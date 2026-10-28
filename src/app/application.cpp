@@ -234,6 +234,17 @@ namespace {
           m_location->selectAll();
           return;
         }
+        if (event.sym == XKB_KEY_k && event.modifiers == KeyMod::Ctrl && m_filterInput != nullptr) {
+          openFilter();
+          return;
+        }
+        if (m_filterOpen
+            && event.modifiers == 0
+            && KeySymbol::isEscape(event.sym)
+            && m_dispatcher.focusedArea() != m_location->inputArea()) {
+          closeFilter();
+          return;
+        }
         if (event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Left) {
           (void)m_browser.back();
           return;
@@ -250,7 +261,8 @@ namespace {
           m_browser.refresh();
           return;
         }
-        const bool editing = m_location != nullptr && m_dispatcher.focusedArea() == m_location->inputArea();
+        const bool editing = (m_location != nullptr && m_dispatcher.focusedArea() == m_location->inputArea())
+            || (m_filterInput != nullptr && m_dispatcher.focusedArea() == m_filterInput->inputArea());
         if (!editing && event.modifiers == KeyMod::Ctrl && (event.sym == XKB_KEY_1 || event.sym == XKB_KEY_2)) {
           setViewMode(event.sym == XKB_KEY_1 ? files::ViewMode::GRID : files::ViewMode::LIST);
           return;
@@ -267,6 +279,33 @@ namespace {
     }
 
   private:
+    void openFilter() {
+      m_filterOpen = true;
+      m_focusFilter = true;
+      m_browserDirty = true;
+      m_surface.requestUpdate();
+    }
+
+    void changeNameFilter(const std::string& text) {
+      if (text == m_browser.model().filter().text) {
+        return;
+      }
+      m_listAdapter.onPointerCancel();
+      m_gridAdapter.onPointerCancel();
+      m_viewAnchor.reset();
+      m_list->scrollView().requestScrollToOffset(0);
+      m_browser.setNameFilter(text);
+    }
+
+    void closeFilter() {
+      m_filterOpen = false;
+      m_focusFilter = false;
+      changeNameFilter({});
+      m_dispatcher.setFocus(m_list->focusArea());
+      m_browserDirty = true;
+      m_surface.requestUpdate();
+    }
+
     void captureViewAnchor() {
       if (m_list == nullptr) {
         return;
@@ -394,6 +433,11 @@ namespace {
       const auto& snapshot = model.snapshot();
       const auto uri = snapshot.location ? snapshot.location->uri() : std::string{};
       if (uri != m_displayedLocation) {
+        m_filterOpen = false;
+        m_focusFilter = false;
+        if (m_dispatcher.focusedArea() == m_filterInput->inputArea()) {
+          m_dispatcher.setFocus(m_list->focusArea());
+        }
         m_displayedLocation = uri;
         m_location->setValue(uri);
         m_locationInvalid = false;
@@ -403,6 +447,17 @@ namespace {
         m_list->scrollView().requestScrollToOffset(0);
       }
       m_location->setInvalid(m_locationInvalid);
+      m_filterBar->setVisible(m_filterOpen);
+      m_filterBar->setParticipatesInLayout(m_filterOpen);
+      m_filterButton->setSelected(m_filterOpen);
+      if (m_filterInput->value() != model.filter().text) {
+        m_filterInput->setValue(model.filter().text);
+      }
+      if (m_focusFilter) {
+        m_focusFilter = false;
+        m_dispatcher.setFocus(m_filterInput->inputArea());
+        m_filterInput->selectAll();
+      }
       const auto& sort = model.sort();
       const char* indicator = sort.descending ? "arrow-down" : "arrow-up";
       m_nameHeader->setGlyph(indicator);
@@ -447,9 +502,16 @@ namespace {
       } else if (snapshot.status == files::DirectoryStatus::CANCELLED) {
         status = "Loading stopped.";
       } else {
-        status = std::format("{} items", model.rows().size());
-        if (model.rows().size() < snapshot.entries.size()) {
-          status += std::format(" · {} hidden", snapshot.entries.size() - model.rows().size());
+        const auto hidden = model.filter().showHidden
+            ? 0U
+            : static_cast<std::size_t>(std::ranges::count_if(snapshot.entries, [](const auto& entry) {
+                return entry.hidden;
+              }));
+        status = model.filter().text.empty()
+            ? std::format("{} items", model.rows().size())
+            : std::format("{} of {} items", model.rows().size(), snapshot.entries.size() - hidden);
+        if (hidden > 0) {
+          status += std::format(" · {} hidden", hidden);
         }
       }
       if (!model.selection().selected.empty()) {
@@ -462,8 +524,9 @@ namespace {
                   || snapshot.status == files::DirectoryStatus::CANCELLED
                   || !m_browser.message().empty()
               ? status
-              : snapshot.entries.empty() ? "This folder is empty."
-                                         : "No visible items."
+              : snapshot.entries.empty()     ? "This folder is empty."
+              : !model.filter().text.empty() ? "No matching items."
+                                             : "No visible items."
       );
       const bool empty = model.rows().empty();
       m_notice->setVisible(empty);
@@ -633,6 +696,20 @@ namespace {
                            ) { setViewMode(index == 0 ? files::ViewMode::GRID : files::ViewMode::LIST); }}
           ),
           ui::button(
+              {.out = &m_filterButton,
+               .glyph = "filter",
+               .variant = ButtonVariant::Ghost,
+               .tooltip = "Filter this folder (Ctrl+K)",
+               .onClick =
+                   [this] {
+                     if (m_filterOpen) {
+                       closeFilter();
+                     } else {
+                       openFilter();
+                     }
+                   }}
+          ),
+          ui::button(
               {.out = &m_sortButton,
                .glyph = "arrows-sort",
                .variant = ButtonVariant::Ghost,
@@ -648,6 +725,35 @@ namespace {
           ui::button(
               {.out = &m_menuButton, .glyph = "dots-vertical", .variant = ButtonVariant::Ghost, .onClick = [this] {
                  openMenu();
+               }}
+          )
+      );
+
+      auto filterBar = ui::row(
+          {.out = &m_filterBar,
+           .align = FlexAlign::Center,
+           .gap = Style::spaceSm,
+           .paddingV = Style::spaceXs,
+           .paddingH = Style::spaceSm,
+           .visible = false,
+           .participatesInLayout = false},
+          ui::label({.text = "Filter this folder", .fontSize = Style::fontSizeCaption}),
+          ui::input(
+              {.out = &m_filterInput,
+               .placeholder = "Filter names…",
+               .clearButtonEnabled = true,
+               .flexGrow = 1.0F,
+               .onChange = [this](const std::string& text) { changeNameFilter(text); },
+               .onSubmit =
+                   [this](const std::string&) {
+                     if (!m_browser.model().rows().empty()) {
+                       m_dispatcher.setFocus(m_list->focusArea());
+                     }
+                   }}
+          ),
+          ui::button(
+              {.glyph = "x", .variant = ButtonVariant::Ghost, .tooltip = "Close filter (Escape)", .onClick = [this] {
+                 closeFilter();
                }}
           )
       );
@@ -769,7 +875,7 @@ namespace {
            .fill = colorSpecFromRole(ColorRole::Surface),
            .fillWidth = true,
            .fillHeight = true},
-          std::move(header), std::move(toolbar),
+          std::move(header), std::move(toolbar), std::move(filterBar),
           ui::row(
               {.align = FlexAlign::Stretch, .clipChildren = true, .flexGrow = 1.0F}, std::move(places),
               std::move(content)
@@ -943,6 +1049,11 @@ namespace {
     InputDispatcher m_dispatcher;
     Flex* m_titlebar = nullptr;
     Input* m_location = nullptr;
+    Input* m_filterInput = nullptr;
+    Flex* m_filterBar = nullptr;
+    Button* m_filterButton = nullptr;
+    bool m_filterOpen = false;
+    bool m_focusFilter = false;
     Label* m_status = nullptr;
     Label* m_notice = nullptr;
     VirtualGridView* m_list = nullptr;

@@ -38,6 +38,7 @@ void files::BrowserController::open(const Location& location) {
     m_historyIndex = m_history.size() - 1;
   }
   m_message.clear();
+  setNameFilter({});
   m_session.open(destination);
 }
 
@@ -89,6 +90,7 @@ bool files::BrowserController::back() {
   }
   --m_historyIndex;
   m_message.clear();
+  setNameFilter({});
   const auto destination = m_history[m_historyIndex];
   m_session.open(destination);
   return true;
@@ -100,6 +102,7 @@ bool files::BrowserController::forward() {
   }
   ++m_historyIndex;
   m_message.clear();
+  setNameFilter({});
   const auto destination = m_history[m_historyIndex];
   m_session.open(destination);
   return true;
@@ -136,6 +139,16 @@ void files::BrowserController::stop() { m_session.cancel(); }
 void files::BrowserController::toggleHidden() {
   auto filter = m_model.filter();
   filter.showHidden = !filter.showHidden;
+  m_model.setFilter(std::move(filter));
+}
+
+void files::BrowserController::setNameFilter(std::string text) {
+  auto filter = m_model.filter();
+  if (filter.text == text) {
+    return;
+  }
+  filter.text = std::move(text);
+  m_message.clear();
   m_model.setFilter(std::move(filter));
 }
 

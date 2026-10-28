@@ -20,6 +20,7 @@ namespace files {
     void refresh();
     void stop();
     void toggleHidden();
+    void setNameFilter(std::string text);
     void activate(EntryId id);
 
     [[nodiscard]] bool canBack() const;

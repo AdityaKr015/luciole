@@ -168,12 +168,81 @@ namespace {
     browser.refresh();
     pump.ready(browser);
   }
+  void testCurrentFolderFilter() {
+    Fixture fixture;
+    std::ofstream(fixture.path / "Straße.txt") << "Unicode";
+    std::ofstream(fixture.path / "*.txt") << "literal";
+    Pump pump;
+    BrowserController browser({}, false);
+    browser.open(Location::fromPath(fixture.path.native()));
+    pump.ready(browser);
+    const auto generation = browser.model().snapshot().generation;
+    const auto count = browser.model().snapshot().entries.size();
+    const auto file = id(browser, "file");
+    browser.model().select(file);
+    browser.model().select(id(browser, "child"), files::SelectionMode::TOGGLE);
+    browser.setNameFilter("FILE");
+    require(
+        browser.model().rows() == std::vector<EntryId>{file}
+            && browser.model().selectedIds() == std::vector<EntryId>{file},
+        "filter did not prune excluded selection or preserve matching identity"
+    );
+    require(
+        browser.model().snapshot().generation == generation && browser.model().snapshot().entries.size() == count,
+        "filter rescanned or removed source entries"
+    );
+    browser.setNameFilter({});
+    require(browser.model().selectedIds() == std::vector<EntryId>{file}, "clearing restored excluded selection");
+    browser.setNameFilter("STRASSE");
+    require(browser.model().rows() == std::vector<EntryId>{id(browser, "Straße.txt")}, "filter lost Unicode matching");
+    browser.setNameFilter("*");
+    require(browser.model().rows() == std::vector<EntryId>{id(browser, "*.txt")}, "filter interpreted a glob");
+    browser.open(*browser.model().snapshot().location);
+    pump.ready(browser);
+    require(browser.model().filter().text == "*" && !browser.canBack(), "same-location refresh cleared filter/history");
+    std::ofstream(fixture.path / "another*.txt") << "monitored";
+    pump.until([&] { return browser.model().rows().size() == 2; });
+    require(browser.model().filter().text == "*", "monitor update cleared filter");
+    browser.setNameFilter("hidden");
+    require(browser.model().rows().empty(), "name filter bypassed hidden-file visibility");
+    browser.toggleHidden();
+    require(browser.model().rows() == std::vector<EntryId>{id(browser, ".hidden")}, "hidden toggle lost name filter");
+    require(
+        !browser.openText("sftp://invalid%zz") && browser.model().filter().text == "hidden",
+        "invalid navigation cleared the current filter"
+    );
+    browser.stop();
+    browser.refresh();
+    pump.ready(browser);
+    require(browser.model().filter().text == "hidden", "cancel/resume lost filter");
+    require(browser.openText("child"), "cannot navigate out of filtered folder");
+    pump.ready(browser);
+    require(
+        browser.model().filter().text.empty()
+            && browser.model().filter().showHidden
+            && browser.model().rows().size() == 1,
+        "new folder inherited text filter or lost hidden preference"
+    );
+    browser.setNameFilter("inside");
+    require(browser.back(), "filtered history Back failed");
+    pump.ready(browser);
+    require(browser.model().filter().text.empty(), "Back inherited text filter");
+    browser.setNameFilter("file");
+    require(browser.forward(), "filtered history Forward failed");
+    pump.ready(browser);
+    require(browser.model().filter().text.empty(), "Forward inherited text filter");
+    browser.setNameFilter("inside");
+    require(browser.up(), "filtered parent navigation failed");
+    pump.ready(browser);
+    require(browser.model().filter().text.empty(), "parent navigation inherited text filter");
+  }
 } // namespace
 
 int main() {
   try {
     testNavigation();
     testFailureAndLiveUpdates();
+    testCurrentFolderFilter();
     std::println("browser controller checks passed");
     return 0;
   } catch (const std::exception& error) {
