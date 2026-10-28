@@ -99,6 +99,77 @@ namespace {
         "missing configured folders were omitted or created"
     );
 
+    require(service.bookmarks().size() == places.size(), "new Places list did not start with defaults");
+    const auto home = places.front().bookmark;
+    const auto filesystem = places.back().bookmark;
+    const auto existingPath = fixture.root / "existing/state.toml";
+    fs::create_directories(existingPath.parent_path());
+    {
+      std::ofstream existing(existingPath);
+      existing
+          << "schema_version = 1\nbookmarks = [{label = 'My downloads', uri = '"
+          << downloads->bookmark.location.uri()
+          << "'}, {label = 'Project one', uri = '"
+          << fixture.location("project-one").uri()
+          << "'}, {label = 'Project two', uri = '"
+          << fixture.location("project-two").uri()
+          << "'}]\nwindows = []\n";
+    }
+    files::PinService existing(existingPath);
+    existing.reload();
+    pump.ready(existing);
+    require(
+        existing.bookmarks().size() == places.size() + 2
+            && existing.contains(home.location)
+            && existing.contains(filesystem.location),
+        "a preexisting custom pin list suppressed default Places"
+    );
+    require(
+        std::ranges::count(existing.bookmarks(), downloads->bookmark.location, &files::Bookmark::location) == 1
+            && existing.bookmarks()[2].label == "My downloads"
+            && existing.bookmarks()[places.size()].label == "Project one"
+            && existing.bookmarks().back().label == "Project two",
+        "initial Places duplicated a default or lost custom labels/order"
+    );
+    files::StateStore observed(existingPath);
+    require(
+        observed.load() && !observed.state().placesCustomized && observed.state().bookmarks.size() == 3,
+        "loading initial Places rewrote saved state"
+    );
+    require(existing.remove(home.location), "cannot customize a preexisting pin list");
+    pump.ready(existing);
+    files::PinService existingRestarted(existingPath);
+    existingRestarted.reload();
+    pump.ready(existingRestarted);
+    require(
+        !existingRestarted.contains(home.location)
+            && existingRestarted.contains(fixture.location("project-one"))
+            && observed.load()
+            && observed.state().placesCustomized,
+        "an intentional default unpin was lost after initializing Places"
+    );
+    require(service.remove(home.location), "Home could not be unpinned");
+    pump.ready(service);
+    service.reload();
+    pump.ready(service);
+    require(!service.contains(home.location), "reload restored an unpinned default");
+    require(service.move(filesystem.location, 0), "File System could not be reordered");
+    pump.ready(service);
+    require(service.bookmarks().front() == filesystem, "default place order did not persist");
+    require(service.add({{"home folder", home.location}}, 1), "Home could not be pinned again");
+    pump.ready(service);
+    require(service.bookmarks()[1] == home, "repinning a default lost its standard label");
+    std::vector<files::Location> defaults;
+    for (const auto& pin : service.bookmarks()) {
+      defaults.push_back(pin.location);
+    }
+    require(service.removeMany(defaults), "cannot unpin every default place");
+    pump.ready(service);
+    files::PinService restarted(path);
+    restarted.reload();
+    pump.ready(restarted);
+    require(restarted.bookmarks().empty(), "empty saved Places list was reseeded with defaults");
+
     require(service.add({fixture.pin("a"), fixture.pin("b"), fixture.pin("c")}, 0), "cannot add pins");
     pump.ready(service);
     require(service.error().empty() && service.bookmarks().size() == 3, "pin save failed");

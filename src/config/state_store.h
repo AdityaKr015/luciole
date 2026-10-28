@@ -30,6 +30,7 @@ namespace files {
   struct SessionState {
     std::vector<Bookmark> bookmarks;
     std::vector<SavedWindow> windows;
+    bool placesCustomized = false;
     bool operator==(const SessionState&) const = default;
   };
 
@@ -37,6 +38,7 @@ namespace files {
   // Single owning I/O thread; load before saving and marshal snapshots to UI.
   class StateStore {
   public:
+    static constexpr std::size_t bookmarkLimit = 256;
     explicit StateStore(std::filesystem::path path);
     [[nodiscard]] static std::filesystem::path pathFromEnvironment();
     bool load(); // Failure preserves the last valid snapshot and the file.

@@ -147,6 +147,34 @@ namespace {
     );
   }
 
+  void testEmptyPlacesSnapshot() {
+    Fixture fixture;
+    StateStore first(fixture.path());
+    require(first.load() && !first.state().placesCustomized, "missing state already customized Places");
+    require(first.saveWindows({window("/tmp/initial")}) == AtomicWriteState::DURABLE, "cannot save initial window");
+    StateStore stale(fixture.path());
+    require(stale.load() && !stale.state().placesCustomized, "window-only save initialized Places");
+    require(first.saveBookmarks({}) == AtomicWriteState::DURABLE, "empty Places was treated as an unsaved no-op");
+    require(
+        stale.saveBookmarks({{.label = "Stale", .location = Location::fromPath("/tmp/stale")}})
+            == AtomicWriteState::NOT_COMMITTED,
+        "stale defaults overwrote an explicitly empty Places list"
+    );
+    require(
+        stale.saveWindows({window("/tmp/updated")}) == AtomicWriteState::DURABLE,
+        "window save failed to preserve customized Places"
+    );
+    require(
+        first.load() && first.state().placesCustomized && first.state().bookmarks.empty(),
+        "empty Places did not survive unrelated window saving"
+    );
+    const auto bytes = read(fixture.path());
+    require(
+        first.saveBookmarks({}) == AtomicWriteState::UNCHANGED && read(fixture.path()) == bytes,
+        "an already saved empty Places list was rewritten"
+    );
+  }
+
   void testInvalidStateAndRecovery() {
     Fixture fixture;
     StateStore store(fixture.path());
@@ -162,6 +190,8 @@ namespace {
              "broken = [",
              "schema_version = 1\nunknown = true",
              "schema_version = 1\nbookmarks = 0",
+             "schema_version = 1\nplaces_customized = 1",
+             "schema_version = 1\nplaces_customized = true",
              "schema_version = 1\nbookmarks = [{label = 'x', uri = '/relative'}]",
              "schema_version = 1\nbookmarks = [{label = '', uri = 'file:///tmp'}]",
              "schema_version = 1\nbookmarks = [{label = 'x', uri = 'file:///tmp', extra = true}]",
@@ -302,6 +332,7 @@ int main() {
   try {
     testRoundtrip();
     testSectionMergingAndConflicts();
+    testEmptyPlacesSnapshot();
     testInvalidStateAndRecovery();
     testPrivacyAndBounds();
     testPrivateReaderAndPaths();

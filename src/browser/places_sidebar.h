@@ -12,13 +12,12 @@ namespace files {
     void invalidate();
     void sync(std::optional<Location> current);
     void cancelDragCandidate();
-    bool builtIn(const Location& location) const;
     std::optional<std::size_t> dropSlot(float x, float y) const;
     LayoutRect dropLine(std::size_t slot) const;
     void dragScroll(float delta);
     float dragScrollSpeed(float x, float y) const;
     void setOpenCallback(std::function<void(const Location&)> callback);
-    void setContextCallback(std::function<void(const Bookmark&, bool, float, float)> callback);
+    void setContextCallback(std::function<void(const Bookmark&, float, float)> callback);
     void setDragCallback(std::function<void(const Bookmark&)> callback);
 
   protected:
@@ -30,17 +29,16 @@ namespace files {
     struct Row {
       Bookmark bookmark;
       std::string iconName;
-      bool pinned = false;
       std::size_t pinIndex = 0;
       Button* button = nullptr;
       FileIcon* icon = nullptr;
     };
     void rebuild();
-    void addRow(const Bookmark& bookmark, const std::string& icon, bool pinned, std::size_t index);
+    void addRow(const Bookmark& bookmark, const std::string& icon, std::size_t index);
     PinService& m_pins;
     FileIconCache& m_icons;
     ScrollView* m_scroll = nullptr;
-    Label* m_pinnedHeading = nullptr;
+    Label* m_heading = nullptr;
     std::vector<Row> m_rows;
     std::optional<Location> m_current;
     std::optional<Bookmark> m_dragCandidate;
@@ -49,7 +47,7 @@ namespace files {
     bool m_dirty = true;
     bool m_dragged = false;
     std::function<void(const Location&)> m_open;
-    std::function<void(const Bookmark&, bool, float, float)> m_context;
+    std::function<void(const Bookmark&, float, float)> m_context;
     std::function<void(const Bookmark&)> m_drag;
   };
 } // namespace files

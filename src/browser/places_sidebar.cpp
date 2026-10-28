@@ -25,7 +25,7 @@ files::PlacesSidebar::PlacesSidebar(PinService& pins, FileIconCache& icons) : m_
 void files::PlacesSidebar::setOpenCallback(std::function<void(const Location&)> callback) {
   m_open = std::move(callback);
 }
-void files::PlacesSidebar::setContextCallback(std::function<void(const Bookmark&, bool, float, float)> callback) {
+void files::PlacesSidebar::setContextCallback(std::function<void(const Bookmark&, float, float)> callback) {
   m_context = std::move(callback);
 }
 void files::PlacesSidebar::setDragCallback(std::function<void(const Bookmark&)> callback) {
@@ -38,11 +38,6 @@ void files::PlacesSidebar::invalidate() {
 void files::PlacesSidebar::cancelDragCandidate() {
   m_dragCandidate.reset();
   m_dragged = false;
-}
-bool files::PlacesSidebar::builtIn(const Location& location) const {
-  return std::ranges::any_of(m_pins.userPlaces(), [&](const auto& place) {
-    return place.bookmark.location == location;
-  });
 }
 void files::PlacesSidebar::sync(std::optional<Location> current) {
   m_current = std::move(current);
@@ -58,9 +53,7 @@ void files::PlacesSidebar::sync(std::optional<Location> current) {
   }
   markLayoutDirty();
 }
-void files::PlacesSidebar::addRow(
-    const Bookmark& bookmark, const std::string& iconName, bool pinned, std::size_t index
-) {
+void files::PlacesSidebar::addRow(const Bookmark& bookmark, const std::string& iconName, std::size_t index) {
   auto button = ui::button(
       {.text = bookmark.label,
        .contentAlign = ButtonContentAlign::Start,
@@ -78,8 +71,8 @@ void files::PlacesSidebar::addRow(
   raw->label()->setUseMarkup(false);
   raw->label()->setMaxWidth(126.0F);
   raw->setTooltip(locationEditText(bookmark.location));
-  raw->inputArea()->setTabFocusKey(std::string(pinned ? "pin:" : "place:") + bookmark.location.uri());
-  raw->inputArea()->setOnKeyDown([this, bookmark, pinned, raw](const InputArea::KeyData& key) {
+  raw->inputArea()->setTabFocusKey("place:" + bookmark.location.uri());
+  raw->inputArea()->setOnKeyDown([this, bookmark, raw](const InputArea::KeyData& key) {
     if (!key.pressed) {
       return;
     }
@@ -91,7 +84,7 @@ void files::PlacesSidebar::addRow(
       float x = 0, y = 0;
       Node::absolutePosition(raw, x, y);
       if (m_context) {
-        m_context(bookmark, pinned, x + raw->width() * 0.5F, y + raw->height() * 0.5F);
+        m_context(bookmark, x + raw->width() * 0.5F, y + raw->height() * 0.5F);
       }
     }
   });
@@ -101,13 +94,13 @@ void files::PlacesSidebar::addRow(
       {.names = {iconName, "folder"}, .filePath = {}, .desktopFile = {}}, colorSpecFromRole(ColorRole::OnSurface)
   );
   raw->insertChildAt(0, std::move(icon));
-  raw->setOnRightClickWithPointer([this, bookmark, pinned](float x, float y, std::uint32_t, std::uint32_t) {
+  raw->setOnRightClickWithPointer([this, bookmark](float x, float y, std::uint32_t, std::uint32_t) {
     cancelDragCandidate();
     if (m_context) {
-      m_context(bookmark, pinned, x, y);
+      m_context(bookmark, x, y);
     }
   });
-  if (pinned) {
+  {
     raw->inputArea()->setOnPress([this, bookmark, raw](const InputArea::PointerData& pointer) {
       raw->setPressedVisual(pointer.pressed);
       if (pointer.button == BTN_LEFT && pointer.pressed) {
@@ -142,7 +135,7 @@ void files::PlacesSidebar::addRow(
     m_scroll->requestScrollIntoView(raw);
   });
   raw->inputArea()->setOnFocusLoss([raw] { raw->setKeyboardFocusHint(false); });
-  m_rows.push_back({bookmark, iconName, pinned, index, raw, artwork});
+  m_rows.push_back({bookmark, iconName, index, raw, artwork});
   m_scroll->content()->addChild(std::move(button));
 }
 void files::PlacesSidebar::rebuild() {
@@ -164,15 +157,13 @@ void files::PlacesSidebar::rebuild() {
         )
     );
   };
-  heading("Places");
-  for (const auto& place : m_pins.userPlaces()) {
-    addRow(place.bookmark, place.iconName, false, 0);
-  }
-  content->addChild(ui::separator({}));
-  heading("Pinned", &m_pinnedHeading);
+  heading("Places", &m_heading);
   const auto& pins = m_pins.bookmarks();
   for (std::size_t i = 0; i < pins.size(); ++i) {
-    addRow(pins[i], "folder", true, i);
+    const auto known = std::ranges::find_if(m_pins.userPlaces(), [&](const auto& place) {
+      return place.bookmark.location == pins[i].location;
+    });
+    addRow(pins[i], known == m_pins.userPlaces().end() ? "folder" : known->iconName, i);
   }
   if (pins.empty()) {
     content->addChild(
@@ -208,9 +199,6 @@ std::optional<std::size_t> files::PlacesSidebar::dropSlot(float x, float y) cons
     return std::nullopt;
   }
   for (const auto& row : m_rows) {
-    if (!row.pinned) {
-      continue;
-    }
     float rowX = 0, rowY = 0;
     Node::absolutePosition(row.button, rowX, rowY);
     if (y < rowY + row.button->height() * 0.5F) {
@@ -224,15 +212,12 @@ LayoutRect files::PlacesSidebar::dropLine(std::size_t slot) const {
   Node::absolutePosition(this, x, y);
   const float top = y;
   float line = top + height() - 8.0F;
-  if (m_pinnedHeading != nullptr) {
+  if (m_heading != nullptr) {
     float headingX = 0;
-    Node::absolutePosition(m_pinnedHeading, headingX, line);
-    line += m_pinnedHeading->height() + 2.0F;
+    Node::absolutePosition(m_heading, headingX, line);
+    line += m_heading->height() + 2.0F;
   }
   for (const auto& row : m_rows) {
-    if (!row.pinned) {
-      continue;
-    }
     float rowX = 0, rowY = 0;
     Node::absolutePosition(row.button, rowX, rowY);
     line = rowY - 2.0F;

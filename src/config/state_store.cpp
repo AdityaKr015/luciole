@@ -12,7 +12,6 @@
 #include <utility>
 
 namespace {
-  constexpr std::size_t kMaxBookmarks = 256;
   constexpr std::size_t kMaxWindows = 16;
   constexpr std::size_t kMaxTabs = 64;
   constexpr std::size_t kMaxUriBytes = 64 * 1024;
@@ -51,7 +50,7 @@ namespace {
         add(key, *error);
       }
     };
-    if (state.bookmarks.size() > kMaxBookmarks) {
+    if (state.bookmarks.size() > files::StateStore::bookmarkLimit) {
       add("bookmarks", "at most 256 bookmarks are supported");
     }
     std::unordered_set<std::string> uris;
@@ -240,13 +239,21 @@ namespace {
       );
     }
     Decoder decoder(path);
-    decoder.keys(table, "", {"schema_version", "bookmarks", "windows"});
+    decoder.keys(table, "", {"schema_version", "places_customized", "bookmarks", "windows"});
     const auto* version = table.get("schema_version");
     if (version == nullptr || !version->is_integer() || version->as_integer()->get() != 1) {
       decoder.issue(version != nullptr ? *version : table, "schema_version", "expected integer state schema version 1");
     }
     files::SessionState state;
-    if (const auto* bookmarks = decoder.array(table, "bookmarks", "bookmarks", kMaxBookmarks, false)) {
+    if (const auto* customized = table.get("places_customized")) {
+      if (!customized->is_boolean()) {
+        decoder.issue(*customized, "places_customized", "expected a boolean");
+      } else {
+        state.placesCustomized = customized->as_boolean()->get();
+      }
+    }
+    if (const auto* bookmarks =
+            decoder.array(table, "bookmarks", "bookmarks", files::StateStore::bookmarkLimit, state.placesCustomized)) {
       for (std::size_t i = 0; i < bookmarks->size(); ++i) {
         const auto key = std::format("bookmarks[{}]", i);
         const auto* bookmark = bookmarks->get(i)->as_table();
@@ -300,7 +307,10 @@ namespace {
       );
     }
     const toml::table document{
-        {"schema_version", 1}, {"bookmarks", std::move(bookmarks)}, {"windows", std::move(windows)}
+        {"schema_version", 1},
+        {"places_customized", state.placesCustomized},
+        {"bookmarks", std::move(bookmarks)},
+        {"windows", std::move(windows)}
     };
     // Adapted from Noctalia StateStore's canonical TOML formatting.
     std::ostringstream output;
@@ -361,6 +371,7 @@ bool files::StateStore::load() {
 files::AtomicWriteState files::StateStore::saveBookmarks(std::vector<Bookmark> bookmarks) {
   auto proposed = m_state;
   proposed.bookmarks = std::move(bookmarks);
+  proposed.placesCustomized = true;
   return save(std::move(proposed), true);
 }
 
@@ -388,15 +399,19 @@ files::AtomicWriteState files::StateStore::save(SessionState proposed, bool book
           m_issues = std::move(current.error());
           return std::unexpected("invalid existing state; repair or remove it explicitly before saving");
         }
-        const bool unchanged =
-            bookmarks ? current->bookmarks == proposed.bookmarks : current->windows == proposed.windows;
-        const bool matches = bookmarks ? current->bookmarks == m_state.bookmarks : current->windows == m_state.windows;
+        const bool unchanged = bookmarks
+            ? current->bookmarks == proposed.bookmarks && current->placesCustomized == proposed.placesCustomized
+            : current->windows == proposed.windows;
+        const bool matches = bookmarks
+            ? current->bookmarks == m_state.bookmarks && current->placesCustomized == m_state.placesCustomized
+            : current->windows == m_state.windows;
         if (!unchanged && !matches) {
           return std::unexpected("state section changed in another writer; reload before retrying");
         }
         candidate = std::move(*current);
         if (bookmarks) {
           candidate.bookmarks = std::move(proposed.bookmarks);
+          candidate.placesCustomized = proposed.placesCustomized;
         } else {
           candidate.windows = std::move(proposed.windows);
         }

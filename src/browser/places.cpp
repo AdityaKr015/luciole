@@ -131,6 +131,25 @@ struct files::PinService::State : std::enable_shared_from_this<State> {
           }
         }
         result->bookmarks = store.state().bookmarks;
+        if (!store.state().placesCustomized) {
+          auto available = StateStore::bookmarkLimit - result->bookmarks.size();
+          std::vector<Bookmark> initial;
+          for (const auto& place : result->places) {
+            const auto existing = std::ranges::find(result->bookmarks, place.bookmark.location, &Bookmark::location);
+            if (existing != result->bookmarks.end()) {
+              initial.push_back(*existing);
+            } else if (available != 0) {
+              initial.push_back(place.bookmark);
+              --available;
+            }
+          }
+          for (const auto& bookmark : result->bookmarks) {
+            if (std::ranges::none_of(initial, [&](const auto& pin) { return pin.location == bookmark.location; })) {
+              initial.push_back(bookmark);
+            }
+          }
+          result->bookmarks = std::move(initial);
+        }
       } catch (const std::exception& error) {
         result->error = error.what();
       }
@@ -184,7 +203,10 @@ bool files::PinService::add(std::vector<Bookmark> bookmarks, std::size_t before)
       }
       proposed.erase(existing);
     } else {
-      bookmark.label = pinLabel(bookmark.label);
+      const auto known = std::ranges::find_if(m_state->places, [&](const auto& place) {
+        return place.bookmark.location == bookmark.location;
+      });
+      bookmark.label = known == m_state->places.end() ? pinLabel(bookmark.label) : known->bookmark.label;
     }
     incoming.push_back(std::move(bookmark));
   }

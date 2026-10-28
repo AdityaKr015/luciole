@@ -503,7 +503,7 @@ namespace {
       if (!id) {
         const auto location = m_browser.model().snapshot().location;
         std::vector<ContextMenuControlEntry> entries{{.id = 1, .label = "Refresh"}};
-        if (location && (m_pins.contains(*location) || !m_places->builtIn(*location))) {
+        if (location) {
           entries.push_back(
               {.id = 2,
                .label = m_pins.contains(*location) ? "Unpin" : "Pin this folder to sidebar",
@@ -556,9 +556,8 @@ namespace {
         entries.push_back({.id = 2, .label = "Show in containing folder"});
       }
       if (folders) {
-        const bool canPin = std::ranges::any_of(targets, [this](const auto& entry) {
-          return !m_places->builtIn(entry.location) && !m_pins.contains(entry.location);
-        });
+        const bool canPin =
+            std::ranges::any_of(targets, [this](const auto& entry) { return !m_pins.contains(entry.location); });
         const bool canUnpin =
             std::ranges::any_of(targets, [this](const auto& entry) { return m_pins.contains(entry.location); });
         if (canPin || canUnpin) {
@@ -590,7 +589,7 @@ namespace {
             } else if (action == 3) {
               std::vector<files::Bookmark> bookmarks;
               for (const auto& target : targets) {
-                if (!m_places->builtIn(target.location) && !m_pins.contains(target.location)) {
+                if (!m_pins.contains(target.location)) {
                   bookmarks.push_back({target.displayName, target.location});
                 }
               }
@@ -610,9 +609,9 @@ namespace {
       );
     }
 
-    void openPlaceMenu(const files::Bookmark& bookmark, bool pinned, float x, float y) {
+    void openPlaceMenu(const files::Bookmark& bookmark, float x, float y) {
       std::vector<ContextMenuControlEntry> entries{{.id = 1, .label = "Open"}};
-      if (pinned) {
+      {
         const auto& pins = m_pins.bookmarks();
         const auto found = std::ranges::find(pins, bookmark.location, &files::Bookmark::location);
         const auto index = static_cast<std::size_t>(found - pins.begin());
@@ -625,8 +624,8 @@ namespace {
       entries.push_back({.id = 5, .label = "Properties"});
       showContextMenu(
           std::move(entries),
-          [this, bookmark, pinned](int action) {
-            if (pinned && !m_pins.contains(bookmark.location)) {
+          [this, bookmark](int action) {
+            if (!m_pins.contains(bookmark.location)) {
               actionError("This pin is no longer available.");
               return;
             }
@@ -865,13 +864,9 @@ namespace {
       if (!m_pinDrag) {
         return;
       }
-      const bool allowed = std::ranges::none_of(m_pinDrag->bookmarks, [this](const auto& bookmark) {
-        return m_places->builtIn(bookmark.location);
-      });
       m_dragLabel->setText(
-          !allowed ? "Already in Places"
-              : m_pinDrag->sourcePin
-              ? "Reorder pin"
+          m_pinDrag->sourcePin
+              ? "Reorder place"
               : std::format("Pin {} folder{}", m_pinDrag->bookmarks.size(), m_pinDrag->bookmarks.size() == 1 ? "" : "s")
       );
       m_dragPreview->arrange(
@@ -879,7 +874,7 @@ namespace {
           {std::clamp(m_pointerX + 12, 0.0F, static_cast<float>(m_surface.width()) - 190.0F),
            std::clamp(m_pointerY + 12, 0.0F, static_cast<float>(m_surface.height()) - 38.0F), 190, 38}
       );
-      if (const auto slot = m_places->dropSlot(m_pointerX, m_pointerY); slot && allowed) {
+      if (const auto slot = m_places->dropSlot(m_pointerX, m_pointerY); slot) {
         m_pinDropLine->setVisible(true);
         m_pinDropLine->arrange(renderer, m_places->dropLine(*slot));
       }
@@ -888,14 +883,9 @@ namespace {
       const bool current = pinDragCurrent();
       const auto slot = m_places->dropSlot(x, y);
       const auto drag = *m_pinDrag;
-      const bool allowed = std::ranges::none_of(drag.bookmarks, [this](const auto& bookmark) {
-        return m_places->builtIn(bookmark.location);
-      });
       cancelPinDrag();
-      if (current && slot && allowed) {
+      if (current && slot) {
         pinFolders(drag.bookmarks, *slot);
-      } else if (slot && !allowed) {
-        actionError("This folder is already in Places.");
       }
     }
     TextInputState textInputState() const override { return m_filterInput->textInputState(); }
@@ -1653,8 +1643,8 @@ namespace {
         m_browser.open(location);
         m_dispatcher.setFocus(m_list->focusArea());
       });
-      places->setContextCallback([this](const files::Bookmark& bookmark, bool pinned, float x, float y) {
-        openPlaceMenu(bookmark, pinned, x, y);
+      places->setContextCallback([this](const files::Bookmark& bookmark, float x, float y) {
+        openPlaceMenu(bookmark, x, y);
       });
       places->setDragCallback([this](const files::Bookmark& bookmark) { startPlacePinDrag(bookmark); });
       auto content = ui::column(
