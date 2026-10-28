@@ -267,17 +267,42 @@ namespace {
     }
 
   private:
+    void captureViewAnchor() {
+      if (m_list == nullptr) {
+        return;
+      }
+      const auto first = m_list->firstVisibleIndex();
+      const auto& rows = m_browser.model().rows();
+      if (first && *first < rows.size()) {
+        m_viewAnchor = rows[*first];
+      }
+    }
+
+    void changeSort(files::SortOptions options) {
+      if (options == m_browser.model().sort()) {
+        return;
+      }
+      captureViewAnchor();
+      m_listAdapter.onPointerCancel();
+      m_gridAdapter.onPointerCancel();
+      m_browser.model().setSort(options);
+      m_dispatcher.setFocus(m_list->focusArea());
+    }
+
+    void sortBy(files::SortField field) {
+      auto options = m_browser.model().sort();
+      options.descending = options.field == field && !options.descending;
+      options.field = field;
+      changeSort(options);
+    }
+
     void setViewMode(files::ViewMode mode) {
       if (mode == m_viewMode) {
         return;
       }
       m_viewAnchor.reset();
       if (m_list != nullptr) {
-        const auto first = m_list->firstVisibleIndex();
-        const auto& rows = m_browser.model().rows();
-        if (first && *first < rows.size()) {
-          m_viewAnchor = rows[*first];
-        }
+        captureViewAnchor();
         m_dispatcher.setFocus(m_list->focusArea());
       }
       m_viewMode = mode;
@@ -378,6 +403,24 @@ namespace {
         m_list->scrollView().requestScrollToOffset(0);
       }
       m_location->setInvalid(m_locationInvalid);
+      const auto& sort = model.sort();
+      const char* indicator = sort.descending ? "arrow-down" : "arrow-up";
+      m_nameHeader->setGlyph(indicator);
+      m_sizeHeader->setGlyph(indicator);
+      m_nameHeader->glyph()->setVisible(sort.field == files::SortField::NAME);
+      m_nameHeader->glyph()->setParticipatesInLayout(sort.field == files::SortField::NAME);
+      m_sizeHeader->glyph()->setVisible(sort.field == files::SortField::SIZE);
+      m_sizeHeader->glyph()->setParticipatesInLayout(sort.field == files::SortField::SIZE);
+      const char* field = sort.field == files::SortField::NAME ? "Name"
+          : sort.field == files::SortField::SIZE               ? "Size"
+                                                               : "Modified";
+      const char* direction = sort.field == files::SortField::MODIFIED
+          ? (sort.descending ? "newest first" : "oldest first")
+          : sort.field == files::SortField::SIZE ? (sort.descending ? "largest first" : "smallest first")
+                                                 : (sort.descending ? "Z to A" : "A to Z");
+      m_sortButton->setTooltip(
+          std::format("Sort: {}, {}{}", field, direction, sort.directoriesFirst ? " · Folders first" : "")
+      );
       const bool grid = m_viewMode == files::ViewMode::GRID;
       m_viewSwitch->setSelectedIndex(grid ? 0 : 1);
       m_listHeader->setVisible(!grid);
@@ -590,13 +633,23 @@ namespace {
                            ) { setViewMode(index == 0 ? files::ViewMode::GRID : files::ViewMode::LIST); }}
           ),
           ui::button(
+              {.out = &m_sortButton,
+               .glyph = "arrows-sort",
+               .variant = ButtonVariant::Ghost,
+               .onClick = [this] { openMenu(true); }}
+          ),
+          ui::button(
               {.out = &m_hidden,
                .glyph = "eye",
                .variant = ButtonVariant::Ghost,
                .tooltip = "Show hidden files (Ctrl+H)",
                .onClick = [this] { m_browser.toggleHidden(); }}
           ),
-          ui::button({.glyph = "dots-vertical", .variant = ButtonVariant::Ghost, .onClick = [this] { openMenu(); }})
+          ui::button(
+              {.out = &m_menuButton, .glyph = "dots-vertical", .variant = ButtonVariant::Ghost, .onClick = [this] {
+                 openMenu();
+               }}
+          )
       );
 
       auto places = ui::column(
@@ -649,21 +702,38 @@ namespace {
       auto content = ui::column(
           {.align = FlexAlign::Stretch, .gap = Style::spaceXs, .padding = Style::spaceSm, .flexGrow = 1.0F},
           ui::column(
-              {.out = &m_listHeader},
+              {.out = &m_listHeader, .align = FlexAlign::Stretch},
               ui::row(
                   {.height = 32.0F},
                   ui::row(
                       {.align = FlexAlign::Center, .gap = Style::spaceSm, .paddingH = Style::spaceMd, .flexGrow = 1.0F},
-                      ui::label({.text = "Name", .fontSize = Style::fontSizeCaption, .flexGrow = 1.0F}),
+                      ui::button(
+                          {.out = &m_nameHeader,
+                           .text = "Name",
+                           .fontSize = Style::fontSizeCaption,
+                           .controlHeight = Style::controlHeightSm,
+                           .contentAlign = ButtonContentAlign::Start,
+                           .variant = ButtonVariant::Ghost,
+                           .tooltip = "Sort by name; click again to reverse",
+                           .paddingH = 0.0F,
+                           .flexGrow = 1.0F,
+                           .onClick = [this] { sortBy(files::SortField::NAME); }}
+                      ),
                       ui::label(
                           {.text = "Type", .fontSize = Style::fontSizeCaption, .minWidth = 100.0F, .maxWidth = 100.0F}
                       ),
-                      ui::label(
-                          {.text = "Size",
+                      ui::button(
+                          {.out = &m_sizeHeader,
+                           .text = "Size",
                            .fontSize = Style::fontSizeCaption,
+                           .controlHeight = Style::controlHeightSm,
+                           .contentAlign = ButtonContentAlign::End,
+                           .variant = ButtonVariant::Ghost,
+                           .tooltip = "Sort by size; click again to reverse",
                            .minWidth = 110.0F,
                            .maxWidth = 110.0F,
-                           .textAlign = TextAlign::End}
+                           .paddingH = 0.0F,
+                           .onClick = [this] { sortBy(files::SortField::SIZE); }}
                       )
                   ),
                   ui::box({.width = Style::scrollbarWidth + Style::scrollbarGap})
@@ -737,7 +807,7 @@ namespace {
       m_menu = nullptr;
       m_menuSurface.reset();
     }
-    void openMenu() {
+    void openMenu(bool sorting = false) {
       if (m_menuSurface != nullptr) {
         dismissMenu();
         return;
@@ -748,15 +818,54 @@ namespace {
       m_menuSurface->setDismissedCallback([this] { dismissMenu(); });
       auto menu = std::make_unique<ContextMenuControl>();
       m_menu = menu.get();
-      menu->setEntries(
-          {{.id = 1, .label = "Minimize"},
-           {.id = 2, .label = "Maximize / Restore"},
-           {.id = 3, .label = "Fullscreen"},
-           {.id = 4, .label = "Close"}}
-      );
-      menu->setMenuWidth(240);
-      menu->setOnActivate([this](const ContextMenuControlEntry& entry) {
+      std::vector<ContextMenuControlEntry> entries;
+      if (sorting) {
+        const auto& sort = m_browser.model().sort();
+        entries = {
+            {.id = 1, .label = "Name", .radio = true, .toggleState = sort.field == files::SortField::NAME ? 1 : 0},
+            {.id = 2, .label = "Size", .radio = true, .toggleState = sort.field == files::SortField::SIZE ? 1 : 0},
+            {.id = 3,
+             .label = "Modified",
+             .radio = true,
+             .toggleState = sort.field == files::SortField::MODIFIED ? 1 : 0},
+            {.label = "", .separator = true},
+            {.id = 4, .label = "Ascending", .radio = true, .toggleState = sort.descending ? 0 : 1},
+            {.id = 5, .label = "Descending", .radio = true, .toggleState = sort.descending ? 1 : 0},
+            {.label = "", .separator = true},
+            {.id = 6, .label = "Folders first", .checkmark = true, .toggleState = sort.directoriesFirst ? 1 : 0},
+        };
+      } else {
+        entries = {
+            {.id = 1, .label = "Minimize"},
+            {.id = 2, .label = "Maximize / Restore"},
+            {.id = 3, .label = "Fullscreen"},
+            {.id = 4, .label = "Close"}
+        };
+      }
+      const float menuHeight = ContextMenuControl::preferredHeight(entries, entries.size(), 1.0F);
+      const float menuWidth = sorting ? 264.0F : 240.0F;
+      menu->setEntries(std::move(entries));
+      menu->setMenuWidth(menuWidth);
+      menu->setOnActivate([this, sorting](const ContextMenuControlEntry& entry) {
         dismissMenu();
+        if (sorting) {
+          auto options = m_browser.model().sort();
+          if (entry.id >= 1 && entry.id <= 3) {
+            const auto field = entry.id == 1 ? files::SortField::NAME
+                : entry.id == 2              ? files::SortField::SIZE
+                                             : files::SortField::MODIFIED;
+            if (field != options.field) {
+              options.field = field;
+              options.descending = false;
+            }
+          } else if (entry.id == 4 || entry.id == 5) {
+            options.descending = entry.id == 5;
+          } else if (entry.id == 6) {
+            options.directoriesFirst = !options.directoriesFirst;
+          }
+          changeSort(options);
+          return;
+        }
         switch (entry.id) {
         case 1:
           m_surface.minimize();
@@ -796,13 +905,16 @@ namespace {
         );
       });
       m_menuSurface->setConfigureCallback([this](std::uint32_t, std::uint32_t) { m_menuSurface->requestLayout(); });
+      const auto* anchor = sorting ? m_sortButton : m_menuButton;
+      float anchorX = 0, anchorY = 0;
+      Node::absolutePosition(anchor, anchorX, anchorY);
       PopupSurfaceConfig config{
-          .anchorX = static_cast<int>(m_surface.width()) - 48,
-          .anchorY = 48,
-          .anchorWidth = 40,
-          .anchorHeight = 40,
-          .width = 256,
-          .height = 192,
+          .anchorX = static_cast<int>(anchorX),
+          .anchorY = static_cast<int>(anchorY),
+          .anchorWidth = static_cast<int>(anchor->width()),
+          .anchorHeight = static_cast<int>(anchor->height()),
+          .width = static_cast<std::uint32_t>(menuWidth + Style::spaceSm * 2),
+          .height = static_cast<std::uint32_t>(menuHeight + Style::spaceSm * 2),
           .anchor = XDG_POSITIONER_ANCHOR_BOTTOM_RIGHT,
           .gravity = XDG_POSITIONER_GRAVITY_BOTTOM_LEFT,
           .constraintAdjustment =
@@ -836,6 +948,10 @@ namespace {
     VirtualGridView* m_list = nullptr;
     Flex* m_listHeader = nullptr;
     Segmented* m_viewSwitch = nullptr;
+    Button* m_nameHeader = nullptr;
+    Button* m_sizeHeader = nullptr;
+    Button* m_sortButton = nullptr;
+    Button* m_menuButton = nullptr;
     Button* m_back = nullptr;
     Button* m_forward = nullptr;
     Button* m_up = nullptr;
