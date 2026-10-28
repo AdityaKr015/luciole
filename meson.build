@@ -42,7 +42,9 @@ foreach protocol : [
 endforeach
 alias_target('generated-headers', protocol_headers)
 
+gio = dependency('gio-2.0', version: '>=2.76')
 ui_dependencies = [
+  gio,
   dependency('wayland-client'), dependency('wayland-egl'), dependency('wayland-cursor'),
   dependency('egl'), dependency('glesv2'), dependency('xkbcommon'),
   dependency('freetype2'), dependency('fontconfig'),
@@ -161,6 +163,16 @@ app_sources = files(
   'src/wayland/wayland_seat.cpp',
 )
 
+filesystem_service = declare_dependency(
+  sources: files(
+    'src/fs/location.cpp',
+    'src/fs/directory_session.cpp',
+    'src/app/glib_poll_source.cpp',
+  ),
+  include_directories: include_directories('src'),
+  dependencies: gio,
+)
+
 app = executable('noctalia-files',
   app_sources,
   protocol_sources,
@@ -168,7 +180,7 @@ app = executable('noctalia-files',
   build_info,
   completions,
   include_directories: include_directories('src', '.'),
-  dependencies: ui_dependencies,
+  dependencies: ui_dependencies + [filesystem_service],
   install: true,
 )
 
@@ -177,6 +189,14 @@ build_tests = tests_opt.enabled() or (
   tests_opt.auto() and get_option('buildtype') == 'debug' and get_option('b_sanitize') == 'none'
 )
 if build_tests
+  directory_test = executable('directory-session-test',
+    'tests/directory_session_test.cpp',
+    include_directories: include_directories('src'),
+    dependencies: filesystem_service,
+  )
+  test('directory-session', directory_test, timeout: 30,
+    env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],
+  )
   python = import('python').find_installation('python3')
   test('headless-cli', python,
     args: [files('tests/cli_test.py'), app, meson.project_version()],

@@ -13,6 +13,7 @@
   freetype,
   fontconfig,
   cairo,
+  glib,
   pango,
   harfbuzz,
   libpng,
@@ -68,6 +69,7 @@ stdenv.mkDerivation (finalAttrs: {
     freetype
     fontconfig
     cairo
+    glib
     pango
     harfbuzz
     libpng

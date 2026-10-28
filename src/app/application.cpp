@@ -1,6 +1,7 @@
 #include "app/application.h"
 
 #include "app/deferred_call_poll_source.h"
+#include "app/glib_poll_source.h"
 #include "app/main_loop.h"
 #include "app/timer_poll_source.h"
 #include "core/deferred_call.h"
@@ -477,6 +478,7 @@ int files::runApplication() {
   const auto previousInt = std::signal(SIGINT, stopRequested);
   int result = EXIT_SUCCESS;
   try {
+    GlibPollSource glib;
     TextInputService textInput;
     WaylandConnection connection;
     std::string error;
@@ -501,7 +503,7 @@ int files::runApplication() {
     DeferredCallPollSource deferred;
     TimerPollSource timers;
     KeyRepeatPollSource repeat(connection.input());
-    MainLoop loop(connection, {&deferred, &timers, &repeat}, [&window] {
+    MainLoop loop(connection, {&deferred, &timers, &repeat, &glib}, [&window] {
       return g_stopRequested == 0 && window.running();
     });
     loop.run();

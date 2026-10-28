@@ -1,0 +1,331 @@
+#include "fs/directory_session.h"
+
+#include <unordered_map>
+#include <utility>
+
+namespace {
+  constexpr const char* kAttributes = G_FILE_ATTRIBUTE_STANDARD_NAME
+      "," G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME "," G_FILE_ATTRIBUTE_STANDARD_TYPE
+      "," G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN "," G_FILE_ATTRIBUTE_STANDARD_IS_SYMLINK
+      "," G_FILE_ATTRIBUTE_STANDARD_SIZE "," G_FILE_ATTRIBUTE_TIME_MODIFIED "," G_FILE_ATTRIBUTE_ETAG_VALUE;
+  constexpr int kBatchSize = 64;
+  constexpr unsigned int kMonitorDelayMs = 80;
+
+  files::FileError fileError(const GError& error) {
+    using Kind = files::FileErrorKind;
+    Kind kind = Kind::OTHER;
+    if (error.domain == G_IO_ERROR) {
+      switch (error.code) {
+      case G_IO_ERROR_NOT_FOUND:
+        kind = Kind::MISSING;
+        break;
+      case G_IO_ERROR_PERMISSION_DENIED:
+        kind = Kind::DENIED;
+        break;
+      case G_IO_ERROR_NOT_DIRECTORY:
+        kind = Kind::NOT_DIRECTORY;
+        break;
+      case G_IO_ERROR_NOT_MOUNTED:
+      case G_IO_ERROR_HOST_NOT_FOUND:
+      case G_IO_ERROR_HOST_UNREACHABLE:
+      case G_IO_ERROR_CONNECTION_CLOSED:
+        kind = Kind::UNAVAILABLE;
+        break;
+      case G_IO_ERROR_NOT_SUPPORTED:
+        kind = Kind::UNSUPPORTED;
+        break;
+      default:
+        break;
+      }
+    }
+    return {.kind = kind, .message = error.message};
+  }
+
+  void closeEnumerator(GFileEnumerator* enumerator) {
+    if (enumerator == nullptr || g_file_enumerator_is_closed(enumerator)) {
+      return;
+    }
+    g_file_enumerator_close_async(
+        enumerator, G_PRIORITY_DEFAULT, nullptr,
+        [](GObject* source, GAsyncResult* result, gpointer) {
+          g_file_enumerator_close_finish(G_FILE_ENUMERATOR(source), result, nullptr);
+        },
+        nullptr
+    );
+  }
+} // namespace
+
+struct files::DirectorySession::State : std::enable_shared_from_this<State> {
+  struct Scan {
+    GioPtr<GCancellable> cancellable{g_cancellable_new()};
+    GioPtr<GFileEnumerator> enumerator;
+    std::vector<DirectoryEntry> entries;
+    ~Scan() { closeEnumerator(enumerator.get()); }
+  };
+
+  struct Request {
+    std::weak_ptr<State> state;
+    std::shared_ptr<Scan> scan;
+  };
+
+  DirectorySnapshot snapshot;
+  std::function<void()> changed;
+  std::shared_ptr<Scan> scan;
+  GioPtr<GFileMonitor> monitor;
+  std::unordered_map<std::string, std::uint64_t> identities;
+  std::uint64_t nextId = 1;
+  guint timer = 0;
+  bool dirty = false;
+
+  ~State() { stop(); }
+
+  void notify() const {
+    // A callback may replace itself, navigate, cancel, or destroy its session.
+    const auto callback = changed;
+    if (callback) {
+      callback();
+    }
+  }
+
+  void stopScan() {
+    if (timer != 0) {
+      g_source_remove(std::exchange(timer, 0));
+    }
+    if (scan) {
+      g_cancellable_cancel(scan->cancellable.get());
+      scan.reset();
+    }
+    dirty = false;
+  }
+
+  void stop() {
+    stopScan();
+    if (monitor) {
+      g_file_monitor_cancel(monitor.get());
+      monitor.reset();
+    }
+  }
+
+  void schedule() {
+    if (timer != 0) {
+      return;
+    }
+    timer = g_timeout_add_full(
+        G_PRIORITY_DEFAULT, kMonitorDelayMs,
+        [](gpointer data) -> gboolean {
+          if (const auto state = static_cast<std::weak_ptr<State>*>(data)->lock()) {
+            state->timer = 0;
+            state->begin();
+          }
+          return G_SOURCE_REMOVE;
+        },
+        new std::weak_ptr<State>(weak_from_this()),
+        [](gpointer data) { delete static_cast<std::weak_ptr<State>*>(data); }
+    );
+  }
+
+  void monitorChanged(GFile* file, GFile* other, GFileMonitorEvent event) {
+    const GString uri(g_file_get_uri(file));
+    // Only an explicit same-directory rename proves continuity. Replacements
+    // and delete/create sequences get a new identity even at the same URI.
+    if (event == G_FILE_MONITOR_EVENT_RENAMED && other != nullptr) {
+      const GString otherUri(g_file_get_uri(other));
+      identities.erase(otherUri.get());
+      if (auto node = identities.extract(uri.get()); !node.empty()) {
+        node.key() = otherUri.get();
+        identities.insert(std::move(node));
+      }
+    } else if (
+        event == G_FILE_MONITOR_EVENT_DELETED
+        || event == G_FILE_MONITOR_EVENT_MOVED_OUT
+        || event == G_FILE_MONITOR_EVENT_CREATED
+        || event == G_FILE_MONITOR_EVENT_MOVED_IN
+    ) {
+      identities.erase(uri.get());
+    }
+    dirty = true;
+    if (!scan) {
+      schedule();
+    }
+  }
+
+  void watch() {
+    const auto file = snapshot.location->file();
+    if (!g_file_is_native(file.get())) {
+      snapshot.monitorError =
+          FileError{.kind = FileErrorKind::UNSUPPORTED, .message = "Remote change monitoring is not implemented yet."};
+      return;
+    }
+    GError* error = nullptr;
+    monitor.reset(g_file_monitor_directory(file.get(), G_FILE_MONITOR_WATCH_MOVES, nullptr, &error));
+    if (error != nullptr) {
+      snapshot.monitorError = fileError(*error);
+      g_error_free(error);
+      return;
+    }
+    g_signal_connect(
+        monitor.get(), "changed",
+        G_CALLBACK(+[](GFileMonitor*, GFile* file, GFile* other, GFileMonitorEvent event, gpointer data) {
+          // Keep State alive if its observer destroys the session.
+          const auto state = static_cast<State*>(data)->shared_from_this();
+          state->monitorChanged(file, other, event);
+        }),
+        this
+    );
+  }
+
+  void begin() {
+    stopScan();
+    ++snapshot.generation;
+    snapshot.status = DirectoryStatus::LOADING;
+    snapshot.error.reset();
+    scan = std::make_shared<Scan>();
+    g_file_enumerate_children_async(
+        snapshot.location->file().get(), kAttributes, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, G_PRIORITY_DEFAULT,
+        scan->cancellable.get(),
+        [](GObject* source, GAsyncResult* result, gpointer data) {
+          const std::unique_ptr<Request> request(static_cast<Request*>(data));
+          GError* error = nullptr;
+          request->scan->enumerator.reset(g_file_enumerate_children_finish(G_FILE(source), result, &error));
+          if (const auto state = request->state.lock(); state && state->scan == request->scan) {
+            if (error != nullptr) {
+              state->complete(fileError(*error));
+            } else {
+              state->nextBatch();
+            }
+          }
+          g_clear_error(&error);
+        },
+        new Request{.state = weak_from_this(), .scan = scan}
+    );
+    notify();
+  }
+
+  void append(GFileInfo* info) {
+    const char* name = g_file_info_get_name(info);
+    const auto parent = snapshot.location->file();
+    const GioPtr<GFile> child(g_file_get_child(parent.get(), name));
+    const GString uri(g_file_get_uri(child.get()));
+    auto [identity, inserted] = identities.try_emplace(uri.get(), nextId);
+    if (inserted) {
+      ++nextId;
+    }
+    DirectoryEntry entry{
+        .id = identity->second,
+        .location = Location::fromUri(uri.get()),
+        .name = name,
+        .displayName = g_file_info_get_display_name(info),
+        .type = g_file_info_get_file_type(info),
+        .hidden = g_file_info_get_is_hidden(info) != FALSE,
+        .symlink = g_file_info_get_is_symlink(info) != FALSE,
+        .size = std::nullopt,
+        .modifiedSeconds = std::nullopt,
+        .etag = std::nullopt,
+    };
+    if (g_file_info_has_attribute(info, G_FILE_ATTRIBUTE_STANDARD_SIZE)) {
+      const auto size = g_file_info_get_size(info);
+      if (size >= 0) {
+        entry.size = static_cast<std::uint64_t>(size);
+      }
+    }
+    if (g_file_info_has_attribute(info, G_FILE_ATTRIBUTE_TIME_MODIFIED)) {
+      entry.modifiedSeconds = g_file_info_get_attribute_uint64(info, G_FILE_ATTRIBUTE_TIME_MODIFIED);
+    }
+    if (const char* etag = g_file_info_get_etag(info); etag != nullptr) {
+      entry.etag = etag;
+    }
+    scan->entries.push_back(std::move(entry));
+  }
+
+  void nextBatch() {
+    g_file_enumerator_next_files_async(
+        scan->enumerator.get(), kBatchSize, G_PRIORITY_DEFAULT, scan->cancellable.get(),
+        [](GObject* source, GAsyncResult* result, gpointer data) {
+          const std::unique_ptr<Request> request(static_cast<Request*>(data));
+          GError* error = nullptr;
+          GList* infos = g_file_enumerator_next_files_finish(G_FILE_ENUMERATOR(source), result, &error);
+          if (const auto state = request->state.lock(); state && state->scan == request->scan) {
+            if (error != nullptr) {
+              state->complete(fileError(*error));
+            } else if (infos == nullptr) {
+              state->complete(std::nullopt);
+            } else {
+              for (const GList* item = infos; item != nullptr; item = item->next) {
+                state->append(G_FILE_INFO(item->data));
+              }
+              state->nextBatch();
+            }
+          }
+          g_list_free_full(infos, g_object_unref);
+          g_clear_error(&error);
+        },
+        new Request{.state = weak_from_this(), .scan = scan}
+    );
+  }
+
+  void complete(std::optional<FileError> error) {
+    if (dirty) {
+      scan.reset();
+      schedule();
+      return;
+    }
+    snapshot.entries = std::move(scan->entries);
+    scan.reset();
+    std::unordered_map<std::string, std::uint64_t> retained;
+    retained.reserve(snapshot.entries.size());
+    for (const auto& entry : snapshot.entries) {
+      retained.emplace(entry.location.uri(), entry.id);
+    }
+    identities = std::move(retained);
+    snapshot.error = std::move(error);
+    snapshot.status = snapshot.error ? DirectoryStatus::ERROR : DirectoryStatus::READY;
+    notify();
+  }
+};
+
+files::DirectorySession::DirectorySession() : m_state(std::make_shared<State>()) {}
+
+files::DirectorySession::~DirectorySession() {
+  m_state->changed = {};
+  m_state->stop();
+}
+
+void files::DirectorySession::open(const Location& location) {
+  const auto state = m_state;
+  state->stop();
+  state->identities.clear();
+  state->snapshot.location = location;
+  state->snapshot.entries.clear();
+  state->snapshot.monitorError.reset();
+  state->watch();
+  state->begin();
+}
+
+void files::DirectorySession::refresh() {
+  const auto state = m_state;
+  if (state->snapshot.location) {
+    if (!state->monitor) {
+      state->snapshot.monitorError.reset();
+      state->watch();
+      // Changes before this new watch were not observed.
+      state->identities.clear();
+    }
+    state->begin();
+  }
+}
+
+void files::DirectorySession::cancel() {
+  const auto state = m_state;
+  state->stop();
+  state->identities.clear();
+  ++state->snapshot.generation;
+  state->snapshot.status = DirectoryStatus::CANCELLED;
+  state->snapshot.error.reset();
+  state->notify();
+}
+
+void files::DirectorySession::setChangedCallback(std::function<void()> callback) {
+  m_state->changed = std::move(callback);
+}
+
+const files::DirectorySnapshot& files::DirectorySession::snapshot() const { return m_state->snapshot; }
