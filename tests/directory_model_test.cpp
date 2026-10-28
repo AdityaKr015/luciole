@@ -1,0 +1,301 @@
+#include "app/glib_poll_source.h"
+#include "browser/directory_model.h"
+
+#include <algorithm>
+#include <chrono>
+#include <clocale>
+#include <filesystem>
+#include <fstream>
+#include <print>
+#include <stdexcept>
+
+namespace {
+  using namespace std::chrono_literals;
+  using files::DirectoryEntry;
+  using files::DirectoryModel;
+  using files::DirectorySnapshot;
+  using files::DirectoryStatus;
+  using files::EntryId;
+  using files::Location;
+  using files::SelectionMode;
+  using files::SortField;
+
+  void require(bool condition, const std::string& message) {
+    if (!condition) {
+      throw std::runtime_error(message);
+    }
+  }
+
+  DirectoryEntry entry(EntryId id, const std::string& name, GFileType type = G_FILE_TYPE_REGULAR) {
+    return {
+        .id = id,
+        .location = Location::fromPath("/tmp/noctalia-model-fixture/" + name),
+        .name = name,
+        .displayName = name,
+        .type = type,
+        .size = std::nullopt,
+        .modifiedSeconds = std::nullopt,
+        .etag = std::nullopt
+    };
+  }
+
+  DirectorySnapshot snapshot(std::vector<DirectoryEntry> entries, std::uint64_t generation = 1) {
+    DirectorySnapshot result;
+    result.generation = generation;
+    result.location = Location::fromPath("/tmp/noctalia-model-fixture");
+    result.status = DirectoryStatus::READY;
+    result.entries = std::move(entries);
+    return result;
+  }
+
+  void rows(const DirectoryModel& model, const std::vector<EntryId>& expected) {
+    require(model.rows() == expected, "unexpected visible row order");
+  }
+
+  void selected(const DirectoryModel& model, const std::vector<EntryId>& expected) {
+    require(model.selectedIds() == expected, "unexpected selected IDs or action order");
+  }
+
+  void testSortAndMetadata() {
+    DirectoryModel model;
+    auto data = snapshot(
+        {entry(10, "item10"), entry(2, "item2"), entry(1, "item1"), entry(30, "z-folder", G_FILE_TYPE_DIRECTORY),
+         entry(20, "a-folder", G_FILE_TYPE_DIRECTORY)}
+    );
+    model.applySnapshot(data);
+    rows(model, {20, 30, 1, 2, 10});
+    model.setSort({.descending = true});
+    rows(model, {30, 20, 10, 2, 1});
+    model.setSort({.directoriesFirst = false});
+    rows(model, {20, 1, 2, 10, 30});
+
+    data.entries = {entry(1, "a"), entry(2, "b"), entry(3, "c")};
+    data.entries[0].size = 0;
+    data.entries[0].modifiedSeconds = 0;
+    data.entries[1].size = 5;
+    data.entries[1].modifiedSeconds = 20;
+    model.applySnapshot(data);
+    for (const auto field : {SortField::SIZE, SortField::MODIFIED}) {
+      model.setSort({.field = field});
+      rows(model, {1, 2, 3});
+      model.setSort({.field = field, .descending = true});
+      rows(model, {2, 1, 3});
+    }
+
+    // Collation ties must not let enumeration order determine action targets.
+    data.entries = {entry(5, "same-b"), entry(4, "same-a")};
+    for (auto& item : data.entries) {
+      item.displayName = "Same";
+    }
+    model.setSort({});
+    model.applySnapshot(data);
+    const auto order = model.rows();
+    std::ranges::reverse(data.entries);
+    model.applySnapshot(data);
+    require(model.rows() == order, "collation ties changed after enumeration reorder");
+    require(model.entry(4)->name == "same-a", "sorting changed the operation name");
+  }
+
+  void testFiltering() {
+    DirectoryModel model;
+    auto data = snapshot({entry(1, "Straße"), entry(2, "café"), entry(3, ".hidden"), entry(4, "*.txt")});
+    data.entries[2].hidden = true;
+    model.applySnapshot(data);
+    require(model.rows().size() == 3, "hidden entries visible by default");
+    model.setFilter({.text = "STRASSE"});
+    rows(model, {1});
+    model.setFilter({.text = "CAFE\u0301"});
+    rows(model, {2});
+    model.setFilter({.text = "*"});
+    rows(model, {4});
+    model.setFilter({.showHidden = true, .text = "hidden"});
+    rows(model, {3});
+    require(model.entry(3)->name == ".hidden", "display filtering rewrote a filename");
+    require(model.snapshot().entries.size() == 4, "filter removed source entries");
+    model.setFilter({.text = "absent"});
+    rows(model, {});
+    require(model.snapshot().status == DirectoryStatus::READY, "empty projection changed source status");
+  }
+
+  void testSelectionAndAnchors() {
+    DirectoryModel model;
+    model.applySnapshot(snapshot({entry(1, "a"), entry(2, "b"), entry(3, "c"), entry(4, "d")}));
+    model.select(2);
+    model.setScrollAnchor(2);
+    model.setSort({.descending = true});
+    selected(model, {2});
+    require(
+        model.selection().focused == 2 && model.selection().anchor == 2 && model.scrollAnchor() == 2,
+        "reorder moved identity-based anchors"
+    );
+    model.select(4, SelectionMode::RANGE);
+    selected(model, {4, 3, 2});
+    require(model.selection().anchor == 2 && model.selection().focused == 4, "range moved its anchor");
+    model.select(3, SelectionMode::RANGE);
+    selected(model, {3, 2});
+    model.select(1, SelectionMode::TOGGLE);
+    selected(model, {3, 2, 1});
+    model.select(1, SelectionMode::TOGGLE);
+    selected(model, {3, 2});
+    require(model.selection().anchor == 1 && model.selection().focused == 1, "toggle coupled focus to selection");
+    model.select(4, SelectionMode::ADD_RANGE);
+    selected(model, {4, 3, 2, 1});
+    model.clearSelection();
+    require(model.selection().focused == 4 && !model.selection().anchor, "clear selection changed focus");
+    model.setFocus(3);
+    model.select(1, SelectionMode::RANGE);
+    selected(model, {3, 2, 1});
+    require(model.selection().anchor == 3, "range without an anchor did not start at focus");
+    require(!model.select(999) && !model.setFocus(999) && !model.setScrollAnchor(999), "unknown ID accepted");
+    selected(model, {3, 2, 1});
+    model.setFilter({.text = "b"});
+    selected(model, {2});
+    require(!model.selection().focused && !model.selection().anchor, "filtered anchors were kept");
+    require(model.scrollAnchor() == 2, "visible scroll anchor was cleared");
+    require(!model.select(1), "filtered ID selected");
+    model.selectAll();
+    selected(model, {2});
+    model.setFilter({});
+    selected(model, {2});
+  }
+
+  void testSnapshotReconciliation() {
+    DirectoryModel model;
+    auto data = snapshot({entry(1, "a"), entry(2, "b")}, 10);
+    model.applySnapshot(data);
+    model.select(1);
+    model.setScrollAnchor(1);
+    auto loading = data;
+    loading.generation = 11;
+    loading.status = DirectoryStatus::LOADING;
+    model.applySnapshot(loading);
+    selected(model, {1});
+    require(!model.applySnapshot(data), "obsolete generation accepted");
+    require(model.snapshot().status == DirectoryStatus::LOADING, "stale result replaced loading state");
+    data.generation = 11;
+    data.entries[0] = entry(1, "z-renamed");
+    model.applySnapshot(data);
+    selected(model, {1});
+    require(model.entry(1)->name == "z-renamed" && model.scrollAnchor() == 1, "rename lost identity");
+    data.generation = 12;
+    data.entries[0] = entry(3, "z-renamed");
+    model.applySnapshot(data);
+    selected(model, {});
+    require(
+        !model.selection().focused && !model.selection().anchor && !model.scrollAnchor(),
+        "replacement inherited selection or anchors"
+    );
+    model.select(2);
+    auto cancelled = data;
+    cancelled.generation = 13;
+    cancelled.status = DirectoryStatus::CANCELLED;
+    model.applySnapshot(cancelled);
+    selected(model, {});
+    require(!model.select(2), "cancelled snapshot accepts selection");
+    cancelled.generation = 14;
+    cancelled.status = DirectoryStatus::LOADING;
+    model.applySnapshot(cancelled);
+    require(!model.select(2), "resume selected entries from an unobserved interval");
+    cancelled.status = DirectoryStatus::ERROR;
+    cancelled.error = files::FileError{.kind = files::FileErrorKind::DENIED, .message = "partial fixture"};
+    model.applySnapshot(cancelled);
+    require(model.snapshot().error && model.select(2), "partial error lost available entries");
+    auto other = snapshot({entry(2, "other")}, 15);
+    other.location = Location::fromPath("/tmp/another-model-location");
+    model.applySnapshot(other);
+    selected(model, {});
+    require(!model.selection().focused, "navigation reused selection at an overlapping ID");
+    auto dying = std::make_unique<DirectoryModel>();
+    dying->setChangedCallback([&dying] { dying.reset(); });
+    dying->applySnapshot(other);
+  }
+
+  struct Fixture {
+    std::filesystem::path path;
+    Fixture() {
+      const files::GString directory(g_dir_make_tmp("noctalia-model-test-XXXXXX", nullptr));
+      require(directory != nullptr, "cannot create private fixture directory");
+      path = directory.get();
+    }
+    ~Fixture() {
+      std::error_code ignored;
+      std::filesystem::remove_all(path, ignored);
+    }
+    Fixture(const Fixture&) = delete;
+    Fixture& operator=(const Fixture&) = delete;
+    void write(const std::string& name) const {
+      std::ofstream file(path / name);
+      file << "fixture";
+      require(file.good(), "cannot write fixture file");
+    }
+  };
+
+  class Pump {
+  public:
+    void until(const std::function<bool()>& done) {
+      const auto deadline = std::chrono::steady_clock::now() + 5s;
+      while (!done()) {
+        require(std::chrono::steady_clock::now() < deadline, "directory model integration timed out");
+        std::vector<pollfd> fds;
+        const auto start = m_source.addPollFds(fds);
+        const int requested = m_source.pollTimeoutMs();
+        const int timeout = requested < 0 ? 20 : std::min(requested, 20);
+        require(::poll(fds.data(), fds.size(), timeout) >= 0, "poll failed");
+        m_source.dispatch(fds, start);
+      }
+    }
+
+  private:
+    GlibPollSource m_source;
+  };
+
+  void testDirectoryServiceIntegration() {
+    Fixture fixture;
+    const std::string name = "item2#%\n" + std::string(1, static_cast<char>(0xFF));
+    fixture.write(name);
+    fixture.write("item10");
+    Pump pump;
+    DirectoryModel model;
+    files::DirectorySession session;
+    session.setChangedCallback([&] { model.applySnapshot(session.snapshot()); });
+    session.open(Location::fromPath(fixture.path.native()));
+    pump.until([&] { return model.snapshot().status == DirectoryStatus::READY; });
+    require(model.rows().size() == 2, "service snapshot not projected");
+    const auto id = model.rows().front();
+    const auto otherId = model.rows().back();
+    require(model.entry(id)->name == name, "native name was altered during projection");
+    model.select(id);
+    model.setScrollAnchor(id);
+    std::filesystem::rename(fixture.path / name, fixture.path / "item20");
+    pump.until([&] { return model.entry(id) && model.entry(id)->name == "item20"; });
+    rows(model, {otherId, id});
+    selected(model, {id});
+    require(model.selection().focused == id && model.scrollAnchor() == id, "monitored rename lost anchors");
+    session.refresh();
+    selected(model, {id});
+    pump.until([&] { return model.snapshot().status == DirectoryStatus::READY; });
+    selected(model, {id});
+    std::filesystem::remove(fixture.path / "item20");
+    pump.until([&] { return model.entry(id) == nullptr; });
+    selected(model, {});
+    fixture.write("item20");
+    pump.until([&] { return model.rows().size() == 2; });
+    require(model.entry(id) == nullptr && model.selection().selected.empty(), "recreated entry inherited selection");
+  }
+} // namespace
+
+int main() {
+  try {
+    std::setlocale(LC_ALL, "C");
+    testSortAndMetadata();
+    testFiltering();
+    testSelectionAndAnchors();
+    testSnapshotReconciliation();
+    testDirectoryServiceIntegration();
+    std::println("directory model checks passed");
+    return 0;
+  } catch (const std::exception& error) {
+    std::println(stderr, "directory model test: {}", error.what());
+    return 1;
+  }
+}

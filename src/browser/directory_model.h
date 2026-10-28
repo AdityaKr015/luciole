@@ -1,0 +1,90 @@
+#pragma once
+
+#include "fs/directory_session.h"
+
+#include <functional>
+#include <unordered_map>
+#include <unordered_set>
+
+namespace files {
+  using EntryId = std::uint64_t;
+
+  enum class SortField : std::uint8_t { NAME, SIZE, MODIFIED };
+  struct SortOptions {
+    SortField field = SortField::NAME;
+    bool descending = false;
+    bool directoriesFirst = true;
+    bool operator==(const SortOptions&) const = default;
+  };
+
+  struct FilterOptions {
+    bool showHidden = false;
+    std::string text; // Literal substring of the display name, folded and normalized.
+    bool operator==(const FilterOptions&) const = default;
+  };
+
+  enum class SelectionMode : std::uint8_t { REPLACE, TOGGLE, RANGE, ADD_RANGE };
+  struct SelectionState {
+    std::unordered_set<EntryId> selected;
+    std::optional<EntryId> focused;
+    std::optional<EntryId> anchor;
+  };
+
+  // One model per DirectorySession, updated on the main thread by its observer.
+  // The model owns its snapshot; borrowed rows/entries expire on mutation.
+  class DirectoryModel {
+  public:
+    DirectoryModel() = default;
+    DirectoryModel(const DirectoryModel&) = delete;
+    DirectoryModel& operator=(const DirectoryModel&) = delete;
+    DirectoryModel(DirectoryModel&&) = delete;
+    DirectoryModel& operator=(DirectoryModel&&) = delete;
+
+    // Returns false for an obsolete generation. Observers must not throw.
+    bool applySnapshot(DirectorySnapshot snapshot);
+    void setChangedCallback(std::function<void()> callback);
+    void setSort(SortOptions options);
+    void setFilter(FilterOptions options);
+
+    [[nodiscard]] const DirectorySnapshot& snapshot() const { return m_snapshot; }
+    [[nodiscard]] const std::vector<EntryId>& rows() const { return m_rows; }
+    [[nodiscard]] const DirectoryEntry* entry(EntryId id) const;
+    [[nodiscard]] const SortOptions& sort() const { return m_sort; }
+    [[nodiscard]] const FilterOptions& filter() const { return m_filter; }
+    [[nodiscard]] const SelectionState& selection() const { return m_selection; }
+    [[nodiscard]] std::optional<EntryId> scrollAnchor() const { return m_scrollAnchor; }
+    [[nodiscard]] std::vector<EntryId> selectedIds() const; // Visible order, for action dispatch.
+
+    // Reject invisible or unknown IDs without changing focus or selection.
+    bool select(EntryId id, SelectionMode mode = SelectionMode::REPLACE);
+    void selectAll();
+    void clearSelection();
+    bool setFocus(std::optional<EntryId> id);
+    bool setScrollAnchor(std::optional<EntryId> id);
+
+  private:
+    struct Presentation {
+      std::size_t sourceIndex = 0;
+      std::string sortKey;
+      std::string filterKey;
+    };
+
+    void rebuildProjection();
+    void reconcileSelection();
+    void notify() const;
+    [[nodiscard]] bool canSelect() const;
+    [[nodiscard]] bool less(EntryId left, EntryId right) const;
+
+    DirectorySnapshot m_snapshot;
+    SortOptions m_sort;
+    FilterOptions m_filter;
+    std::string m_filterKey;
+    std::unordered_map<EntryId, Presentation> m_presentations;
+    std::vector<EntryId> m_rows;
+    std::unordered_map<EntryId, std::size_t> m_positions;
+    SelectionState m_selection;
+    std::optional<EntryId> m_scrollAnchor;
+    bool m_selectionAvailable = false;
+    std::function<void()> m_changed;
+  };
+} // namespace files

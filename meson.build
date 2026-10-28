@@ -173,6 +173,11 @@ filesystem_service = declare_dependency(
   dependencies: gio,
 )
 
+browser_model = declare_dependency(
+  sources: files('src/browser/directory_model.cpp'),
+  dependencies: filesystem_service,
+)
+
 app = executable('noctalia-files',
   app_sources,
   protocol_sources,
@@ -180,7 +185,7 @@ app = executable('noctalia-files',
   build_info,
   completions,
   include_directories: include_directories('src', '.'),
-  dependencies: ui_dependencies + [filesystem_service],
+  dependencies: ui_dependencies + [browser_model],
   install: true,
 )
 
@@ -195,6 +200,13 @@ if build_tests
     dependencies: filesystem_service,
   )
   test('directory-session', directory_test, timeout: 30,
+    env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],
+  )
+  browser_test = executable('directory-model-test',
+    'tests/directory_model_test.cpp',
+    dependencies: browser_model,
+  )
+  test('directory-model', browser_test, timeout: 30,
     env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],
   )
   python = import('python').find_installation('python3')
