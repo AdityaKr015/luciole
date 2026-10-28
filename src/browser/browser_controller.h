@@ -12,6 +12,7 @@ namespace files {
     BrowserController& operator=(const BrowserController&) = delete;
 
     void setChangedCallback(std::function<void()> callback);
+    void setFileActivatedCallback(std::function<void(const Location&)> callback);
     void open(const Location& location);
     bool openText(const std::string& text);
     void home();
@@ -46,5 +47,6 @@ namespace files {
     std::size_t m_historyIndex = 0;
     std::string m_message;
     std::function<void()> m_changed;
+    std::function<void(const Location&)> m_fileActivated;
   };
 } // namespace files

@@ -7,13 +7,16 @@
 #include "browser/browser_controller.h"
 #include "browser/file_view.h"
 #include "browser/location_presentation.h"
+#include "browser/places_sidebar.h"
 #include "config/settings.h"
 #include "config/view_preference_writer.h"
 #include "core/deferred_call.h"
 #include "core/input/key_symbols.h"
 #include "core/input/keybind_matcher.h"
 #include "core/log.h"
+#include "core/timer_manager.h"
 #include "core/ui_phase.h"
+#include "platform/file_launcher.h"
 #include "render/animation/animation_manager.h"
 #include "render/gl_shared_context.h"
 #include "render/render_context.h"
@@ -75,6 +78,9 @@ namespace {
         return key == sym && modifiers == (action == KeybindAction::Save ? KeyMod::Ctrl : 0U);
       });
     }
+    KeybindMatcher::setMatcher(KeybindAction::Validate, [](std::uint32_t key, std::uint32_t modifiers) {
+      return modifiers == 0 && KeySymbol::isEnterOrSpace(key);
+    });
     KeybindMatcher::setMatcher(KeybindAction::Validate, [](std::uint32_t sym, std::uint32_t modifiers) {
       return modifiers == 0 && KeySymbol::isEnterOrSpace(sym);
     });
@@ -102,7 +108,8 @@ namespace {
               m_browser, m_icons, files::ViewMode::GRID, [this] { return m_connection.input().keyboardModifiers(); },
               [this] { return m_list != nullptr && m_list->focusArea()->focused(); }
           ),
-          m_preferences(std::move(paths)), m_viewMode(settings.viewMode) {
+          m_preferences(std::move(paths)), m_pins(files::StateStore::pathFromEnvironment()),
+          m_viewMode(settings.viewMode) {
       m_gridZoom = static_cast<std::size_t>(
           std::ranges::find(files::kGridIconSizes, settings.gridIconSize) - files::kGridIconSizes.begin()
       );
@@ -119,9 +126,36 @@ namespace {
         m_browserDirty = true;
         m_surface.requestUpdate();
       });
+      m_browser.setFileActivatedCallback([this](const files::Location& location) { m_launcher.open(location); });
+      m_launcher.setChangedCallback([this](const std::string& error) {
+        m_actionError = error.empty() ? "" : std::format("Could not open the file: {}", error);
+        m_browserDirty = true;
+        m_surface.requestUpdate();
+      });
+      m_pins.setChangedCallback([this] {
+        m_placesDirty = true;
+        m_browserDirty = true;
+        m_surface.requestUpdate();
+      });
+      for (auto* adapter : {&m_listAdapter, &m_gridAdapter}) {
+        adapter->setContextCallback([this](std::optional<files::EntryId> id, float x, float y) {
+          openFileMenu(id, x, y);
+        });
+        adapter->setDragCallback(
+            [this](const std::vector<files::EntryId>& ids) { startFilePinDrag(ids); },
+            [this] {
+              if (m_pinDrag && !m_pinDrag->sourcePin) {
+                cancelPinDrag();
+              }
+            }
+        );
+      }
       m_icons.setChangedCallback([this] {
         m_browserDirty = true;
         m_surface.requestUpdate();
+        if (m_menuSurface != nullptr && m_menu == nullptr) {
+          m_menuSurface->requestLayout();
+        }
       });
       m_preferences.setChangedCallback([this](const std::string& error) {
         m_preferenceError = error.empty() ? "" : std::format("Could not save the view preference: {}", error);
@@ -131,7 +165,11 @@ namespace {
     }
 
     ~Window() override {
+      m_pinDragScroll.stop();
       m_browser.setChangedCallback({});
+      m_browser.setFileActivatedCallback({});
+      m_launcher.setChangedCallback({});
+      m_pins.setChangedCallback({});
       m_icons.setChangedCallback({});
       m_preferences.setChangedCallback({});
       closeMenu();
@@ -158,6 +196,7 @@ namespace {
       if (!m_surface.initialize(nullptr, config)) {
         return false;
       }
+      m_pins.reload();
       if (initialLocation) {
         (void)m_browser.openText(*initialLocation);
       } else {
@@ -166,7 +205,9 @@ namespace {
       return true;
     }
 
-    [[nodiscard]] bool running() const { return m_surface.isRunning() || m_preferences.busy(); }
+    [[nodiscard]] bool running() const {
+      return m_surface.isRunning() || m_preferences.busy() || m_pins.busy() || m_launcher.busy();
+    }
 
     void outputChanged(wl_output* output) {
       if (m_connection.outputForSurface(m_surface.wlSurface()) == output) {
@@ -178,6 +219,18 @@ namespace {
     }
 
     void pointer(const PointerEvent& event) {
+      if (m_menuSurface != nullptr && event.type == PointerEvent::Type::Button && event.pressed) {
+        const bool inPopup = event.surface == m_menuSurface->wlSurface()
+            && event.sx >= 0
+            && event.sy >= 0
+            && event.sx < m_menuSurface->width()
+            && event.sy < m_menuSurface->height();
+        if (!inPopup) {
+          m_dispatcher.cancelPointerCapture();
+          dismissMenu();
+          return;
+        }
+      }
       auto* dispatcher = event.surface == m_surface.wlSurface()                     ? &m_dispatcher
           : m_menuSurface != nullptr && event.surface == m_menuSurface->wlSurface() ? &m_menuDispatcher
                                                                                     : nullptr;
@@ -185,6 +238,19 @@ namespace {
         return;
       }
       const auto x = static_cast<float>(event.sx), y = static_cast<float>(event.sy);
+      m_pointerX = x;
+      m_pointerY = y;
+      if (event.type == PointerEvent::Type::Button && event.pressed) {
+        m_popupSerial = event.serial;
+      }
+      if (dispatcher == &m_dispatcher
+          && m_pinDrag
+          && event.type == PointerEvent::Type::Button
+          && event.button == BTN_LEFT
+          && !event.pressed) {
+        finishPinDrag(x, y);
+        return;
+      }
       if (dispatcher == &m_dispatcher && event.type == PointerEvent::Type::Button && event.pressed) {
         const bool twice = event.button == BTN_LEFT
             && m_lastBreadcrumb
@@ -228,9 +294,15 @@ namespace {
         break;
       case PointerEvent::Type::Leave:
         dispatcher->pointerLeave();
+        if (dispatcher == &m_dispatcher) {
+          cancelPinDrag();
+        }
         break;
       case PointerEvent::Type::Motion:
         dispatcher->pointerMotion(x, y, event.serial);
+        if (dispatcher == &m_dispatcher && m_pinDrag) {
+          updatePinDrag();
+        }
         break;
       case PointerEvent::Type::Button:
         dispatcher->pointerButton(x, y, event.button, event.pressed, event.serial, event.time, event.touch);
@@ -249,9 +321,24 @@ namespace {
 
     void keyboard(const KeyboardEvent& event) {
       if (event.pressed) {
+        m_popupSerial = m_connection.input().lastSerial();
         m_lastBreadcrumb.reset();
+        if (m_pinDrag && KeySymbol::isEscape(event.sym)) {
+          cancelPinDrag();
+          return;
+        }
       }
       if (m_menuSurface != nullptr) {
+        if (m_menu == nullptr) {
+          if (event.pressed && KeySymbol::isEscape(event.sym)) {
+            dismissMenu();
+          } else if (event.pressed && KeySymbol::isTab(event.sym)) {
+            (void)m_menuDispatcher.cycleTabFocus((event.modifiers & KeyMod::Shift) != 0);
+          } else {
+            m_menuDispatcher.keyEvent(event.sym, event.utf32, event.modifiers, event.pressed, event.preedit);
+          }
+          return;
+        }
         if (!event.pressed) {
           return;
         }
@@ -320,6 +407,37 @@ namespace {
         }
         const bool editing = (m_location != nullptr && m_dispatcher.focusedArea() == m_location->inputArea())
             || (m_filterInput != nullptr && m_dispatcher.focusedArea() == m_filterInput->inputArea());
+        if (!editing
+            && m_list != nullptr
+            && m_dispatcher.focusedArea() == m_list->focusArea()
+            && (event.sym == XKB_KEY_Menu || (event.sym == XKB_KEY_F10 && event.modifiers == KeyMod::Shift))) {
+          auto id = m_browser.model().selection().focused;
+          float x = 240, y = 100;
+          if (id) {
+            if (!m_browser.model().selection().selected.contains(*id)) {
+              m_browser.model().select(*id);
+            }
+            const auto& rows = m_browser.model().rows();
+            const auto found = std::ranges::find(rows, *id);
+            if (found != rows.end()) {
+              (void)m_list->absoluteAnchorForIndex(static_cast<std::size_t>(found - rows.begin()), x, y);
+            }
+          }
+          openFileMenu(id, x, y);
+          return;
+        }
+        if (!editing && event.sym == XKB_KEY_Return && event.modifiers == KeyMod::Alt) {
+          std::vector<files::DirectoryEntry> targets;
+          for (const auto id : m_browser.model().selectedIds()) {
+            if (const auto* entry = m_browser.model().entry(id)) {
+              targets.push_back(*entry);
+            }
+          }
+          if (!targets.empty()) {
+            showProperties(targets);
+          }
+          return;
+        }
         if (!editing && event.modifiers == KeyMod::Ctrl && (event.sym == XKB_KEY_1 || event.sym == XKB_KEY_2)) {
           setViewMode(event.sym == XKB_KEY_1 ? files::ViewMode::GRID : files::ViewMode::LIST);
           return;
@@ -343,6 +461,443 @@ namespace {
     }
 
   private:
+    struct EntryTarget {
+      files::EntryId id;
+      files::Location location;
+    };
+    struct PinDrag {
+      std::vector<EntryTarget> entries;
+      std::vector<files::Bookmark> bookmarks;
+      std::optional<files::Location> sourcePin;
+    };
+
+    void actionError(std::string message) {
+      m_actionError = std::move(message);
+      m_browserDirty = true;
+      m_surface.requestUpdate();
+    }
+
+    bool targetsCurrent(const std::vector<files::DirectoryEntry>& targets) {
+      const bool current = std::ranges::all_of(targets, [this](const auto& target) {
+        const auto* entry = m_browser.model().entry(target.id);
+        return entry != nullptr
+            && entry->location == target.location
+            && std::ranges::contains(m_browser.model().rows(), target.id);
+      });
+      if (!current) {
+        actionError("The selection changed. Open the menu again.");
+      }
+      return current;
+    }
+
+    void pinFolders(std::vector<files::Bookmark> bookmarks, std::size_t before) {
+      if (!m_pins.add(std::move(bookmarks), before)) {
+        actionError(
+            m_pins.busy() ? "Pins are being saved. Try again shortly." : "Reload valid pins before editing them."
+        );
+      }
+    }
+
+    void openFileMenu(std::optional<files::EntryId> id, float x, float y) {
+      m_actionError.clear();
+      if (!id) {
+        const auto location = m_browser.model().snapshot().location;
+        std::vector<ContextMenuControlEntry> entries{{.id = 1, .label = "Refresh"}};
+        if (location && (m_pins.contains(*location) || !m_places->builtIn(*location))) {
+          entries.push_back(
+              {.id = 2,
+               .label = m_pins.contains(*location) ? "Unpin" : "Pin this folder to sidebar",
+               .enabled = m_pins.editable()}
+          );
+        }
+        entries.push_back({.label = "", .separator = true});
+        entries.push_back({.id = 3, .label = "Reload pins", .enabled = !m_pins.busy()});
+        showContextMenu(
+            std::move(entries),
+            [this, location](int action) {
+              if (action == 1) {
+                m_browser.refresh();
+              } else if (action == 3) {
+                m_pins.reload();
+              } else if (action == 2 && location) {
+                if (m_pins.contains(*location)) {
+                  m_pins.remove(*location);
+                } else {
+                  pinFolders(
+                      {{.label = files::locationBreadcrumbs(*location).back().label, .location = *location}},
+                      m_pins.bookmarks().size()
+                  );
+                }
+              }
+            },
+            {x, y, 1, 1}
+        );
+        return;
+      }
+      std::vector<files::DirectoryEntry> targets;
+      for (const auto selected : m_browser.model().selectedIds()) {
+        if (const auto* entry = m_browser.model().entry(selected)) {
+          targets.push_back(*entry);
+        }
+      }
+      if (targets.empty()) {
+        return;
+      }
+      const bool folders =
+          std::ranges::all_of(targets, [](const auto& entry) { return entry.type == G_FILE_TYPE_DIRECTORY; });
+      const bool files = std::ranges::all_of(targets, [](const auto& entry) {
+        return entry.type == G_FILE_TYPE_REGULAR && !entry.symlink;
+      });
+      std::vector<ContextMenuControlEntry> entries;
+      if (targets.size() == 1 || files) {
+        entries.push_back({.id = 1, .label = "Open"});
+      }
+      if (targets.size() == 1) {
+        entries.push_back({.id = 2, .label = "Show in containing folder"});
+      }
+      if (folders) {
+        const bool canPin = std::ranges::any_of(targets, [this](const auto& entry) {
+          return !m_places->builtIn(entry.location) && !m_pins.contains(entry.location);
+        });
+        const bool canUnpin =
+            std::ranges::any_of(targets, [this](const auto& entry) { return m_pins.contains(entry.location); });
+        if (canPin || canUnpin) {
+          entries.push_back({.label = "", .separator = true});
+        }
+        if (canPin) {
+          entries.push_back({.id = 3, .label = "Pin to sidebar", .enabled = m_pins.editable()});
+        }
+        if (canUnpin) {
+          entries.push_back(
+              {.id = 4, .label = targets.size() == 1 ? "Unpin" : "Unpin folders", .enabled = m_pins.editable()}
+          );
+        }
+      }
+      entries.push_back({.label = "", .separator = true});
+      entries.push_back({.id = 5, .label = "Properties"});
+      showContextMenu(
+          std::move(entries),
+          [this, targets](int action) {
+            if (!targetsCurrent(targets)) {
+              return;
+            }
+            if (action == 1) {
+              for (const auto& target : targets) {
+                m_browser.activate(target.id);
+              }
+            } else if (action == 2) {
+              showContaining(targets.front().location);
+            } else if (action == 3) {
+              std::vector<files::Bookmark> bookmarks;
+              for (const auto& target : targets) {
+                if (!m_places->builtIn(target.location) && !m_pins.contains(target.location)) {
+                  bookmarks.push_back({target.displayName, target.location});
+                }
+              }
+              pinFolders(std::move(bookmarks), m_pins.bookmarks().size());
+            } else if (action == 4) {
+              std::vector<files::Location> locations;
+              locations.reserve(targets.size());
+              for (const auto& target : targets) {
+                locations.push_back(target.location);
+              }
+              m_pins.removeMany(locations);
+            } else if (action == 5) {
+              showProperties(targets);
+            }
+          },
+          {x, y, 1, 1}
+      );
+    }
+
+    void openPlaceMenu(const files::Bookmark& bookmark, bool pinned, float x, float y) {
+      std::vector<ContextMenuControlEntry> entries{{.id = 1, .label = "Open"}};
+      if (pinned) {
+        const auto& pins = m_pins.bookmarks();
+        const auto found = std::ranges::find(pins, bookmark.location, &files::Bookmark::location);
+        const auto index = static_cast<std::size_t>(found - pins.begin());
+        entries.push_back({.label = "", .separator = true});
+        entries.push_back({.id = 2, .label = "Unpin", .enabled = m_pins.editable()});
+        entries.push_back({.id = 3, .label = "Move up", .enabled = m_pins.editable() && index > 0});
+        entries.push_back({.id = 4, .label = "Move down", .enabled = m_pins.editable() && index + 1 < pins.size()});
+      }
+      entries.push_back({.label = "", .separator = true});
+      entries.push_back({.id = 5, .label = "Properties"});
+      showContextMenu(
+          std::move(entries),
+          [this, bookmark, pinned](int action) {
+            if (pinned && !m_pins.contains(bookmark.location)) {
+              actionError("This pin is no longer available.");
+              return;
+            }
+            if (action == 1) {
+              m_browser.open(bookmark.location);
+            } else if (action == 2) {
+              m_pins.remove(bookmark.location);
+            } else if (action == 3 || action == 4) {
+              const auto& pins = m_pins.bookmarks();
+              const auto found = std::ranges::find(pins, bookmark.location, &files::Bookmark::location);
+              const auto index = static_cast<std::size_t>(found - pins.begin());
+              m_pins.move(
+                  bookmark.location, action == 3 ? (index > 0 ? index - 1 : 0) : std::min(index + 1, pins.size() - 1)
+              );
+            } else if (action == 5) {
+              showProperties(
+                  {{.location = bookmark.location,
+                    .name = bookmark.label,
+                    .displayName = bookmark.label,
+                    .type = G_FILE_TYPE_DIRECTORY,
+                    .size = std::nullopt,
+                    .modifiedSeconds = std::nullopt,
+                    .etag = std::nullopt,
+                    .parentDisplayName = {}}}
+              );
+            }
+          },
+          {x, y, 1, 1}
+      );
+    }
+
+    void showContaining(const files::Location& location) {
+      const files::GioPtr<GFile> parent(g_file_get_parent(location.file().get()));
+      if (!parent) {
+        return;
+      }
+      const files::GString uri(g_file_get_uri(parent.get()));
+      m_browser.open(files::Location::fromUri(uri.get()));
+      m_revealTarget = location;
+      m_dispatcher.setFocus(m_list->focusArea());
+    }
+
+    void showProperties(const std::vector<files::DirectoryEntry>& targets) {
+      const float width = std::min(440.0F, static_cast<float>(m_surface.width()) - 32.0F);
+      auto body =
+          ui::scrollView({.viewportPaddingH = 0.0F, .viewportPaddingV = 0.0F, .fillWidth = true, .flexGrow = 1.0F});
+      body->content()->setAlign(FlexAlign::Stretch);
+      body->content()->setGap(Style::spaceMd);
+      const auto literal = [](Label& label) { label.setUseMarkup(false); };
+      const auto field = [&](const std::string& name, const std::string& value) {
+        body->content()->addChild(
+            ui::row(
+                {.align = FlexAlign::Start, .gap = Style::spaceMd},
+                ui::label(
+                    {.text = name,
+                     .fontSize = Style::fontSizeCaption,
+                     .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
+                     .minWidth = 76.0F,
+                     .maxWidth = 76.0F}
+                ),
+                ui::label(
+                    {.text = value, .maxWidth = width - 132.0F, .maxLines = 3, .flexGrow = 1.0F, .configure = literal}
+                )
+            )
+        );
+      };
+      if (targets.size() == 1) {
+        const auto& entry = targets.front();
+        auto icon = std::make_unique<files::FileIcon>(m_icons, 48.0F);
+        icon->bind(entry.icon, colorSpecFromRole(ColorRole::OnSurface));
+        body->content()->addChild(
+            ui::row(
+                {.align = FlexAlign::Center, .gap = Style::spaceMd}, std::move(icon),
+                ui::column(
+                    {.align = FlexAlign::Start, .gap = Style::spaceXs, .flexGrow = 1.0F},
+                    ui::label(
+                        {.text = entry.displayName,
+                         .fontWeight = FontWeight::SemiBold,
+                         .maxWidth = width - 104.0F,
+                         .maxLines = 2,
+                         .configure = literal}
+                    ),
+                    ui::label(
+                        {.text = entry.symlink                     ? "Symbolic link"
+                             : entry.type == G_FILE_TYPE_DIRECTORY ? "Folder"
+                                                                   : "File",
+                         .fontSize = Style::fontSizeCaption,
+                         .color = colorSpecFromRole(ColorRole::OnSurfaceVariant)}
+                    )
+                )
+            )
+        );
+        body->content()->addChild(ui::separator({}));
+        field("Location", files::locationEditText(entry.location));
+        if (entry.type != G_FILE_TYPE_DIRECTORY) {
+          const files::GString size(entry.size ? g_format_size_full(*entry.size, G_FORMAT_SIZE_IEC_UNITS) : nullptr);
+          field("Size", size ? size.get() : "Unknown");
+        }
+        if (entry.modifiedSeconds && *entry.modifiedSeconds <= static_cast<std::uint64_t>(G_MAXINT64)) {
+          const std::unique_ptr<GDateTime, decltype(&g_date_time_unref)> date(
+              g_date_time_new_from_unix_local(static_cast<gint64>(*entry.modifiedSeconds)), &g_date_time_unref
+          );
+          if (date) {
+            const files::GString text(g_date_time_format(date.get(), "%Y-%m-%d %H:%M:%S"));
+            field("Modified", text.get());
+          }
+        }
+      } else {
+        field("Selection", std::format("{} items", targets.size()));
+      }
+      auto root = ui::column(
+          {.align = FlexAlign::Stretch,
+           .gap = Style::spaceMd,
+           .padding = Style::spaceMd,
+           .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
+           .radius = Style::radiusLg,
+           .border = colorSpecFromRole(ColorRole::OutlineVariant)},
+          ui::row(
+              {.align = FlexAlign::Center, .gap = Style::spaceSm},
+              ui::label({.text = "Properties", .fontWeight = FontWeight::SemiBold, .flexGrow = 1.0F}),
+              ui::button(
+                  {.glyph = "x",
+                   .controlHeight = Style::controlHeightSm,
+                   .variant = ButtonVariant::Default,
+                   .tooltip = "Close",
+                   .minWidth = Style::controlHeightSm,
+                   .maxWidth = Style::controlHeightSm,
+                   .onClick = [this] { dismissMenu(); }}
+              )
+          ),
+          std::move(body)
+      );
+      UiPhaseScope phase(UiPhase::Layout);
+      auto& renderer = m_surface.renderTarget().renderer();
+      LayoutConstraints constraints;
+      constraints.setExactWidth(width);
+      const float height =
+          std::min(root->measure(renderer, constraints).height, static_cast<float>(m_surface.height()) - 64.0F);
+      showPopup(
+          std::move(root), nullptr, {(m_surface.width() - width) * 0.5F, (m_surface.height() - height) * 0.5F, 1, 1},
+          width, height
+      );
+    }
+
+    bool pinDragCurrent() const {
+      if (!m_pinDrag || !m_pins.editable()) {
+        return false;
+      }
+      if (m_pinDrag->sourcePin) {
+        return m_pins.contains(*m_pinDrag->sourcePin);
+      }
+      return std::ranges::all_of(m_pinDrag->entries, [this](const auto& target) {
+        const auto* entry = m_browser.model().entry(target.id);
+        return entry != nullptr
+            && entry->location == target.location
+            && entry->type == G_FILE_TYPE_DIRECTORY
+            && std::ranges::contains(m_browser.model().rows(), target.id);
+      });
+    }
+
+    void startFilePinDrag(const std::vector<files::EntryId>& ids) {
+      if (ids.empty() || !m_pins.editable()) {
+        return;
+      }
+      PinDrag drag;
+      for (const auto id : ids) {
+        const auto* entry = m_browser.model().entry(id);
+        if (entry == nullptr || entry->type != G_FILE_TYPE_DIRECTORY) {
+          return;
+        }
+        drag.entries.push_back({id, entry->location});
+        drag.bookmarks.push_back({entry->displayName, entry->location});
+      }
+      m_pinDrag = std::move(drag);
+      updatePinDrag();
+    }
+    void startPlacePinDrag(const files::Bookmark& bookmark) {
+      if (!m_pins.editable()) {
+        return;
+      }
+      m_pinDrag = PinDrag{.entries = {}, .bookmarks = {bookmark}, .sourcePin = bookmark.location};
+      updatePinDrag();
+    }
+    void cancelPinDrag() {
+      if (!m_pinDrag) {
+        return;
+      }
+      m_pinDrag.reset();
+      m_pinDragScroll.stop();
+      m_pinDragScrollDelta = 0;
+      if (m_places != nullptr) {
+        m_places->cancelDragCandidate();
+      }
+      m_dispatcher.cancelPointerCapture();
+      if (m_dragPreview != nullptr) {
+        m_dragPreview->setVisible(false);
+        m_pinDropLine->setVisible(false);
+      }
+      m_surface.requestLayout();
+    }
+    void updatePinDrag() {
+      if (!pinDragCurrent()) {
+        cancelPinDrag();
+        return;
+      }
+      const auto slot = m_places->dropSlot(m_pointerX, m_pointerY);
+      const float scroll = slot ? m_places->dragScrollSpeed(m_pointerX, m_pointerY) : 0.0F;
+      if (scroll == 0) {
+        m_pinDragScroll.stop();
+        m_pinDragScrollDelta = 0;
+      } else if (!m_pinDragScroll.active()) {
+        m_pinDragScroll.startRepeating(std::chrono::milliseconds(16), [this] {
+          if (!pinDragCurrent()) {
+            cancelPinDrag();
+            return;
+          }
+          const auto slot = m_places->dropSlot(m_pointerX, m_pointerY);
+          const float step = slot ? m_places->dragScrollSpeed(m_pointerX, m_pointerY) : 0.0F;
+          if (step == 0) {
+            m_pinDragScroll.stop();
+            m_pinDragScrollDelta = 0;
+            return;
+          }
+          m_pinDragScrollDelta = std::clamp(m_pinDragScrollDelta + step, -18.0F, 18.0F);
+          m_surface.requestLayout();
+        });
+      }
+      m_surface.requestLayout();
+    }
+    void layoutPinDrag(Renderer& renderer) {
+      if (m_pinDrag && !pinDragCurrent()) {
+        cancelPinDrag();
+      }
+      m_dragPreview->setVisible(m_pinDrag.has_value());
+      m_pinDropLine->setVisible(false);
+      if (!m_pinDrag) {
+        return;
+      }
+      const bool allowed = std::ranges::none_of(m_pinDrag->bookmarks, [this](const auto& bookmark) {
+        return m_places->builtIn(bookmark.location);
+      });
+      m_dragLabel->setText(
+          !allowed ? "Already in Places"
+              : m_pinDrag->sourcePin
+              ? "Reorder pin"
+              : std::format("Pin {} folder{}", m_pinDrag->bookmarks.size(), m_pinDrag->bookmarks.size() == 1 ? "" : "s")
+      );
+      m_dragPreview->arrange(
+          renderer,
+          {std::clamp(m_pointerX + 12, 0.0F, static_cast<float>(m_surface.width()) - 190.0F),
+           std::clamp(m_pointerY + 12, 0.0F, static_cast<float>(m_surface.height()) - 38.0F), 190, 38}
+      );
+      if (const auto slot = m_places->dropSlot(m_pointerX, m_pointerY); slot && allowed) {
+        m_pinDropLine->setVisible(true);
+        m_pinDropLine->arrange(renderer, m_places->dropLine(*slot));
+      }
+    }
+    void finishPinDrag(float x, float y) {
+      const bool current = pinDragCurrent();
+      const auto slot = m_places->dropSlot(x, y);
+      const auto drag = *m_pinDrag;
+      const bool allowed = std::ranges::none_of(drag.bookmarks, [this](const auto& bookmark) {
+        return m_places->builtIn(bookmark.location);
+      });
+      cancelPinDrag();
+      if (current && slot && allowed) {
+        pinFolders(drag.bookmarks, *slot);
+      } else if (slot && !allowed) {
+        actionError("This folder is already in Places.");
+      }
+    }
     TextInputState textInputState() const override { return m_filterInput->textInputState(); }
     void textInputApplyEdit(const TextInputEdit& edit) override {
       if ((edit.hasCommitText && !edit.commitText.empty())
@@ -718,16 +1273,16 @@ namespace {
       m_back->setEnabled(m_browser.canBack());
       m_forward->setEnabled(m_browser.canForward());
       m_up->setEnabled(m_browser.canUp());
-      const char* home = std::getenv("HOME");
-      m_homePlace->setSelected(
-          home != nullptr && g_path_is_absolute(home) && snapshot.location == files::Location::fromPath(home)
-      );
-      m_rootPlace->setSelected(snapshot.location == files::Location::fromPath("/"));
+      m_places->sync(snapshot.location);
       const bool loading = snapshot.status == files::DirectoryStatus::LOADING;
       m_refresh->setGlyph(loading ? "square" : "refresh");
       m_refresh->setTooltip(loading ? "Stop loading" : "Refresh");
       std::string status;
-      if (!m_preferenceError.empty()) {
+      if (!m_actionError.empty()) {
+        status = m_actionError;
+      } else if (!m_pins.error().empty()) {
+        status = std::format("Could not update pins: {}", m_pins.error());
+      } else if (!m_preferenceError.empty()) {
         status = m_preferenceError;
       } else if (!m_browser.message().empty()) {
         status = m_browser.message();
@@ -788,6 +1343,17 @@ namespace {
       }
       m_list->setSelectedIndex(focus, false);
       m_list->notifyDataChanged();
+      if (m_revealTarget && snapshot.status != files::DirectoryStatus::LOADING) {
+        const auto target = *std::exchange(m_revealTarget, std::nullopt);
+        const auto found = std::ranges::find_if(model.rows(), [&](files::EntryId id) {
+          const auto* entry = model.entry(id);
+          return entry != nullptr && entry->location == target;
+        });
+        if (found != model.rows().end()) {
+          m_browser.model().select(*found);
+          m_list->scrollToIndex(static_cast<std::size_t>(found - model.rows().begin()));
+        }
+      }
     }
 
     std::uint32_t resizeEdges(float x, float y) const {
@@ -831,6 +1397,22 @@ namespace {
       }
       if (layout) {
         UiPhaseScope phase(UiPhase::Layout);
+        std::optional<InputDispatcher::TabFocusSnapshot> placesFocus;
+        if (m_placesDirty) {
+          for (const Node* node = m_dispatcher.focusedArea(); node != nullptr; node = node->parent()) {
+            if (node == m_places) {
+              placesFocus = m_dispatcher.captureTabFocus();
+              break;
+            }
+          }
+        }
+        if (m_placesDirty) {
+          m_placesDirty = false;
+          m_places->invalidate();
+        }
+        if (m_pinDrag && m_pinDragScrollDelta != 0) {
+          m_places->dragScroll(std::exchange(m_pinDragScrollDelta, 0.0F));
+        }
         const float searchWidth = m_surface.width() < 800 ? 148.0F : 220.0F;
         m_searchArea->setMinWidth(searchWidth);
         m_searchArea->setMaxWidth(searchWidth);
@@ -855,6 +1437,10 @@ namespace {
         m_root->arrange(
             renderer, LayoutRect{0, 0, static_cast<float>(m_surface.width()), static_cast<float>(m_surface.height())}
         );
+        layoutPinDrag(renderer);
+        if (placesFocus) {
+          m_dispatcher.restoreTabFocus(std::move(*placesFocus));
+        }
         if (m_dispatcher.focusedArea() == m_list->focusArea()) {
           m_textInput.notifyClientStateChanged(this, TextInputChangeCause::Other);
         }
@@ -1060,44 +1646,17 @@ namespace {
                   )
               );
 
-      auto places = ui::column(
-          {.align = FlexAlign::Stretch,
-           .gap = Style::spaceXs,
-           .padding = Style::spaceMd,
-           .fill = colorSpecFromRole(ColorRole::SurfaceContainerLow),
-           .minWidth = 206.0F}
-      );
-      places->addChild(
-          ui::label(
-              {.text = "Places",
-               .fontSize = Style::fontSizeCaption,
-               .fontWeight = FontWeight::SemiBold,
-               .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
-               .height = 24.0F}
-          )
-      );
-      places->addChild(
-          ui::button(
-              {.out = &m_homePlace,
-               .text = "Home",
-               .glyph = "home",
-               .contentAlign = ButtonContentAlign::Start,
-               .variant = ButtonVariant::Ghost,
-               .minWidth = 174.0F,
-               .onClick = [this] { m_browser.home(); }}
-          )
-      );
-      places->addChild(
-          ui::button(
-              {.out = &m_rootPlace,
-               .text = "File System",
-               .glyph = "device-desktop",
-               .contentAlign = ButtonContentAlign::Start,
-               .variant = ButtonVariant::Ghost,
-               .minWidth = 174.0F,
-               .onClick = [this] { m_browser.open(files::Location::fromPath("/")); }}
-          )
-      );
+      auto places = std::make_unique<files::PlacesSidebar>(m_pins, m_icons);
+      m_places = places.get();
+      places->setOpenCallback([this](const files::Location& location) {
+        m_actionError.clear();
+        m_browser.open(location);
+        m_dispatcher.setFocus(m_list->focusArea());
+      });
+      places->setContextCallback([this](const files::Bookmark& bookmark, bool pinned, float x, float y) {
+        openPlaceMenu(bookmark, pinned, x, y);
+      });
+      places->setDragCallback([this](const files::Bookmark& bookmark) { startPlacePinDrag(bookmark); });
       auto content = ui::column(
           {.align = FlexAlign::Stretch, .gap = Style::spaceXs, .padding = Style::spaceSm, .flexGrow = 1.0F},
           ui::column(
@@ -1181,6 +1740,35 @@ namespace {
               ui::label({.out = &m_status, .maxLines = 1, .flexGrow = 1.0F})
           )
       );
+      m_root->addChild(
+          ui::column(
+              {.out = &m_dragPreview,
+               .padding = 8.0F,
+               .fill = colorSpecFromRole(ColorRole::SurfaceContainerHigh),
+               .radius = Style::radiusMd,
+               .border = colorSpecFromRole(ColorRole::Primary),
+               .width = 190.0F,
+               .height = 38.0F,
+               .visible = false,
+               .participatesInLayout = false},
+              ui::label({.out = &m_dragLabel, .maxWidth = 174.0F, .maxLines = 1, .configure = [](Label& label) {
+                           label.setUseMarkup(false);
+                         }})
+          )
+      );
+      m_dragPreview->setZIndex(100);
+      m_dragPreview->setHitTestVisible(false);
+      m_root->addChild(
+          ui::box(
+              {.out = &m_pinDropLine,
+               .fill = colorSpecFromRole(ColorRole::Primary),
+               .height = 2.0F,
+               .visible = false,
+               .participatesInLayout = false}
+          )
+      );
+      m_pinDropLine->setZIndex(101);
+      m_pinDropLine->setHitTestVisible(false);
       m_root->setAnimationManager(&m_animations);
       m_surface.setSceneRoot(m_root.get());
       m_dispatcher.setSceneRoot(m_root.get());
@@ -1206,18 +1794,95 @@ namespace {
       m_menuRoot.reset();
       m_menu = nullptr;
       m_menuSurface.reset();
+      m_surface.requestLayout();
     }
+    static LayoutRect sceneRect(const Node& node) {
+      float x = 0, y = 0;
+      Node::absolutePosition(&node, x, y);
+      return {x, y, node.width(), node.height()};
+    }
+
+    void showPopup(
+        std::unique_ptr<Flex> root, ContextMenuControl* menu, LayoutRect anchor, float width, float height,
+        bool alignLeft = false
+    ) {
+      closeMenu();
+      m_menu = menu;
+      m_menuRoot = std::move(root);
+      m_menuSurface = std::make_unique<PopupSurface>(m_connection);
+      m_menuSurface->setRenderContext(&m_renderer);
+      m_menuSurface->setAnimationManager(&m_animations);
+      m_menuSurface->setDismissedCallback([this] { dismissMenu(); });
+      m_menuRoot->setAnimationManager(&m_animations);
+      m_menuSurface->setSceneRoot(m_menuRoot.get());
+      m_menuDispatcher.setSceneRoot(m_menuRoot.get());
+      m_menuDispatcher.setCursorShapeCallback([this](std::uint32_t serial, std::uint32_t shape) {
+        m_connection.input().setCursorShape(serial, shape);
+      });
+      m_menuSurface->setPrepareFrameCallback([this](bool, bool) {
+        if (m_menuSurface == nullptr || !m_renderer.makeCurrent(m_menuSurface->renderTarget())) {
+          return;
+        }
+        UiPhaseScope phase(UiPhase::Layout);
+        m_menuRoot->arrange(
+            m_menuSurface->renderTarget().renderer(),
+            {0, 0, static_cast<float>(m_menuSurface->width()), static_cast<float>(m_menuSurface->height())}
+        );
+      });
+      m_menuSurface->setConfigureCallback([this](std::uint32_t, std::uint32_t) { m_menuSurface->requestLayout(); });
+      PopupSurfaceConfig config{
+          .anchorX = static_cast<int>(anchor.x),
+          .anchorY = static_cast<int>(anchor.y),
+          .anchorWidth = std::max(1, static_cast<int>(anchor.width)),
+          .anchorHeight = std::max(1, static_cast<int>(anchor.height)),
+          .width = static_cast<std::uint32_t>(width),
+          .height = static_cast<std::uint32_t>(height),
+          .anchor = XDG_POSITIONER_ANCHOR_BOTTOM_RIGHT,
+          .gravity = alignLeft ? XDG_POSITIONER_GRAVITY_BOTTOM_LEFT : XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT,
+          .constraintAdjustment =
+              XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X | XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y,
+          .serial = m_popupSerial != 0 ? m_popupSerial : m_connection.input().lastSerial(),
+      };
+      if (!m_menuSurface->initializeAsChild(
+              m_surface.xdgSurface(), m_connection.outputForSurface(m_surface.wlSurface()), config
+          )) {
+        closeMenu();
+      }
+    }
+
+    void showContextMenu(
+        std::vector<ContextMenuControlEntry> entries, std::function<void(int)> action, LayoutRect anchor,
+        bool alignLeft = false
+    ) {
+      cancelPinDrag();
+      auto menu = std::make_unique<ContextMenuControl>();
+      auto* control = menu.get();
+      const float height = ContextMenuControl::preferredHeight(entries, entries.size(), 1.0F);
+      constexpr float width = 264.0F;
+      control->setEntries(std::move(entries));
+      control->setMenuWidth(width);
+      control->setOnActivate([this, action = std::move(action)](const ContextMenuControlEntry& entry) {
+        const int id = entry.id;
+        const std::weak_ptr<int> lifetime = m_lifetime;
+        dismissMenu();
+        DeferredCall::callLater([lifetime, action, id] {
+          if (!lifetime.expired()) {
+            action(id);
+          }
+        });
+      });
+      auto root = ui::column(
+          {.padding = 8.0F, .fill = colorSpecFromRole(ColorRole::SurfaceContainerHigh), .radius = Style::radiusLg},
+          std::move(menu)
+      );
+      showPopup(std::move(root), control, anchor, width + 16.0F, height + 16.0F, alignLeft);
+    }
+
     void openMenu() {
       if (m_menuSurface != nullptr) {
         dismissMenu();
         return;
       }
-      m_menuSurface = std::make_unique<PopupSurface>(m_connection);
-      m_menuSurface->setRenderContext(&m_renderer);
-      m_menuSurface->setAnimationManager(&m_animations);
-      m_menuSurface->setDismissedCallback([this] { dismissMenu(); });
-      auto menu = std::make_unique<ContextMenuControl>();
-      m_menu = menu.get();
       const auto& sort = m_browser.model().sort();
       std::vector<ContextMenuControlEntry> entries{
           {.label = "Sort by", .header = true},
@@ -1239,79 +1904,35 @@ namespace {
           {.label = "", .separator = true},
           {.id = 8, .label = "Search files (Ctrl+F)"},
       };
-      const float menuHeight = ContextMenuControl::preferredHeight(entries, entries.size(), 1.0F);
-      constexpr float menuWidth = 264.0F;
-      menu->setEntries(std::move(entries));
-      menu->setMenuWidth(menuWidth);
-      menu->setOnActivate([this](const ContextMenuControlEntry& entry) {
-        dismissMenu();
-        if (entry.id <= 6) {
-          auto options = m_browser.model().sort();
-          if (entry.id >= 1 && entry.id <= 3) {
-            const auto field = entry.id == 1 ? files::SortField::NAME
-                : entry.id == 2              ? files::SortField::SIZE
-                                             : files::SortField::MODIFIED;
-            if (field != options.field) {
-              options.field = field;
-              options.descending = false;
+      showContextMenu(
+          std::move(entries),
+          [this](int id) {
+            if (id <= 6) {
+              auto options = m_browser.model().sort();
+              if (id >= 1 && id <= 3) {
+                const auto field = id == 1 ? files::SortField::NAME
+                    : id == 2              ? files::SortField::SIZE
+                                           : files::SortField::MODIFIED;
+                if (field != options.field) {
+                  options.field = field;
+                  options.descending = false;
+                }
+              } else if (id == 4 || id == 5) {
+                options.descending = id == 5;
+              } else if (id == 6) {
+                options.directoriesFirst = !options.directoriesFirst;
+              }
+              changeSort(options);
+            } else if (id == 7) {
+              m_browser.toggleHidden();
+            } else if (id == 8) {
+              openFilter();
+              return;
             }
-          } else if (entry.id == 4 || entry.id == 5) {
-            options.descending = entry.id == 5;
-          } else if (entry.id == 6) {
-            options.directoriesFirst = !options.directoriesFirst;
-          }
-          changeSort(options);
-        } else if (entry.id == 7) {
-          m_browser.toggleHidden();
-        } else if (entry.id == 8) {
-          openFilter();
-          return;
-        }
-        m_dispatcher.setFocus(m_list->focusArea());
-      });
-      m_menuRoot = ui::column(
-          {.padding = 8.0F, .fill = colorSpecFromRole(ColorRole::SurfaceContainerHigh), .radius = Style::radiusLg},
-          std::move(menu)
+            m_dispatcher.setFocus(m_list->focusArea());
+          },
+          sceneRect(*m_menuButton), true
       );
-      m_menuRoot->setAnimationManager(&m_animations);
-      m_menuSurface->setSceneRoot(m_menuRoot.get());
-      m_menuDispatcher.setSceneRoot(m_menuRoot.get());
-      m_menuDispatcher.setCursorShapeCallback([this](std::uint32_t serial, std::uint32_t shape) {
-        m_connection.input().setCursorShape(serial, shape);
-      });
-      m_menuSurface->setPrepareFrameCallback([this](bool, bool) {
-        if (m_menuSurface == nullptr || !m_renderer.makeCurrent(m_menuSurface->renderTarget())) {
-          return;
-        }
-        UiPhaseScope phase(UiPhase::Layout);
-        auto& renderer = m_menuSurface->renderTarget().renderer();
-        m_menuRoot->arrange(
-            renderer,
-            LayoutRect{0, 0, static_cast<float>(m_menuSurface->width()), static_cast<float>(m_menuSurface->height())}
-        );
-      });
-      m_menuSurface->setConfigureCallback([this](std::uint32_t, std::uint32_t) { m_menuSurface->requestLayout(); });
-      const auto* anchor = m_menuButton;
-      float anchorX = 0, anchorY = 0;
-      Node::absolutePosition(anchor, anchorX, anchorY);
-      PopupSurfaceConfig config{
-          .anchorX = static_cast<int>(anchorX),
-          .anchorY = static_cast<int>(anchorY),
-          .anchorWidth = static_cast<int>(anchor->width()),
-          .anchorHeight = static_cast<int>(anchor->height()),
-          .width = static_cast<std::uint32_t>(menuWidth + Style::spaceSm * 2),
-          .height = static_cast<std::uint32_t>(menuHeight + Style::spaceSm * 2),
-          .anchor = XDG_POSITIONER_ANCHOR_BOTTOM_RIGHT,
-          .gravity = XDG_POSITIONER_GRAVITY_BOTTOM_LEFT,
-          .constraintAdjustment =
-              XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X | XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y,
-          .serial = m_connection.input().lastSerial(),
-      };
-      if (!m_menuSurface->initializeAsChild(
-              m_surface.xdgSurface(), m_connection.outputForSurface(m_surface.wlSurface()), config
-          )) {
-        closeMenu();
-      }
     }
 
     WaylandConnection& m_connection;
@@ -1324,6 +1945,21 @@ namespace {
     files::FileViewAdapter m_listAdapter;
     files::FileViewAdapter m_gridAdapter;
     files::ViewPreferenceWriter m_preferences;
+    files::PinService m_pins;
+    files::FileLauncher m_launcher;
+    files::PlacesSidebar* m_places = nullptr;
+    bool m_placesDirty = true;
+    std::string m_actionError;
+    std::optional<files::Location> m_revealTarget;
+    std::optional<PinDrag> m_pinDrag;
+    Timer m_pinDragScroll;
+    float m_pinDragScrollDelta = 0;
+    float m_pointerX = 0;
+    float m_pointerY = 0;
+    std::uint32_t m_popupSerial = 0;
+    Flex* m_dragPreview = nullptr;
+    Label* m_dragLabel = nullptr;
+    Box* m_pinDropLine = nullptr;
     std::string m_preferenceError;
     std::size_t m_gridZoom = 1;
     double m_zoomScroll = 0;
@@ -1359,8 +1995,6 @@ namespace {
     Button* m_forward = nullptr;
     Button* m_up = nullptr;
     Button* m_refresh = nullptr;
-    Button* m_homePlace = nullptr;
-    Button* m_rootPlace = nullptr;
     std::string m_displayedLocation;
     bool m_browserDirty = true;
     bool m_locationInvalid = false;

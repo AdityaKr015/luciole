@@ -107,6 +107,7 @@ public:
   // Optional: secondary button press (e.g. context menu). Anchor coordinates are in the panel scene graph
   // (surface-local).
   virtual void onSecondaryActivate(std::size_t /*index*/, float /*anchorX*/, float /*anchorY*/) {}
+  virtual void onBackgroundSecondaryActivate(float, float) {}
 };
 
 class VirtualGridView : public Flex {

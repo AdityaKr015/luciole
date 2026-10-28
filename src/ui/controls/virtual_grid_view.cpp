@@ -807,8 +807,14 @@ void VirtualGridView::updateAreaSelection(float localX, float localY) {
 }
 
 void VirtualGridView::onSecondaryPointerPress(float localX, float localY) {
+  cancelPointerGesture();
   const auto idx = indexAt(localX, localY);
   if (!idx.has_value()) {
+    if (m_adapter != nullptr) {
+      float x = 0, y = 0;
+      Node::mapToScene(m_inputArea, localX, localY, x, y);
+      m_adapter->onBackgroundSecondaryActivate(x, y);
+    }
     return;
   }
   setSelectedIndex(idx, false);

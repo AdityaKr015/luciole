@@ -1,0 +1,211 @@
+#include "browser/places.h"
+
+#include <algorithm>
+#include <array>
+#include <unordered_set>
+#include <utility>
+
+namespace {
+  std::string pinLabel(const std::string& input) {
+    const files::GString valid(g_utf8_make_valid(input.data(), static_cast<gssize>(input.size())));
+    std::string label(valid.get());
+    for (auto& c : label) {
+      if (static_cast<unsigned char>(c) < 32 || c == 127) {
+        c = ' ';
+      }
+    }
+    if (label.size() > 256) {
+      auto end = std::size_t{256};
+      while ((static_cast<unsigned char>(label[end]) & 0xc0U) == 0x80U) {
+        --end;
+      }
+      label.resize(end);
+    }
+    return label.find_first_not_of(' ') == std::string::npos ? "Folder" : label;
+  }
+} // namespace
+
+std::vector<files::UserPlace> files::configuredUserPlaces() {
+  struct Special {
+    GUserDirectory directory;
+    const char* label;
+    const char* icon;
+  };
+  constexpr std::array specials{
+      Special{G_USER_DIRECTORY_DESKTOP, "Desktop", "user-desktop"},
+      Special{G_USER_DIRECTORY_DOCUMENTS, "Documents", "folder-documents"},
+      Special{G_USER_DIRECTORY_DOWNLOAD, "Downloads", "folder-download"},
+      Special{G_USER_DIRECTORY_MUSIC, "Music", "folder-music"},
+      Special{G_USER_DIRECTORY_PICTURES, "Pictures", "folder-pictures"},
+      Special{G_USER_DIRECTORY_VIDEOS, "Videos", "folder-videos"},
+      Special{G_USER_DIRECTORY_PUBLIC_SHARE, "Public", "folder-publicshare"},
+      Special{G_USER_DIRECTORY_TEMPLATES, "Templates", "folder-templates"},
+  };
+  std::vector<UserPlace> result;
+  std::unordered_set<std::string> seen{Location::fromPath("/").uri()};
+  if (const char* home = g_get_home_dir(); home != nullptr && g_path_is_absolute(home)) {
+    auto location = Location::fromPath(home);
+    seen.insert(location.uri());
+    result.push_back({{.label = "Home", .location = std::move(location)}, "user-home"});
+  }
+  for (const auto& special : specials) {
+    const char* path = g_get_user_special_dir(special.directory);
+    if (path == nullptr || !g_path_is_absolute(path)) {
+      continue;
+    }
+    auto location = Location::fromPath(path);
+    if (seen.insert(location.uri()).second) {
+      result.push_back({{.label = special.label, .location = std::move(location)}, special.icon});
+    }
+  }
+  result.push_back({{.label = "File System", .location = Location::fromPath("/")}, "drive-harddisk"});
+  return result;
+}
+
+struct files::PinService::State : std::enable_shared_from_this<State> {
+  struct Result {
+    bool ready = false;
+    std::vector<Bookmark> bookmarks;
+    std::vector<UserPlace> places;
+    std::string error;
+  };
+  struct Request {
+    std::shared_ptr<State> owner;
+    std::optional<std::vector<Bookmark>> proposed;
+  };
+  explicit State(std::filesystem::path path) : store(std::move(path)) {}
+  StateStore store; // Accessed only by serial worker tasks.
+  std::vector<Bookmark> bookmarks;
+  std::vector<UserPlace> places;
+  std::string error;
+  std::function<void()> changed;
+  bool ready = false;
+  bool busy = false;
+
+  void notify() const {
+    const auto callback = changed;
+    if (callback) {
+      callback();
+    }
+  }
+  void run(std::optional<std::vector<Bookmark>> proposed) {
+    busy = true;
+    error.clear();
+    GioPtr<GTask> task(g_task_new(
+        nullptr, nullptr,
+        [](GObject*, GAsyncResult* result, gpointer) {
+          auto* task = G_TASK(result);
+          const auto owner = static_cast<Request*>(g_task_get_task_data(task))->owner;
+          const std::unique_ptr<Result> loaded(static_cast<Result*>(g_task_propagate_pointer(task, nullptr)));
+          owner->busy = false;
+          owner->ready = loaded->ready;
+          owner->bookmarks = loaded->bookmarks;
+          owner->places = loaded->places;
+          owner->error = loaded->error;
+          owner->notify();
+        },
+        nullptr
+    ));
+    g_task_set_task_data(task.get(), new Request{shared_from_this(), std::move(proposed)}, [](gpointer data) {
+      delete static_cast<Request*>(data);
+    });
+    g_task_run_in_thread(task.get(), [](GTask* task, gpointer, gpointer data, GCancellable*) {
+      const auto& request = *static_cast<Request*>(data);
+      auto result = std::make_unique<Result>();
+      auto& store = request.owner->store;
+      try {
+        result->places = configuredUserPlaces();
+        if (request.proposed) {
+          const auto outcome = store.saveBookmarks(*request.proposed);
+          if (!store.issues().empty()) {
+            result->error = store.issues().front().format();
+          }
+          result->ready = outcome != AtomicWriteState::NOT_COMMITTED;
+          if (!result->ready) {
+            result->ready = store.load();
+          }
+        } else {
+          result->ready = store.load();
+          if (!result->ready && !store.issues().empty()) {
+            result->error = store.issues().front().format();
+          }
+        }
+        result->bookmarks = store.state().bookmarks;
+      } catch (const std::exception& error) {
+        result->error = error.what();
+      }
+      g_task_return_pointer(task, result.release(), [](gpointer data) { delete static_cast<Result*>(data); });
+    });
+    notify();
+  }
+};
+
+files::PinService::PinService(std::filesystem::path path) : m_state(std::make_shared<State>(std::move(path))) {}
+files::PinService::~PinService() { m_state->changed = {}; }
+void files::PinService::setChangedCallback(std::function<void()> callback) { m_state->changed = std::move(callback); }
+void files::PinService::reload() {
+  if (!m_state->busy) {
+    m_state->run(std::nullopt);
+  }
+}
+bool files::PinService::editable() const { return m_state->ready && !m_state->busy; }
+bool files::PinService::busy() const { return m_state->busy; }
+const std::vector<files::Bookmark>& files::PinService::bookmarks() const { return m_state->bookmarks; }
+const std::vector<files::UserPlace>& files::PinService::userPlaces() const { return m_state->places; }
+const std::string& files::PinService::error() const { return m_state->error; }
+bool files::PinService::contains(const Location& location) const {
+  return std::ranges::any_of(m_state->bookmarks, [&](const auto& pin) { return pin.location == location; });
+}
+bool files::PinService::save(std::vector<Bookmark> bookmarks) {
+  if (!editable()) {
+    return false;
+  }
+  if (bookmarks != m_state->bookmarks) {
+    m_state->run(std::move(bookmarks));
+  }
+  return true;
+}
+bool files::PinService::add(std::vector<Bookmark> bookmarks, std::size_t before) {
+  if (!editable()) {
+    return false;
+  }
+  auto proposed = m_state->bookmarks;
+  before = std::min(before, proposed.size());
+  std::vector<Bookmark> incoming;
+  for (auto& bookmark : bookmarks) {
+    if (std::ranges::any_of(incoming, [&](const auto& pin) { return pin.location == bookmark.location; })) {
+      continue;
+    }
+    const auto existing = std::ranges::find(proposed, bookmark.location, &Bookmark::location);
+    if (existing != proposed.end()) {
+      bookmark.label = existing->label;
+      if (static_cast<std::size_t>(existing - proposed.begin()) < before) {
+        --before;
+      }
+      proposed.erase(existing);
+    } else {
+      bookmark.label = pinLabel(bookmark.label);
+    }
+    incoming.push_back(std::move(bookmark));
+  }
+  proposed.insert(proposed.begin() + static_cast<std::ptrdiff_t>(before), incoming.begin(), incoming.end());
+  return save(std::move(proposed));
+}
+bool files::PinService::remove(const Location& location) { return removeMany({location}); }
+bool files::PinService::removeMany(const std::vector<Location>& locations) {
+  auto proposed = m_state->bookmarks;
+  std::erase_if(proposed, [&](const auto& pin) { return std::ranges::contains(locations, pin.location); });
+  return save(std::move(proposed));
+}
+bool files::PinService::move(const Location& location, std::size_t position) {
+  auto proposed = m_state->bookmarks;
+  const auto found = std::ranges::find(proposed, location, &Bookmark::location);
+  if (found == proposed.end()) {
+    return false;
+  }
+  auto bookmark = std::move(*found);
+  proposed.erase(found);
+  position = std::min(position, proposed.size());
+  proposed.insert(proposed.begin() + static_cast<std::ptrdiff_t>(position), std::move(bookmark));
+  return save(std::move(proposed));
+}

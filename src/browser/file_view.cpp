@@ -243,15 +243,22 @@ bool files::FileViewAdapter::onPointerPress(std::size_t index, float, float, flo
   m_pressed = m_browser.model().rows()[index];
   m_dragged = false;
   m_plainClick = modifiers == 0;
+  m_collapseSelectionOnClick = m_plainClick && m_browser.model().selection().selected.contains(*m_pressed);
   const auto mode = (modifiers & KeyMod::Shift) != 0
       ? ((modifiers & KeyMod::Ctrl) != 0 ? SelectionMode::ADD_RANGE : SelectionMode::RANGE)
       : ((modifiers & KeyMod::Ctrl) != 0 ? SelectionMode::TOGGLE : SelectionMode::REPLACE);
-  (void)m_browser.model().select(*m_pressed, mode);
+  if (!m_collapseSelectionOnClick) {
+    (void)m_browser.model().select(*m_pressed, mode);
+  }
   return true;
 }
 
 bool files::FileViewAdapter::onPointerDrag(std::optional<std::size_t>, float, float, float, float) {
+  const bool first = !m_dragged;
   m_dragged = true;
+  if (first && m_drag && m_pressed && m_browser.model().entry(*m_pressed) != nullptr) {
+    m_drag(m_browser.model().selectedIds());
+  }
   return false;
 }
 
@@ -260,16 +267,20 @@ VirtualGridAdapter::PointerReleaseResult files::FileViewAdapter::onPointerReleas
   m_areaRows.clear();
   m_areaBaseline.clear();
   const auto pressed = std::exchange(m_pressed, std::nullopt);
+  const bool dragged = std::exchange(m_dragged, false);
   if (!pressed
       || !index
       || *index >= itemCount()
       || m_browser.model().rows()[*index] != *pressed
-      || m_dragged
+      || dragged
       || !m_plainClick) {
     m_lastClick.reset();
     return {};
   }
   const auto now = std::chrono::steady_clock::now();
+  if (m_collapseSelectionOnClick) {
+    m_browser.model().select(*pressed);
+  }
   const bool twice = m_lastClick == pressed && now - m_lastClickTime < std::chrono::milliseconds(400);
   m_lastClick = twice ? std::nullopt : pressed;
   m_lastClickTime = now;
@@ -277,11 +288,45 @@ VirtualGridAdapter::PointerReleaseResult files::FileViewAdapter::onPointerReleas
 }
 
 void files::FileViewAdapter::onPointerCancel() {
+  const bool dragged = std::exchange(m_dragged, false);
   m_pressed.reset();
   m_lastClick.reset();
   m_areaSelection = false;
   m_areaRows.clear();
   m_areaBaseline.clear();
+  if (dragged && m_cancelDrag) {
+    m_cancelDrag();
+  }
+}
+
+void files::FileViewAdapter::setContextCallback(std::function<void(std::optional<EntryId>, float, float)> callback) {
+  m_context = std::move(callback);
+}
+void files::FileViewAdapter::setDragCallback(
+    std::function<void(const std::vector<EntryId>&)> start, std::function<void()> cancel
+) {
+  m_drag = std::move(start);
+  m_cancelDrag = std::move(cancel);
+}
+void files::FileViewAdapter::onSecondaryActivate(std::size_t index, float x, float y) {
+  auto& model = m_browser.model();
+  if (index >= model.rows().size()) {
+    return;
+  }
+  const auto id = model.rows()[index];
+  if (!model.selection().selected.contains(id)) {
+    model.select(id);
+  } else {
+    model.setFocus(id);
+  }
+  if (m_context) {
+    m_context(id, x, y);
+  }
+}
+void files::FileViewAdapter::onBackgroundSecondaryActivate(float x, float y) {
+  if (m_context) {
+    m_context(std::nullopt, x, y);
+  }
 }
 
 bool files::FileViewAdapter::onBackgroundPointerPress() {

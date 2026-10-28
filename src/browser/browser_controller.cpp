@@ -29,6 +29,9 @@ files::BrowserController::~BrowserController() {
 }
 
 void files::BrowserController::setChangedCallback(std::function<void()> callback) { m_changed = std::move(callback); }
+void files::BrowserController::setFileActivatedCallback(std::function<void(const Location&)> callback) {
+  m_fileActivated = std::move(callback);
+}
 
 void files::BrowserController::open(const Location& location) {
   // Opening publishes a new snapshot and invalidates locations borrowed from the model.
@@ -192,6 +195,10 @@ void files::BrowserController::activate(EntryId id) {
   }
   if (entry->type == G_FILE_TYPE_DIRECTORY || entry->symlink) {
     open(entry->location);
+  } else if (m_fileActivated) {
+    const auto callback = m_fileActivated;
+    const auto location = entry->location;
+    callback(location);
   } else {
     showMessage("Opening files is not available yet.");
   }

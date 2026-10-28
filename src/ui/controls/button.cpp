@@ -160,9 +160,8 @@ namespace {
           .normal = makeState(
               colorSpecFromRole(ColorRole::Primary), clearColorSpec(), colorSpecFromRole(ColorRole::OnPrimary)
           ),
-          .hover = makeState(
-              colorSpecFromRole(ColorRole::Primary), clearColorSpec(), colorSpecFromRole(ColorRole::OnPrimary)
-          ),
+          .hover =
+              makeState(colorSpecFromRole(ColorRole::Hover), clearColorSpec(), colorSpecFromRole(ColorRole::OnHover)),
           .pressed = makeState(
               colorSpecFromRole(ColorRole::Primary), clearColorSpec(), colorSpecFromRole(ColorRole::OnPrimary)
           ),
@@ -604,22 +603,17 @@ void Button::applyColors(const Color& bg, const Color& border, const Color& labe
 }
 
 float Button::effectiveBorderWidth() const noexcept {
+  if (m_enabled && (m_keyboardFocusHint || (m_inputArea != nullptr && m_inputArea->focused()))) {
+    return Style::borderWidth;
+  }
   return Style::buttonBordersEnabled() ? m_palette.borderWidth : 0.0F;
 }
 
 void Button::resolveVisualStateColors(Color& targetBg, Color& targetBorder, Color& targetLabel) const {
-  const bool isKeyboardFocused = m_enabled && m_keyboardFocusHint;
-  const bool isInputFocused = m_enabled && m_inputArea != nullptr && m_inputArea->focused();
-  const bool keyboardNavFocus = isKeyboardFocused
-      && (m_variant == ButtonVariant::TabActive
-          || m_variant == ButtonVariant::Tab
-          || m_variant == ButtonVariant::Ghost);
-  bool isHovered = m_enabled && (m_hoveredVisual || (!m_hoverSuppressed && hovered()));
-  if (isInputFocused && !keyboardNavFocus) {
-    isHovered = true;
-  }
-  bool isPressed = m_enabled && (m_pressedVisual || pressed());
-  bool isSelected = m_enabled && m_selected;
+  const bool isFocused = m_enabled && (m_keyboardFocusHint || (m_inputArea != nullptr && m_inputArea->focused()));
+  const bool isHovered = m_enabled && (m_hoveredVisual || (!m_hoverSuppressed && hovered()));
+  const bool isPressed = m_enabled && (m_pressedVisual || pressed());
+  const bool isSelected = m_enabled && m_selected;
 
   if (!m_enabled) {
     targetBg = resolveColorSpec(m_palette.disabled.bg);
@@ -629,15 +623,15 @@ void Button::resolveVisualStateColors(Color& targetBg, Color& targetBorder, Colo
     targetBg = resolveColorSpec(m_palette.pressed.bg);
     targetBorder = resolveColorSpec(m_palette.pressed.border);
     targetLabel = resolveColorSpec(m_palette.pressed.label);
+  } else if (isHovered) {
+    targetBg = resolveColorSpec(m_palette.hover.bg);
+    targetBorder = resolveColorSpec(m_palette.hover.border);
+    targetLabel = resolveColorSpec(m_palette.hover.label);
   } else if (isSelected && m_palette.selected.has_value()) {
     targetBg = resolveColorSpec(m_palette.selected->bg);
     targetBorder = resolveColorSpec(m_palette.selected->border);
     targetLabel = resolveColorSpec(m_palette.selected->label);
-  } else if (keyboardNavFocus) {
-    targetBg = resolveColorSpec(colorSpecFromRole(ColorRole::Secondary));
-    targetBorder = resolveColorSpec(clearColorSpec());
-    targetLabel = resolveColorSpec(colorSpecFromRole(ColorRole::OnSecondary));
-  } else if (isHovered || isSelected) {
+  } else if (isSelected) {
     targetBg = resolveColorSpec(m_palette.hover.bg);
     targetBorder = resolveColorSpec(m_palette.hover.border);
     targetLabel = resolveColorSpec(m_palette.hover.label);
@@ -645,6 +639,9 @@ void Button::resolveVisualStateColors(Color& targetBg, Color& targetBorder, Colo
     targetBg = resolveColorSpec(m_palette.normal.bg);
     targetBorder = resolveColorSpec(m_palette.normal.border);
     targetLabel = resolveColorSpec(m_palette.normal.label);
+  }
+  if (isFocused) {
+    targetBorder = resolveColorSpec(colorSpecFromRole(ColorRole::Secondary));
   }
 }
 

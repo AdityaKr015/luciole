@@ -25,6 +25,10 @@ namespace files {
     bool areaSelectionCurrent() const override;
     bool itemHitTest(std::size_t, float x, float y, float width, float height) const override;
     void onActivate(std::size_t index) override;
+    void onSecondaryActivate(std::size_t index, float x, float y) override;
+    void onBackgroundSecondaryActivate(float x, float y) override;
+    void setContextCallback(std::function<void(std::optional<EntryId>, float, float)> callback);
+    void setDragCallback(std::function<void(const std::vector<EntryId>&)> start, std::function<void()> cancel);
     void setGridIconSize(float size) { m_gridIconSize = size; }
 
   private:
@@ -38,6 +42,10 @@ namespace files {
     std::chrono::steady_clock::time_point m_lastClickTime;
     bool m_dragged = false;
     bool m_plainClick = false;
+    bool m_collapseSelectionOnClick = false;
+    std::function<void(std::optional<EntryId>, float, float)> m_context;
+    std::function<void(const std::vector<EntryId>&)> m_drag;
+    std::function<void()> m_cancelDrag;
     float m_gridIconSize = 48.0F;
     std::vector<EntryId> m_areaRows;
     std::unordered_set<EntryId> m_areaBaseline;
