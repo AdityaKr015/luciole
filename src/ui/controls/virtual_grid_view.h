@@ -1,5 +1,6 @@
 #pragma once
 
+#include "core/timer_manager.h"
 #include "render/scene/node.h"
 #include "ui/controls/flex.h"
 #include "ui/tooltip_content.h"
@@ -111,6 +112,7 @@ public:
 class VirtualGridView : public Flex {
 public:
   VirtualGridView();
+  ~VirtualGridView() override;
 
   [[nodiscard]] InputArea* focusArea() const noexcept { return m_inputArea; }
 
@@ -180,6 +182,9 @@ private:
   void setOverlayHoveredForIndex(std::size_t index, bool hovered);
   void updateTooltipAnchor(std::size_t slot, std::size_t index, bool overlayHovered);
   void updateAreaSelection(float localX, float localY);
+  void updateAreaScroll();
+  void stopAreaScroll();
+  void tickAreaScroll();
 
   ScrollView* m_scroll = nullptr;
   Canvas* m_canvas = nullptr;
@@ -224,6 +229,13 @@ private:
   bool m_adapterPointerCapture = false;
   bool m_areaPointerCapture = false;
   LayoutRect m_selectionRect{};
+  float m_areaViewportX = 0.0F;
+  float m_areaViewportY = 0.0F;
+  float m_areaScrollSpeed = 0.0F;
+  float m_areaScrollDelta = 0.0F;
+  bool m_applyingAreaScroll = false;
+  Timer m_areaScrollTimer;
+  std::chrono::steady_clock::time_point m_areaScrollTick;
   // Press point of the captured press, and whether the pointer has travelled
   // far enough since for the gesture to count as a drag. Only meaningful while
   // m_adapterPointerCapture holds, and both are set when capture begins.

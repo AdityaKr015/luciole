@@ -11,6 +11,11 @@
 #include <memory>
 #include <utility>
 
+namespace {
+  constexpr float kAreaScrollBand = 32.0F;
+  constexpr float kAreaScrollSpeed = 720.0F;
+} // namespace
+
 // Internal canvas that reports a virtual size set externally and never moves
 // its children during its own layout pass, VirtualGridView positions pool
 // tiles and the overlay InputArea explicitly.
@@ -90,6 +95,8 @@ VirtualGridView::VirtualGridView() {
   selectionBox->setVisible(false);
   m_selectionBox = static_cast<Box*>(m_canvas->addChild(std::move(selectionBox)));
 }
+
+VirtualGridView::~VirtualGridView() { stopAreaScroll(); }
 
 void VirtualGridView::bindScrollState(ScrollViewState* state) { m_scroll->bindState(state); }
 
@@ -362,7 +369,13 @@ void VirtualGridView::doLayout(Renderer& renderer) {
   }
 
   // Resolve pending jumps and clamp the offset against the new canvas before binding tiles.
+  const float areaDelta = std::exchange(m_areaScrollDelta, 0.0F);
+  if (m_areaPointerCapture && areaDelta != 0.0F) {
+    m_applyingAreaScroll = true;
+    m_scroll->requestScrollToOffset(m_scroll->scrollOffset() + areaDelta);
+  }
   Flex::doLayout(renderer);
+  m_applyingAreaScroll = false;
 
   // Step 2: determine the visible row range from the resolved scroll offset, with overscan.
   const float rowStride = cellH + m_rowGap;
@@ -530,8 +543,13 @@ LayoutSize VirtualGridView::doMeasure(Renderer& /*renderer*/, const LayoutConstr
 
 void VirtualGridView::doArrange(Renderer& renderer, const LayoutRect& rect) { arrangeByLayout(renderer, rect); }
 
-void VirtualGridView::onScrollChanged(float /*offset*/) {
-  cancelPointerGesture();
+void VirtualGridView::onScrollChanged(float offset) {
+  if (m_applyingAreaScroll && m_areaPointerCapture && m_adapter != nullptr && m_adapter->areaSelectionCurrent()) {
+    updateAreaSelection(m_areaViewportX, offset + m_areaViewportY);
+    updateAreaScroll();
+  } else {
+    cancelPointerGesture();
+  }
   if (m_hoveredOverlayIndex.has_value()) {
     setOverlayHoveredForIndex(*m_hoveredOverlayIndex, false);
   }
@@ -558,7 +576,10 @@ void VirtualGridView::onPointerMotion(float localX, float localY) {
       m_dragThresholdPassed = true;
     }
     if (m_areaPointerCapture) {
+      m_areaViewportX = localX;
+      m_areaViewportY = localY - m_scroll->scrollOffset();
       updateAreaSelection(localX, localY);
+      updateAreaScroll();
       return;
     }
     if (m_adapter->onPointerDrag(idx, localX, localY, m_cellWidth, m_cellHeightResolved)) {
@@ -666,6 +687,7 @@ void VirtualGridView::onPointerPress(float localX, float localY) {
 }
 
 void VirtualGridView::onPointerRelease(float localX, float localY) {
+  stopAreaScroll();
   if (!m_adapterPointerCapture || m_adapter == nullptr) {
     return;
   }
@@ -689,6 +711,7 @@ void VirtualGridView::onPointerRelease(float localX, float localY) {
 }
 
 void VirtualGridView::cancelPointerGesture() {
+  stopAreaScroll();
   if (m_adapterPointerCapture && m_adapter != nullptr) {
     m_adapter->onPointerCancel();
   }
@@ -697,6 +720,55 @@ void VirtualGridView::cancelPointerGesture() {
   if (m_selectionBox != nullptr) {
     m_selectionBox->setVisible(false);
   }
+}
+
+void VirtualGridView::stopAreaScroll() {
+  m_areaScrollTimer.stop();
+  m_areaScrollSpeed = 0.0F;
+  m_areaScrollDelta = 0.0F;
+}
+
+void VirtualGridView::updateAreaScroll() {
+  if (!m_areaPointerCapture || !m_dragThresholdPassed || m_adapter == nullptr || !m_adapter->areaSelectionCurrent()) {
+    stopAreaScroll();
+    return;
+  }
+  const float height = m_scroll->contentViewportHeight();
+  const float band = std::min(kAreaScrollBand, height * 0.25F);
+  float speed = 0.0F;
+  if (band > 0.0F && m_areaViewportX >= 0.0F && m_areaViewportX <= m_virtualWidth) {
+    if (m_areaViewportY < band) {
+      speed = -kAreaScrollSpeed * std::clamp((band - m_areaViewportY) / band, 0.0F, 1.0F);
+    } else if (m_areaViewportY > height - band) {
+      speed = kAreaScrollSpeed * std::clamp((m_areaViewportY - height + band) / band, 0.0F, 1.0F);
+    }
+  }
+  const float offset = m_scroll->scrollOffset();
+  if ((speed < 0.0F && offset <= 0.0F) || (speed > 0.0F && offset >= m_scroll->maxScrollOffset())) {
+    speed = 0.0F;
+  }
+  if (speed == 0.0F) {
+    stopAreaScroll();
+    return;
+  }
+  m_areaScrollSpeed = speed;
+  if (!m_areaScrollTimer.active()) {
+    m_areaScrollTick = std::chrono::steady_clock::now();
+    m_areaScrollTimer.startRepeating(std::chrono::milliseconds(16), [this] { tickAreaScroll(); });
+  }
+}
+
+void VirtualGridView::tickAreaScroll() {
+  if (!m_areaPointerCapture || m_adapter == nullptr || !m_adapter->areaSelectionCurrent()) {
+    cancelPointerGesture();
+    return;
+  }
+  const auto now = std::chrono::steady_clock::now();
+  const float elapsed = std::min(std::chrono::duration<float>(now - m_areaScrollTick).count(), 0.05F);
+  m_areaScrollTick = now;
+  // Bound accumulated work if the compositor delays the next layout frame.
+  m_areaScrollDelta = std::clamp(m_areaScrollDelta + m_areaScrollSpeed * elapsed, -36.0F, 36.0F);
+  markLayoutDirty();
 }
 
 void VirtualGridView::updateAreaSelection(float localX, float localY) {
