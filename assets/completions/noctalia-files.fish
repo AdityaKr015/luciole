@@ -3,3 +3,6 @@ complete -c noctalia-files -n '__fish_use_subcommand' -l help -d 'Show help'
 complete -c noctalia-files -n '__fish_use_subcommand' -l version -d 'Show version'
 complete -c noctalia-files -n '__fish_use_subcommand' -a completions -d 'Print shell completions'
 complete -c noctalia-files -n '__fish_seen_subcommand_from completions' -a 'bash zsh fish'
+complete -c noctalia-files -n '__fish_use_subcommand' -a config -d 'Configuration commands'
+complete -c noctalia-files -n '__fish_seen_subcommand_from config; and not __fish_seen_subcommand_from validate' -a validate -d 'Validate a TOML file'
+complete -c noctalia-files -n '__fish_seen_subcommand_from config; and __fish_seen_subcommand_from validate' -F

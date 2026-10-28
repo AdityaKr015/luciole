@@ -4,6 +4,7 @@
 #include "app/glib_poll_source.h"
 #include "app/main_loop.h"
 #include "app/timer_poll_source.h"
+#include "config/settings.h"
 #include "core/deferred_call.h"
 #include "core/input/key_symbols.h"
 #include "core/input/keybind_matcher.h"
@@ -478,6 +479,10 @@ int files::runApplication() {
   const auto previousInt = std::signal(SIGINT, stopRequested);
   int result = EXIT_SUCCESS;
   try {
+    ConfigService config(ConfigPaths::fromEnvironment());
+    if (!config.reload()) {
+      throw std::runtime_error(config.issues().front().format());
+    }
     GlibPollSource glib;
     TextInputService textInput;
     WaylandConnection connection;

@@ -19,6 +19,7 @@
   libpng,
   librsvg,
   nlohmann_json,
+  tomlplusplus,
   autoAddDriverRunpath,
   buildRevision ? "unknown",
 }:
@@ -75,6 +76,7 @@ stdenv.mkDerivation (finalAttrs: {
     libpng
     librsvg
     nlohmann_json
+    tomlplusplus
   ];
 
   mesonBuildType = "release";

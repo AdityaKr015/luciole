@@ -43,6 +43,7 @@ endforeach
 alias_target('generated-headers', protocol_headers)
 
 gio = dependency('gio-2.0', version: '>=2.76')
+tomlplusplus = dependency('tomlplusplus', version: '>=3.4')
 ui_dependencies = [
   gio,
   dependency('wayland-client'), dependency('wayland-egl'), dependency('wayland-cursor'),
@@ -178,6 +179,12 @@ browser_model = declare_dependency(
   dependencies: filesystem_service,
 )
 
+settings_service = declare_dependency(
+  sources: files('src/config/settings.cpp'),
+  include_directories: include_directories('src'),
+  dependencies: tomlplusplus,
+)
+
 app = executable('noctalia-files',
   app_sources,
   protocol_sources,
@@ -185,7 +192,7 @@ app = executable('noctalia-files',
   build_info,
   completions,
   include_directories: include_directories('src', '.'),
-  dependencies: ui_dependencies + [browser_model],
+  dependencies: ui_dependencies + [browser_model, settings_service],
   install: true,
 )
 
@@ -208,6 +215,13 @@ if build_tests
   )
   test('directory-model', browser_test, timeout: 30,
     env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],
+  )
+  settings_test = executable('settings-test',
+    'tests/settings_test.cpp',
+    dependencies: [settings_service, browser_model],
+  )
+  test('settings', settings_test, timeout: 30,
+    env: ['G_DEBUG=fatal-warnings'],
   )
   python = import('python').find_installation('python3')
   test('headless-cli', python,

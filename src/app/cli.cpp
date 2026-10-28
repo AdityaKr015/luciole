@@ -1,6 +1,7 @@
 #include "app/cli.h"
 
 #include "app/application.h"
+#include "config/settings.h"
 #include "noctalia_files_build_info.h"
 #include "noctalia_files_completions.h"
 
@@ -10,7 +11,8 @@
 
 namespace {
 
-  constexpr std::string_view kHelp = R"(Usage: noctalia-files [--help | --version | completions <shell>]
+  constexpr std::string_view kHelp =
+      R"(Usage: noctalia-files [--help | --version | completions <shell> | config validate <file>]
 
 Open Noctalia Files. Folder browsing is under development.
 
@@ -18,6 +20,7 @@ Options:
   --help                 Show this help
   --version              Show version and explicit build revision
   completions <shell>    Print bash, zsh, or fish shell completions
+  config validate <file> Validate one TOML settings file without opening a window
 )";
 
   int printCompletions(std::string_view shell) {
@@ -47,6 +50,17 @@ int files::runCli(std::span<const std::string_view> args) {
   }
   if (args.size() == 2 && args.front() == "completions") {
     return printCompletions(args[1]);
+  }
+  if (args.size() == 3 && args[0] == "config" && args[1] == "validate") {
+    const auto issues = validateConfigFile(std::filesystem::path(args[2]));
+    if (!issues.empty()) {
+      for (const auto& issue : issues) {
+        std::println(stderr, "noctalia-files: {}", issue.format());
+      }
+      return EXIT_FAILURE;
+    }
+    std::println("Configuration is valid.");
+    return EXIT_SUCCESS;
   }
   if (args.empty()) {
     return runApplication();

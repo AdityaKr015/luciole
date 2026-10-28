@@ -25,7 +25,12 @@ in
         lib.types.path
       ];
       default = { };
-      description = "Base TOML settings as an attribute set, TOML string, or file path. Runtime settings are implemented in Step 3.";
+      description = "Base TOML settings as an attribute set, TOML string, or file path. Browser defaults are separate from writable GUI overrides.";
+    };
+    checkConfig = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Validate the base configuration at build time when a package is selected.";
     };
   };
 
@@ -34,7 +39,7 @@ in
     xdg.config.files."noctalia-files/config.toml" = lib.mkIf (cfg.settings != { }) {
       source = import ./config_file.nix {
         inherit pkgs;
-        inherit (cfg) settings;
+        inherit (cfg) settings package checkConfig;
       };
     };
   };

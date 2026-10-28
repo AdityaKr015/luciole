@@ -46,6 +46,10 @@
 
       checks = forEachSystem (pkgs: {
         package = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+        module-config = import ./nix/module-checks.nix {
+          inherit pkgs;
+          package = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+        };
         headless-cli = self.packages.${pkgs.stdenv.hostPlatform.system}.default.overrideAttrs (_: {
           mesonFlags = [ "-Dtests=enabled" ];
           doCheck = true;

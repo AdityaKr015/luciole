@@ -2,5 +2,16 @@
 _arguments \
   '--help[Show help]' \
   '--version[Show version]' \
-  '1:command:(completions)' \
-  '2:shell:(bash zsh fish)'
+  '1:command:(completions config)' \
+  '*::argument:->arguments'
+
+case $words[1] in
+  completions) _values 'shell' bash zsh fish ;;
+  config)
+    if (( CURRENT == 2 )); then
+      _values 'command' validate
+    elif [[ $words[2] == validate ]]; then
+      _files
+    fi
+    ;;
+esac
