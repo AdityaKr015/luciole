@@ -1,0 +1,6 @@
+#compdef noctalia-files
+_arguments \
+  '--help[Show help]' \
+  '--version[Show version]' \
+  '1:command:(completions)' \
+  '2:shell:(bash zsh fish)'

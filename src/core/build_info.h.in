@@ -1,0 +1,4 @@
+#pragma once
+
+#mesondefine NOCTALIA_FILES_VERSION
+#mesondefine NOCTALIA_FILES_BUILD_REVISION
