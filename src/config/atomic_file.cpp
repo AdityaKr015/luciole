@@ -58,19 +58,19 @@ namespace {
       if (next < 0 && errno == ENOENT) {
         const bool created = ::mkdirat(parent.fd, part.c_str(), 0700) == 0;
         if (!created && errno != EEXIST) {
-          return std::unexpected(failure("create config directory"));
+          return std::unexpected(failure("create parent directory"));
         }
         next = ::openat(parent.fd, part.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
         if (next < 0) {
-          return std::unexpected(failure("open config directory"));
+          return std::unexpected(failure("open parent directory"));
         }
         Descriptor child(next);
         if (created && (!sync(child.fd) || !sync(parent.fd))) {
-          return std::unexpected(failure("sync new config directory"));
+          return std::unexpected(failure("sync new parent directory"));
         }
         parent = std::move(child);
       } else if (next < 0) {
-        return std::unexpected(failure("open config directory"));
+        return std::unexpected(failure("open parent directory"));
       } else {
         parent = Descriptor(next);
       }
@@ -96,27 +96,27 @@ namespace {
     struct stat revision{};
   };
 
-  std::expected<CurrentFile, std::string> readCurrent(int parent, const std::string& name) {
+  std::expected<CurrentFile, std::string> readCurrent(int parent, const std::string& name, bool requireWritable) {
     CurrentFile current;
     if (::fstatat(parent, name.c_str(), &current.revision, AT_SYMLINK_NOFOLLOW) < 0) {
       if (errno == ENOENT) {
         return current;
       }
-      return std::unexpected(failure("inspect settings"));
+      return std::unexpected(failure("inspect private file"));
     }
     if (!S_ISREG(current.revision.st_mode)
         || current.revision.st_nlink != 1
         || current.revision.st_uid != ::geteuid()
-        || (current.revision.st_mode & S_IWUSR) == 0) {
-      return std::unexpected("settings must be an owned, writable regular file with no hard links or symlink");
+        || (requireWritable && (current.revision.st_mode & S_IWUSR) == 0)) {
+      return std::unexpected("expected an owned regular file without links, writable when saving");
     }
     const Descriptor file(::openat(parent, name.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK));
     if (file.fd < 0) {
-      return std::unexpected(failure("read settings"));
+      return std::unexpected(failure("read private file"));
     }
     struct stat before{};
     if (::fstat(file.fd, &before) < 0 || !sameRevision(before, current.revision)) {
-      return std::unexpected("settings changed while opening; reload and retry");
+      return std::unexpected("private file changed while opening; reload and retry");
     }
     current.content.emplace();
     std::array<char, 8192> buffer{};
@@ -126,20 +126,20 @@ namespace {
         if (errno == EINTR) {
           continue;
         }
-        return std::unexpected(failure("read settings"));
+        return std::unexpected(failure("read private file"));
       }
       if (count == 0) {
         break;
       }
       const auto size = static_cast<std::size_t>(count);
       if (current.content->size() + size > kMaxBytes) {
-        return std::unexpected("settings exceed the 256 KiB limit");
+        return std::unexpected("private file exceeds the 256 KiB limit");
       }
       current.content->append(buffer.data(), size);
     }
     struct stat after{};
     if (::fstat(file.fd, &after) < 0 || !sameRevision(before, after)) {
-      return std::unexpected("settings changed while reading; reload and retry");
+      return std::unexpected("private file changed while reading; reload and retry");
     }
     return current;
   }
@@ -218,22 +218,22 @@ files::updateTextFileAtomic(const std::filesystem::path& path, const AtomicTrans
       ::openat(parent->fd, lockName.c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK, 0600)
   );
   if (lock.fd < 0) {
-    return {.error = failure("open settings lock")};
+    return {.error = failure("open private file lock")};
   }
   struct stat lockInfo{};
   if (::fstat(lock.fd, &lockInfo) < 0
       || !S_ISREG(lockInfo.st_mode)
       || lockInfo.st_nlink != 1
       || lockInfo.st_uid != ::geteuid()) {
-    return {.error = "settings lock must be an owned regular file with no links"};
+    return {.error = "private file lock must be an owned regular file with no links"};
   }
   if (::flock(lock.fd, LOCK_EX | LOCK_NB) < 0) {
-    return {.error = failure("settings are busy; retry later")};
+    return {.error = failure("private file is busy; retry later")};
   }
   if (::fchmod(lock.fd, 0600) < 0) {
-    return {.error = failure("secure settings lock")};
+    return {.error = failure("secure private file lock")};
   }
-  const auto current = readCurrent(parent->fd, name);
+  const auto current = readCurrent(parent->fd, name, true);
   if (!current) {
     return {.error = current.error()};
   }
@@ -246,7 +246,7 @@ files::updateTextFileAtomic(const std::filesystem::path& path, const AtomicTrans
   }
   const auto& content = **transformed;
   if (content.size() > kMaxBytes) {
-    return {.error = "settings exceed the 256 KiB limit"};
+    return {.error = "private file exceeds the 256 KiB limit"};
   }
   TemporaryFile temporary{.parent = parent->fd, .name = {}, .file = Descriptor{}};
   for (int attempt = 0; attempt < 32; ++attempt) {
@@ -262,30 +262,50 @@ files::updateTextFileAtomic(const std::filesystem::path& path, const AtomicTrans
       break;
     }
     if (errno != EEXIST) {
-      return {.error = failure("create settings temporary file")};
+      return {.error = failure("create private file temporary file")};
     }
   }
   if (temporary.file.fd < 0) {
-    return {.error = "could not allocate a unique settings temporary file"};
+    return {.error = "could not allocate a unique temporary file"};
   }
   if (::fchmod(temporary.file.fd, 0600) < 0 || !writeAll(temporary.file.fd, content) || !sync(temporary.file.fd)) {
-    return {.error = failure("write and sync settings")};
+    return {.error = failure("write and sync private file")};
   }
   if (temporary.file.close() < 0) {
-    return {.error = failure("close settings temporary file")};
+    return {.error = failure("close private file temporary file")};
   }
   if (!stillCurrent(parent->fd, name, *current)) {
-    return {.error = "settings changed before replacement; reload and retry"};
+    return {.error = "private file changed before replacement; reload and retry"};
   }
   const long renamed = current->content
       ? ::renameat(parent->fd, temporary.name.c_str(), parent->fd, name.c_str())
       : ::syscall(SYS_renameat2, parent->fd, temporary.name.c_str(), parent->fd, name.c_str(), RENAME_NOREPLACE);
   if (renamed < 0) {
-    return {.error = failure("replace settings")};
+    return {.error = failure("replace private file")};
   }
   temporary.name.clear();
   if (!sync(parent->fd)) {
-    return {.state = AtomicWriteState::COMMITTED, .error = failure("settings replaced but directory sync failed")};
+    return {.state = AtomicWriteState::COMMITTED, .error = failure("private file replaced but directory sync failed")};
   }
   return {.state = AtomicWriteState::DURABLE, .error = {}};
+}
+
+std::expected<std::optional<std::string>, std::string> files::readPrivateTextFile(const std::filesystem::path& path) {
+  if (!path.is_absolute()
+      || path.native().contains('\0')
+      || path.filename().empty()
+      || path.filename() == "."
+      || path.filename() == "..") {
+    return std::unexpected("expected an absolute application-owned file path");
+  }
+  const Descriptor parent(::open(path.parent_path().c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+  if (parent.fd < 0) {
+    return errno == ENOENT ? std::expected<std::optional<std::string>, std::string>(std::nullopt)
+                           : std::unexpected(failure("open parent directory"));
+  }
+  auto current = readCurrent(parent.fd, path.filename().native(), false);
+  if (!current) {
+    return std::unexpected(std::move(current.error()));
+  }
+  return std::move(current->content);
 }

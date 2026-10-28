@@ -2,6 +2,7 @@
 
 #include "browser/directory_options.h"
 #include "config/atomic_file.h"
+#include "config/diagnostic.h"
 
 #include <expected>
 #include <filesystem>
@@ -27,16 +28,6 @@ namespace files {
     static ConfigPaths fromEnvironment();
   };
 
-  struct ConfigIssue {
-    std::filesystem::path file;
-    std::uint32_t line = 0;
-    std::uint32_t column = 0;
-    std::string key;
-    std::string message;
-    [[nodiscard]] std::string format() const;
-  };
-
-  using ConfigIssues = std::vector<ConfigIssue>;
   using SettingsResult = std::expected<Settings, ConfigIssues>;
 
   enum class BrowserPreference : std::uint8_t { SHOW_HIDDEN, SORT_BY, SORT_DESCENDING, DIRECTORIES_FIRST };

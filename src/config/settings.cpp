@@ -282,14 +282,6 @@ files::ConfigPaths files::ConfigPaths::fromEnvironment() {
   return {.base = directory / "config.toml", .overrides = directory / "settings.toml"};
 }
 
-std::string files::ConfigIssue::format() const {
-  auto location = file.string();
-  if (line != 0) {
-    location += std::format(":{}:{}", line, column);
-  }
-  return key.empty() ? std::format("{}: {}", location, message) : std::format("{}: {}: {}", location, key, message);
-}
-
 files::ConfigIssues files::validateConfigFile(const std::filesystem::path& file) {
   auto text = readFile(file, false);
   if (!text) {

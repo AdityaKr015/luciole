@@ -27,4 +27,9 @@ namespace files {
   // with a persistent advisory lock. Call outside Render, on an I/O worker.
   [[nodiscard]] AtomicWriteResult
   updateTextFileAtomic(const std::filesystem::path& path, const AtomicTransform& transform);
+
+  // No creation or chmod during reads; missing files/parents return nullopt.
+  // Owned regular files only, without symlinks or hard links. Read-only is OK.
+  [[nodiscard]] std::expected<std::optional<std::string>, std::string>
+  readPrivateTextFile(const std::filesystem::path& path);
 } // namespace files

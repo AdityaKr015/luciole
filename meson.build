@@ -179,10 +179,19 @@ browser_model = declare_dependency(
   dependencies: filesystem_service,
 )
 
-settings_service = declare_dependency(
-  sources: files('src/config/settings.cpp', 'src/config/atomic_file.cpp'),
+persistence_core = declare_dependency(
+  sources: files('src/config/atomic_file.cpp', 'src/config/diagnostic.cpp'),
   include_directories: include_directories('src'),
-  dependencies: tomlplusplus,
+)
+
+settings_service = declare_dependency(
+  sources: files('src/config/settings.cpp'),
+  dependencies: [persistence_core, tomlplusplus],
+)
+
+state_service = declare_dependency(
+  sources: files('src/config/state_store.cpp'),
+  dependencies: [persistence_core, filesystem_service, tomlplusplus],
 )
 
 app = executable('noctalia-files',
@@ -192,7 +201,7 @@ app = executable('noctalia-files',
   build_info,
   completions,
   include_directories: include_directories('src', '.'),
-  dependencies: ui_dependencies + [browser_model, settings_service],
+  dependencies: ui_dependencies + [browser_model, settings_service, state_service],
   install: true,
 )
 
@@ -228,6 +237,13 @@ if build_tests
     dependencies: settings_service,
   )
   test('atomic-file', atomic_test, timeout: 30)
+  state_test = executable('state-store-test',
+    'tests/state_store_test.cpp',
+    dependencies: state_service,
+  )
+  test('state-store', state_test, timeout: 30,
+    env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],
+  )
   python = import('python').find_installation('python3')
   test('headless-cli', python,
     args: [files('tests/cli_test.py'), app, meson.project_version()],
