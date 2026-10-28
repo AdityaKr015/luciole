@@ -104,4 +104,25 @@ namespace StringUtils {
     return std::string(text.substr(0, end));
   }
 
+  [[nodiscard]] inline std::string unquote(std::string_view text) {
+    if (text.size() < 2) {
+      return std::string(text);
+    }
+    char front = text.front();
+    char back = text.back();
+    if ((front == '"' && back == '"') || (front == '\'' && back == '\'')) {
+      text = text.substr(1, text.size() - 2);
+      std::string result;
+      result.reserve(text.size());
+      for (std::size_t i = 0; i < text.size(); ++i) {
+        if (text[i] == '\\' && i + 1 < text.size()) {
+          ++i;
+        }
+        result += text[i];
+      }
+      return result;
+    }
+    return std::string(text);
+  }
+
 } // namespace StringUtils

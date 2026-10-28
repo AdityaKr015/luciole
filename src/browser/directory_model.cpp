@@ -1,16 +1,9 @@
 #include "browser/directory_model.h"
 
+#include "fs/name_matching.h"
+
 #include <algorithm>
 #include <utility>
-
-namespace {
-  std::string folded(const std::string& text) {
-    const files::GString valid(g_utf8_make_valid(text.c_str(), static_cast<gssize>(text.size())));
-    const files::GString lower(g_utf8_casefold(valid.get(), -1));
-    const files::GString normalized(g_utf8_normalize(lower.get(), -1, G_NORMALIZE_DEFAULT_COMPOSE));
-    return normalized.get();
-  }
-} // namespace
 
 bool files::DirectoryModel::applySnapshot(DirectorySnapshot snapshot) {
   if (snapshot.generation < m_snapshot.generation) {
@@ -23,7 +16,11 @@ bool files::DirectoryModel::applySnapshot(DirectorySnapshot snapshot) {
   }
   if (snapshot.status == DirectoryStatus::IDLE || snapshot.status == DirectoryStatus::CANCELLED) {
     m_selectionAvailable = false;
-  } else if (snapshot.status == DirectoryStatus::READY || snapshot.status == DirectoryStatus::ERROR) {
+  } else if (
+      snapshot.status == DirectoryStatus::READY
+      || snapshot.status == DirectoryStatus::ERROR
+      || (snapshot.status == DirectoryStatus::LOADING && snapshot.incrementalResults && !snapshot.entries.empty())
+  ) {
     m_selectionAvailable = true;
   }
   m_snapshot = std::move(snapshot);
@@ -31,7 +28,7 @@ bool files::DirectoryModel::applySnapshot(DirectorySnapshot snapshot) {
   m_presentations.reserve(m_snapshot.entries.size());
   for (std::size_t i = 0; i < m_snapshot.entries.size(); ++i) {
     const auto& entry = m_snapshot.entries[i];
-    auto key = folded(entry.displayName);
+    auto key = foldedDisplayText(entry.displayName);
     const GString sortKey(g_utf8_collate_key_for_filename(key.c_str(), -1));
     m_presentations.emplace(
         entry.id, Presentation{.sourceIndex = i, .sortKey = sortKey.get(), .filterKey = std::move(key)}
@@ -57,7 +54,7 @@ void files::DirectoryModel::setFilter(FilterOptions options) {
   if (m_filter == options) {
     return;
   }
-  m_filterKey = folded(options.text);
+  m_filterKey = foldedDisplayText(options.text);
   m_filter = std::move(options);
   rebuildProjection();
   notify();
@@ -184,6 +181,23 @@ void files::DirectoryModel::clearSelection() {
   m_selection.selected.clear();
   m_selection.anchor.reset();
   notify();
+}
+
+bool files::DirectoryModel::replaceSelection(std::span<const EntryId> ids) {
+  if (!canSelect() || std::ranges::any_of(ids, [this](EntryId id) { return !m_positions.contains(id); })) {
+    return false;
+  }
+  std::unordered_set<EntryId> selected(ids.begin(), ids.end());
+  if (selected == m_selection.selected) {
+    return true;
+  }
+  m_selection.selected = std::move(selected);
+  m_selection.anchor = ids.empty() ? std::nullopt : std::optional(ids.front());
+  if (!ids.empty() && (!m_selection.focused || !m_selection.selected.contains(*m_selection.focused))) {
+    m_selection.focused = ids.back();
+  }
+  notify();
+  return true;
 }
 
 bool files::DirectoryModel::setFocus(std::optional<EntryId> id) {

@@ -205,17 +205,58 @@ namespace {
          .hidden = true,
          .size = 20,
          .modifiedSeconds = std::nullopt,
-         .etag = std::nullopt},
+         .etag = std::nullopt,
+         .parentDisplayName = {}},
         {.id = 2,
          .location = files::Location::fromPath((fixture.directory / "visible").native()),
          .name = "visible",
          .displayName = "visible",
          .size = 5,
          .modifiedSeconds = std::nullopt,
-         .etag = std::nullopt},
+         .etag = std::nullopt,
+         .parentDisplayName = {}},
     };
     model.applySnapshot(std::move(data));
     require(model.rows() == std::vector<files::EntryId>{1, 2}, "typed settings did not configure model projection");
+  }
+
+  void testGridIconSize() {
+    Fixture fixture;
+    using Preference = files::BrowserPreference;
+    using State = files::AtomicWriteState;
+    for (const int size : files::kGridIconSizes) {
+      fixture.write("config.toml", "[browser]\ngrid_icon_size = " + std::to_string(size) + "\n");
+      const auto loaded = files::loadSettings(fixture.paths());
+      require(loaded && loaded->browser.gridIconSize == size, "valid grid icon size rejected");
+    }
+    for (const auto* value : {"0", "31", "49", "129", "-32", "64.0", "true", "'64'", "9223372036854775807"}) {
+      fixture.write("config.toml", std::string("[browser]\ngrid_icon_size = ") + value + "\n");
+      require(!files::validateConfigFile(fixture.paths().base).empty(), "invalid grid icon size accepted");
+    }
+    fixture.write("config.toml", "[browser]\ngrid_icon_size = 64\n");
+    fixture.write("settings.toml", "[browser]\ngrid_icon_size = 96\nshow_hidden = true\n");
+    files::ConfigService config(fixture.paths());
+    require(config.reload() && config.settings().browser.gridIconSize == 96, "zoom layering ignored the override");
+    const std::array zoom{files::OverrideEdit{Preference::GRID_ICON_SIZE, 32}};
+    require(config.saveOverrides(zoom) == State::DURABLE, "zoom preference did not persist");
+    const auto loaded = files::loadSettings(fixture.paths());
+    require(loaded && loaded->browser.gridIconSize == 32 && loaded->browser.showHidden, "zoom roundtrip lost settings");
+    const auto previous = read(fixture.paths().overrides);
+    for (const auto& value :
+         {files::OverrideEdit{Preference::GRID_ICON_SIZE, true}, files::OverrideEdit{Preference::GRID_ICON_SIZE, 33}}) {
+      const std::array edit{value};
+      require(
+          config.saveOverrides(edit) == State::NOT_COMMITTED && read(fixture.paths().overrides) == previous,
+          "invalid zoom edit changed settings"
+      );
+    }
+    const std::array reset{files::OverrideEdit{Preference::GRID_ICON_SIZE, std::monostate{}}};
+    require(
+        config.saveOverrides(reset) == State::DURABLE
+            && config.settings().browser.gridIconSize == 64
+            && !read(fixture.paths().overrides).contains("grid_icon_size"),
+        "zoom reset did not restore base inheritance"
+    );
   }
 
   void testOverrideSaving() {
@@ -365,6 +406,7 @@ int main() {
     testFilesAndLimits();
     testEnvironmentPaths();
     testBrowserDefaults();
+    testGridIconSize();
     testOverrideSaving();
     std::println("settings checks passed");
     return 0;

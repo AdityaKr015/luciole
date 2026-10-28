@@ -1,5 +1,7 @@
 #pragma once
 
+#include "fs/file_error.h"
+#include "fs/file_icon_source.h"
 #include "fs/file_metadata.h"
 #include "fs/location.h"
 
@@ -12,13 +14,6 @@
 
 namespace files {
   enum class DirectoryStatus : std::uint8_t { IDLE, LOADING, READY, ERROR, CANCELLED };
-  enum class FileErrorKind : std::uint8_t { MISSING, DENIED, NOT_DIRECTORY, UNAVAILABLE, UNSUPPORTED, OTHER };
-
-  struct FileError {
-    FileErrorKind kind = FileErrorKind::OTHER;
-    std::string message;
-  };
-
   struct DirectoryEntry {
     std::uint64_t id = 0;
     Location location;
@@ -31,6 +26,8 @@ namespace files {
     std::optional<std::uint64_t> modifiedSeconds;
     std::optional<std::string> etag;
     FileAccess access{};
+    std::string parentDisplayName; // Search result context; never an operation address.
+    FileIconSource icon{};
   };
 
   struct DirectorySnapshot {
@@ -44,6 +41,7 @@ namespace files {
     bool metadataLoading = false;
     std::optional<FileError> accessError = std::nullopt;
     std::optional<FileError> filesystemError = std::nullopt;
+    bool incrementalResults = false; // Fresh current-scan batches, rather than retained refresh entries.
   };
 
   // Main/default-context service. Observers run there and must not throw.

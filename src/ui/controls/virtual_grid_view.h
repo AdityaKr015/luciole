@@ -14,6 +14,7 @@
 
 class InputArea;
 class ScrollView;
+class Box;
 struct ScrollViewState;
 
 // Adapter that drives a VirtualGridView from an external data source.
@@ -83,6 +84,13 @@ public:
   virtual PointerReleaseResult onPointerRelease(std::optional<std::size_t> /*index*/) { return {}; }
   virtual void onPointerCancel() {}
 
+  // Opt in to empty-space clicks and rectangle selection. Indices are current layout indices.
+  virtual bool onBackgroundPointerPress() { return false; }
+  // False retires the gesture when its source identities are no longer valid.
+  virtual bool onAreaSelection(const std::vector<std::size_t>&) { return false; }
+  virtual bool areaSelectionCurrent() const { return true; }
+  virtual bool itemHitTest(std::size_t, float, float, float, float) const { return true; }
+
   [[nodiscard]] virtual bool overlayHitTest(
       std::size_t /*index*/, float /*cellLocalX*/, float /*cellLocalY*/, float /*cellWidth*/, float /*cellHeight*/
   ) const {
@@ -145,6 +153,7 @@ public:
   void setOnSelectionChanged(std::function<void(std::optional<std::size_t>)> callback);
 
   [[nodiscard]] ScrollView& scrollView() noexcept { return *m_scroll; }
+  void cancelPointerGesture();
 
 protected:
   void doLayout(Renderer& renderer) override;
@@ -170,10 +179,12 @@ private:
   }
   void setOverlayHoveredForIndex(std::size_t index, bool hovered);
   void updateTooltipAnchor(std::size_t slot, std::size_t index, bool overlayHovered);
+  void updateAreaSelection(float localX, float localY);
 
   ScrollView* m_scroll = nullptr;
   Canvas* m_canvas = nullptr;
   InputArea* m_inputArea = nullptr;
+  Box* m_selectionBox = nullptr;
 
   VirtualGridAdapter* m_adapter = nullptr;
   std::vector<Node*> m_pool;
@@ -211,6 +222,8 @@ private:
   bool m_pendingScrollAlignTop = false;
   std::size_t m_pendingScrollIndex = 0;
   bool m_adapterPointerCapture = false;
+  bool m_areaPointerCapture = false;
+  LayoutRect m_selectionRect{};
   // Press point of the captured press, and whether the pointer has travelled
   // far enough since for the gesture to count as a drag. Only meaningful while
   // m_adapterPointerCapture holds, and both are set when capture begins.

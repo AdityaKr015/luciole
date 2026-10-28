@@ -1,5 +1,6 @@
 #include "app/glib_poll_source.h"
 #include "browser/browser_controller.h"
+#include "browser/location_presentation.h"
 
 #include <algorithm>
 #include <chrono>
@@ -168,81 +169,220 @@ namespace {
     browser.refresh();
     pump.ready(browser);
   }
-  void testCurrentFolderFilter() {
+  void testRecursiveSearch() {
     Fixture fixture;
+    Fixture outside;
+    fs::create_directories(fixture.path / "child/deep");
+    fs::create_directory(fixture.path / ".private");
+    fs::create_directory(fixture.path / "target-folder");
+    for (const auto& name : {"target.txt", "child/target.txt", "child/deep/target.txt", ".private/target.txt"}) {
+      std::ofstream(fixture.path / name) << "target";
+    }
+    std::ofstream(outside.path / "outside-target.txt") << "outside";
     std::ofstream(fixture.path / "Straße.txt") << "Unicode";
     std::ofstream(fixture.path / "*.txt") << "literal";
+    fs::create_directory_symlink(outside.path, fixture.path / "external-link");
+    fs::create_directory_symlink(".", fixture.path / "target-link");
     Pump pump;
+    BrowserController browser({}, false);
+    const auto root = Location::fromPath(fixture.path.native());
+    browser.open(root);
+    pump.ready(browser);
+    const auto oldId = id(browser, "target.txt");
+    browser.model().select(oldId);
+    browser.setSearchQuery("TARGET");
+    pump.ready(browser);
+    require(browser.model().rows().size() == 5, "recursive search missed nested files or followed hidden/link folders");
+    require(browser.model().selection().selected.empty(), "search retargeted an old browsing selection");
+    std::unordered_set<std::string> targets;
+    for (const auto& entry : browser.model().snapshot().entries) {
+      targets.insert(entry.location.uri());
+      require(!entry.parentDisplayName.empty() && entry.id != oldId, "result lost parent context or source identity");
+    }
+    require(
+        targets.contains(Location::fromPath((fixture.path / "child/deep/target.txt").native()).uri())
+            && !targets.contains(Location::fromPath((outside.path / "outside-target.txt").native()).uri()),
+        "search used wrong operation locations or traversed an external symlink"
+    );
+    browser.setSearchQuery("STRASSE");
+    pump.ready(browser);
+    require(
+        browser.model().rows().size() == 1 && browser.model().snapshot().entries.front().name == "Straße.txt",
+        "recursive query lost Unicode matching"
+    );
+    browser.setSearchQuery("*");
+    pump.ready(browser);
+    require(
+        browser.model().rows().size() == 1 && browser.model().snapshot().entries.front().name == "*.txt",
+        "recursive query interpreted a glob"
+    );
+    browser.setSearchQuery("obsolete");
+    browser.setSearchQuery("target");
+    browser.setSearchQuery("STRASSE");
+    pump.ready(browser);
+    require(
+        browser.model().rows().size() == 1 && browser.searchQuery() == "STRASSE",
+        "late query results replaced current search"
+    );
+    browser.setSearchQuery("target");
+    browser.stop();
+    require(browser.model().snapshot().status == DirectoryStatus::CANCELLED, "search stop was ignored");
+    browser.refresh();
+    pump.ready(browser);
+    require(
+        browser.model().rows().size() == 5 && browser.searchQuery() == "target", "search refresh lost query/results"
+    );
+    browser.toggleHidden();
+    pump.ready(browser);
+    require(browser.model().rows().size() == 6, "hidden search did not include hidden descendants");
+    require(!browser.openText("sftp://invalid%zz") && browser.searchQuery() == "target", "invalid path cleared query");
+    browser.setSearchQuery({});
+    require(
+        browser.model().snapshot().location == root
+            && browser.model().selection().selected.empty()
+            && id(browser, "target.txt") == oldId,
+        "clearing search did not restore the browsing source safely"
+    );
+    browser.setSearchQuery("target");
+    pump.ready(browser);
+    browser.open(root);
+    pump.ready(browser);
+    require(browser.searchQuery().empty() && !browser.canBack(), "reopening the search root did not exit search");
+    browser.setSearchQuery("target");
+    pump.ready(browser);
+    const auto directory = id(browser, "target-folder");
+    browser.activate(directory);
+    pump.ready(browser);
+    require(
+        browser.searchQuery().empty() && browser.model().snapshot().entries.empty(), "folder result activation failed"
+    );
+    browser.setSearchQuery("missing");
+    require(browser.back(), "Back from search failed");
+    pump.ready(browser);
+    require(browser.searchQuery().empty() && browser.model().snapshot().location == root, "history retained search");
+
+    for (int i = 0; i < 180; ++i) {
+      std::ofstream(fixture.path / ("batch-match-" + std::to_string(i))) << "batch";
+    }
+    bool progressive = false;
+    bool selectable = false;
+    browser.setChangedCallback([&] {
+      if (!progressive
+          && browser.model().snapshot().status == DirectoryStatus::LOADING
+          && !browser.model().rows().empty()) {
+        progressive = true;
+        selectable = browser.model().select(browser.model().rows().front());
+      }
+    });
+    browser.setSearchQuery("batch-match");
+    pump.ready(browser);
+    browser.setChangedCallback({});
+    require(
+        progressive
+            && selectable
+            && browser.model().rows().size() == 180
+            && browser.model().selection().selected.size() == 1,
+        "search did not publish progressive batches with stable selection"
+    );
+    browser.setSearchQuery("target");
+    browser.open(Location::fromPath(outside.path.native()));
+    pump.ready(browser);
+    require(
+        browser.searchQuery().empty()
+            && browser.model().snapshot().location == Location::fromPath(outside.path.native()),
+        "late search polluted navigation"
+    );
+    browser.setSearchQuery("target");
+    pump.ready(browser);
+    require(browser.model().rows().size() == 1, "new search used the previous root");
+    require(browser.openText((fixture.path / "missing").native()), "missing path rejected synchronously");
+    pump.until([&] { return browser.model().snapshot().status == DirectoryStatus::ERROR; });
+    browser.setSearchQuery("target");
+    pump.until([&] { return browser.model().snapshot().status == DirectoryStatus::ERROR; });
+    require(
+        browser.model().snapshot().error && browser.model().snapshot().error->kind == files::FileErrorKind::MISSING,
+        "search root failure lost its diagnostic"
+    );
+  }
+
+  void testSearchLifetimeAndPartialFailure() {
+    Fixture fixture;
+    Pump pump;
+    auto immediate = std::make_unique<files::RecursiveSearch>();
+    immediate->setChangedCallback([&] { immediate.reset(); });
+    immediate->start(Location::fromPath(fixture.path.native()), "file", false);
+    require(!immediate, "search observer did not destroy its owner during initial publication");
+    if (::geteuid() != 0) {
+      const auto denied = fixture.path / "denied";
+      fs::create_directory(denied);
+      std::ofstream(denied / "inside-target") << "inaccessible";
+      fs::permissions(denied, fs::perms::none);
+      BrowserController browser({}, false);
+      browser.open(Location::fromPath(fixture.path.native()));
+      pump.ready(browser);
+      browser.setSearchQuery("file");
+      pump.ready(browser);
+      fs::permissions(denied, fs::perms::owner_all);
+      require(
+          browser.model().rows().size() == 1 && browser.skippedSearchFolders() == 1,
+          "unreadable descendant hid accessible results or reported complete coverage"
+      );
+    }
+
+    auto search = std::make_unique<files::RecursiveSearch>();
+    bool destroyed = false;
+    search->setChangedCallback([&] {
+      if (!search->snapshot().entries.empty()) {
+        search.reset();
+        destroyed = true;
+      }
+    });
+    search->start(Location::fromPath(fixture.path.native()), "file", false);
+    pump.until([&] { return destroyed; });
+    // Drain cancelled callbacks while a new independent search runs.
     BrowserController browser({}, false);
     browser.open(Location::fromPath(fixture.path.native()));
     pump.ready(browser);
-    const auto generation = browser.model().snapshot().generation;
-    const auto count = browser.model().snapshot().entries.size();
-    const auto file = id(browser, "file");
-    browser.model().select(file);
-    browser.model().select(id(browser, "child"), files::SelectionMode::TOGGLE);
-    browser.setNameFilter("FILE");
-    require(
-        browser.model().rows() == std::vector<EntryId>{file}
-            && browser.model().selectedIds() == std::vector<EntryId>{file},
-        "filter did not prune excluded selection or preserve matching identity"
-    );
-    require(
-        browser.model().snapshot().generation == generation && browser.model().snapshot().entries.size() == count,
-        "filter rescanned or removed source entries"
-    );
-    browser.setNameFilter({});
-    require(browser.model().selectedIds() == std::vector<EntryId>{file}, "clearing restored excluded selection");
-    browser.setNameFilter("STRASSE");
-    require(browser.model().rows() == std::vector<EntryId>{id(browser, "Straße.txt")}, "filter lost Unicode matching");
-    browser.setNameFilter("*");
-    require(browser.model().rows() == std::vector<EntryId>{id(browser, "*.txt")}, "filter interpreted a glob");
-    browser.open(*browser.model().snapshot().location);
+    browser.setSearchQuery("inside");
     pump.ready(browser);
-    require(browser.model().filter().text == "*" && !browser.canBack(), "same-location refresh cleared filter/history");
-    std::ofstream(fixture.path / "another*.txt") << "monitored";
-    pump.until([&] { return browser.model().rows().size() == 2; });
-    require(browser.model().filter().text == "*", "monitor update cleared filter");
-    browser.setNameFilter("hidden");
-    require(browser.model().rows().empty(), "name filter bypassed hidden-file visibility");
-    browser.toggleHidden();
-    require(browser.model().rows() == std::vector<EntryId>{id(browser, ".hidden")}, "hidden toggle lost name filter");
-    require(
-        !browser.openText("sftp://invalid%zz") && browser.model().filter().text == "hidden",
-        "invalid navigation cleared the current filter"
-    );
-    browser.stop();
-    browser.refresh();
-    pump.ready(browser);
-    require(browser.model().filter().text == "hidden", "cancel/resume lost filter");
-    require(browser.openText("child"), "cannot navigate out of filtered folder");
-    pump.ready(browser);
-    require(
-        browser.model().filter().text.empty()
-            && browser.model().filter().showHidden
-            && browser.model().rows().size() == 1,
-        "new folder inherited text filter or lost hidden preference"
-    );
-    browser.setNameFilter("inside");
-    require(browser.back(), "filtered history Back failed");
-    pump.ready(browser);
-    require(browser.model().filter().text.empty(), "Back inherited text filter");
-    browser.setNameFilter("file");
-    require(browser.forward(), "filtered history Forward failed");
-    pump.ready(browser);
-    require(browser.model().filter().text.empty(), "Forward inherited text filter");
-    browser.setNameFilter("inside");
-    require(browser.up(), "filtered parent navigation failed");
-    pump.ready(browser);
-    require(browser.model().filter().text.empty(), "parent navigation inherited text filter");
+    require(!browser.model().rows().empty(), "search failed after observer destruction");
   }
+
+  void testLocationPresentation() {
+    const auto path = Location::fromPath("/tmp/space here/<literal>/café");
+    const auto crumbs = files::locationBreadcrumbs(path);
+    require(
+        crumbs.size() == 5
+            && crumbs.front().location == Location::fromPath("/")
+            && crumbs.back().location == path
+            && crumbs[3].label == "<literal>",
+        "breadcrumbs lost ancestors, literal labels or original targets"
+    );
+    require(files::locationEditText(path) == "/tmp/space here/<literal>/café", "native editor showed URI escapes");
+    const auto raw = Location::fromPath("/tmp/raw-" + std::string(1, static_cast<char>(0xff)));
+    require(
+        files::locationEditText(raw) == raw.uri() && files::locationBreadcrumbs(raw).back().location == raw,
+        "non-UTF8 breadcrumb/editor lost operation identity"
+    );
+    const auto remote = Location::fromUri("sftp://user:secret@example.org/space%20here/leaf");
+    const auto remoteCrumbs = files::locationBreadcrumbs(remote);
+    require(
+        remoteCrumbs.back().location == remote
+            && remoteCrumbs.front().label == "example.org"
+            && files::locationEditText(remote) == remote.uri(),
+        "remote breadcrumb root/editor was incorrect"
+    );
+  }
+
 } // namespace
 
 int main() {
   try {
     testNavigation();
     testFailureAndLiveUpdates();
-    testCurrentFolderFilter();
+    testRecursiveSearch();
+    testSearchLifetimeAndPartialFailure();
+    testLocationPresentation();
     std::println("browser controller checks passed");
     return 0;
   } catch (const std::exception& error) {

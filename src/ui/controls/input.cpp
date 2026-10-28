@@ -445,6 +445,11 @@ void Input::setHorizontalPadding(float padding) {
   markLayoutDirty();
 }
 
+void Input::setClearButtonWidth(float width) {
+  m_clearButtonWidth = std::max(0.0F, width);
+  markLayoutDirty();
+}
+
 void Input::setClearButtonEnabled(bool enabled) {
   if (m_clearButtonEnabled == enabled) {
     return;
@@ -2223,7 +2228,7 @@ float Input::clearButtonHitWidth() const noexcept {
     return 0.0F;
   }
   const float h = height() > 0.0F ? height() : m_controlHeight;
-  return std::max(0.0F, h);
+  return m_clearButtonWidth > 0.0F ? m_clearButtonWidth : std::max(0.0F, h);
 }
 
 float Input::clearButtonTextReserveWidth() const noexcept {

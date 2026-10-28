@@ -2,6 +2,7 @@
 #include "browser/directory_model.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <clocale>
 #include <filesystem>
@@ -35,7 +36,8 @@ namespace {
         .type = type,
         .size = std::nullopt,
         .modifiedSeconds = std::nullopt,
-        .etag = std::nullopt
+        .etag = std::nullopt,
+        .parentDisplayName = {}
     };
   }
 
@@ -157,6 +159,39 @@ namespace {
     selected(model, {2});
     model.setFilter({});
     selected(model, {2});
+  }
+
+  void testBulkSelection() {
+    DirectoryModel model;
+    model.applySnapshot(snapshot({entry(1, "a"), entry(2, "b"), entry(3, "c")}));
+    int publications = 0;
+    model.setChangedCallback([&] { ++publications; });
+    const std::array initial{files::EntryId{1}, files::EntryId{3}, files::EntryId{1}};
+    require(model.replaceSelection(initial), "bulk selection rejected visible identities");
+    selected(model, {1, 3});
+    require(
+        publications == 1 && model.selection().anchor == 1 && model.selection().focused == 1,
+        "bulk selection published intermediate states or lost anchors"
+    );
+    const std::array invalid{files::EntryId{2}, files::EntryId{999}};
+    require(!model.replaceSelection(invalid), "bulk selection accepted an unknown identity");
+    selected(model, {1, 3});
+    require(publications == 1, "failed bulk selection published a partial replacement");
+    const std::array reduced{files::EntryId{3}};
+    require(model.replaceSelection(reduced), "shrinking area selection failed");
+    selected(model, {3});
+    model.setSort({.descending = true});
+    require(model.replaceSelection(initial), "reordering invalidated visible identities");
+    selected(model, {3, 1});
+    model.setFilter({.text = "c"});
+    require(!model.replaceSelection(initial), "bulk selection restored a filtered identity");
+    selected(model, {3});
+    require(model.replaceSelection({}) && !model.selection().anchor, "empty area did not clear selected identities");
+    selected(model, {});
+    auto stopped = model.snapshot();
+    stopped.status = DirectoryStatus::CANCELLED;
+    model.applySnapshot(stopped);
+    require(!model.replaceSelection(reduced), "bulk selection accepted a cancelled snapshot");
   }
 
   void testSnapshotReconciliation() {
@@ -290,6 +325,7 @@ int main() {
     testSortAndMetadata();
     testFiltering();
     testSelectionAndAnchors();
+    testBulkSelection();
     testSnapshotReconciliation();
     testDirectoryServiceIntegration();
     std::println("directory model checks passed");

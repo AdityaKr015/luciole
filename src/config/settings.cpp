@@ -1,5 +1,6 @@
 #include "config/settings.h"
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstdlib>
@@ -23,6 +24,7 @@ namespace {
     std::optional<bool> showHidden;
     std::optional<files::SortField> sortBy;
     std::optional<files::ViewMode> viewMode;
+    std::optional<int> gridIconSize;
     std::optional<bool> sortDescending;
     std::optional<bool> directoriesFirst;
     bool operator==(const Patch&) const = default;
@@ -148,6 +150,13 @@ namespace {
             } else {
               issue(issues, file, value, path, "expected 'name', 'size', or 'modified'");
             }
+          } else if (name == "grid_icon_size") {
+            const auto* size = value.as_integer();
+            if (size != nullptr && std::ranges::contains(files::kGridIconSizes, size->get())) {
+              patch.gridIconSize = static_cast<int>(size->get());
+            } else {
+              issue(issues, file, value, path, "expected integer icon size 32, 48, 64, 80, 96, or 128");
+            }
           } else if (name == "view_mode") {
             const auto* mode = value.as_string();
             if (mode != nullptr && mode->get() == "list") {
@@ -186,6 +195,9 @@ namespace {
   }
 
   void apply(files::Settings& settings, const Patch& patch) {
+    if (patch.gridIconSize) {
+      settings.browser.gridIconSize = *patch.gridIconSize;
+    }
     if (patch.viewMode) {
       settings.browser.viewMode = *patch.viewMode;
     }
@@ -216,12 +228,20 @@ namespace {
       return "browser.directories_first";
     case Preference::VIEW_MODE:
       return "browser.view_mode";
+    case Preference::GRID_ICON_SIZE:
+      return "browser.grid_icon_size";
     }
     return {};
   }
 
   void editPatch(Patch& patch, const files::OverrideEdit& edit) {
     using Preference = files::BrowserPreference;
+    if (edit.preference == Preference::GRID_ICON_SIZE) {
+      patch.gridIconSize = std::holds_alternative<std::monostate>(edit.value)
+          ? std::nullopt
+          : std::optional<int>(std::get<int>(edit.value));
+      return;
+    }
     if (edit.preference == Preference::VIEW_MODE) {
       patch.viewMode = std::holds_alternative<std::monostate>(edit.value)
           ? std::nullopt
@@ -249,12 +269,16 @@ namespace {
       break;
     case Preference::SORT_BY:
     case Preference::VIEW_MODE:
+    case Preference::GRID_ICON_SIZE:
       break;
     }
   }
 
   std::string formatPatch(const Patch& patch) {
     toml::table browser;
+    if (patch.gridIconSize) {
+      browser.insert("grid_icon_size", *patch.gridIconSize);
+    }
     if (patch.viewMode) {
       browser.insert("view_mode", *patch.viewMode == files::ViewMode::LIST ? "list" : "grid");
     }
@@ -378,6 +402,9 @@ files::AtomicWriteState files::ConfigService::saveOverrides(std::span<const Over
         const auto* sort = std::get_if<SortField>(&edit.value);
         valid =
             sort != nullptr && (*sort == SortField::NAME || *sort == SortField::SIZE || *sort == SortField::MODIFIED);
+      } else if (edit.preference == BrowserPreference::GRID_ICON_SIZE) {
+        const auto* size = std::get_if<int>(&edit.value);
+        valid = size != nullptr && std::ranges::contains(kGridIconSizes, *size);
       } else if (edit.preference == BrowserPreference::VIEW_MODE) {
         const auto* mode = std::get_if<ViewMode>(&edit.value);
         valid = mode != nullptr && (*mode == ViewMode::LIST || *mode == ViewMode::GRID);

@@ -15,6 +15,7 @@ namespace files {
     SortOptions sort;
     ViewMode viewMode = ViewMode::LIST;
     bool showHidden = false;
+    int gridIconSize = 48;
     bool operator==(const BrowserSettings&) const = default;
   };
 
@@ -31,10 +32,17 @@ namespace files {
 
   using SettingsResult = std::expected<Settings, ConfigIssues>;
 
-  enum class BrowserPreference : std::uint8_t { SHOW_HIDDEN, SORT_BY, SORT_DESCENDING, DIRECTORIES_FIRST, VIEW_MODE };
+  enum class BrowserPreference : std::uint8_t {
+    SHOW_HIDDEN,
+    SORT_BY,
+    SORT_DESCENDING,
+    DIRECTORIES_FIRST,
+    VIEW_MODE,
+    GRID_ICON_SIZE
+  };
   struct OverrideEdit {
     BrowserPreference preference;
-    std::variant<std::monostate, bool, SortField, ViewMode>
+    std::variant<std::monostate, bool, SortField, ViewMode, int>
         value; // monostate restores inheritance from the base/defaults.
   };
 

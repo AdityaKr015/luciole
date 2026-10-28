@@ -10,11 +10,21 @@ files::BrowserController::BrowserController(SortOptions sort, bool showHidden) {
   m_model.setSort(sort);
   m_model.setFilter({.showHidden = showHidden, .text = {}});
   m_model.setChangedCallback([this] { notify(); });
-  m_session.setChangedCallback([this] { m_model.applySnapshot(m_session.snapshot()); });
+  m_session.setChangedCallback([this] {
+    if (m_query.empty()) {
+      publish(m_session.snapshot());
+    }
+  });
+  m_search.setChangedCallback([this] {
+    if (!m_query.empty()) {
+      publish(m_search.snapshot());
+    }
+  });
 }
 
 files::BrowserController::~BrowserController() {
   m_session.setChangedCallback({});
+  m_search.setChangedCallback({});
   m_model.setChangedCallback({});
 }
 
@@ -24,6 +34,7 @@ void files::BrowserController::open(const Location& location) {
   // Opening publishes a new snapshot and invalidates locations borrowed from the model.
   const auto destination = location; // NOLINT(performance-unnecessary-copy-initialization)
   if (!m_history.empty() && m_history[m_historyIndex] == destination) {
+    setSearchQuery({});
     refresh();
     return;
   }
@@ -38,7 +49,7 @@ void files::BrowserController::open(const Location& location) {
     m_historyIndex = m_history.size() - 1;
   }
   m_message.clear();
-  setNameFilter({});
+  setSearchQuery({});
   m_session.open(destination);
 }
 
@@ -90,7 +101,7 @@ bool files::BrowserController::back() {
   }
   --m_historyIndex;
   m_message.clear();
-  setNameFilter({});
+  setSearchQuery({});
   const auto destination = m_history[m_historyIndex];
   m_session.open(destination);
   return true;
@@ -102,7 +113,7 @@ bool files::BrowserController::forward() {
   }
   ++m_historyIndex;
   m_message.clear();
-  setNameFilter({});
+  setSearchQuery({});
   const auto destination = m_history[m_historyIndex];
   m_session.open(destination);
   return true;
@@ -131,25 +142,47 @@ bool files::BrowserController::up() {
 
 void files::BrowserController::refresh() {
   m_message.clear();
-  m_session.refresh();
+  if (m_query.empty()) {
+    m_session.refresh();
+  } else if (m_session.snapshot().location) {
+    m_search.start(*m_session.snapshot().location, m_query, m_model.filter().showHidden);
+  }
 }
 
-void files::BrowserController::stop() { m_session.cancel(); }
+void files::BrowserController::stop() {
+  if (m_query.empty()) {
+    m_session.cancel();
+  } else {
+    m_search.cancel();
+  }
+}
 
 void files::BrowserController::toggleHidden() {
   auto filter = m_model.filter();
   filter.showHidden = !filter.showHidden;
   m_model.setFilter(std::move(filter));
+  if (!m_query.empty()) {
+    refresh();
+  }
 }
 
-void files::BrowserController::setNameFilter(std::string text) {
-  auto filter = m_model.filter();
-  if (filter.text == text) {
+void files::BrowserController::setSearchQuery(std::string text) {
+  if (m_query == text) {
     return;
   }
-  filter.text = std::move(text);
+  m_query = std::move(text);
   m_message.clear();
-  m_model.setFilter(std::move(filter));
+  if (m_query.empty()) {
+    m_search.cancel();
+    publish(m_session.snapshot());
+  } else if (m_session.snapshot().location) {
+    m_search.start(*m_session.snapshot().location, m_query, m_model.filter().showHidden);
+  }
+}
+
+void files::BrowserController::publish(DirectorySnapshot snapshot) {
+  snapshot.generation = ++m_revision;
+  m_model.applySnapshot(std::move(snapshot));
 }
 
 void files::BrowserController::activate(EntryId id) {

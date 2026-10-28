@@ -39,6 +39,7 @@ public:
   void setControlHeight(float height);
   void setHorizontalPadding(float padding);
   void setClearButtonEnabled(bool enabled);
+  void setClearButtonWidth(float width);
   void setPasswordMode(bool enabled);
   /// Shows a password-mode value as plain text. Display only: the field keeps password semantics (no
   /// clipboard export, no undo history, sensitive text-input hints). Ignored outside password mode;
@@ -98,6 +99,7 @@ public:
   void textInputDeactivated(TextInputService& service) override;
 
 private:
+  float m_clearButtonWidth = 0.0F;
   enum class EditCoalesceKind : std::uint8_t {
     None = 0,
     Typing = 1,

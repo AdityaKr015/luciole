@@ -4,6 +4,7 @@
 #include "fs/directory_session.h"
 
 #include <functional>
+#include <span>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -46,6 +47,7 @@ namespace files {
     bool select(EntryId id, SelectionMode mode = SelectionMode::REPLACE);
     void selectAll();
     void clearSelection();
+    bool replaceSelection(std::span<const EntryId> ids);
     bool setFocus(std::optional<EntryId> id);
     bool setScrollAnchor(std::optional<EntryId> id);
 

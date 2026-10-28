@@ -1,9 +1,11 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <string>
 
 namespace files {
+  inline constexpr std::array<int, 6> kGridIconSizes{32, 48, 64, 80, 96, 128};
   enum class ViewMode : std::uint8_t { LIST, GRID };
   enum class SortField : std::uint8_t { NAME, SIZE, MODIFIED };
   struct SortOptions {

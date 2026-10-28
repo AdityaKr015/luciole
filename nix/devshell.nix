@@ -20,6 +20,7 @@ pkgs.mkShell {
 
   shellHook = ''
     export NOCTALIA_FILES_ASSETS_DIR="$PWD/assets"
+    export XDG_DATA_DIRS="''${XDG_DATA_DIRS:-/usr/local/share:/usr/share}:${pkgs.adwaita-icon-theme}/share"
     echo "Noctalia Files dev shell | just --list"
   '';
 }

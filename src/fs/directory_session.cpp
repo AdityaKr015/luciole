@@ -13,42 +13,12 @@ namespace {
   constexpr const char* kAttributes = G_FILE_ATTRIBUTE_STANDARD_NAME
       "," G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME "," G_FILE_ATTRIBUTE_STANDARD_TYPE
       "," G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN "," G_FILE_ATTRIBUTE_STANDARD_IS_SYMLINK
-      "," G_FILE_ATTRIBUTE_STANDARD_SIZE "," G_FILE_ATTRIBUTE_TIME_MODIFIED "," G_FILE_ATTRIBUTE_ETAG_VALUE
-      "," G_FILE_ATTRIBUTE_ACCESS_CAN_READ "," G_FILE_ATTRIBUTE_ACCESS_CAN_WRITE "," G_FILE_ATTRIBUTE_ACCESS_CAN_EXECUTE
-      "," G_FILE_ATTRIBUTE_ACCESS_CAN_RENAME "," G_FILE_ATTRIBUTE_ACCESS_CAN_TRASH
-      "," G_FILE_ATTRIBUTE_ACCESS_CAN_DELETE;
+      "," G_FILE_ATTRIBUTE_STANDARD_ICON "," G_FILE_ATTRIBUTE_STANDARD_SIZE "," G_FILE_ATTRIBUTE_TIME_MODIFIED
+      "," G_FILE_ATTRIBUTE_ETAG_VALUE "," G_FILE_ATTRIBUTE_ACCESS_CAN_READ "," G_FILE_ATTRIBUTE_ACCESS_CAN_WRITE
+      "," G_FILE_ATTRIBUTE_ACCESS_CAN_EXECUTE "," G_FILE_ATTRIBUTE_ACCESS_CAN_RENAME
+      "," G_FILE_ATTRIBUTE_ACCESS_CAN_TRASH "," G_FILE_ATTRIBUTE_ACCESS_CAN_DELETE;
   constexpr int kBatchSize = 64;
   constexpr unsigned int kMonitorDelayMs = 80;
-
-  files::FileError fileError(const GError& error) {
-    using Kind = files::FileErrorKind;
-    Kind kind = Kind::OTHER;
-    if (error.domain == G_IO_ERROR) {
-      switch (error.code) {
-      case G_IO_ERROR_NOT_FOUND:
-        kind = Kind::MISSING;
-        break;
-      case G_IO_ERROR_PERMISSION_DENIED:
-        kind = Kind::DENIED;
-        break;
-      case G_IO_ERROR_NOT_DIRECTORY:
-        kind = Kind::NOT_DIRECTORY;
-        break;
-      case G_IO_ERROR_NOT_MOUNTED:
-      case G_IO_ERROR_HOST_NOT_FOUND:
-      case G_IO_ERROR_HOST_UNREACHABLE:
-      case G_IO_ERROR_CONNECTION_CLOSED:
-        kind = Kind::UNAVAILABLE;
-        break;
-      case G_IO_ERROR_NOT_SUPPORTED:
-        kind = Kind::UNSUPPORTED;
-        break;
-      default:
-        break;
-      }
-    }
-    return {.kind = kind, .message = error.message};
-  }
 
   void closeEnumerator(GFileEnumerator* enumerator) {
     if (enumerator == nullptr || g_file_enumerator_is_closed(enumerator)) {
@@ -310,6 +280,8 @@ struct files::DirectorySession::State : std::enable_shared_from_this<State> {
         .modifiedSeconds = std::nullopt,
         .etag = std::nullopt,
         .access = readFileAccess(info),
+        .parentDisplayName = {},
+        .icon = readFileIcon(info, Location::fromUri(uri.get())),
     };
     if (g_file_info_has_attribute(info, G_FILE_ATTRIBUTE_STANDARD_SIZE)) {
       const auto size = g_file_info_get_size(info);

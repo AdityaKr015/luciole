@@ -21,6 +21,8 @@
   nlohmann_json,
   tomlplusplus,
   autoAddDriverRunpath,
+  makeWrapper,
+  adwaita-icon-theme,
   buildRevision ? "unknown",
 }:
 stdenv.mkDerivation (finalAttrs: {
@@ -60,6 +62,7 @@ stdenv.mkDerivation (finalAttrs: {
     python3
     wayland-scanner
     autoAddDriverRunpath
+    makeWrapper
   ];
 
   buildInputs = [
@@ -80,6 +83,10 @@ stdenv.mkDerivation (finalAttrs: {
   ];
 
   mesonBuildType = "release";
+  postFixup = ''
+    wrapProgram "$out/bin/noctalia-files" \
+      --suffix XDG_DATA_DIRS : "${lib.makeSearchPath "share" [ adwaita-icon-theme ]}"
+  '';
   mesonFlags = [
     "-Dtests=disabled"
     (lib.mesonOption "build_revision" buildRevision)

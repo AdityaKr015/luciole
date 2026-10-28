@@ -99,6 +99,13 @@ app_sources = files(
   'src/core/input/key_chord.cpp',
   'src/core/input/keybind_matcher.cpp',
   'src/core/log.cpp',
+  'src/core/inotify/inotify.cpp',
+  'src/system/icon_resolver.cpp',
+  'src/system/freedesktop_key_file.cpp',
+  'src/system/icon_theme_poll_source.cpp',
+  'src/browser/file_icon_cache.cpp',
+  'src/browser/file_icon.cpp',
+  'src/config/view_preference_writer.cpp',
   'src/core/timer_manager.cpp',
   'src/core/ui_phase.cpp',
   'src/ui/controls/color_swatch_preview.cpp',
@@ -169,7 +176,9 @@ filesystem_service = declare_dependency(
   sources: files(
     'src/fs/location.cpp',
     'src/fs/file_metadata.cpp',
+    'src/fs/file_icon_source.cpp',
     'src/fs/directory_session.cpp',
+    'src/fs/recursive_search.cpp',
     'src/app/glib_poll_source.cpp',
   ),
   include_directories: include_directories('src'),
@@ -177,7 +186,7 @@ filesystem_service = declare_dependency(
 )
 
 browser_model = declare_dependency(
-  sources: files('src/browser/directory_model.cpp', 'src/browser/browser_controller.cpp'),
+  sources: files('src/browser/directory_model.cpp', 'src/browser/browser_controller.cpp', 'src/browser/location_presentation.cpp'),
   dependencies: filesystem_service,
 )
 
@@ -212,6 +221,23 @@ build_tests = tests_opt.enabled() or (
   tests_opt.auto() and get_option('buildtype') == 'debug' and get_option('b_sanitize') == 'none'
 )
 if build_tests
+  icon_test = executable('file-icon-test',
+    'tests/file_icon_test.cpp',
+    'src/browser/file_icon_cache.cpp',
+    'src/system/icon_resolver.cpp',
+    'src/system/freedesktop_key_file.cpp',
+    'src/render/core/image_file_loader.cpp',
+    'src/render/core/image_decoder.cpp',
+    'src/core/log.cpp',
+    dependencies: ui_dependencies + [filesystem_service],
+  )
+  test('file-icon', icon_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
+  view_writer_test = executable('view-preference-writer-test',
+    'tests/view_preference_writer_test.cpp',
+    'src/config/view_preference_writer.cpp',
+    dependencies: [settings_service, filesystem_service],
+  )
+  test('view-preference-writer', view_writer_test, timeout: 30, env: ['G_DEBUG=fatal-warnings'])
   directory_test = executable('directory-session-test',
     'tests/directory_session_test.cpp',
     include_directories: include_directories('src'),
