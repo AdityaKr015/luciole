@@ -180,7 +180,7 @@ browser_model = declare_dependency(
 )
 
 settings_service = declare_dependency(
-  sources: files('src/config/settings.cpp'),
+  sources: files('src/config/settings.cpp', 'src/config/atomic_file.cpp'),
   include_directories: include_directories('src'),
   dependencies: tomlplusplus,
 )
@@ -223,6 +223,11 @@ if build_tests
   test('settings', settings_test, timeout: 30,
     env: ['G_DEBUG=fatal-warnings'],
   )
+  atomic_test = executable('atomic-file-test',
+    'tests/atomic_file_test.cpp',
+    dependencies: settings_service,
+  )
+  test('atomic-file', atomic_test, timeout: 30)
   python = import('python').find_installation('python3')
   test('headless-cli', python,
     args: [files('tests/cli_test.py'), app, meson.project_version()],

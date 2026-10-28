@@ -1,9 +1,12 @@
 #pragma once
 
 #include "browser/directory_options.h"
+#include "config/atomic_file.h"
 
 #include <expected>
 #include <filesystem>
+#include <span>
+#include <variant>
 #include <vector>
 
 namespace files {
@@ -36,6 +39,12 @@ namespace files {
   using ConfigIssues = std::vector<ConfigIssue>;
   using SettingsResult = std::expected<Settings, ConfigIssues>;
 
+  enum class BrowserPreference : std::uint8_t { SHOW_HIDDEN, SORT_BY, SORT_DESCENDING, DIRECTORIES_FIRST };
+  struct OverrideEdit {
+    BrowserPreference preference;
+    std::variant<std::monostate, bool, SortField> value; // monostate restores inheritance from the base/defaults.
+  };
+
   // Bounded, read-only local file loading. Call outside Render and traversal jobs.
   // Validation reads exactly one required file, without adjacent override files.
   [[nodiscard]] ConfigIssues validateConfigFile(const std::filesystem::path& file);
@@ -45,6 +54,9 @@ namespace files {
   public:
     explicit ConfigService(ConfigPaths paths);
     bool reload(); // Explicit reload; failure retains the last valid settings.
+    // Single-owner service: perform saves on its I/O thread and marshal results
+    // to UI owners. Never call concurrently on the same service or during Render.
+    AtomicWriteState saveOverrides(std::span<const OverrideEdit> edits);
     [[nodiscard]] const Settings& settings() const { return m_settings; }
     [[nodiscard]] const ConfigIssues& issues() const { return m_issues; }
 

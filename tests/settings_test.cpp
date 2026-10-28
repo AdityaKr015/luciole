@@ -1,6 +1,7 @@
 #include "browser/directory_model.h"
 #include "config/settings.h"
 
+#include <array>
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
@@ -209,6 +210,120 @@ namespace {
     model.applySnapshot(std::move(data));
     require(model.rows() == std::vector<files::EntryId>{1, 2}, "typed settings did not configure model projection");
   }
+
+  void testOverrideSaving() {
+    using Preference = files::BrowserPreference;
+    using State = files::AtomicWriteState;
+    Fixture fixture;
+    fixture.write("base-target.toml", "[browser]\nshow_hidden = false\nsort_by = 'size'\n");
+    const auto baseTarget = fixture.directory / "base-target.toml";
+    std::filesystem::create_symlink(baseTarget, fixture.paths().base);
+    require(::chmod(baseTarget.c_str(), 0444) == 0, "cannot protect declarative base fixture");
+    const auto baseContent = read(baseTarget);
+    files::ConfigService first(fixture.paths());
+    files::ConfigService second(fixture.paths());
+    require(first.reload() && second.reload(), "cannot load save fixtures");
+    const std::array show{files::OverrideEdit{Preference::SHOW_HIDDEN, true}};
+    const std::array descending{files::OverrideEdit{Preference::SORT_DESCENDING, true}};
+    require(
+        first.saveOverrides(show) == State::DURABLE && first.settings().browser.showHidden,
+        "override did not persist or update effective settings"
+    );
+    // The second instance still has its earlier cache. Saving another key must
+    // reread the sidecar under the lock rather than overwrite the first edit.
+    require(second.saveOverrides(descending) == State::DURABLE, "second preference save failed");
+    require(
+        second.settings().browser.showHidden
+            && second.settings().browser.sort.descending
+            && second.settings().browser.sort.field == files::SortField::SIZE,
+        "unrelated override was lost"
+    );
+    require(files::validateConfigFile(fixture.paths().overrides).empty(), "saved sidecar violates schema");
+    const auto saved = read(fixture.paths().overrides);
+    require(
+        second.saveOverrides(descending) == State::UNCHANGED && read(fixture.paths().overrides) == saved,
+        "unchanged preference was rewritten"
+    );
+    const std::array disable{
+        files::OverrideEdit{Preference::DIRECTORIES_FIRST, false},
+        files::OverrideEdit{Preference::SORT_DESCENDING, false},
+    };
+    require(
+        second.saveOverrides(disable) == State::DURABLE
+            && second.settings().browser.showHidden
+            && !second.settings().browser.sort.directoriesFirst
+            && !second.settings().browser.sort.descending,
+        "false-valued batch edits were lost or changed another preference"
+    );
+    const std::array inherit{files::OverrideEdit{Preference::SHOW_HIDDEN, std::monostate{}}};
+    require(
+        second.saveOverrides(inherit) == State::DURABLE && !second.settings().browser.showHidden,
+        "reset did not restore base inheritance"
+    );
+    require(!read(fixture.paths().overrides).contains("show_hidden"), "reset left an explicit override");
+    require(
+        read(baseTarget) == baseContent && std::filesystem::is_symlink(fixture.paths().base),
+        "saving modified declarative base configuration"
+    );
+
+    const auto lastGood = second.settings();
+    fixture.write("settings.toml", "[browser]\nunknown = true\n");
+    const auto invalid = read(fixture.paths().overrides);
+    require(
+        second.saveOverrides(show) == State::NOT_COMMITTED
+            && second.settings() == lastGood
+            && read(fixture.paths().overrides) == invalid
+            && !second.issues().empty(),
+        "invalid existing sidecar was overwritten or published"
+    );
+    std::filesystem::remove(fixture.paths().overrides);
+    std::filesystem::create_symlink(baseTarget, fixture.paths().overrides);
+    require(
+        second.saveOverrides(show) == State::NOT_COMMITTED && read(baseTarget) == baseContent,
+        "save followed a settings symlink"
+    );
+    std::filesystem::remove(fixture.paths().overrides);
+    const std::array invalidEdits{files::OverrideEdit{Preference::SORT_BY, true}};
+    require(
+        second.saveOverrides(invalidEdits) == State::NOT_COMMITTED
+            && !std::filesystem::exists(fixture.paths().overrides),
+        "mistyped preference created an override"
+    );
+    const std::array sort{files::OverrideEdit{Preference::SORT_BY, files::SortField::MODIFIED}};
+    require(
+        second.saveOverrides(sort) == State::DURABLE
+            && second.settings().browser.sort.field == files::SortField::MODIFIED,
+        "typed sort override failed"
+    );
+    files::ConfigService aliased({.base = fixture.paths().base, .overrides = fixture.paths().base});
+    require(
+        aliased.saveOverrides(show) == State::NOT_COMMITTED && read(baseTarget) == baseContent,
+        "save accepted the base path as its override destination"
+    );
+    Fixture reverseAlias;
+    reverseAlias.write("settings.toml", "[browser]\nshow_hidden = false\n");
+    const auto aliasedContent = read(reverseAlias.paths().overrides);
+    std::filesystem::create_symlink(reverseAlias.paths().overrides, reverseAlias.paths().base);
+    files::ConfigService sameFile(reverseAlias.paths());
+    require(
+        sameFile.saveOverrides(show) == State::NOT_COMMITTED && read(reverseAlias.paths().overrides) == aliasedContent,
+        "base symlink alias was modified indirectly"
+    );
+
+    Fixture invalidBase;
+    invalidBase.write("config.toml", "[browser]\nshow_hidden = true\n");
+    files::ConfigService protectedConfig(invalidBase.paths());
+    require(protectedConfig.saveOverrides(descending) == State::DURABLE, "cannot create invalid-base fixture");
+    const auto before = read(invalidBase.paths().overrides);
+    const auto beforeSettings = protectedConfig.settings();
+    invalidBase.write("config.toml", "schema_version = 999\n");
+    require(
+        protectedConfig.saveOverrides(sort) == State::NOT_COMMITTED
+            && protectedConfig.settings() == beforeSettings
+            && read(invalidBase.paths().overrides) == before,
+        "invalid base allowed a save or changed the published settings"
+    );
+  }
 } // namespace
 
 int main() {
@@ -218,6 +333,7 @@ int main() {
     testFilesAndLimits();
     testEnvironmentPaths();
     testBrowserDefaults();
+    testOverrideSaving();
     std::println("settings checks passed");
     return 0;
   } catch (const std::exception& error) {

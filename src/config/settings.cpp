@@ -7,6 +7,7 @@
 #include <format>
 #include <iterator>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string_view>
 #include <sys/stat.h>
@@ -23,6 +24,7 @@ namespace {
     std::optional<files::SortField> sortBy;
     std::optional<bool> sortDescending;
     std::optional<bool> directoriesFirst;
+    bool operator==(const Patch&) const = default;
   };
 
   struct FileDescriptor {
@@ -187,6 +189,79 @@ namespace {
       settings.browser.sort.directoriesFirst = *patch.directoriesFirst;
     }
   }
+
+  std::string_view preferenceKey(files::BrowserPreference preference) {
+    using Preference = files::BrowserPreference;
+    switch (preference) {
+    case Preference::SHOW_HIDDEN:
+      return "browser.show_hidden";
+    case Preference::SORT_BY:
+      return "browser.sort_by";
+    case Preference::SORT_DESCENDING:
+      return "browser.sort_descending";
+    case Preference::DIRECTORIES_FIRST:
+      return "browser.directories_first";
+    }
+    return {};
+  }
+
+  void editPatch(Patch& patch, const files::OverrideEdit& edit) {
+    using Preference = files::BrowserPreference;
+    if (edit.preference == Preference::SORT_BY) {
+      patch.sortBy = std::holds_alternative<std::monostate>(edit.value)
+          ? std::nullopt
+          : std::optional<files::SortField>(std::get<files::SortField>(edit.value));
+      return;
+    }
+    const auto value = std::holds_alternative<std::monostate>(edit.value)
+        ? std::nullopt
+        : std::optional<bool>(std::get<bool>(edit.value));
+    switch (edit.preference) {
+    case Preference::SHOW_HIDDEN:
+      patch.showHidden = value;
+      break;
+    case Preference::SORT_DESCENDING:
+      patch.sortDescending = value;
+      break;
+    case Preference::DIRECTORIES_FIRST:
+      patch.directoriesFirst = value;
+      break;
+    case Preference::SORT_BY:
+      break;
+    }
+  }
+
+  std::string formatPatch(const Patch& patch) {
+    toml::table browser;
+    if (patch.showHidden) {
+      browser.insert("show_hidden", *patch.showHidden);
+    }
+    if (patch.sortBy) {
+      const auto* name = *patch.sortBy == files::SortField::NAME ? "name"
+          : *patch.sortBy == files::SortField::SIZE              ? "size"
+                                                                 : "modified";
+      browser.insert("sort_by", name);
+    }
+    if (patch.sortDescending) {
+      browser.insert("sort_descending", *patch.sortDescending);
+    }
+    if (patch.directoriesFirst) {
+      browser.insert("directories_first", *patch.directoriesFirst);
+    }
+    toml::table document{{"schema_version", 1}};
+    if (!browser.empty()) {
+      document.insert("browser", std::move(browser));
+    }
+    std::ostringstream output;
+    output << toml::toml_formatter{
+        document, toml::toml_formatter::default_flags & ~toml::format_flags::allow_literal_strings
+    };
+    auto text = output.str();
+    if (!text.ends_with('\n')) {
+      text.push_back('\n');
+    }
+    return text;
+  }
 } // namespace
 
 files::ConfigPaths files::ConfigPaths::fromEnvironment() {
@@ -261,4 +336,89 @@ bool files::ConfigService::reload() {
   m_settings = *loaded;
   m_issues.clear();
   return true;
+}
+
+files::AtomicWriteState files::ConfigService::saveOverrides(std::span<const OverrideEdit> edits) {
+  if (edits.empty()) {
+    return AtomicWriteState::UNCHANGED;
+  }
+  m_issues.clear();
+  if (!m_paths.base.is_absolute()
+      || !m_paths.overrides.is_absolute()
+      || m_paths.base.filename() != "config.toml"
+      || m_paths.overrides.filename() != "settings.toml"
+      || m_paths.base.parent_path().lexically_normal() != m_paths.overrides.parent_path().lexically_normal()) {
+    m_issues.push_back(
+        ioIssue(m_paths.overrides, "saves require distinct config.toml and settings.toml in one absolute directory")
+    );
+    return AtomicWriteState::NOT_COMMITTED;
+  }
+  for (const auto& edit : edits) {
+    const auto key = preferenceKey(edit.preference);
+    bool valid = !key.empty();
+    if (!std::holds_alternative<std::monostate>(edit.value)) {
+      if (edit.preference == BrowserPreference::SORT_BY) {
+        const auto* sort = std::get_if<SortField>(&edit.value);
+        valid =
+            sort != nullptr && (*sort == SortField::NAME || *sort == SortField::SIZE || *sort == SortField::MODIFIED);
+      } else {
+        valid = valid && std::holds_alternative<bool>(edit.value);
+      }
+    }
+    if (!valid) {
+      m_issues.push_back(
+          {.file = m_paths.overrides, .key = std::string(key), .message = "invalid preference or value type"}
+      );
+    }
+  }
+  if (!m_issues.empty()) {
+    return AtomicWriteState::NOT_COMMITTED;
+  }
+  Settings candidate;
+  const auto result = updateTextFileAtomic(
+      m_paths.overrides,
+      [&](const std::optional<std::string>& current) -> std::expected<std::optional<std::string>, std::string> {
+        std::error_code aliasError;
+        if (std::filesystem::equivalent(m_paths.base, m_paths.overrides, aliasError)) {
+          return std::unexpected("base configuration and GUI overrides refer to the same file");
+        }
+        if (aliasError && aliasError != std::errc::no_such_file_or_directory) {
+          return std::unexpected(std::format("cannot inspect base configuration: {}", aliasError.message()));
+        }
+        const auto base = readFile(m_paths.base, true);
+        if (!base) {
+          m_issues.push_back(base.error());
+          return std::unexpected("cannot load base configuration");
+        }
+        if (*base) {
+          const auto parsed = parse(m_paths.base, **base);
+          if (!parsed) {
+            m_issues = parsed.error();
+            return std::unexpected("invalid base configuration");
+          }
+          apply(candidate, *parsed);
+        }
+        auto patch = parse(m_paths.overrides, current.value_or(""));
+        if (!patch) {
+          m_issues = std::move(patch.error());
+          return std::unexpected("invalid existing settings");
+        }
+        const auto previous = *patch;
+        for (const auto& edit : edits) {
+          editPatch(*patch, edit);
+        }
+        apply(candidate, *patch);
+        if (*patch == previous) {
+          return std::nullopt;
+        }
+        return formatPatch(*patch);
+      }
+  );
+  if (result.state != AtomicWriteState::NOT_COMMITTED) {
+    m_settings = candidate;
+  }
+  if (!result.error.empty() && m_issues.empty()) {
+    m_issues.push_back(ioIssue(m_paths.overrides, result.error));
+  }
+  return result.state;
 }
