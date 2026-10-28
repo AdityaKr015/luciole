@@ -4,6 +4,8 @@
 #include "app/glib_poll_source.h"
 #include "app/main_loop.h"
 #include "app/timer_poll_source.h"
+#include "browser/browser_controller.h"
+#include "browser/file_list.h"
 #include "config/settings.h"
 #include "core/deferred_call.h"
 #include "core/input/key_symbols.h"
@@ -18,6 +20,7 @@
 #include "ui/builders.h"
 #include "ui/controls/context_menu.h"
 #include "ui/controls/input.h"
+#include "ui/controls/scroll_view.h"
 #include "ui/palette.h"
 #include "wayland/popup_surface.h"
 #include "wayland/text_input_service.h"
@@ -25,10 +28,12 @@
 #include "wayland/wayland_connection.h"
 #include "xdg-shell-client-protocol.h"
 
+#include <algorithm>
 #include <array>
 #include <csignal>
 #include <cstdlib>
 #include <exception>
+#include <format>
 #include <memory>
 #include <print>
 #include <string>
@@ -78,8 +83,16 @@ namespace {
 
   class Window {
   public:
-    Window(WaylandConnection& connection, RenderContext& renderer, TextInputService& textInput)
-        : m_connection(connection), m_renderer(renderer), m_textInput(textInput), m_surface(connection) {
+    Window(
+        WaylandConnection& connection, RenderContext& renderer, TextInputService& textInput,
+        const files::BrowserSettings& settings
+    )
+        : m_connection(connection), m_renderer(renderer), m_textInput(textInput), m_surface(connection),
+          m_browser(settings.sort, settings.showHidden),
+          m_adapter(
+              m_browser, [this] { return m_connection.input().keyboardModifiers(); },
+              [this] { return m_list != nullptr && m_list->focusArea()->focused(); }
+          ) {
       m_surface.setRenderContext(&renderer);
       m_surface.setAnimationManager(&m_animations);
       m_surface.setConfigureCallback([this](std::uint32_t, std::uint32_t) { m_surface.requestLayout(); });
@@ -89,16 +102,21 @@ namespace {
       m_dispatcher.setCursorShapeCallback([this](std::uint32_t serial, std::uint32_t shape) {
         m_connection.input().setCursorShape(serial, shape);
       });
+      m_browser.setChangedCallback([this] {
+        m_browserDirty = true;
+        m_surface.requestUpdate();
+      });
     }
 
     ~Window() {
+      m_browser.setChangedCallback({});
       closeMenu();
       m_dispatcher.setSceneRoot(nullptr);
       m_surface.setSceneRoot(nullptr);
       m_root.reset();
     }
 
-    bool initialize() {
+    bool initialize(const std::optional<std::string>& initialLocation) {
       ToplevelSurfaceConfig config{
           .width = 1080,
           .height = 720,
@@ -107,7 +125,15 @@ namespace {
           .title = "Noctalia Files",
           .appId = "dev.noctalia.Files",
       };
-      return m_surface.initialize(nullptr, config);
+      if (!m_surface.initialize(nullptr, config)) {
+        return false;
+      }
+      if (initialLocation) {
+        (void)m_browser.openText(*initialLocation);
+      } else {
+        m_browser.home();
+      }
+      return true;
     }
 
     [[nodiscard]] bool running() const { return m_surface.isRunning(); }
@@ -200,6 +226,31 @@ namespace {
         }
         if (event.sym == XKB_KEY_l && event.modifiers == KeyMod::Ctrl && m_location != nullptr) {
           m_dispatcher.setFocus(m_location->inputArea());
+          m_location->selectAll();
+          return;
+        }
+        if (event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Left) {
+          (void)m_browser.back();
+          return;
+        }
+        if (event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Right) {
+          (void)m_browser.forward();
+          return;
+        }
+        if (event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Up) {
+          (void)m_browser.up();
+          return;
+        }
+        if (event.sym == XKB_KEY_F5 && event.modifiers == 0) {
+          m_browser.refresh();
+          return;
+        }
+        const bool editing = m_location != nullptr && m_dispatcher.focusedArea() == m_location->inputArea();
+        if (!editing && event.sym == XKB_KEY_h && event.modifiers == KeyMod::Ctrl) {
+          m_browser.toggleHidden();
+          return;
+        }
+        if (m_list != nullptr && m_dispatcher.focusedArea() == m_list->focusArea() && listKey(event)) {
           return;
         }
       }
@@ -207,6 +258,135 @@ namespace {
     }
 
   private:
+    bool listKey(const KeyboardEvent& event) {
+      auto& model = m_browser.model();
+      if (event.sym == XKB_KEY_a && event.modifiers == KeyMod::Ctrl) {
+        model.selectAll();
+        return true;
+      }
+      if (event.modifiers == 0 && KeySymbol::isEscape(event.sym)) {
+        model.clearSelection();
+        return true;
+      }
+      if (event.modifiers == 0 && KeySymbol::isEnter(event.sym)) {
+        if (!event.repeat && model.selection().focused) {
+          m_browser.activate(*model.selection().focused);
+        }
+        return true;
+      }
+      if (model.rows().empty() || (event.modifiers & (KeyMod::Alt | KeyMod::Super)) != 0) {
+        return false;
+      }
+      auto index = std::int64_t{0};
+      if (model.selection().focused) {
+        const auto found = std::ranges::find(model.rows(), *model.selection().focused);
+        if (found != model.rows().end()) {
+          index = std::distance(model.rows().begin(), found);
+        }
+      }
+      const bool hasFocus = model.selection().focused.has_value();
+      if (event.sym == XKB_KEY_Down) {
+        index += hasFocus ? 1 : 0;
+      } else if (event.sym == XKB_KEY_Up) {
+        index += hasFocus ? -1 : 0;
+      } else if (event.sym == XKB_KEY_Home) {
+        index = 0;
+      } else if (event.sym == XKB_KEY_End) {
+        index = static_cast<std::int64_t>(model.rows().size()) - 1;
+      } else if (event.sym == XKB_KEY_Page_Down) {
+        index += static_cast<std::int64_t>(m_list->pageItemStride());
+      } else if (event.sym == XKB_KEY_Page_Up) {
+        index -= static_cast<std::int64_t>(m_list->pageItemStride());
+      } else {
+        return false;
+      }
+      const auto row = static_cast<std::size_t>(
+          std::clamp(index, std::int64_t{0}, static_cast<std::int64_t>(model.rows().size()) - 1)
+      );
+      const auto id = model.rows()[row];
+      const bool ctrl = (event.modifiers & KeyMod::Ctrl) != 0;
+      const bool shift = (event.modifiers & KeyMod::Shift) != 0;
+      if (ctrl && !shift) {
+        (void)model.setFocus(id);
+      } else {
+        (void)model.select(
+            id,
+            shift ? (ctrl ? files::SelectionMode::ADD_RANGE : files::SelectionMode::RANGE)
+                  : files::SelectionMode::REPLACE
+        );
+      }
+      m_list->scrollToIndex(row);
+      return true;
+    }
+
+    void syncBrowser() {
+      const auto& model = m_browser.model();
+      const auto& snapshot = model.snapshot();
+      const auto uri = snapshot.location ? snapshot.location->uri() : std::string{};
+      if (uri != m_displayedLocation) {
+        m_displayedLocation = uri;
+        m_location->setValue(uri);
+        m_locationInvalid = false;
+        m_adapter.onPointerCancel();
+        m_list->scrollView().requestScrollToOffset(0);
+      }
+      m_location->setInvalid(m_locationInvalid);
+      m_back->setEnabled(m_browser.canBack());
+      m_forward->setEnabled(m_browser.canForward());
+      m_up->setEnabled(m_browser.canUp());
+      m_hidden->setSelected(model.filter().showHidden);
+      const char* home = std::getenv("HOME");
+      m_homePlace->setSelected(
+          home != nullptr && g_path_is_absolute(home) && snapshot.location == files::Location::fromPath(home)
+      );
+      m_rootPlace->setSelected(snapshot.location == files::Location::fromPath("/"));
+      const bool loading = snapshot.status == files::DirectoryStatus::LOADING;
+      m_refresh->setGlyph(loading ? "square" : "refresh");
+      m_refresh->setTooltip(loading ? "Stop loading" : "Refresh");
+      std::string status;
+      if (!m_browser.message().empty()) {
+        status = m_browser.message();
+      } else if (snapshot.error) {
+        status = snapshot.error->message;
+      } else if (loading) {
+        status = "Loading folder…";
+      } else if (snapshot.status == files::DirectoryStatus::CANCELLED) {
+        status = "Loading stopped.";
+      } else {
+        status = std::format("{} items", model.rows().size());
+        if (model.rows().size() < snapshot.entries.size()) {
+          status += std::format(" · {} hidden", snapshot.entries.size() - model.rows().size());
+        }
+      }
+      if (!model.selection().selected.empty()) {
+        status += std::format(" · {} selected", model.selection().selected.size());
+      }
+      m_status->setText(status);
+      m_notice->setText(
+          snapshot.error
+                  || loading
+                  || snapshot.status == files::DirectoryStatus::CANCELLED
+                  || !m_browser.message().empty()
+              ? status
+              : snapshot.entries.empty() ? "This folder is empty."
+                                         : "No visible items."
+      );
+      const bool empty = model.rows().empty();
+      m_notice->setVisible(empty);
+      m_notice->setParticipatesInLayout(empty);
+      m_list->setVisible(!empty);
+      m_list->setParticipatesInLayout(!empty);
+      std::optional<std::size_t> focus;
+      if (model.selection().focused) {
+        const auto found = std::ranges::find(model.rows(), *model.selection().focused);
+        if (found != model.rows().end()) {
+          focus = static_cast<std::size_t>(std::distance(model.rows().begin(), found));
+        }
+      }
+      m_list->setSelectedIndex(focus, false);
+      m_list->notifyDataChanged();
+    }
+
     std::uint32_t resizeEdges(float x, float y) const {
       const bool left = x<6, right = x> static_cast<float>(m_surface.width()) - 6;
       const bool top = y<6, bottom = y> static_cast<float>(m_surface.height()) - 6;
@@ -233,12 +413,16 @@ namespace {
       UiPhaseScope update(UiPhase::Update);
       if (m_root == nullptr) {
         layout = true;
+        UiPhaseScope phase(UiPhase::Layout);
+        buildScene();
+      }
+      if (m_browserDirty) {
+        m_browserDirty = false;
+        syncBrowser();
+        layout = true;
       }
       if (layout) {
         UiPhaseScope phase(UiPhase::Layout);
-        if (m_root == nullptr) {
-          buildScene();
-        }
         const bool clientHeader = !m_surface.serverDecorated() && !m_surface.fullscreen();
         m_titlebar->setVisible(clientHeader);
         m_titlebar->setParticipatesInLayout(clientHeader);
@@ -284,17 +468,58 @@ namespace {
       );
       auto toolbar = ui::row(
           {.align = FlexAlign::Center, .gap = Style::spaceSm, .padding = Style::spaceSm},
-          ui::button({.glyph = "arrow-left", .enabled = false, .variant = ButtonVariant::Ghost}),
-          ui::button({.glyph = "arrow-right", .enabled = false, .variant = ButtonVariant::Ghost}),
+          ui::button(
+              {.out = &m_back,
+               .glyph = "arrow-left",
+               .variant = ButtonVariant::Ghost,
+               .tooltip = "Back (Alt+Left)",
+               .onClick = [this] { (void)m_browser.back(); }}
+          ),
+          ui::button(
+              {.out = &m_forward,
+               .glyph = "arrow-right",
+               .variant = ButtonVariant::Ghost,
+               .tooltip = "Forward (Alt+Right)",
+               .onClick = [this] { (void)m_browser.forward(); }}
+          ),
+          ui::button(
+              {.out = &m_up,
+               .glyph = "arrow-up",
+               .variant = ButtonVariant::Ghost,
+               .tooltip = "Parent folder (Alt+Up)",
+               .onClick = [this] { (void)m_browser.up(); }}
+          ),
           ui::input(
               {.out = &m_location,
                .placeholder = "Location",
                .flexGrow = 1.0F,
                .onSubmit =
-                   [this](const std::string&) {
-                     m_status->setText("Folder browsing is not available yet.");
-                     m_surface.requestLayout();
+                   [this](const std::string& text) {
+                     m_locationInvalid = !m_browser.openText(text);
+                     if (!m_locationInvalid) {
+                       m_dispatcher.setFocus(m_list->focusArea());
+                     }
                    }}
+          ),
+          ui::button(
+              {.out = &m_refresh,
+               .glyph = "refresh",
+               .variant = ButtonVariant::Ghost,
+               .onClick =
+                   [this] {
+                     if (m_browser.model().snapshot().status == files::DirectoryStatus::LOADING) {
+                       m_browser.stop();
+                     } else {
+                       m_browser.refresh();
+                     }
+                   }}
+          ),
+          ui::button(
+              {.out = &m_hidden,
+               .glyph = "eye",
+               .variant = ButtonVariant::Ghost,
+               .tooltip = "Show hidden files (Ctrl+H)",
+               .onClick = [this] { m_browser.toggleHidden(); }}
           ),
           ui::button({.glyph = "dots-vertical", .variant = ButtonVariant::Ghost, .onClick = [this] { openMenu(); }})
       );
@@ -305,8 +530,18 @@ namespace {
            .fill = colorSpecFromRole(ColorRole::SurfaceContainerLow),
            .minWidth = 206.0F}
       );
-      const std::array<std::pair<const char*, const char*>, 5> entries{{
-          {"home", "Home"},
+      places->addChild(
+          ui::button(
+              {.out = &m_homePlace,
+               .text = "Home",
+               .glyph = "home",
+               .contentAlign = ButtonContentAlign::Start,
+               .variant = ButtonVariant::Ghost,
+               .minWidth = 174.0F,
+               .onClick = [this] { m_browser.home(); }}
+          )
+      );
+      const std::array<std::pair<const char*, const char*>, 4> entries{{
           {"clock", "Recent"},
           {"star", "Starred"},
           {"network", "Network"},
@@ -314,24 +549,70 @@ namespace {
       }};
       for (const auto& [glyph, label] : entries) {
         places->addChild(
-            ui::row(
-                {.align = FlexAlign::Center, .gap = Style::spaceMd, .padding = Style::spaceSm},
-                ui::glyph({.glyph = glyph}), ui::label({.text = label})
+            ui::button(
+                {.text = label,
+                 .glyph = glyph,
+                 .enabled = false,
+                 .contentAlign = ButtonContentAlign::Start,
+                 .variant = ButtonVariant::Ghost,
+                 .minWidth = 174.0F}
             )
         );
       }
+      places->addChild(ui::separator({}));
+      places->addChild(
+          ui::button(
+              {.out = &m_rootPlace,
+               .text = "File System",
+               .glyph = "device-desktop",
+               .contentAlign = ButtonContentAlign::Start,
+               .variant = ButtonVariant::Ghost,
+               .minWidth = 174.0F,
+               .onClick = [this] { m_browser.open(files::Location::fromPath("/")); }}
+          )
+      );
       auto content = ui::column(
-          {.align = FlexAlign::Center,
-           .justify = FlexJustify::Center,
-           .gap = Style::spaceMd,
-           .padding = Style::spaceLg,
-           .flexGrow = 1.0F},
-          ui::glyph({.glyph = "folder", .glyphSize = 56.0F, .color = colorSpecFromRole(ColorRole::Primary)}),
-          ui::label({.text = "No folder open", .fontSize = Style::fontSizeHeader}),
-          ui::label(
-              {.out = &m_status,
-               .text = "Folder browsing is not available yet.",
-               .color = colorSpecFromRole(ColorRole::OnSurfaceVariant)}
+          {.align = FlexAlign::Stretch, .gap = Style::spaceXs, .padding = Style::spaceSm, .flexGrow = 1.0F},
+          ui::row(
+              {.height = 32.0F},
+              ui::row(
+                  {.align = FlexAlign::Center, .gap = Style::spaceSm, .paddingH = Style::spaceMd, .flexGrow = 1.0F},
+                  ui::label({.text = "Name", .fontSize = Style::fontSizeCaption, .flexGrow = 1.0F}),
+                  ui::label(
+                      {.text = "Type", .fontSize = Style::fontSizeCaption, .minWidth = 100.0F, .maxWidth = 100.0F}
+                  ),
+                  ui::label(
+                      {.text = "Size",
+                       .fontSize = Style::fontSizeCaption,
+                       .minWidth = 110.0F,
+                       .maxWidth = 110.0F,
+                       .textAlign = TextAlign::End}
+                  )
+              ),
+              ui::box({.width = Style::scrollbarWidth + Style::scrollbarGap})
+          ),
+          ui::separator({}), ui::label({.out = &m_notice, .textAlign = TextAlign::Center, .flexGrow = 1.0F}),
+          ui::virtualGridView(
+              {.out = &m_list,
+               .columns = 1,
+               .cellHeight = 36.0F,
+               .squareCells = false,
+               .columnGap = 0.0F,
+               .rowGap = 2.0F,
+               .adapter = &m_adapter,
+               .flexGrow = 1.0F,
+               .configure = [this](VirtualGridView& list) {
+                 list.scrollView().setReserveScrollbarGutter(true);
+                 list.focusArea()->setRetainsFocusOnPointerRelease(true);
+                 list.focusArea()->setOnFocusGain([this] {
+                   m_browserDirty = true;
+                   m_surface.requestUpdate();
+                 });
+                 list.focusArea()->setOnFocusLoss([this] {
+                   m_browserDirty = true;
+                   m_surface.requestUpdate();
+                 });
+               }}
           )
       );
       m_root = ui::column(
@@ -343,12 +624,19 @@ namespace {
           ui::row(
               {.align = FlexAlign::Stretch, .clipChildren = true, .flexGrow = 1.0F}, std::move(places),
               std::move(content)
+          ),
+          ui::row(
+              {.align = FlexAlign::Center,
+               .padding = Style::spaceSm,
+               .fill = colorSpecFromRole(ColorRole::SurfaceContainerLow)},
+              ui::label({.out = &m_status, .maxLines = 1, .flexGrow = 1.0F})
           )
       );
       m_root->setAnimationManager(&m_animations);
       m_surface.setSceneRoot(m_root.get());
       m_dispatcher.setSceneRoot(m_root.get());
       m_dispatcher.setTextInputContext(m_surface.wlSurface(), &m_textInput);
+      m_dispatcher.setFocus(m_list->focusArea());
     }
 
     void dismissMenu() {
@@ -454,11 +742,25 @@ namespace {
     TextInputService& m_textInput;
     AnimationManager m_animations;
     ToplevelSurface m_surface;
+    files::BrowserController m_browser;
+    files::FileListAdapter m_adapter;
     std::unique_ptr<Node> m_root;
     InputDispatcher m_dispatcher;
     Flex* m_titlebar = nullptr;
     Input* m_location = nullptr;
     Label* m_status = nullptr;
+    Label* m_notice = nullptr;
+    VirtualGridView* m_list = nullptr;
+    Button* m_back = nullptr;
+    Button* m_forward = nullptr;
+    Button* m_up = nullptr;
+    Button* m_refresh = nullptr;
+    Button* m_hidden = nullptr;
+    Button* m_homePlace = nullptr;
+    Button* m_rootPlace = nullptr;
+    std::string m_displayedLocation;
+    bool m_browserDirty = true;
+    bool m_locationInvalid = false;
     std::unique_ptr<PopupSurface> m_menuSurface;
     std::unique_ptr<Flex> m_menuRoot;
     ContextMenuControl* m_menu = nullptr;
@@ -468,7 +770,7 @@ namespace {
   };
 } // namespace
 
-int files::runApplication() {
+int files::runApplication(const std::optional<std::string>& initialLocation) {
   initLogLevelFromEnvironment();
   initializeKeys();
   Input::setValidateKeyMatcher([](std::uint32_t sym, std::uint32_t modifiers) {
@@ -495,8 +797,8 @@ int files::runApplication() {
     graphics.initialize(connection.display());
     RenderContext renderer;
     renderer.initialize(graphics);
-    Window window(connection, renderer, textInput);
-    if (!window.initialize()) {
+    Window window(connection, renderer, textInput, config.settings().browser);
+    if (!window.initialize(initialLocation)) {
       throw std::runtime_error("cannot create the application window");
     }
     connection.input().setPointerEventCallback([&window](const PointerEvent& event) { window.pointer(event); });

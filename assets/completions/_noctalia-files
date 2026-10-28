@@ -2,8 +2,13 @@
 _arguments \
   '--help[Show help]' \
   '--version[Show version]' \
-  '1:command:(completions config)' \
+  '1:command or directory:->first' \
   '*::argument:->arguments'
+
+if [[ $state == first ]]; then
+  _alternative 'commands:command:(completions config)' 'directories:directory:_directories'
+  return
+fi
 
 case $words[1] in
   completions) _values 'shell' bash zsh fish ;;

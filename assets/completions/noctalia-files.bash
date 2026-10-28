@@ -8,7 +8,11 @@ _noctalia_files() {
     mapfile -t COMPREPLY < <(compgen -f -- "$cur")
     compopt -o filenames
   elif [[ $COMP_CWORD -eq 1 ]]; then
-    COMPREPLY=( $(compgen -W '--help --version completions config' -- "$cur") )
+    mapfile -t COMPREPLY < <(
+      compgen -W '--help --version completions config' -- "$cur"
+      compgen -d -- "$cur"
+    )
+    compopt -o filenames
   else
     COMPREPLY=()
   fi

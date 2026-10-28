@@ -93,6 +93,7 @@ app_sources = files(
   'src/app/application.cpp',
   'src/app/cli.cpp',
   'src/app/main_loop.cpp',
+  'src/browser/file_list.cpp',
   'src/core/deferred_call.cpp',
   'src/core/files/resource_paths.cpp',
   'src/core/input/key_chord.cpp',
@@ -176,7 +177,7 @@ filesystem_service = declare_dependency(
 )
 
 browser_model = declare_dependency(
-  sources: files('src/browser/directory_model.cpp'),
+  sources: files('src/browser/directory_model.cpp', 'src/browser/browser_controller.cpp'),
   dependencies: filesystem_service,
 )
 
@@ -224,6 +225,13 @@ if build_tests
     dependencies: browser_model,
   )
   test('directory-model', browser_test, timeout: 30,
+    env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],
+  )
+  controller_test = executable('browser-controller-test',
+    'tests/browser_controller_test.cpp',
+    dependencies: browser_model,
+  )
+  test('browser-controller', controller_test, timeout: 30,
     env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],
   )
   settings_test = executable('settings-test',

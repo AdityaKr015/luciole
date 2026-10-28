@@ -14,7 +14,8 @@ namespace {
   constexpr std::string_view kHelp =
       R"(Usage: noctalia-files [--help | --version | completions <shell> | config validate <file>]
 
-Open Noctalia Files. Folder browsing is under development.
+Open Noctalia Files in Home, or pass one directory path/URI to browse.
+Usage: noctalia-files [directory]
 
 Options:
   --help                 Show this help
@@ -64,6 +65,12 @@ int files::runCli(std::span<const std::string_view> args) {
   }
   if (args.empty()) {
     return runApplication();
+  }
+  if (args.size() == 1 && !args.front().starts_with('-') && args.front() != "config" && args.front() != "completions") {
+    return runApplication(std::string(args.front()));
+  }
+  if (args.size() == 2 && args.front() == "--") {
+    return runApplication(std::string(args[1]));
   }
   std::println(stderr, "noctalia-files: invalid arguments; use --help for available commands");
   return EXIT_FAILURE;

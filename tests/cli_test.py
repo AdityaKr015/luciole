@@ -126,6 +126,10 @@ printf '%s\n' "${COMPREPLY[@]}"
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")
         self.assertIn("cannot connect to Wayland", result.stderr)
+        for args in ((str(self.config_dir),), ("--", str(self.config_dir))):
+            result = self.invoke(*args)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("cannot connect to Wayland", result.stderr)
 
 
 if __name__ == "__main__":
