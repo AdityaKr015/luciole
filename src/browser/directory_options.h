@@ -4,6 +4,7 @@
 #include <string>
 
 namespace files {
+  enum class ViewMode : std::uint8_t { LIST, GRID };
   enum class SortField : std::uint8_t { NAME, SIZE, MODIFIED };
   struct SortOptions {
     SortField field = SortField::NAME;

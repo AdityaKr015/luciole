@@ -13,6 +13,7 @@
 namespace files {
   struct BrowserSettings {
     SortOptions sort;
+    ViewMode viewMode = ViewMode::LIST;
     bool showHidden = false;
     bool operator==(const BrowserSettings&) const = default;
   };
@@ -30,10 +31,11 @@ namespace files {
 
   using SettingsResult = std::expected<Settings, ConfigIssues>;
 
-  enum class BrowserPreference : std::uint8_t { SHOW_HIDDEN, SORT_BY, SORT_DESCENDING, DIRECTORIES_FIRST };
+  enum class BrowserPreference : std::uint8_t { SHOW_HIDDEN, SORT_BY, SORT_DESCENDING, DIRECTORIES_FIRST, VIEW_MODE };
   struct OverrideEdit {
     BrowserPreference preference;
-    std::variant<std::monostate, bool, SortField> value; // monostate restores inheritance from the base/defaults.
+    std::variant<std::monostate, bool, SortField, ViewMode>
+        value; // monostate restores inheritance from the base/defaults.
   };
 
   // Bounded, read-only local file loading. Call outside Render and traversal jobs.

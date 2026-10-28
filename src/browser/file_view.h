@@ -6,10 +6,11 @@
 #include <chrono>
 
 namespace files {
-  class FileListAdapter final : public VirtualGridAdapter {
+  class FileViewAdapter final : public VirtualGridAdapter {
   public:
-    FileListAdapter(
-        BrowserController& browser, std::function<std::uint32_t()> modifiers, std::function<bool()> focused
+    FileViewAdapter(
+        BrowserController& browser, ViewMode mode, std::function<std::uint32_t()> modifiers,
+        std::function<bool()> focused
     );
     [[nodiscard]] std::size_t itemCount() const override;
     [[nodiscard]] std::unique_ptr<Node> createTile() override;
@@ -22,6 +23,7 @@ namespace files {
 
   private:
     BrowserController& m_browser;
+    const ViewMode m_mode;
     std::function<std::uint32_t()> m_modifiers;
     std::function<bool()> m_focused;
     std::optional<EntryId> m_pressed;

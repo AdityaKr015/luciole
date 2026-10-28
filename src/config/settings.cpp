@@ -22,6 +22,7 @@ namespace {
   struct Patch {
     std::optional<bool> showHidden;
     std::optional<files::SortField> sortBy;
+    std::optional<files::ViewMode> viewMode;
     std::optional<bool> sortDescending;
     std::optional<bool> directoriesFirst;
     bool operator==(const Patch&) const = default;
@@ -147,6 +148,15 @@ namespace {
             } else {
               issue(issues, file, value, path, "expected 'name', 'size', or 'modified'");
             }
+          } else if (name == "view_mode") {
+            const auto* mode = value.as_string();
+            if (mode != nullptr && mode->get() == "list") {
+              patch.viewMode = files::ViewMode::LIST;
+            } else if (mode != nullptr && mode->get() == "grid") {
+              patch.viewMode = files::ViewMode::GRID;
+            } else {
+              issue(issues, file, value, path, "expected 'list' or 'grid'");
+            }
           } else {
             std::optional<bool>* target = nullptr;
             if (name == "show_hidden") {
@@ -176,6 +186,9 @@ namespace {
   }
 
   void apply(files::Settings& settings, const Patch& patch) {
+    if (patch.viewMode) {
+      settings.browser.viewMode = *patch.viewMode;
+    }
     if (patch.showHidden) {
       settings.browser.showHidden = *patch.showHidden;
     }
@@ -201,12 +214,20 @@ namespace {
       return "browser.sort_descending";
     case Preference::DIRECTORIES_FIRST:
       return "browser.directories_first";
+    case Preference::VIEW_MODE:
+      return "browser.view_mode";
     }
     return {};
   }
 
   void editPatch(Patch& patch, const files::OverrideEdit& edit) {
     using Preference = files::BrowserPreference;
+    if (edit.preference == Preference::VIEW_MODE) {
+      patch.viewMode = std::holds_alternative<std::monostate>(edit.value)
+          ? std::nullopt
+          : std::optional<files::ViewMode>(std::get<files::ViewMode>(edit.value));
+      return;
+    }
     if (edit.preference == Preference::SORT_BY) {
       patch.sortBy = std::holds_alternative<std::monostate>(edit.value)
           ? std::nullopt
@@ -227,12 +248,16 @@ namespace {
       patch.directoriesFirst = value;
       break;
     case Preference::SORT_BY:
+    case Preference::VIEW_MODE:
       break;
     }
   }
 
   std::string formatPatch(const Patch& patch) {
     toml::table browser;
+    if (patch.viewMode) {
+      browser.insert("view_mode", *patch.viewMode == files::ViewMode::LIST ? "list" : "grid");
+    }
     if (patch.showHidden) {
       browser.insert("show_hidden", *patch.showHidden);
     }
@@ -353,6 +378,9 @@ files::AtomicWriteState files::ConfigService::saveOverrides(std::span<const Over
         const auto* sort = std::get_if<SortField>(&edit.value);
         valid =
             sort != nullptr && (*sort == SortField::NAME || *sort == SortField::SIZE || *sort == SortField::MODIFIED);
+      } else if (edit.preference == BrowserPreference::VIEW_MODE) {
+        const auto* mode = std::get_if<ViewMode>(&edit.value);
+        valid = mode != nullptr && (*mode == ViewMode::LIST || *mode == ViewMode::GRID);
       } else {
         valid = valid && std::holds_alternative<bool>(edit.value);
       }

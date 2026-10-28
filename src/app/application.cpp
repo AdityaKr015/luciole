@@ -5,7 +5,7 @@
 #include "app/main_loop.h"
 #include "app/timer_poll_source.h"
 #include "browser/browser_controller.h"
-#include "browser/file_list.h"
+#include "browser/file_view.h"
 #include "config/settings.h"
 #include "core/deferred_call.h"
 #include "core/input/key_symbols.h"
@@ -89,10 +89,15 @@ namespace {
     )
         : m_connection(connection), m_renderer(renderer), m_textInput(textInput), m_surface(connection),
           m_browser(settings.sort, settings.showHidden),
-          m_adapter(
-              m_browser, [this] { return m_connection.input().keyboardModifiers(); },
+          m_listAdapter(
+              m_browser, files::ViewMode::LIST, [this] { return m_connection.input().keyboardModifiers(); },
               [this] { return m_list != nullptr && m_list->focusArea()->focused(); }
-          ) {
+          ),
+          m_gridAdapter(
+              m_browser, files::ViewMode::GRID, [this] { return m_connection.input().keyboardModifiers(); },
+              [this] { return m_list != nullptr && m_list->focusArea()->focused(); }
+          ),
+          m_viewMode(settings.viewMode) {
       m_surface.setRenderContext(&renderer);
       m_surface.setAnimationManager(&m_animations);
       m_surface.setConfigureCallback([this](std::uint32_t, std::uint32_t) { m_surface.requestLayout(); });
@@ -246,6 +251,10 @@ namespace {
           return;
         }
         const bool editing = m_location != nullptr && m_dispatcher.focusedArea() == m_location->inputArea();
+        if (!editing && event.modifiers == KeyMod::Ctrl && (event.sym == XKB_KEY_1 || event.sym == XKB_KEY_2)) {
+          setViewMode(event.sym == XKB_KEY_1 ? files::ViewMode::GRID : files::ViewMode::LIST);
+          return;
+        }
         if (!editing && event.sym == XKB_KEY_h && event.modifiers == KeyMod::Ctrl) {
           m_browser.toggleHidden();
           return;
@@ -258,6 +267,37 @@ namespace {
     }
 
   private:
+    void setViewMode(files::ViewMode mode) {
+      if (mode == m_viewMode) {
+        return;
+      }
+      m_viewAnchor.reset();
+      if (m_list != nullptr) {
+        const auto first = m_list->firstVisibleIndex();
+        const auto& rows = m_browser.model().rows();
+        if (first && *first < rows.size()) {
+          m_viewAnchor = rows[*first];
+        }
+        m_dispatcher.setFocus(m_list->focusArea());
+      }
+      m_viewMode = mode;
+      m_browserDirty = true;
+      m_surface.requestUpdate();
+    }
+
+    void applyViewMode() {
+      m_listAdapter.onPointerCancel();
+      m_gridAdapter.onPointerCancel();
+      const bool grid = m_viewMode == files::ViewMode::GRID;
+      m_list->setAdapter(grid ? &m_gridAdapter : &m_listAdapter);
+      m_list->setColumns(grid ? 0 : 1);
+      m_list->setMinCellWidth(132.0F);
+      m_list->setCellHeight(grid ? 144.0F : 36.0F);
+      m_list->setColumnGap(grid ? Style::spaceSm : 0.0F);
+      m_list->setRowGap(grid ? Style::spaceSm : 2.0F);
+      m_appliedViewMode = m_viewMode;
+    }
+
     bool listKey(const KeyboardEvent& event) {
       auto& model = m_browser.model();
       if (event.sym == XKB_KEY_a && event.modifiers == KeyMod::Ctrl) {
@@ -285,10 +325,15 @@ namespace {
         }
       }
       const bool hasFocus = model.selection().focused.has_value();
+      const auto columns = static_cast<std::int64_t>(std::max<std::size_t>(1, m_list->layoutColumnCount()));
       if (event.sym == XKB_KEY_Down) {
-        index += hasFocus ? 1 : 0;
+        index += hasFocus ? columns : 0;
       } else if (event.sym == XKB_KEY_Up) {
-        index += hasFocus ? -1 : 0;
+        index += hasFocus ? -columns : 0;
+      } else if (m_viewMode == files::ViewMode::GRID && event.sym == XKB_KEY_Right) {
+        index += hasFocus ? (Style::rtl() ? -1 : 1) : 0;
+      } else if (m_viewMode == files::ViewMode::GRID && event.sym == XKB_KEY_Left) {
+        index += hasFocus ? (Style::rtl() ? 1 : -1) : 0;
       } else if (event.sym == XKB_KEY_Home) {
         index = 0;
       } else if (event.sym == XKB_KEY_End) {
@@ -327,10 +372,16 @@ namespace {
         m_displayedLocation = uri;
         m_location->setValue(uri);
         m_locationInvalid = false;
-        m_adapter.onPointerCancel();
+        m_listAdapter.onPointerCancel();
+        m_gridAdapter.onPointerCancel();
+        m_viewAnchor.reset();
         m_list->scrollView().requestScrollToOffset(0);
       }
       m_location->setInvalid(m_locationInvalid);
+      const bool grid = m_viewMode == files::ViewMode::GRID;
+      m_viewSwitch->setSelectedIndex(grid ? 0 : 1);
+      m_listHeader->setVisible(!grid);
+      m_listHeader->setParticipatesInLayout(!grid);
       m_back->setEnabled(m_browser.canBack());
       m_forward->setEnabled(m_browser.canForward());
       m_up->setEnabled(m_browser.canUp());
@@ -423,6 +474,17 @@ namespace {
       }
       if (layout) {
         UiPhaseScope phase(UiPhase::Layout);
+        if (m_appliedViewMode != m_viewMode) {
+          applyViewMode();
+        }
+        if (m_viewAnchor) {
+          const auto& rows = m_browser.model().rows();
+          const auto found = std::ranges::find(rows, *m_viewAnchor);
+          if (found != rows.end()) {
+            m_list->scrollToIndex(static_cast<std::size_t>(std::distance(rows.begin(), found)), true);
+          }
+          m_viewAnchor.reset();
+        }
         const bool clientHeader = !m_surface.serverDecorated() && !m_surface.fullscreen();
         m_titlebar->setVisible(clientHeader);
         m_titlebar->setParticipatesInLayout(clientHeader);
@@ -514,6 +576,19 @@ namespace {
                      }
                    }}
           ),
+          ui::segmented(
+              {.out = &m_viewSwitch,
+               .options =
+                   std::vector<ui::SegmentedOption>{
+                       {.label = "", .glyph = "layout-grid", .tooltip = "Grid view (Ctrl+1)"},
+                       {.label = "", .glyph = "list", .tooltip = "List view (Ctrl+2)"}
+                   },
+               .selectedIndex = m_viewMode == files::ViewMode::GRID ? 0U : 1U,
+               .compact = true,
+               .onChange = [this](
+                               std::size_t index
+                           ) { setViewMode(index == 0 ? files::ViewMode::GRID : files::ViewMode::LIST); }}
+          ),
           ui::button(
               {.out = &m_hidden,
                .glyph = "eye",
@@ -573,25 +648,29 @@ namespace {
       );
       auto content = ui::column(
           {.align = FlexAlign::Stretch, .gap = Style::spaceXs, .padding = Style::spaceSm, .flexGrow = 1.0F},
-          ui::row(
-              {.height = 32.0F},
+          ui::column(
+              {.out = &m_listHeader},
               ui::row(
-                  {.align = FlexAlign::Center, .gap = Style::spaceSm, .paddingH = Style::spaceMd, .flexGrow = 1.0F},
-                  ui::label({.text = "Name", .fontSize = Style::fontSizeCaption, .flexGrow = 1.0F}),
-                  ui::label(
-                      {.text = "Type", .fontSize = Style::fontSizeCaption, .minWidth = 100.0F, .maxWidth = 100.0F}
+                  {.height = 32.0F},
+                  ui::row(
+                      {.align = FlexAlign::Center, .gap = Style::spaceSm, .paddingH = Style::spaceMd, .flexGrow = 1.0F},
+                      ui::label({.text = "Name", .fontSize = Style::fontSizeCaption, .flexGrow = 1.0F}),
+                      ui::label(
+                          {.text = "Type", .fontSize = Style::fontSizeCaption, .minWidth = 100.0F, .maxWidth = 100.0F}
+                      ),
+                      ui::label(
+                          {.text = "Size",
+                           .fontSize = Style::fontSizeCaption,
+                           .minWidth = 110.0F,
+                           .maxWidth = 110.0F,
+                           .textAlign = TextAlign::End}
+                      )
                   ),
-                  ui::label(
-                      {.text = "Size",
-                       .fontSize = Style::fontSizeCaption,
-                       .minWidth = 110.0F,
-                       .maxWidth = 110.0F,
-                       .textAlign = TextAlign::End}
-                  )
+                  ui::box({.width = Style::scrollbarWidth + Style::scrollbarGap})
               ),
-              ui::box({.width = Style::scrollbarWidth + Style::scrollbarGap})
+              ui::separator({})
           ),
-          ui::separator({}), ui::label({.out = &m_notice, .textAlign = TextAlign::Center, .flexGrow = 1.0F}),
+          ui::label({.out = &m_notice, .textAlign = TextAlign::Center, .flexGrow = 1.0F}),
           ui::virtualGridView(
               {.out = &m_list,
                .columns = 1,
@@ -599,7 +678,7 @@ namespace {
                .squareCells = false,
                .columnGap = 0.0F,
                .rowGap = 2.0F,
-               .adapter = &m_adapter,
+               .adapter = &m_listAdapter,
                .flexGrow = 1.0F,
                .configure = [this](VirtualGridView& list) {
                  list.scrollView().setReserveScrollbarGutter(true);
@@ -743,7 +822,11 @@ namespace {
     AnimationManager m_animations;
     ToplevelSurface m_surface;
     files::BrowserController m_browser;
-    files::FileListAdapter m_adapter;
+    files::FileViewAdapter m_listAdapter;
+    files::FileViewAdapter m_gridAdapter;
+    files::ViewMode m_viewMode;
+    std::optional<files::ViewMode> m_appliedViewMode;
+    std::optional<files::EntryId> m_viewAnchor;
     std::unique_ptr<Node> m_root;
     InputDispatcher m_dispatcher;
     Flex* m_titlebar = nullptr;
@@ -751,6 +834,8 @@ namespace {
     Label* m_status = nullptr;
     Label* m_notice = nullptr;
     VirtualGridView* m_list = nullptr;
+    Flex* m_listHeader = nullptr;
+    Segmented* m_viewSwitch = nullptr;
     Button* m_back = nullptr;
     Button* m_forward = nullptr;
     Button* m_up = nullptr;

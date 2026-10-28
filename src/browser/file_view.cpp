@@ -1,4 +1,4 @@
-#include "browser/file_list.h"
+#include "browser/file_view.h"
 
 #include "core/input/key_modifiers.h"
 #include "ui/builders.h"
@@ -104,17 +104,91 @@ namespace {
     Label* m_kind = nullptr;
     Label* m_size = nullptr;
   };
+
+  // Adapted from Noctalia's FileEntryTile without its picker or thumbnail service.
+  class FileTile final : public InputArea {
+  public:
+    FileTile() {
+      setHitTestVisible(false);
+      addChild(ui::box({.out = &m_background, .radius = Style::radiusLg}));
+      addChild(
+          ui::box(
+              {.out = &m_preview, .fill = colorSpecFromRole(ColorRole::SurfaceContainerLow), .radius = Style::radiusMd}
+          )
+      );
+      addChild(ui::glyph({.out = &m_icon, .glyphSize = 36.0F}));
+      addChild(
+          ui::label(
+              {.out = &m_name,
+               .fontSize = Style::fontSizeCaption,
+               .maxLines = 2,
+               .textAlign = TextAlign::Center,
+               .baselineMode = LabelBaselineMode::TextFixedHeight,
+               .configure = [](Label& label) { label.setUseMarkup(false); }}
+          )
+      );
+    }
+
+    void bind(const files::DirectoryEntry& entry, bool selected, bool focused, bool hovered) {
+      m_icon->setGlyph(entry.symlink ? "link" : entry.type == G_FILE_TYPE_DIRECTORY ? "folder" : "file");
+      m_name->setText(entry.displayName);
+      m_name->setMaxWidth(std::max(0.0F, width() - Style::spaceSm * 2));
+      m_icon->setColor(colorSpecFromRole(ColorRole::OnSurface));
+      m_name->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurface));
+      m_background->setFill(colorSpecFromRole(
+          selected      ? ColorRole::PrimaryContainer
+              : hovered ? ColorRole::SurfaceContainerHigh
+                        : ColorRole::Surface
+      ));
+      if (focused) {
+        m_background->setBorder(colorSpecFromRole(ColorRole::Primary), Style::focusRingWidth);
+      } else {
+        m_background->clearBorder();
+      }
+    }
+
+  protected:
+    void doLayout(Renderer& renderer) override {
+      const float previewInset = Style::spaceMd;
+      const float previewWidth = std::max(0.0F, width() - previewInset * 2);
+      const float previewHeight = std::max(0.0F, height() - 60.0F);
+      m_background->arrange(renderer, {0, 0, width(), height()});
+      m_preview->arrange(renderer, {previewInset, previewInset, previewWidth, previewHeight});
+      m_icon->measure(renderer);
+      m_icon->arrange(
+          renderer,
+          {previewInset + (previewWidth - m_icon->width()) * 0.5F,
+           previewInset + (previewHeight - m_icon->height()) * 0.5F, m_icon->width(), m_icon->height()}
+      );
+      m_name->arrange(
+          renderer,
+          {Style::spaceSm, previewInset + previewHeight + Style::spaceXs, std::max(0.0F, width() - Style::spaceSm * 2),
+           40.0F}
+      );
+    }
+
+  private:
+    Box* m_background = nullptr;
+    Box* m_preview = nullptr;
+    Glyph* m_icon = nullptr;
+    Label* m_name = nullptr;
+  };
 } // namespace
 
-files::FileListAdapter::FileListAdapter(
-    BrowserController& browser, std::function<std::uint32_t()> modifiers, std::function<bool()> focused
+files::FileViewAdapter::FileViewAdapter(
+    BrowserController& browser, ViewMode mode, std::function<std::uint32_t()> modifiers, std::function<bool()> focused
 )
-    : m_browser(browser), m_modifiers(std::move(modifiers)), m_focused(std::move(focused)) {}
+    : m_browser(browser), m_mode(mode), m_modifiers(std::move(modifiers)), m_focused(std::move(focused)) {}
 
-std::size_t files::FileListAdapter::itemCount() const { return m_browser.model().rows().size(); }
-std::unique_ptr<Node> files::FileListAdapter::createTile() { return std::make_unique<FileRow>(); }
+std::size_t files::FileViewAdapter::itemCount() const { return m_browser.model().rows().size(); }
+std::unique_ptr<Node> files::FileViewAdapter::createTile() {
+  if (m_mode == ViewMode::GRID) {
+    return std::make_unique<FileTile>();
+  }
+  return std::make_unique<FileRow>();
+}
 
-void files::FileListAdapter::bindTile(Node& tile, std::size_t index, bool, bool hovered) {
+void files::FileViewAdapter::bindTile(Node& tile, std::size_t index, bool, bool hovered) {
   const auto& model = m_browser.model();
   if (index >= model.rows().size()) {
     return;
@@ -122,13 +196,17 @@ void files::FileListAdapter::bindTile(Node& tile, std::size_t index, bool, bool 
   const auto id = model.rows()[index];
   const auto* entry = model.entry(id);
   if (entry != nullptr) {
-    static_cast<FileRow&>(tile).bind(
-        *entry, model.selection().selected.contains(id), m_focused() && model.selection().focused == id, hovered
-    );
+    const bool selected = model.selection().selected.contains(id);
+    const bool focused = m_focused() && model.selection().focused == id;
+    if (m_mode == ViewMode::GRID) {
+      static_cast<FileTile&>(tile).bind(*entry, selected, focused, hovered);
+    } else {
+      static_cast<FileRow&>(tile).bind(*entry, selected, focused, hovered);
+    }
   }
 }
 
-bool files::FileListAdapter::onPointerPress(std::size_t index, float, float, float, float) {
+bool files::FileViewAdapter::onPointerPress(std::size_t index, float, float, float, float) {
   if (index >= itemCount()) {
     return true;
   }
@@ -143,12 +221,12 @@ bool files::FileListAdapter::onPointerPress(std::size_t index, float, float, flo
   return true;
 }
 
-bool files::FileListAdapter::onPointerDrag(std::optional<std::size_t>, float, float, float, float) {
+bool files::FileViewAdapter::onPointerDrag(std::optional<std::size_t>, float, float, float, float) {
   m_dragged = true;
   return false;
 }
 
-VirtualGridAdapter::PointerReleaseResult files::FileListAdapter::onPointerRelease(std::optional<std::size_t> index) {
+VirtualGridAdapter::PointerReleaseResult files::FileViewAdapter::onPointerRelease(std::optional<std::size_t> index) {
   const auto pressed = std::exchange(m_pressed, std::nullopt);
   if (!pressed
       || !index
@@ -166,12 +244,12 @@ VirtualGridAdapter::PointerReleaseResult files::FileListAdapter::onPointerReleas
   return {.rebind = true, .activateIndex = twice ? index : std::nullopt};
 }
 
-void files::FileListAdapter::onPointerCancel() {
+void files::FileViewAdapter::onPointerCancel() {
   m_pressed.reset();
   m_lastClick.reset();
 }
 
-void files::FileListAdapter::onActivate(std::size_t index) {
+void files::FileViewAdapter::onActivate(std::size_t index) {
   if (index < itemCount()) {
     m_browser.activate(m_browser.model().rows()[index]);
   }

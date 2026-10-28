@@ -112,6 +112,10 @@ void VirtualGridView::setAdapter(VirtualGridAdapter* adapter) {
   m_poolTooltipAreas.clear();
   m_pool.clear();
   m_slotBoundIndex.clear();
+  m_slotBoundSelected.clear();
+  m_slotBoundHovered.clear();
+  m_slotBoundOverlayHovered.clear();
+  m_pendingScrollToIndex = false;
   m_selectedIndex.reset();
   m_hoveredIndex.reset();
   m_hoveredOverlayIndex.reset();
@@ -198,15 +202,27 @@ void VirtualGridView::setItemCursorShape(std::uint32_t shape) {
   }
 }
 
-void VirtualGridView::scrollToIndex(std::size_t index) {
+void VirtualGridView::scrollToIndex(std::size_t index, bool alignToTop) {
   m_pendingScrollToIndex = true;
+  m_pendingScrollAlignTop = alignToTop;
   m_pendingScrollIndex = index;
   markLayoutDirty();
+}
+
+std::optional<std::size_t> VirtualGridView::firstVisibleIndex() const noexcept {
+  const float stride = m_cellHeightResolved + m_rowGap;
+  if (m_itemCount == 0 || m_layoutColumns == 0 || stride <= 0) {
+    return std::nullopt;
+  }
+  const auto row = static_cast<std::size_t>(std::floor(m_scroll->scrollOffset() / stride));
+  return std::min(row * m_layoutColumns, m_itemCount - 1);
 }
 
 void VirtualGridView::setSelectedIndex(std::optional<std::size_t> index, bool scrollToSelection) {
   if (!scrollToSelection) {
     m_pendingScrollToIndex = false;
+  } else {
+    m_pendingScrollAlignTop = false;
   }
   if (m_selectedIndex == index) {
     if (scrollToSelection && m_selectedIndex.has_value()) {
@@ -327,7 +343,7 @@ void VirtualGridView::doLayout(Renderer& renderer) {
       const float rowBottom = rowTop + cellH;
       const float visibleTop = m_scroll->scrollOffset();
       const float visibleBottom = visibleTop + viewportH;
-      if (rowTop < visibleTop) {
+      if (m_pendingScrollAlignTop || rowTop < visibleTop) {
         m_scroll->requestScrollToOffset(rowTop);
       } else if (rowBottom > visibleBottom) {
         m_scroll->requestScrollToOffset(rowBottom - viewportH);

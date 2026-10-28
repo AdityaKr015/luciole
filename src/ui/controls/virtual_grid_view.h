@@ -129,7 +129,8 @@ public:
   // travel threshold that separates a click from a drag on an adapter-consumed press.
   void setScale(float scale);
 
-  void scrollToIndex(std::size_t index);
+  void scrollToIndex(std::size_t index, bool alignToTop = false);
+  [[nodiscard]] std::optional<std::size_t> firstVisibleIndex() const noexcept;
   // Pointer selection can keep the viewport stable until release.
   void setSelectedIndex(std::optional<std::size_t> index, bool scrollToSelection = true);
   [[nodiscard]] std::optional<std::size_t> selectedIndex() const noexcept { return m_selectedIndex; }
@@ -207,6 +208,7 @@ private:
   std::size_t m_visibleStartIndex = 0;
   std::size_t m_itemCount = 0;
   bool m_pendingScrollToIndex = false;
+  bool m_pendingScrollAlignTop = false;
   std::size_t m_pendingScrollIndex = 0;
   bool m_adapterPointerCapture = false;
   // Press point of the captured press, and whether the pointer has travelled

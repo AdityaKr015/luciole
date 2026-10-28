@@ -51,7 +51,7 @@ namespace {
     fixture.write(
         "config.toml",
         "schema_version = 1\n[browser]\nshow_hidden = true\nsort_by = 'modified'\n"
-        "sort_descending = true\ndirectories_first = false\n"
+        "sort_descending = true\ndirectories_first = false\nview_mode = 'grid'\n"
     );
     require(files::validateConfigFile(fixture.paths().base).empty(), "valid settings rejected");
     fixture.write("settings.toml", "invalid adjacent override");
@@ -69,8 +69,9 @@ namespace {
     require(foundLine, "type diagnostic lost key or source line");
     for (const auto& invalid :
          {"schema_version = 2", "schema_version = true", "schema_version = 1.0", "browser = false",
-          "[browser]\nshow_hidden = 'true'", "[browser]\nsort_by = 1",
-          "[browser]\nshow_hidden = true\nshow_hidden = false", "broken = [", "theme = {}"}) {
+          "[browser]\nshow_hidden = 'true'", "[browser]\nsort_by = 1", "[browser]\nview_mode = true",
+          "[browser]\nview_mode = 'icons'", "[browser]\nshow_hidden = true\nshow_hidden = false", "broken = [",
+          "theme = {}"}) {
       fixture.write("config.toml", invalid);
       require(!files::validateConfigFile(fixture.paths().base).empty(), "invalid TOML or schema accepted");
     }
@@ -82,19 +83,25 @@ namespace {
     Fixture fixture;
     files::ConfigService config(fixture.paths());
     require(config.reload() && config.settings() == files::Settings{}, "missing optional layers lost defaults");
-    fixture.write("config.toml", "[browser]\nshow_hidden = true\nsort_by = 'size'\nsort_descending = true\n");
-    fixture.write("settings.toml", "[browser]\nshow_hidden = false\ndirectories_first = false\n");
+    fixture.write(
+        "config.toml", "[browser]\nshow_hidden = true\nsort_by = 'size'\nsort_descending = true\nview_mode = 'grid'\n"
+    );
+    require(
+        config.reload() && config.settings().browser.viewMode == files::ViewMode::GRID, "base grid preference was lost"
+    );
+    fixture.write("settings.toml", "[browser]\nshow_hidden = false\ndirectories_first = false\nview_mode = 'list'\n");
     require(config.reload(), "valid layered settings rejected");
     const auto& browser = config.settings().browser;
     require(
         !browser.showHidden
             && browser.sort.field == files::SortField::SIZE
             && browser.sort.descending
-            && !browser.sort.directoriesFirst,
+            && !browser.sort.directoriesFirst
+            && browser.viewMode == files::ViewMode::LIST,
         "defaults/base/override precedence is wrong"
     );
     const auto lastGood = config.settings();
-    fixture.write("settings.toml", "[browser]\nsort_by = 'unknown'\n");
+    fixture.write("settings.toml", "[browser]\nview_mode = 'unknown'\n");
     require(
         !config.reload() && config.settings() == lastGood && !config.issues().empty(), "failed reload changed settings"
     );
@@ -294,6 +301,31 @@ namespace {
         second.saveOverrides(sort) == State::DURABLE
             && second.settings().browser.sort.field == files::SortField::MODIFIED,
         "typed sort override failed"
+    );
+    const std::array grid{files::OverrideEdit{Preference::VIEW_MODE, files::ViewMode::GRID}};
+    require(second.saveOverrides(grid) == State::DURABLE, "grid preference did not persist");
+    files::ConfigService reloaded(fixture.paths());
+    require(
+        reloaded.reload()
+            && reloaded.settings().browser.viewMode == files::ViewMode::GRID
+            && reloaded.settings().browser.sort.field == files::SortField::MODIFIED,
+        "view preference roundtrip lost a typed value or unrelated key"
+    );
+    const auto gridBytes = read(fixture.paths().overrides);
+    const std::array invalidView{files::OverrideEdit{Preference::VIEW_MODE, true}};
+    const std::array invalidMode{files::OverrideEdit{Preference::VIEW_MODE, static_cast<files::ViewMode>(99)}};
+    require(
+        second.saveOverrides(invalidView) == State::NOT_COMMITTED
+            && second.saveOverrides(invalidMode) == State::NOT_COMMITTED
+            && read(fixture.paths().overrides) == gridBytes,
+        "invalid view preference changed the sidecar"
+    );
+    const std::array resetView{files::OverrideEdit{Preference::VIEW_MODE, std::monostate{}}};
+    require(
+        second.saveOverrides(resetView) == State::DURABLE
+            && second.settings().browser.viewMode == files::ViewMode::LIST
+            && !read(fixture.paths().overrides).contains("view_mode"),
+        "view reset did not restore inheritance"
     );
     files::ConfigService aliased({.base = fixture.paths().base, .overrides = fixture.paths().base});
     require(

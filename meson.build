@@ -93,7 +93,7 @@ app_sources = files(
   'src/app/application.cpp',
   'src/app/cli.cpp',
   'src/app/main_loop.cpp',
-  'src/browser/file_list.cpp',
+  'src/browser/file_view.cpp',
   'src/core/deferred_call.cpp',
   'src/core/files/resource_paths.cpp',
   'src/core/input/key_chord.cpp',
