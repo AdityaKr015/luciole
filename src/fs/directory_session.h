@@ -1,5 +1,6 @@
 #pragma once
 
+#include "fs/file_metadata.h"
 #include "fs/location.h"
 
 #include <cstdint>
@@ -29,6 +30,7 @@ namespace files {
     std::optional<std::uint64_t> size;
     std::optional<std::uint64_t> modifiedSeconds;
     std::optional<std::string> etag;
+    FileAccess access{};
   };
 
   struct DirectorySnapshot {
@@ -38,6 +40,10 @@ namespace files {
     std::vector<DirectoryEntry> entries;
     std::optional<FileError> error;
     std::optional<FileError> monitorError;
+    DirectoryMetadata metadata{};
+    bool metadataLoading = false;
+    std::optional<FileError> accessError = std::nullopt;
+    std::optional<FileError> filesystemError = std::nullopt;
   };
 
   // Main/default-context service. Observers run there and must not throw.

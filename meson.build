@@ -167,6 +167,7 @@ app_sources = files(
 filesystem_service = declare_dependency(
   sources: files(
     'src/fs/location.cpp',
+    'src/fs/file_metadata.cpp',
     'src/fs/directory_session.cpp',
     'src/app/glib_poll_source.cpp',
   ),

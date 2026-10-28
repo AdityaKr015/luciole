@@ -4,10 +4,19 @@
 #include <utility>
 
 namespace {
+  constexpr const char* kAccessAttributes =
+      G_FILE_ATTRIBUTE_ACCESS_CAN_READ "," G_FILE_ATTRIBUTE_ACCESS_CAN_WRITE "," G_FILE_ATTRIBUTE_ACCESS_CAN_EXECUTE
+                                       "," G_FILE_ATTRIBUTE_ACCESS_CAN_RENAME "," G_FILE_ATTRIBUTE_ACCESS_CAN_TRASH
+                                       "," G_FILE_ATTRIBUTE_ACCESS_CAN_DELETE;
+  constexpr const char* kFilesystemAttributes =
+      G_FILE_ATTRIBUTE_FILESYSTEM_READONLY "," G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE "," G_FILE_ATTRIBUTE_FILESYSTEM_TYPE;
   constexpr const char* kAttributes = G_FILE_ATTRIBUTE_STANDARD_NAME
       "," G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME "," G_FILE_ATTRIBUTE_STANDARD_TYPE
       "," G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN "," G_FILE_ATTRIBUTE_STANDARD_IS_SYMLINK
-      "," G_FILE_ATTRIBUTE_STANDARD_SIZE "," G_FILE_ATTRIBUTE_TIME_MODIFIED "," G_FILE_ATTRIBUTE_ETAG_VALUE;
+      "," G_FILE_ATTRIBUTE_STANDARD_SIZE "," G_FILE_ATTRIBUTE_TIME_MODIFIED "," G_FILE_ATTRIBUTE_ETAG_VALUE
+      "," G_FILE_ATTRIBUTE_ACCESS_CAN_READ "," G_FILE_ATTRIBUTE_ACCESS_CAN_WRITE "," G_FILE_ATTRIBUTE_ACCESS_CAN_EXECUTE
+      "," G_FILE_ATTRIBUTE_ACCESS_CAN_RENAME "," G_FILE_ATTRIBUTE_ACCESS_CAN_TRASH
+      "," G_FILE_ATTRIBUTE_ACCESS_CAN_DELETE;
   constexpr int kBatchSize = 64;
   constexpr unsigned int kMonitorDelayMs = 80;
 
@@ -60,6 +69,12 @@ struct files::DirectorySession::State : std::enable_shared_from_this<State> {
     GioPtr<GCancellable> cancellable{g_cancellable_new()};
     GioPtr<GFileEnumerator> enumerator;
     std::vector<DirectoryEntry> entries;
+    DirectoryMetadata metadata;
+    std::optional<FileError> accessError;
+    std::optional<FileError> filesystemError;
+    bool enumerating = true;
+    bool accessPending = true;
+    bool filesystemPending = true;
     ~Scan() { closeEnumerator(enumerator.get()); }
   };
 
@@ -106,6 +121,72 @@ struct files::DirectorySession::State : std::enable_shared_from_this<State> {
     }
   }
 
+  void invalidateMetadata(bool loading) {
+    snapshot.metadata = {};
+    snapshot.metadataLoading = loading;
+    snapshot.accessError.reset();
+    snapshot.filesystemError.reset();
+    for (auto& entry : snapshot.entries) {
+      entry.access = {};
+    }
+  }
+
+  void publishMetadata() {
+    snapshot.metadata = scan->metadata;
+    snapshot.metadataLoading = scan->accessPending || scan->filesystemPending;
+    snapshot.accessError = scan->accessError;
+    snapshot.filesystemError = scan->filesystemError;
+  }
+
+  void metadataCompleted() {
+    if (!dirty && !scan->enumerating && snapshot.status == DirectoryStatus::READY) {
+      publishMetadata();
+      notify();
+    }
+  }
+
+  void queryMetadata() {
+    const auto file = snapshot.location->file();
+    g_file_query_info_async(
+        file.get(), kAccessAttributes, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, G_PRIORITY_DEFAULT, scan->cancellable.get(),
+        [](GObject* source, GAsyncResult* result, gpointer data) {
+          const std::unique_ptr<Request> request(static_cast<Request*>(data));
+          GError* error = nullptr;
+          const GioPtr<GFileInfo> info(g_file_query_info_finish(G_FILE(source), result, &error));
+          if (const auto state = request->state.lock(); state && state->scan == request->scan) {
+            request->scan->accessPending = false;
+            if (info) {
+              request->scan->metadata.access = readFileAccess(info.get());
+            } else if (error != nullptr) {
+              request->scan->accessError = fileError(*error);
+            }
+            state->metadataCompleted();
+          }
+          g_clear_error(&error);
+        },
+        new Request{.state = weak_from_this(), .scan = scan}
+    );
+    g_file_query_filesystem_info_async(
+        file.get(), kFilesystemAttributes, G_PRIORITY_DEFAULT, scan->cancellable.get(),
+        [](GObject* source, GAsyncResult* result, gpointer data) {
+          const std::unique_ptr<Request> request(static_cast<Request*>(data));
+          GError* error = nullptr;
+          const GioPtr<GFileInfo> info(g_file_query_filesystem_info_finish(G_FILE(source), result, &error));
+          if (const auto state = request->state.lock(); state && state->scan == request->scan) {
+            request->scan->filesystemPending = false;
+            if (info) {
+              request->scan->metadata.filesystem = readFilesystemInfo(info.get());
+            } else if (error != nullptr) {
+              request->scan->filesystemError = fileError(*error);
+            }
+            state->metadataCompleted();
+          }
+          g_clear_error(&error);
+        },
+        new Request{.state = weak_from_this(), .scan = scan}
+    );
+  }
+
   void schedule() {
     if (timer != 0) {
       return;
@@ -143,9 +224,14 @@ struct files::DirectorySession::State : std::enable_shared_from_this<State> {
     ) {
       identities.erase(uri.get());
     }
+    const bool wasDirty = dirty;
     dirty = true;
-    if (!scan) {
+    if (!scan || !scan->enumerating) {
       schedule();
+      if (!wasDirty) {
+        invalidateMetadata(true);
+        notify();
+      }
     }
   }
 
@@ -179,7 +265,9 @@ struct files::DirectorySession::State : std::enable_shared_from_this<State> {
     ++snapshot.generation;
     snapshot.status = DirectoryStatus::LOADING;
     snapshot.error.reset();
+    invalidateMetadata(true);
     scan = std::make_shared<Scan>();
+    queryMetadata();
     g_file_enumerate_children_async(
         snapshot.location->file().get(), kAttributes, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, G_PRIORITY_DEFAULT,
         scan->cancellable.get(),
@@ -221,6 +309,7 @@ struct files::DirectorySession::State : std::enable_shared_from_this<State> {
         .size = std::nullopt,
         .modifiedSeconds = std::nullopt,
         .etag = std::nullopt,
+        .access = readFileAccess(info),
     };
     if (g_file_info_has_attribute(info, G_FILE_ATTRIBUTE_STANDARD_SIZE)) {
       const auto size = g_file_info_get_size(info);
@@ -265,12 +354,14 @@ struct files::DirectorySession::State : std::enable_shared_from_this<State> {
 
   void complete(std::optional<FileError> error) {
     if (dirty) {
-      scan.reset();
+      stopScan();
       schedule();
       return;
     }
     snapshot.entries = std::move(scan->entries);
-    scan.reset();
+    scan->enumerating = false;
+    closeEnumerator(scan->enumerator.get());
+    scan->enumerator.reset();
     std::unordered_map<std::string, std::uint64_t> retained;
     retained.reserve(snapshot.entries.size());
     for (const auto& entry : snapshot.entries) {
@@ -279,6 +370,12 @@ struct files::DirectorySession::State : std::enable_shared_from_this<State> {
     identities = std::move(retained);
     snapshot.error = std::move(error);
     snapshot.status = snapshot.error ? DirectoryStatus::ERROR : DirectoryStatus::READY;
+    if (snapshot.error) {
+      g_cancellable_cancel(scan->cancellable.get());
+      invalidateMetadata(false);
+    } else {
+      publishMetadata();
+    }
     notify();
   }
 };
@@ -321,6 +418,7 @@ void files::DirectorySession::cancel() {
   ++state->snapshot.generation;
   state->snapshot.status = DirectoryStatus::CANCELLED;
   state->snapshot.error.reset();
+  state->invalidateMetadata(false);
   state->notify();
 }
 

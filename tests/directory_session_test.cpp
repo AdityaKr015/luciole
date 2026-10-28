@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <unistd.h>
 
 namespace {
   using namespace std::chrono_literals;
@@ -264,6 +265,126 @@ namespace {
     pump.until([&session] { return session.snapshot().status == DirectoryStatus::ERROR; });
     require(session.snapshot().error->kind == files::FileErrorKind::NOT_DIRECTORY, "file location error lost");
   }
+
+  bool unknown(const files::FileAccess& access) {
+    const auto values = {access.read, access.write, access.execute, access.rename, access.trash, access.remove};
+    return std::ranges::all_of(values, [](const auto value) { return !value.has_value(); });
+  }
+
+  void testMetadataAbsenceAndTypes() {
+    const files::GioPtr<GFileInfo> info(g_file_info_new());
+    require(
+        unknown(files::readFileAccess(info.get())) && !files::readFilesystemInfo(info.get()).readOnly.has_value(),
+        "missing provider attributes became false"
+    );
+    g_file_info_set_attribute_boolean(info.get(), G_FILE_ATTRIBUTE_ACCESS_CAN_READ, true);
+    g_file_info_set_attribute_boolean(info.get(), G_FILE_ATTRIBUTE_ACCESS_CAN_DELETE, false);
+    g_file_info_set_attribute_string(info.get(), G_FILE_ATTRIBUTE_ACCESS_CAN_WRITE, "false");
+    g_file_info_set_attribute_boolean(info.get(), G_FILE_ATTRIBUTE_FILESYSTEM_READONLY, false);
+    g_file_info_set_attribute_uint32(info.get(), G_FILE_ATTRIBUTE_FILESYSTEM_TYPE, 1);
+    const auto access = files::readFileAccess(info.get());
+    const auto filesystem = files::readFilesystemInfo(info.get());
+    require(
+        access.read == true && access.remove == false && !access.write.has_value(),
+        "negative or mistyped provider attributes were misclassified"
+    );
+    require(
+        filesystem.readOnly == false && !filesystem.remote.has_value() && !filesystem.type.has_value(),
+        "filesystem false/unknown/type distinction was lost"
+    );
+  }
+
+  void testCapabilityLifecycle(Pump& pump) {
+    Fixture fixture;
+    fixture.write("plain");
+    const auto file = fixture.path / "plain";
+    fs::permissions(file, fs::perms::owner_read | fs::perms::owner_write);
+    DirectorySession session;
+    session.open(fixture.location());
+    require(
+        session.snapshot().metadataLoading && unknown(session.snapshot().metadata.access),
+        "initial metadata was not unknown/loading"
+    );
+    ready(pump, session);
+    pump.until([&session] { return !session.snapshot().metadataLoading; });
+    require(!session.snapshot().accessError && !session.snapshot().filesystemError, "local metadata query failed");
+    require(
+        session.snapshot().metadata.access.read == true
+            && session.snapshot().metadata.access.write == true
+            && session.snapshot().metadata.access.execute == true,
+        "directory access metadata missing"
+    );
+    require(session.snapshot().metadata.filesystem.readOnly == false, "writable fixture filesystem not reported");
+    require(
+        entry(session, "plain").access.read == true
+            && entry(session, "plain").access.write == true
+            && entry(session, "plain").access.execute == false,
+        "entry access metadata missing"
+    );
+    const auto id = entry(session, "plain").id;
+    const auto generation = session.snapshot().generation;
+    bool invalidated = false;
+    session.setChangedCallback([&] {
+      if (session.snapshot().generation == generation
+          && session.snapshot().metadataLoading
+          && unknown(session.snapshot().metadata.access)
+          && unknown(entry(session, "plain").access)) {
+        invalidated = true;
+      }
+    });
+    fs::permissions(file, fs::perms::owner_all);
+    pump.until([&] {
+      return session.snapshot().generation > generation
+          && session.snapshot().status == DirectoryStatus::READY
+          && !session.snapshot().metadataLoading;
+    });
+    require(
+        invalidated && entry(session, "plain").id == id,
+        "monitor did not invalidate facts or preserved identity incorrectly"
+    );
+    require(
+        entry(session, "plain").access.execute == (::access(file.c_str(), X_OK) == 0),
+        "refreshed access disagrees with kernel permissions"
+    );
+    session.setChangedCallback({});
+    fs::permissions(file, fs::perms::owner_read);
+    session.refresh();
+    require(
+        session.snapshot().metadataLoading
+            && unknown(session.snapshot().metadata.access)
+            && unknown(entry(session, "plain").access),
+        "refresh kept old capability facts"
+    );
+    ready(pump, session);
+    pump.until([&session] { return !session.snapshot().metadataLoading; });
+    require(
+        entry(session, "plain").access.write == (::access(file.c_str(), W_OK) == 0),
+        "write access was guessed from mode bits rather than queried"
+    );
+    session.cancel();
+    require(
+        !session.snapshot().metadataLoading
+            && unknown(session.snapshot().metadata.access)
+            && unknown(entry(session, "plain").access),
+        "cancel kept active capability facts"
+    );
+
+    session.open(Location::fromPath(file.native()));
+    pump.until([&session] { return session.snapshot().status == DirectoryStatus::ERROR; });
+    require(
+        !session.snapshot().metadataLoading
+            && unknown(session.snapshot().metadata.access)
+            && !session.snapshot().metadata.filesystem.readOnly.has_value(),
+        "failed listing kept folder capabilities"
+    );
+    // Retire a file query immediately: its non-executable access must never
+    // replace the next directory generation's traversal capability.
+    session.open(Location::fromPath(file.native()));
+    session.open(fixture.location());
+    ready(pump, session);
+    pump.until([&session] { return !session.snapshot().metadataLoading; });
+    require(session.snapshot().metadata.access.execute == true, "retired query replaced current directory metadata");
+  }
 } // namespace
 
 int main() {
@@ -274,6 +395,8 @@ int main() {
     testGenerationAndLifetime(pump);
     testChangesDuringLoading(pump);
     testErrorsAndEmpty(pump);
+    testMetadataAbsenceAndTypes();
+    testCapabilityLifecycle(pump);
     std::println("directory session checks passed");
     return 0;
   } catch (const std::exception& error) {
