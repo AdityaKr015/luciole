@@ -229,7 +229,7 @@ float ContextMenuControl::preferredWidth(
     }
     const float toggleSlot = (reserveToggleSpace || hasToggle(entry)) ? kToggleSlot * scale : 0.0F;
     const FontWeight weight = entry.header ? FontWeight::Bold : FontWeight::Normal;
-    const float textWidth = std::ceil(renderer.measureText(entry.label, kMenuFontSize * scale, {weight}).width);
+    const float textWidth = std::ceil(renderer.measureText(entry.label, kMenuFontSize * scale, {weight, {}, {}}).width);
     // Mirrors rebuildRows: 8px label inset each side, 30px right when a chevron is drawn.
     const float sidePadding = (entry.hasSubmenu ? 30.0F : 16.0F) * scale;
     maxRowWidth = std::max(
@@ -271,7 +271,7 @@ void ContextMenuControl::rebuild(Renderer& renderer) {
   setSize(m_menuWidth, preferredHeight());
 
   // No background here: the control is scrolled content, so the rounded popup card is drawn by
-  // the host at the fixed viewport rect (popup_chrome::addCardBackground) , otherwise the card's
+  // the host at the fixed viewport rect (popup_chrome::addCardBackground), otherwise the card's
   // corners scroll away with the rows.
   rebuildRows(renderer);
   m_needsRebuild = false;

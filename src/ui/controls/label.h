@@ -21,7 +21,7 @@ enum class LabelBaselineMode : std::uint8_t {
   // Cap-band centering like Text, but the box height comes from the primary
   // font's line extent (measureFont) instead of the per-string metrics. Prevents
   // fallback fonts for unusual Unicode characters from inflating the label height
-  // , useful in lists with unpredictable content.
+  //, useful in lists with unpredictable content.
   TextFixedHeight,
   // Centers a cap-height band anchored at the glyph's ink top instead of the
   // baseline. For pictographic script/icon fonts (e.g. bongocat poses) the ink top
@@ -60,7 +60,7 @@ public:
   void setShadow(const Color& color, float offsetX, float offsetY);
   void clearShadow();
   // Single-line horizontal marquee when the line is wider than the laid-out width.
-  // Constrain width with parent layout and/or setMaxWidth() , Flex ignores preset setSize().
+  // Constrain width with parent layout and/or setMaxWidth(), Flex ignores preset setSize().
   // Requires an AnimationManager on the scene (via setAnimationManager).
   void setAutoScroll(bool enabled);
   void setAutoScrollSpeed(float pixelsPerSecond);
@@ -117,7 +117,7 @@ private:
   // User-visible text (wire text may duplicate for seamless marquee).
   std::string m_plainText;
 
-  // Memoized measure() inputs , lets repeated layout passes with identical
+  // Memoized measure() inputs, lets repeated layout passes with identical
   // text skip the Pango/fontconfig path entirely.
   std::string m_cachedText;
   float m_cachedFontSize = 0.0F;
@@ -157,7 +157,7 @@ private:
 
   // Last-applied marquee inputs. restartScrollIfNeeded() resets the scroll
   // offset to 0 and re-arms the animation, so we must avoid calling it on
-  // every measure pass , Flex layout calls Label::measureWithConstraints()
+  // every measure pass, Flex layout calls Label::measureWithConstraints()
   // multiple times per layout (measure → arrange → next pass) with slightly
   // different constraints, each of which is a measure-cache miss.
   bool m_marqueeStateValid = false;

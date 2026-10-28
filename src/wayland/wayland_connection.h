@@ -43,7 +43,9 @@ public:
   [[nodiscard]] wp_fractional_scale_manager_v1* fractionalScaleManager() const noexcept { return m_fractionalScale; }
   [[nodiscard]] zxdg_decoration_manager_v1* decorationManager() const noexcept { return m_decorations; }
   [[nodiscard]] bool hasXdgShell() const noexcept { return m_xdgWmBase != nullptr; }
-  [[nodiscard]] bool hasFractionalScale() const noexcept { return m_viewporter != nullptr && m_fractionalScale != nullptr; }
+  [[nodiscard]] bool hasFractionalScale() const noexcept {
+    return m_viewporter != nullptr && m_fractionalScale != nullptr;
+  }
   [[nodiscard]] WaylandSeat& input() noexcept { return m_input; }
   void bindTextInput(TextInputService& service);
 
@@ -56,8 +58,8 @@ public:
   void unregisterSurface(wl_surface* surface);
   void setOutputChangedCallback(std::function<void(wl_output*)> callback);
 
-  static void handleGlobal(void* data, wl_registry* registry, std::uint32_t name, const char* interface,
-                           std::uint32_t version);
+  static void
+  handleGlobal(void* data, wl_registry* registry, std::uint32_t name, const char* interface, std::uint32_t version);
   static void handleGlobalRemove(void* data, wl_registry* registry, std::uint32_t name);
   static void handleOutputScale(void* data, wl_output* output, std::int32_t factor);
   static void handleOutputDone(void* data, wl_output* output);
@@ -70,6 +72,7 @@ private:
   wl_registry* m_registry = nullptr;
   wl_compositor* m_compositor = nullptr;
   wl_seat* m_seat = nullptr;
+  wl_shm* m_shm = nullptr;
   xdg_wm_base* m_xdgWmBase = nullptr;
   wp_viewporter* m_viewporter = nullptr;
   wp_fractional_scale_manager_v1* m_fractionalScale = nullptr;

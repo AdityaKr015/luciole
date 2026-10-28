@@ -9,8 +9,8 @@ namespace paths {
   const std::filesystem::path& assetsRoot() {
     static const auto root = [] {
       const char* overridePath = std::getenv("NOCTALIA_FILES_ASSETS_DIR");
-      std::filesystem::path path = overridePath != nullptr
-          ? std::filesystem::path(overridePath) : std::filesystem::path(NOCTALIA_FILES_INSTALL_ASSETSDIR);
+      std::filesystem::path path = overridePath != nullptr ? std::filesystem::path(overridePath)
+                                                           : std::filesystem::path(NOCTALIA_FILES_INSTALL_ASSETSDIR);
       if (!std::filesystem::is_regular_file(path / "fonts/noctalia-tabler.ttf")
           || !std::filesystem::is_regular_file(path / "fonts/tabler.json")) {
         throw std::runtime_error("invalid Noctalia Files asset directory: " + path.string());

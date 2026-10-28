@@ -14,4 +14,3 @@ struct DecodedRasterImage {
 
 [[nodiscard]] std::expected<DecodedRasterImage, std::string>
 decodeRasterImage(const std::uint8_t* data, std::size_t size);
-

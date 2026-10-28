@@ -2,9 +2,11 @@
 
 #include "core/log.h"
 #include "wayland/wayland_connection.h"
+#include "xdg-decoration-unstable-v1-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
 
 #include <algorithm>
+#include <span>
 #include <utility>
 
 namespace {
@@ -21,6 +23,11 @@ namespace {
       .configure_bounds = &ToplevelSurface::handleToplevelConfigureBounds,
       .wm_capabilities = &ToplevelSurface::handleToplevelWmCapabilities,
   };
+
+  void decorationConfigure(void* data, zxdg_toplevel_decoration_v1*, std::uint32_t mode) {
+    static_cast<ToplevelSurface*>(data)->configureDecoration(mode);
+  }
+  const zxdg_toplevel_decoration_v1_listener kDecorationListener = {.configure = decorationConfigure};
 
 } // namespace
 
@@ -70,24 +77,23 @@ bool ToplevelSurface::initialize(wl_output* output, const ToplevelSurfaceConfig&
   }
 
   xdg_toplevel_add_listener(m_toplevel, &kToplevelListener, this);
-  xdg_toplevel_set_title(m_toplevel, config.title.empty() ? "Noctalia" : config.title.c_str());
-  xdg_toplevel_set_app_id(m_toplevel, config.appId != nullptr ? config.appId : "dev.noctalia.Noctalia");
+  xdg_toplevel_set_title(m_toplevel, config.title.c_str());
+  xdg_toplevel_set_app_id(m_toplevel, config.appId);
   if (config.minWidth > 0 || config.minHeight > 0) {
     xdg_toplevel_set_min_size(
         m_toplevel, static_cast<std::int32_t>(config.minWidth), static_cast<std::int32_t>(config.minHeight)
     );
   }
 
-  wl_surface_commit(m_surface);
-  wl_display_flush(m_connection.display());
-  if (wl_display_roundtrip(m_connection.display()) < 0) {
-    kLog.warn("toplevel: initial roundtrip failed");
-    destroyRoleObjects();
-    destroySurface();
-    return false;
+  if (auto* manager = m_connection.decorationManager(); manager != nullptr) {
+    m_decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(manager, m_toplevel);
+    if (m_decoration != nullptr) {
+      zxdg_toplevel_decoration_v1_add_listener(m_decoration, &kDecorationListener, this);
+      zxdg_toplevel_decoration_v1_set_mode(m_decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+    }
   }
-
   setRunning(true);
+  wl_surface_commit(m_surface);
   return true;
 }
 
@@ -100,14 +106,68 @@ void ToplevelSurface::setMinSize(std::uint32_t minWidth, std::uint32_t minHeight
 }
 
 void ToplevelSurface::beginMove(std::uint32_t serial) {
-  if (m_toplevel != nullptr) {
+  if (m_toplevel != nullptr && m_connection.seat() != nullptr && serial != 0) {
     xdg_toplevel_move(m_toplevel, m_connection.seat(), serial);
   }
+}
+
+void ToplevelSurface::beginResize(std::uint32_t serial, std::uint32_t edges) {
+  if (m_toplevel != nullptr && m_connection.seat() != nullptr && serial != 0) {
+    xdg_toplevel_resize(m_toplevel, m_connection.seat(), serial, edges);
+  }
+}
+void ToplevelSurface::minimize() {
+  if (m_toplevel != nullptr) {
+    xdg_toplevel_set_minimized(m_toplevel);
+  }
+}
+void ToplevelSurface::toggleMaximized() {
+  if (m_toplevel == nullptr) {
+    return;
+  }
+  if (m_maximized) {
+    xdg_toplevel_unset_maximized(m_toplevel);
+  } else {
+    xdg_toplevel_set_maximized(m_toplevel);
+  }
+}
+void ToplevelSurface::toggleFullscreen() {
+  if (m_toplevel == nullptr) {
+    return;
+  }
+  if (m_fullscreen) {
+    xdg_toplevel_unset_fullscreen(m_toplevel);
+  } else {
+    xdg_toplevel_set_fullscreen(m_toplevel, nullptr);
+  }
+}
+void ToplevelSurface::setTitle(const std::string& title) {
+  if (m_toplevel != nullptr) {
+    xdg_toplevel_set_title(m_toplevel, title.c_str());
+  }
+}
+void ToplevelSurface::showWindowMenu(std::uint32_t serial, std::int32_t x, std::int32_t y) {
+  if (m_toplevel != nullptr && m_connection.seat() != nullptr && serial != 0) {
+    xdg_toplevel_show_window_menu(m_toplevel, m_connection.seat(), serial, x, y);
+  }
+}
+void ToplevelSurface::close() {
+  setRunning(false);
+  if (m_closedCallback) {
+    m_closedCallback();
+  }
+}
+void ToplevelSurface::configureDecoration(std::uint32_t mode) {
+  m_serverDecorated = mode == ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE;
+  requestLayout();
 }
 
 void ToplevelSurface::handleXdgSurfaceConfigure(void* data, xdg_surface* surface, std::uint32_t serial) {
   auto* self = static_cast<ToplevelSurface*>(data);
   xdg_surface_ack_configure(surface, serial);
+  self->m_maximized = self->m_pendingMaximized;
+  self->m_fullscreen = self->m_pendingFullscreen;
+  self->m_activated = self->m_pendingActivated;
 
   std::uint32_t width = self->m_pendingWidth;
   std::uint32_t height = self->m_pendingHeight;
@@ -123,9 +183,13 @@ void ToplevelSurface::handleXdgSurfaceConfigure(void* data, xdg_surface* surface
 }
 
 void ToplevelSurface::handleToplevelConfigure(
-    void* data, xdg_toplevel* /*toplevel*/, std::int32_t width, std::int32_t height, wl_array* /*states*/
+    void* data, xdg_toplevel* /*toplevel*/, std::int32_t width, std::int32_t height, wl_array* states
 ) {
   auto* self = static_cast<ToplevelSurface*>(data);
+  const std::span values(static_cast<const std::uint32_t*>(states->data), states->size / sizeof(std::uint32_t));
+  self->m_pendingMaximized = std::ranges::contains(values, XDG_TOPLEVEL_STATE_MAXIMIZED);
+  self->m_pendingFullscreen = std::ranges::contains(values, XDG_TOPLEVEL_STATE_FULLSCREEN);
+  self->m_pendingActivated = std::ranges::contains(values, XDG_TOPLEVEL_STATE_ACTIVATED);
   self->m_lastToplevelWidth = width;
   self->m_lastToplevelHeight = height;
   if (width > 0) {
@@ -152,6 +216,10 @@ void ToplevelSurface::
     handleToplevelWmCapabilities(void* /*data*/, xdg_toplevel* /*toplevel*/, wl_array* /*capabilities*/) {}
 
 void ToplevelSurface::destroyRoleObjects() {
+  if (m_decoration != nullptr) {
+    zxdg_toplevel_decoration_v1_destroy(m_decoration);
+    m_decoration = nullptr;
+  }
   if (m_toplevel != nullptr) {
     xdg_toplevel_destroy(m_toplevel);
     m_toplevel = nullptr;

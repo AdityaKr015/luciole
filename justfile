@@ -17,6 +17,7 @@ configure m=mode install_prefix=prefix: (_check-mode m)
     args=(--buildtype=debug -Dcpp_std={{cpp-std}} -Dtests=auto)
     [[ "$1" == release ]] && args=(--buildtype=release -Dcpp_std={{cpp-std}} -Dtests=auto -Db_lto=true)
     [[ "$1" == asan ]] && args+=(-Db_sanitize=address,undefined)
+    args+=(-Dpkg_config_path="${PKG_CONFIG_PATH-}")
     if [[ -f "build-$1/meson-private/coredata.dat" ]]; then
         meson setup "build-$1" "${args[@]}" --prefix "$2" --reconfigure
     else
@@ -28,13 +29,18 @@ _ensure-configured m=mode: (_check-mode m)
     set -euo pipefail
     if [[ ! -f "build-$1/build.ninja" ]]; then
         just configure "$1"
+    else
+        configured_pkg_path="$(meson introspect "build-$1" --buildoptions | python3 -c 'import json,sys; print(":".join(next(option["value"] for option in json.load(sys.stdin) if option["name"] == "pkg_config_path")))')"
+        if [[ "$configured_pkg_path" != "${PKG_CONFIG_PATH-}" ]]; then
+            meson configure "build-$1" -Dpkg_config_path="${PKG_CONFIG_PATH-}"
+        fi
     fi
 
 build m=mode: (_ensure-configured m)
     meson compile -C "build-$1" noctalia-files
 
 run m=mode: (build m)
-    ./build-$1/noctalia-files
+    NOCTALIA_FILES_ASSETS_DIR="$PWD/assets" ./build-$1/noctalia-files
 
 test m=mode *args: (_ensure-configured m)
     meson configure "build-$1" -Dtests=enabled

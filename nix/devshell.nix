@@ -8,6 +8,7 @@ pkgs.mkShell {
     meson
     ninja
     pkg-config
+    wayland-scanner
     llvmPackages_22.clang-tools
     llvmPackages_22.libclang
     python3

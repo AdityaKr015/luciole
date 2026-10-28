@@ -13,8 +13,8 @@ namespace util {
   // Like std::clamp but tolerant of an inverted range (hi < lo). std::clamp treats
   // hi < lo as undefined behavior, and a hardened libstdc++ (_GLIBCXX_ASSERTIONS,
   // which distro packagers enable) aborts on it. Use this only at layout/geometry
-  // sites where adverse runtime data , a container narrower than its content, a
-  // zero-size viewport , can momentarily invert the bounds. On inversion it returns
+  // sites where adverse runtime data, a container narrower than its content, a
+  // zero-size viewport, can momentarily invert the bounds. On inversion it returns
   // lo (the minimum wins, so content overflows rather than collapsing) and logs the
   // site once so the underlying math can be fixed. Do NOT use it to paper over a
   // true invariant violation: keep std::clamp where hi >= lo is guaranteed, so a

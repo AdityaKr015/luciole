@@ -14,6 +14,9 @@ struct wl_array;
 struct wl_keyboard;
 struct wl_pointer;
 struct wl_seat;
+struct wl_compositor;
+struct wl_shm;
+struct wl_cursor_theme;
 struct wl_surface;
 struct wl_touch;
 struct wp_cursor_shape_manager_v1;
@@ -80,6 +83,7 @@ public:
 
   void bind(wl_seat* seat);
   void setCursorShapeManager(wp_cursor_shape_manager_v1* manager);
+  void setCursorTheme(wl_compositor* compositor, wl_shm* shm);
   void setPointerEventCallback(PointerEventCallback callback);
   void setKeyboardEventCallback(KeyboardEventCallback callback);
   void setKeyboardFocusCallback(KeyboardFocusCallback callback);
@@ -95,7 +99,7 @@ public:
   [[nodiscard]] wl_seat* seat() const noexcept { return m_seat; }
   [[nodiscard]] wl_pointer* pointer() const noexcept { return m_pointer; }
 
-  // Key repeat , driven by KeyRepeatPollSource
+  // Key repeat, driven by KeyRepeatPollSource
   [[nodiscard]] int repeatPollTimeoutMs() const;
   void repeatTick();
   void stopKeyRepeat();
@@ -173,6 +177,8 @@ private:
   wl_pointer* m_pointer = nullptr;
   wp_cursor_shape_manager_v1* m_cursorShapeManager = nullptr;
   wp_cursor_shape_device_v1* m_cursorShapeDevice = nullptr;
+  wl_cursor_theme* m_cursorTheme = nullptr;
+  wl_surface* m_cursorSurface = nullptr;
   PointerEventCallback m_pointerEventCallback;
   std::vector<PointerEvent> m_pendingPointerEvents;
   std::uint32_t m_pendingAxisSource = 0;

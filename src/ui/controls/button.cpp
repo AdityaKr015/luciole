@@ -831,7 +831,7 @@ void Button::doLayout(Renderer& renderer) {
     m_badge->setPosition(width() - m_badge->width() - margin, margin);
   }
 
-  // Only apply visual state if no animation is in progress , a running
+  // Only apply visual state if no animation is in progress, a running
   // animation already owns the color transition and re-calling here would
   // reset its from/to snapshot, collapsing the animation to a no-op.
   if (m_animId == 0) {

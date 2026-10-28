@@ -13,7 +13,7 @@
 // even if a callback disconnects its own (or another) connection: a snapshot
 // of live slots is captured before dispatch.
 //
-// ScopedConnection is move-only RAII , it disconnects on destruction. Store
+// ScopedConnection is move-only RAII, it disconnects on destruction. Store
 // one as a member of whatever object subscribes, and the subscription dies
 // with the object.
 

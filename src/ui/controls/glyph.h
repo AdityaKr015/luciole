@@ -44,7 +44,7 @@ private:
   float m_shadowOffsetX = 0.0F;
   float m_shadowOffsetY = 0.0F;
 
-  // Memoized measure() inputs , lets repeated layout passes with identical
+  // Memoized measure() inputs, lets repeated layout passes with identical
   // glyph + size skip the Pango/fontconfig path entirely.
   char32_t m_cachedCodepoint = 0;
   float m_cachedFontSize = 0.0F;

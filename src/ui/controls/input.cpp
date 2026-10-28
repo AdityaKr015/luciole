@@ -1987,7 +1987,7 @@ void Input::selectLineAtByteOffset(std::size_t offset) {
     start = lineStartForByte(offset);
     end = lineEndForByte(offset);
   } else {
-    // Layout stops not ready yet , fall back to hard newline bounds.
+    // Layout stops not ready yet, fall back to hard newline bounds.
     const std::size_t pos = std::min(offset, m_value.size());
     const auto left = m_value.rfind('\n', pos == 0 ? 0 : pos - 1);
     start = left == std::string::npos ? 0 : left + 1;
@@ -2446,7 +2446,7 @@ std::size_t Input::lineEndForByte(std::size_t bytePos) const {
     return byte;
   }
   // Soft-wrapped line: the end position is the wrap boundary one char further
-  // (the caret renders at the next line's start , no cursor affinity).
+  // (the caret renders at the next line's start, no cursor affinity).
   return idx + 1 < m_stopByte.size() ? m_stopByte[idx + 1] : byte;
 }
 

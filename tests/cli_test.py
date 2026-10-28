@@ -15,6 +15,7 @@ class CliTest(unittest.TestCase):
         env = dict(os.environ)
         for name in ("DISPLAY", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS"):
             env.pop(name, None)
+        env["WAYLAND_DISPLAY"] = "/noctalia-files-test-missing-wayland-socket"
         return subprocess.run([BINARY, *args], check=False, capture_output=True, text=True, env=env, timeout=5)
 
     def test_headless_information(self):
@@ -54,11 +55,11 @@ class CliTest(unittest.TestCase):
                 self.assertIn(marker, result.stdout)
                 self.assertEqual(result.stderr, "")
 
-    def test_startup_reports_unimplemented_browser(self):
+    def test_startup_reports_connection_failure(self):
         result = self.invoke()
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")
-        self.assertIn("graphical browser is not implemented", result.stderr)
+        self.assertIn("cannot connect to Wayland", result.stderr)
 
 
 if __name__ == "__main__":

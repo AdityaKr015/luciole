@@ -95,7 +95,7 @@ void RenderContext::initialize(GlSharedContext& shared) {
   m_backend = createDefaultRenderBackend();
   m_backend->initialize(shared);
 
-  // Pango handles font fallback via Fontconfig automatically , no explicit chain.
+  // Pango handles font fallback via Fontconfig automatically, no explicit chain.
   m_backend->textureManager().probeExtensions();
   m_textRenderer.initialize(m_backend.get(), &m_backend->textureManager());
   m_glyphRenderer.initialize(
@@ -200,7 +200,6 @@ void RenderContext::renderScene(RenderTarget& target, Node* sceneRoot) {
           renderScale, sceneRoot, Mat3::identity(), 1.0F, sw, sh, bw, bh, 0.0F, 0.0F, sw, sh, false, false, false
       );
     }
-
   }
   float ms = elapsedSince(drawStart);
   logSlowRenderOperation(
@@ -431,13 +430,6 @@ void RenderContext::renderNode(
     break;
   }
 
-
-
-
-
-
-
-
   case NodeType::RenderProxy: {
     const auto* proxy = static_cast<const RenderProxyNode*>(node);
     const Node* source = proxy->source();
@@ -461,7 +453,7 @@ void RenderContext::renderNode(
     break;
   }
 
-  // Fast path: children are already in zIndex order (the common case , most
+  // Fast path: children are already in zIndex order (the common case, most
   // callers never touch zIndex, or set it identically across siblings). Skip
   // allocating/sorting a side vector and iterate the child list directly.
   // Only fall back to the sorted copy when there's an actual out-of-order
@@ -525,7 +517,7 @@ void RenderContext::cleanup() {
     m_backend->makeCurrentNoSurface();
   }
 
-  // Text renderers first , they destroy GL textures and need a current context.
+  // Text renderers first, they destroy GL textures and need a current context.
   m_textRenderer.cleanup();
   m_glyphRenderer.cleanup();
 

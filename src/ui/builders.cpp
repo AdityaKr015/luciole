@@ -511,8 +511,6 @@ namespace ui {
     return control;
   }
 
-
-
   std::unique_ptr<Separator> separator(SeparatorProps props) {
     auto control = std::make_unique<Separator>();
     if (props.color.has_value()) {
@@ -539,8 +537,6 @@ namespace ui {
     }
     return control;
   }
-
-
 
   std::unique_ptr<Slider> slider(SliderProps props) {
     auto control = std::make_unique<Slider>();
@@ -583,8 +579,6 @@ namespace ui {
     }
     return control;
   }
-
-
 
   std::unique_ptr<Segmented> segmented(SegmentedProps props) {
     auto control = std::make_unique<Segmented>();
@@ -770,8 +764,6 @@ namespace ui {
     return control;
   }
 
-
-
   std::unique_ptr<Toggle> toggle(ToggleProps props) {
     auto control = std::make_unique<Toggle>();
     if (props.scale.has_value()) {
@@ -890,8 +882,6 @@ namespace ui {
     }
     return control;
   }
-
-
 
   std::unique_ptr<Spinner> spinner(SpinnerProps props) {
     auto control = std::make_unique<Spinner>();

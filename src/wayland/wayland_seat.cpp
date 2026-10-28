@@ -10,6 +10,7 @@
 #include <linux/input-event-codes.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <wayland-cursor.h>
 #include <xkbcommon/xkbcommon-compose.h>
 #include <xkbcommon/xkbcommon-names.h>
 #include <xkbcommon/xkbcommon.h>
@@ -42,6 +43,7 @@ namespace {
       .axis_discrete = &WaylandSeat::handlePointerAxisDiscrete,
       .axis_value120 = &WaylandSeat::handlePointerAxisValue120,
       .axis_relative_direction = [](void*, wl_pointer*, std::uint32_t, std::uint32_t) {},
+      .warp = nullptr,
   };
 
   const wl_touch_listener kTouchListener = {
@@ -76,7 +78,20 @@ double WaylandSeat::userIdleSeconds() const noexcept {
   return std::max(0.0, dur.count());
 }
 
-void WaylandSeat::setCursorShapeManager(wp_cursor_shape_manager_v1* manager) { m_cursorShapeManager = manager; }
+void WaylandSeat::setCursorShapeManager(wp_cursor_shape_manager_v1* manager) {
+  m_cursorShapeManager = manager;
+  if (manager != nullptr && m_pointer != nullptr && m_cursorShapeDevice == nullptr) {
+    m_cursorShapeDevice = wp_cursor_shape_manager_v1_get_pointer(manager, m_pointer);
+  }
+}
+
+void WaylandSeat::setCursorTheme(wl_compositor* compositor, wl_shm* shm) {
+  if (m_cursorShapeManager != nullptr || compositor == nullptr || shm == nullptr) {
+    return;
+  }
+  m_cursorTheme = wl_cursor_theme_load(nullptr, 24, shm);
+  m_cursorSurface = wl_compositor_create_surface(compositor);
+}
 
 void WaylandSeat::setPointerEventCallback(PointerEventCallback callback) {
   m_pointerEventCallback = std::move(callback);
@@ -114,7 +129,7 @@ void WaylandSeat::notifyLayoutIfChanged() {
 }
 
 void WaylandSeat::setCursorShape(std::uint32_t serial, std::uint32_t shape) {
-  if (m_cursorShapeDevice == nullptr) {
+  if (m_pointer == nullptr || (m_cursorShapeDevice == nullptr && m_cursorTheme == nullptr)) {
     return;
   }
   // Use the wl_pointer.enter serial for the surface hover lifetime.
@@ -129,7 +144,44 @@ void WaylandSeat::setCursorShape(std::uint32_t serial, std::uint32_t shape) {
   }
   m_lastCursorShapeSerial = effectiveSerial;
   m_lastCursorShape = shape;
-  wp_cursor_shape_device_v1_set_shape(m_cursorShapeDevice, effectiveSerial, shape);
+  if (m_cursorShapeDevice != nullptr) {
+    wp_cursor_shape_device_v1_set_shape(m_cursorShapeDevice, effectiveSerial, shape);
+  } else if (m_cursorSurface != nullptr) {
+    const char* name = "left_ptr";
+    switch (shape) {
+    case WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_TEXT:
+      name = "xterm";
+      break;
+    case WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_POINTER:
+      name = "hand2";
+      break;
+    case WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_EW_RESIZE:
+      name = "sb_h_double_arrow";
+      break;
+    case WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NS_RESIZE:
+      name = "sb_v_double_arrow";
+      break;
+    case WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NWSE_RESIZE:
+      name = "top_left_corner";
+      break;
+    case WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NESW_RESIZE:
+      name = "top_right_corner";
+      break;
+    default:
+      break;
+    }
+    auto* cursor = wl_cursor_theme_get_cursor(m_cursorTheme, name);
+    if (cursor != nullptr && cursor->image_count > 0) {
+      auto* image = cursor->images[0];
+      wl_pointer_set_cursor(
+          m_pointer, effectiveSerial, m_cursorSurface, static_cast<int>(image->hotspot_x),
+          static_cast<int>(image->hotspot_y)
+      );
+      wl_surface_attach(m_cursorSurface, wl_cursor_image_get_buffer(image), 0, 0);
+      wl_surface_damage(m_cursorSurface, 0, 0, static_cast<int>(image->width), static_cast<int>(image->height));
+      wl_surface_commit(m_cursorSurface);
+    }
+  }
 }
 
 void WaylandSeat::forgetSurface(wl_surface* surface) noexcept {
@@ -161,6 +213,14 @@ void WaylandSeat::forgetSurface(wl_surface* surface) noexcept {
 }
 
 void WaylandSeat::cleanup() {
+  if (m_cursorSurface != nullptr) {
+    wl_surface_destroy(m_cursorSurface);
+    m_cursorSurface = nullptr;
+  }
+  if (m_cursorTheme != nullptr) {
+    wl_cursor_theme_destroy(m_cursorTheme);
+    m_cursorTheme = nullptr;
+  }
   if (m_cursorShapeDevice != nullptr) {
     wp_cursor_shape_device_v1_destroy(m_cursorShapeDevice);
     m_cursorShapeDevice = nullptr;

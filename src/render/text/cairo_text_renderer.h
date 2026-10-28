@@ -36,10 +36,10 @@ public:
     float width = 0.0F;
     float left = 0.0F;
     float right = 0.0F;
-    float top = 0.0F;       // negative , above baseline
-    float bottom = 0.0F;    // positive , below baseline
-    float inkTop = 0.0F;    // negative , visible ink above baseline
-    float inkBottom = 0.0F; // positive , visible ink below baseline
+    float top = 0.0F;       // negative, above baseline
+    float bottom = 0.0F;    // positive, below baseline
+    float inkTop = 0.0F;    // negative, visible ink above baseline
+    float inkBottom = 0.0F; // positive, visible ink below baseline
     float inkLeft = 0.0F;   // visible ink left edge relative to layout origin
     float inkRight = 0.0F;  // visible ink right edge relative to layout origin
     float capHeight = 0.0F; // measured baseline-to-cap-top of 'H' (0 if unavailable)
@@ -151,7 +151,7 @@ private:
     std::size_t operator()(const FontMetricsKey& k) const noexcept;
   };
 
-  // LruList is a list of pointers into map keys , we break the otherwise
+  // LruList is a list of pointers into map keys, we break the otherwise
   // circular type dependency (CacheEntry ↔ CacheMap) this way. CacheKey* is
   // stable because unordered_map never moves key-value nodes under insert
   // (we also reserve bucket capacity upfront to avoid rehashing).

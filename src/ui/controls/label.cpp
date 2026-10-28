@@ -482,7 +482,7 @@ void Label::doArrange(Renderer& renderer, const LayoutRect& rect) {
   constraints.setExactWidth(rect.width);
   // fromArrange=true: do not overwrite the text node's wrap budget here. Arrange's
   // exact width is the label's own (rounded) measured width fed back, not a parent
-  // wrap-intent , feeding it to Pango as maxWidth can trigger sub-pixel ellipsis.
+  // wrap-intent, feeding it to Pango as maxWidth can trigger sub-pixel ellipsis.
   const LayoutSize measured = measureWithConstraints(renderer, constraints, true);
   setSize(rect.width, rect.height > 0.0F ? rect.height : measured.height);
 }
@@ -499,7 +499,7 @@ LayoutSize Label::measureWithConstraints(Renderer& renderer, const LayoutConstra
     // Measure with the wrap budget paint will use (the text node's budget from
     // the measure pass), never the arrange width: the arrange width is a box
     // size, not a wrap intent. Re-deciding line breaking here with a different
-    // budget can flip the line count , and with it the baseline mode , between
+    // budget can flip the line count, and with it the baseline mode, between
     // measure and paint, bouncing the rendered baseline by a pixel per string.
     measureMaxWidth = m_textNode->maxWidth();
   } else if (constraints.hasMaxWidth) {
@@ -555,7 +555,7 @@ LayoutSize Label::measureWithConstraints(Renderer& renderer, const LayoutConstra
       m_textNode->useMarkup()
   );
   // Line breaking is decided once, on the measure pass. A divergent line count
-  // on arrange means the wrap budget drifted between phases , the baseline mode
+  // on arrange means the wrap budget drifted between phases, the baseline mode
   // would flip between measure and paint (renders as ±1px vertical jitter), so
   // surface it loudly instead of letting it land as pixel drift.
   if (!fromArrange) {
@@ -588,7 +588,7 @@ LayoutSize Label::measureWithConstraints(Renderer& renderer, const LayoutConstra
     float height = 0.0F;
     if (m_baselineMode == LabelBaselineMode::InkCentered || isIconGlyph) {
       // Explicit ink mode, or an icon glyph: center the glyph's own ink.
-      // Unrounded , the renderer snaps the glyph quad to the pixel grid.
+      // Unrounded, the renderer snaps the glyph quad to the pixel grid.
       height = std::round(std::max(actualHeight, inkHeight));
       m_baselineOffset = -metrics.inkTop + (height - inkHeight) * 0.5F;
     } else if (m_baselineMode == LabelBaselineMode::TextFixedHeight) {
@@ -639,7 +639,7 @@ LayoutSize Label::measureWithConstraints(Renderer& renderer, const LayoutConstra
       finalWidth = hasAssignedWidth ? std::max(assignedWidth, m_minWidth) : std::max(measuredWidth, m_minWidth);
     }
     // Ceil, never round: the box width is fed back to us as an exact arrange
-    // constraint, so it must never under-report the text it holds , a box a
+    // constraint, so it must never under-report the text it holds, a box a
     // fraction of a pixel narrower than its own text turns into a wrap/ellipsis
     // trigger downstream.
     setSize(std::ceil(finalWidth), height);

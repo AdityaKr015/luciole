@@ -21,7 +21,7 @@ struct Color;
 struct Mat3;
 
 // Direct FreeType + Cairo renderer for single codepoints in a dedicated font
-// (noctalia-tabler.ttf icon font). No Pango, no shaping, no fallback , the icon font
+// (noctalia-tabler.ttf icon font). No Pango, no shaping, no fallback, the icon font
 // MUST be used, never substituted.
 class CairoGlyphRenderer {
 public:
@@ -29,8 +29,8 @@ public:
     float width = 0.0F;
     float left = 0.0F;
     float right = 0.0F;
-    float top = 0.0F;    // negative , above baseline
-    float bottom = 0.0F; // positive , below baseline
+    float top = 0.0F;    // negative, above baseline
+    float bottom = 0.0F; // positive, below baseline
   };
 
   CairoGlyphRenderer();

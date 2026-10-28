@@ -587,24 +587,6 @@ void GlesRenderBackend::drawSpinner(
   m_spinnerProgram.draw(surfaceWidth, surfaceHeight, width, height, style, transform);
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 void GlesRenderBackend::drawFullscreenTexture(TextureId texture, bool flipY) {
   if (texture == 0) {
     return;

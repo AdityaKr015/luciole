@@ -11,7 +11,7 @@
 #include <utility>
 
 // Internal canvas that reports a virtual size set externally and never moves
-// its children during its own layout pass , VirtualGridView positions pool
+// its children during its own layout pass, VirtualGridView positions pool
 // tiles and the overlay InputArea explicitly.
 class VirtualGridView::Canvas : public Node {
 public:
@@ -98,7 +98,7 @@ void VirtualGridView::setAdapter(VirtualGridAdapter* adapter) {
   }
   m_adapter = adapter;
   m_adapterPointerCapture = false;
-  // Drop the existing pool , tiles were built by the previous adapter's createTile().
+  // Drop the existing pool, tiles were built by the previous adapter's createTile().
   for (Node* tile : m_pool) {
     if (tile != nullptr) {
       m_canvas->removeChild(tile);
@@ -355,7 +355,7 @@ void VirtualGridView::doLayout(Renderer& renderer) {
 
   // Step 3: grow the pool if needed. Pool is row-major (poolRows * columns)
   // so we can address slots by `row % poolRows` and keep tiles bound to the
-  // same logical index while they remain in the visible window , avoids the
+  // same logical index while they remain in the visible window, avoids the
   // "every scroll rebinds every slot" thrash that would otherwise release
   // expensive per-tile state (e.g. wallpaper thumbnails).
   if (previousLayoutColumns != columns) {
@@ -459,7 +459,7 @@ void VirtualGridView::doLayout(Renderer& renderer) {
         }
         tile->setVisible(true);
         // Canvas's doLayout is a no-op, so we lay out each pool tile explicitly
-        // here , otherwise the inner glyph/label children never get measured.
+        // here, otherwise the inner glyph/label children never get measured.
         tile->layout(renderer);
       }
     }

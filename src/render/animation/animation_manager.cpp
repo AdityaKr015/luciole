@@ -116,7 +116,7 @@ void AnimationManager::cancelForOwner(const void* owner) {
 }
 
 void AnimationManager::tick(float /*deltaMs*/) {
-  // Collect completed callbacks separately , onComplete may call animate()
+  // Collect completed callbacks separately, onComplete may call animate()
   // which would push_back and invalidate iterators during iteration.
   std::vector<std::function<void()>> completedCallbacks;
 

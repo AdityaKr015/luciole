@@ -6,7 +6,6 @@
 #include "render/animation/animation_manager.h"
 #include "render/render_context.h"
 #include "render/scene/node.h"
-#include <cstdlib>
 #include "viewporter-client-protocol.h"
 #include "wayland/wayland_connection.h"
 
@@ -79,24 +78,6 @@ namespace {
     static const bool enabled = (std::getenv("NOCTALIA_FILES_IDLE_PROFILE") != nullptr);
     return enabled;
   }
-
-
-
-  std::string_view surfaceTraceName(const Surface& surface) {
-    const auto& name = surface.debugName();
-    if (name.empty()) {
-      return "surface";
-    }
-    return name;
-  }
-
-
-
-
-
-
-
-
 
   struct SurfaceProfileState {
     SurfaceIdleProfileEntry total;
@@ -452,8 +433,6 @@ void Surface::setRenderContext(RenderContext* ctx) {
   }
 }
 
-
-
 void Surface::initializeSurfaceScaleProtocol() {
   if (m_surface == nullptr || !m_connection.hasFractionalScale()) {
     return;
@@ -590,8 +569,6 @@ void Surface::setOpaque(bool opaque) {
   m_opaque = true;
 }
 
-
-
 bool Surface::regionIntersectsBounds(const std::vector<InputRect>& rects, std::uint32_t width, std::uint32_t height) {
   if (width == 0 || height == 0) {
     return false;
@@ -607,8 +584,6 @@ bool Surface::regionIntersectsBounds(const std::vector<InputRect>& rects, std::u
         && static_cast<std::int64_t>(r.y) < height;
   });
 }
-
-
 
 std::vector<InputRect> Surface::tessellateRoundedRect(
     int x, int y, int w, int h, float tlRadius, float trRadius, float brRadius, float blRadius, int stripPx
@@ -752,7 +727,7 @@ std::vector<InputRect> Surface::tessellateShape(
   // strips (yf outside the body's vertical span) are covered only where a concave
   // corner bulge crosses the row; two concave corners on the same edge (e.g. a bar
   // with both inner corners concave) produce two disjoint segments with an empty
-  // middle , so this returns a list, not a single span.
+  // middle, so this returns a list, not a single span.
   const auto rowSegments = [&](float yf) -> std::vector<std::pair<float, float>> {
     std::vector<std::pair<float, float>> segs;
     const auto pushSeg = [&](float l, float r) {
@@ -1029,8 +1004,6 @@ std::vector<InputRect> Surface::tessellateRotatedRoundedRect(
   return out;
 }
 
-
-
 void Surface::requestUpdate() {
   recordSurfaceProfileEvent(*this, SurfaceProfileEvent::RequestUpdate);
   m_updateRequested = true;
@@ -1110,9 +1083,7 @@ void Surface::render() {
   }
 
   requestFrame();
-  const float renderMs = elapsedMs([this] {
-    m_renderContext->renderScene(m_renderTarget, m_sceneRoot);
-  });
+  const float renderMs = elapsedMs([this] { m_renderContext->renderScene(m_renderTarget, m_sceneRoot); });
   recordSurfaceProfileEvent(*this, SurfaceProfileEvent::Render, renderMs);
   logSlowSurfaceOperation(
       renderMs, "surface render took {:.1F}ms ({}x{} logical, {}x{} buffer)", renderMs, m_width, m_height,
@@ -1152,8 +1123,6 @@ void Surface::destroySurface() {
   }
 
   m_renderTarget.destroy();
-
-
 
   if (m_fractionalScale != nullptr) {
     wp_fractional_scale_v1_destroy(m_fractionalScale);

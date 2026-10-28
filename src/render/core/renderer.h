@@ -94,7 +94,7 @@ public:
   // extent of the given font. Bar capsule heights and content widgets that must
   // align with text (e.g. the audio visualizer) size their cross-axis to this
   // instead of re-deriving font metrics by hand. Backed by measureFont(), which
-  // is memoized , safe to call from every layout pass.
+  // is memoized, safe to call from every layout pass.
   [[nodiscard]] virtual float fontRowExtent(float fontSize, const TextFont& font = {}) {
     const TextMetrics m = measureFont(fontSize, font);
     return std::round(m.bottom - m.top);
@@ -104,7 +104,7 @@ public:
       const TextFont& font = {}
   ) = 0;
   // Like measureTextCursorStops, but lays the text out wrapped at maxWidth
-  // (word-char wrap, '\n' honored , the same layout the draw path uses for a
+  // (word-char wrap, '\n' honored, the same layout the draw path uses for a
   // maxLines=0 text node) and reports full caret rects instead of x only.
   virtual void measureTextCursorStopsWrapped(
       std::string_view text, float fontSize, const std::vector<std::size_t>& byteOffsets, float maxWidth,

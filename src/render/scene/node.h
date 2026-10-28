@@ -130,7 +130,7 @@ public:
   [[nodiscard]] bool excludeSubtreeFromTabOrder() const noexcept { return m_excludeSubtreeFromTabOrder; }
 
   virtual Node* addChild(std::unique_ptr<Node> child);
-  // Insert at a specific vector position to control Flex layout order (not rendering order , use zIndex for that).
+  // Insert at a specific vector position to control Flex layout order (not rendering order, use zIndex for that).
   virtual Node* insertChildAt(std::size_t index, std::unique_ptr<Node> child);
   virtual std::unique_ptr<Node> removeChild(Node* child);
 

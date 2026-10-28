@@ -54,14 +54,6 @@ public:
       const Mat3& transform
   ) override;
 
-
-
-
-
-
-
-
-
   void drawFullscreenTexture(TextureId texture, bool flipY) override;
   void drawFullscreenTint(Color color) override;
   void drawFramebufferBlur(

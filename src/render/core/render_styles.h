@@ -91,7 +91,7 @@ struct RoundedRectStyle {
   std::array<GradientStop, 4> gradientStops{};
   CornerShapes corners{};
   RectInsets logicalInset{};
-  Radii radius;
+  Radii radius{0.0F};
   float softness = 1.0F;
   bool noAa = false;
   bool invertFill = false;
@@ -106,7 +106,7 @@ struct RoundedRectStyle {
   float shadowExclusionHeight = 0.0F;
   CornerShapes shadowExclusionCorners{};
   RectInsets shadowExclusionLogicalInset{};
-  Radii shadowExclusionRadius;
+  Radii shadowExclusionRadius{0.0F};
 };
 
 constexpr bool operator==(const RoundedRectStyle& lhs, const RoundedRectStyle& rhs) noexcept {
@@ -139,4 +139,3 @@ struct SpinnerStyle {
   Color color{};
   float thickness = 2.0F;
 };
-

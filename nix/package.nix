@@ -5,6 +5,20 @@
   ninja,
   pkg-config,
   python3,
+  wayland-scanner,
+  wayland,
+  wayland-protocols,
+  libglvnd,
+  libxkbcommon,
+  freetype,
+  fontconfig,
+  cairo,
+  pango,
+  harfbuzz,
+  libpng,
+  librsvg,
+  nlohmann_json,
+  autoAddDriverRunpath,
   buildRevision ? "unknown",
 }:
 stdenv.mkDerivation (finalAttrs: {
@@ -42,6 +56,23 @@ stdenv.mkDerivation (finalAttrs: {
     ninja
     pkg-config
     python3
+    wayland-scanner
+    autoAddDriverRunpath
+  ];
+
+  buildInputs = [
+    wayland
+    wayland-protocols
+    libglvnd
+    libxkbcommon
+    freetype
+    fontconfig
+    cairo
+    pango
+    harfbuzz
+    libpng
+    librsvg
+    nlohmann_json
   ];
 
   mesonBuildType = "release";

@@ -31,7 +31,7 @@ public:
   ) const;
 
   // Alpha-tint path: sample the texture's alpha channel as coverage, multiply
-  // by `tint` (which is interpreted as straight RGBA , the shader premultiplies
+  // by `tint` (which is interpreted as straight RGBA, the shader premultiplies
   // it internally), scale by opacity.
   void drawTinted(
       TextureId texture, float surfaceWidth, float surfaceHeight, float width, float height, float u0, float v0,

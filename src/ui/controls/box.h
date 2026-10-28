@@ -11,7 +11,7 @@ class RectNode;
 
 // A styled rectangle that keeps its internal RectNode sized to match itself.
 // Use this anywhere you need a background or decorative shape in shell/widget
-// code , not RectNode directly.
+// code, not RectNode directly.
 class Box : public Node {
 public:
   Box();

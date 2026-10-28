@@ -3,7 +3,17 @@
 #include <cstdint>
 
 enum class KeybindAction : std::uint8_t {
-  Validate, Cancel, Left, Right, Up, Down, TabNext, TabPrevious, Delete, Copy, Save
+  Validate,
+  Cancel,
+  Left,
+  Right,
+  Up,
+  Down,
+  TabNext,
+  TabPrevious,
+  Delete,
+  Copy,
+  Save
 };
 
 #include <array>

@@ -31,8 +31,8 @@ struct ContextMenuControlEntry {
   // Explicit hierarchy depth; each level adds one medium spacing step before row content.
   std::uint8_t indentLevel = 0;
   // Optional leading visual (dropdown-style rows): a small color dot, or a palette swatch strip.
-  std::optional<ColorSpec> indicatorColor;
-  ColorSwatchPreview swatchPreview;
+  std::optional<ColorSpec> indicatorColor = std::nullopt;
+  ColorSwatchPreview swatchPreview{};
   TextEllipsize ellipsize = TextEllipsize::End;
 };
 
@@ -69,7 +69,7 @@ public:
 
 private:
   struct RowVisual {
-    std::function<void(bool)> apply;
+    std::function<void(bool)> apply = nullptr;
     float y = 0.0F;
     float height = 0.0F;
     bool interactive = false;

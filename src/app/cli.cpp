@@ -1,5 +1,6 @@
 #include "app/cli.h"
 
+#include "app/application.h"
 #include "noctalia_files_build_info.h"
 #include "noctalia_files_completions.h"
 
@@ -11,7 +12,7 @@ namespace {
 
   constexpr std::string_view kHelp = R"(Usage: noctalia-files [--help | --version | completions <shell>]
 
-Noctalia Files is under development. The graphical browser is not implemented yet.
+Open Noctalia Files. Folder browsing is under development.
 
 Options:
   --help                 Show this help
@@ -48,11 +49,8 @@ int files::runCli(std::span<const std::string_view> args) {
     return printCompletions(args[1]);
   }
   if (args.empty()) {
-    std::println(
-        stderr, "noctalia-files: the graphical browser is not implemented yet; use --help for available commands"
-    );
-  } else {
-    std::println(stderr, "noctalia-files: invalid arguments; use --help for available commands");
+    return runApplication();
   }
+  std::println(stderr, "noctalia-files: invalid arguments; use --help for available commands");
   return EXIT_FAILURE;
 }

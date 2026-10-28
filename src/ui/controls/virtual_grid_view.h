@@ -1,8 +1,8 @@
 #pragma once
 
 #include "render/scene/node.h"
-#include "ui/tooltip_content.h"
 #include "ui/controls/flex.h"
+#include "ui/tooltip_content.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -197,7 +197,7 @@ private:
   std::optional<std::size_t> m_hoveredOverlayIndex;
   std::function<void(std::optional<std::size_t>)> m_onSelectionChanged;
 
-  // Most recent layout snapshot , used by hit-testing and scrollToIndex
+  // Most recent layout snapshot, used by hit-testing and scrollToIndex
   // without rerunning measurement.
   std::size_t m_layoutColumns = 1;
   float m_cellWidth = 0.0F;

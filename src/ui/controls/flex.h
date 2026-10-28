@@ -113,7 +113,7 @@ protected:
   LayoutSize measureByLayout(Renderer& renderer, const LayoutConstraints& constraints);
   void arrangeByLayout(Renderer& renderer, const LayoutRect& rect);
   // Set the node size as part of a layout pass without marking it as an explicit (caller-pinned)
-  // size. Subclasses must use this , not setSize() , for sizes they compute inside doLayout, so a
+  // size. Subclasses must use this, not setSize(), for sizes they compute inside doLayout, so a
   // later measure can still re-derive the size from content/min instead of being pinned to a stale
   // value.
   void setSizeFromLayout(float width, float height);

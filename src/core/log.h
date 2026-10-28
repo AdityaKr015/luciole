@@ -29,7 +29,7 @@ template <typename... Args> void logError(std::format_string<Args...> fmt, Args&
   detail::logMessage(LogLevel::Error, nullptr, std::format(fmt, std::forward<Args>(args)...));
 }
 
-// ── Logger , per-module logger with a section tag ─────────────────────────────
+// ── Logger, per-module logger with a section tag ─────────────────────────────
 
 class Logger {
 public:

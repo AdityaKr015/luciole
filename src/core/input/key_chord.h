@@ -13,7 +13,7 @@ struct KeyChord {
 };
 
 // Throws std::runtime_error if spec contains a Super-family modifier.
-// Bare printable keys (e.g. "1", "a") are accepted , UI-level policy is
+// Bare printable keys (e.g. "1", "a") are accepted, UI-level policy is
 // enforced by KeybindRecorder's ModifierPolicy, not here.
 [[nodiscard]] std::optional<KeyChord> parseKeyChordSpec(std::string_view spec);
 [[nodiscard]] std::string keyChordToString(const KeyChord& chord);

@@ -56,7 +56,7 @@ namespace {
 
   // Pack rgb into the top 24 bits; alpha is always forced to 0xFF so that
   // opacity animations on a mixed-content string (the RGBA emoji path) reuse
-  // the same cache entry , the caller's alpha is applied at draw time via
+  // the same cache entry, the caller's alpha is applied at draw time via
   // u_opacity instead of being baked into the raster.
   std::uint32_t packColorRgb(const Color& c) {
     const auto clamp8 = [](float v) -> std::uint32_t {
@@ -249,7 +249,7 @@ void CairoTextRenderer::initialize(RenderBackend* backend, TextureManager* textu
 
   // Force grayscale AA only. The tinted fast path rasterizes to A8 coverage and
   // tints in the shader (u_tint), which cannot carry per-channel subpixel/LCD
-  // coverage , so subpixel AA can't be honored regardless of Fontconfig.
+  // coverage, so subpixel AA can't be honored regardless of Fontconfig.
   // hint_style and hint_metrics are left at DEFAULT so the user's Fontconfig
   // hinting settings apply. measure() and draw() stay consistent because both
   // load fonts from this same shared PangoContext, not because of any specific
@@ -260,7 +260,7 @@ void CairoTextRenderer::initialize(RenderBackend* backend, TextureManager* textu
   cairo_font_options_destroy(fontOptions);
 
   // Reserve bucket count up front so CacheMap iterators remain stable for the
-  // lifetime of every entry , we rely on that stability to keep LRU list
+  // lifetime of every entry, we rely on that stability to keep LRU list
   // entries (which hold map iterators) valid.
   m_cache.max_load_factor(1.0F);
   m_cache.reserve(kMaxCacheEntries + 16);
@@ -940,7 +940,7 @@ void CairoTextRenderer::evictIfNeeded() {
   // Never evict the most-recently-used entry (LRU front). This protects the
   // just-inserted entry from self-eviction in the case where a single text
   // block (e.g. a multi-megabyte code preview) is larger than kMaxCacheBytes
-  // on its own , we'd otherwise walk the LRU from back to front, evict every
+  // on its own, we'd otherwise walk the LRU from back to front, evict every
   // older entry, then evict our own new entry and return a dangling pointer.
   while (m_lru.size() > 1 && (m_cache.size() > kMaxCacheEntries || m_cacheBytes > kMaxCacheBytes)) {
     const CacheKey* keyPtr = m_lru.back();
@@ -957,7 +957,7 @@ CairoTextRenderer::CacheEntry* CairoTextRenderer::lookupOrRasterize(
     float contentScale, std::string_view text, float fontSize, const TextFont& font, float maxWidth, int maxLines,
     TextAlign align, const Color& color, TextEllipsize ellipsize, bool useMarkup
 ) {
-  // Tinted (A8 coverage) entries are color-independent , the shader applies
+  // Tinted (A8 coverage) entries are color-independent, the shader applies
   // u_tint at draw time, so one cache entry serves every color. RGBA entries
   // (mixed content with COLR emoji) bake non-emoji ink color into the Cairo
   // surface, so rgb must be part of the key. Alpha is normalized to 1.0 in
