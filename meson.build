@@ -225,6 +225,11 @@ rename_service = declare_dependency(
   dependencies: filesystem_service,
 )
 
+trash_service = declare_dependency(
+  sources: files('src/operations/trash_service.cpp'),
+  dependencies: filesystem_service,
+)
+
 transfer_service = declare_dependency(
   sources: files('src/operations/transfer_service.cpp'),
   dependencies: filesystem_service,
@@ -237,7 +242,7 @@ app = executable('noctalia-files',
   build_info,
   completions,
   include_directories: include_directories('src', '.'),
-  dependencies: ui_dependencies + [browser_model, settings_service, state_service, places_service, transfer_service, rename_service, create_service],
+  dependencies: ui_dependencies + [browser_model, settings_service, state_service, places_service, transfer_service, rename_service, create_service, trash_service],
   install: true,
 )
 
@@ -246,6 +251,8 @@ build_tests = tests_opt.enabled() or (
   tests_opt.auto() and get_option('buildtype') == 'debug' and get_option('b_sanitize') == 'none'
 )
 if build_tests
+  trash_test = executable('trash-service-test', 'tests/trash_service_test.cpp', dependencies: [trash_service, browser_model])
+  test('trash-service', trash_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   create_test = executable('create-service-test', 'tests/create_service_test.cpp', dependencies: [create_service, browser_model])
   test('create-service', create_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   rename_test = executable('rename-service-test', 'tests/rename_service_test.cpp', dependencies: [rename_service, browser_model])

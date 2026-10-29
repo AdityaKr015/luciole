@@ -21,6 +21,7 @@
 #include "operations/create_service.h"
 #include "operations/rename_service.h"
 #include "operations/transfer_service.h"
+#include "operations/trash_service.h"
 #include "platform/file_launcher.h"
 #include "render/animation/animation_manager.h"
 #include "render/gl_shared_context.h"
@@ -139,13 +140,8 @@ namespace {
         m_surface.requestUpdate();
       });
       m_transfers.setChangedCallback([this] {
-        if (m_transfers.busy()) {
-          m_transferProgress.startRepeating(std::chrono::milliseconds(100), [this] {
-            m_browserDirty = true;
-            m_surface.requestUpdate();
-          });
-        } else {
-          m_transferProgress.stop();
+        updateOperationProgress();
+        if (!m_transfers.busy()) {
           const auto& results = m_transfers.results();
           const auto done = std::ranges::count_if(results, [](const auto& item) {
             return item.outcome == files::TransferOutcome::MOVED || item.outcome == files::TransferOutcome::COPIED;
@@ -162,6 +158,12 @@ namespace {
           }
           m_browser.refresh();
         }
+        m_browserDirty = true;
+        m_surface.requestUpdate();
+      });
+      m_trash.setChangedCallback([this] {
+        updateOperationProgress();
+        m_trashDirty = true;
         m_browserDirty = true;
         m_surface.requestUpdate();
       });
@@ -209,8 +211,9 @@ namespace {
 
     ~Window() override {
       m_dragScroll.stop();
-      m_transferProgress.stop();
+      m_operationProgress.stop();
       m_transfers.setChangedCallback({});
+      m_trash.setChangedCallback({});
       m_renamer.setChangedCallback({});
       m_creator.setChangedCallback({});
       m_browser.setChangedCallback({});
@@ -256,6 +259,8 @@ namespace {
       if (!m_surface.isRunning() && m_transfers.busy()) {
         m_transfers.cancel();
       }
+      if (!m_surface.isRunning() && (m_trash.busy() || m_trash.canTrash()))
+        m_trash.cancel();
       if (!m_surface.isRunning() && m_renamer.busy())
         m_renamer.cancel();
       if (!m_surface.isRunning() && m_creator.busy())
@@ -265,6 +270,7 @@ namespace {
           || m_pins.busy()
           || m_launcher.busy()
           || m_transfers.busy()
+          || m_trash.busy()
           || m_renamer.busy()
           || m_creator.busy();
     }
@@ -515,6 +521,21 @@ namespace {
           return;
         }
         if (!editing
+            && event.sym == XKB_KEY_Delete
+            && event.modifiers == 0
+            && !event.repeat
+            && m_list != nullptr
+            && m_dispatcher.focusedArea() == m_list->focusArea()) {
+          std::vector<files::DirectoryEntry> targets;
+          for (const auto id : m_browser.model().selectedIds()) {
+            if (const auto* entry = m_browser.model().entry(id))
+              targets.push_back(*entry);
+          }
+          if (!targets.empty())
+            trashItems(targets);
+          return;
+        }
+        if (!editing
             && event.sym == XKB_KEY_F2
             && event.modifiers == 0
             && !event.repeat
@@ -693,6 +714,8 @@ namespace {
       if (targets.size() == 1) {
         entries.push_back({.id = 6, .label = "Rename…", .enabled = canFileRename(targets.front())});
       }
+      entries.push_back({.id = 7, .label = "Move to Trash", .enabled = canTrashItems(targets)});
+      entries.push_back({.label = "", .separator = true});
       entries.push_back({.id = 5, .label = "Properties"});
       showContextMenu(
           std::move(entries),
@@ -721,6 +744,8 @@ namespace {
                 locations.push_back(target.location);
               }
               m_pins.removeMany(locations);
+            } else if (action == 7) {
+              trashItems(targets);
             } else if (action == 6) {
               openFileRename(targets.front());
             } else if (action == 5) {
@@ -782,6 +807,78 @@ namespace {
       );
     }
 
+    void updateOperationProgress() {
+      if (m_transfers.busy() || m_trash.busy()) {
+        m_operationProgress.startRepeating(std::chrono::milliseconds(100), [this] {
+          m_browserDirty = true;
+          m_surface.requestUpdate();
+        });
+      } else {
+        m_operationProgress.stop();
+      }
+    }
+    bool canTrashItems(const std::vector<files::DirectoryEntry>& targets) const {
+      const auto& snapshot = m_browser.model().snapshot();
+      return !targets.empty()
+          && snapshot.location
+          && snapshot.location->nativePath().has_value()
+          && m_browser.searchQuery().empty()
+          && (snapshot.status == files::DirectoryStatus::READY || snapshot.status == files::DirectoryStatus::LOADING)
+          && snapshot.metadata.filesystem.readOnly != true
+          && !m_transfers.busy()
+          && !m_trash.busy()
+          && !m_trash.canTrash()
+          && !m_renamer.busy()
+          && !m_creator.busy()
+          && std::ranges::all_of(targets, [](const auto& entry) {
+               return entry.location.nativePath().has_value() && entry.access.trash != false;
+             });
+    }
+    void trashItems(const std::vector<files::DirectoryEntry>& targets) {
+      if (!canTrashItems(targets) || !targetsCurrent(targets)) {
+        actionError("This selection cannot be moved to Trash right now.");
+        return;
+      }
+      cancelDrag();
+      std::vector<files::Location> sources;
+      sources.reserve(targets.size());
+      for (const auto& target : targets)
+        sources.push_back(target.location);
+      if (!m_trash.prepare(*m_browser.model().snapshot().location, std::move(sources)))
+        actionError("Another Trash operation is still finishing.");
+    }
+    void syncTrash() {
+      const auto& snapshot = m_trash.snapshot();
+      if (snapshot.status == files::TrashStatus::READY) {
+        (void)m_trash.trash();
+      } else if (snapshot.status == files::TrashStatus::ERROR) {
+        actionError("Could not move to Trash: " + snapshot.error);
+      } else if (snapshot.status == files::TrashStatus::CANCELLED) {
+        actionError("Move to Trash cancelled.");
+      } else if (snapshot.status == files::TrashStatus::FINISHED) {
+        const auto done =
+            std::ranges::count(snapshot.results, files::TrashOutcome::TRASHED, &files::TrashResult::outcome);
+        const auto failed =
+            std::ranges::count(snapshot.results, files::TrashOutcome::FAILED, &files::TrashResult::outcome);
+        const auto cancelled =
+            std::ranges::count(snapshot.results, files::TrashOutcome::CANCELLED, &files::TrashResult::outcome);
+        std::string message = std::format("{} item{} moved to Trash", done, done == 1 ? "" : "s");
+        if (failed != 0)
+          message += std::format(" · {} failed", failed);
+        if (cancelled != 0)
+          message += std::format(" · {} cancelled", cancelled);
+        const auto error =
+            std::ranges::find_if(snapshot.results, [](const auto& result) { return !result.error.empty(); });
+        if (error != snapshot.results.end()) {
+          const files::GString raw(g_file_get_basename(error->source.file().get()));
+          const files::GString name(g_filename_display_name(raw ? raw.get() : "Item"));
+          message += std::format(" · {}: {}", name.get(), error->error);
+        }
+        actionError(std::move(message));
+        m_browser.refresh();
+      }
+    }
+
     bool canCreateItem() const {
       const auto& snapshot = m_browser.model().snapshot();
       return snapshot.location
@@ -792,7 +889,9 @@ namespace {
           && snapshot.metadata.access.write != false
           && !m_creator.busy()
           && !m_renamer.busy()
-          && !m_transfers.busy();
+          && !m_transfers.busy()
+          && !m_trash.busy()
+          && !m_trash.canTrash();
     }
     void openCreateItem(files::Location parent, files::CreateKind kind) {
       if (!canCreateItem() || m_browser.model().snapshot().location != parent) {
@@ -872,6 +971,8 @@ namespace {
       return entry.location.nativePath().has_value()
           && entry.access.rename != false
           && !m_transfers.busy()
+          && !m_trash.busy()
+          && !m_trash.canTrash()
           && !m_renamer.busy()
           && !m_creator.busy();
     }
@@ -1271,6 +1372,8 @@ namespace {
         return m_pins.editable() && m_pins.contains(*m_drag->sourcePin);
       }
       return !m_transfers.busy()
+          && !m_trash.busy()
+          && !m_trash.canTrash()
           && !m_renamer.busy()
           && !m_creator.busy()
           && std::ranges::all_of(m_drag->entries, [this](const auto& target) {
@@ -1371,7 +1474,12 @@ namespace {
     }
 
     void startFileDrag(const std::vector<files::EntryId>& ids) {
-      if (ids.empty() || m_transfers.busy() || m_renamer.busy() || m_creator.busy()) {
+      if (ids.empty()
+          || m_transfers.busy()
+          || m_trash.busy()
+          || m_trash.canTrash()
+          || m_renamer.busy()
+          || m_creator.busy()) {
         return;
       }
       Drag drag;
@@ -1932,6 +2040,10 @@ namespace {
             : std::format("Preparing {} creation…", kind);
       } else if (m_renamer.busy()) {
         status = m_renamer.snapshot().status == files::RenameStatus::RENAMING ? "Renaming…" : "Preparing rename…";
+      } else if (m_trash.busy()) {
+        status = m_trash.snapshot().status == files::TrashStatus::PREPARING
+            ? "Preparing move to Trash…"
+            : std::format("Moving to Trash… · {} of {} items", m_trash.completed(), m_trash.snapshot().results.size());
       } else if (m_transfers.busy()) {
         const files::GString size(g_format_size(m_transfers.bytes()));
         status = std::format(
@@ -1978,8 +2090,10 @@ namespace {
         status += std::format(" · {} selected", model.selection().selected.size());
       }
       m_status->setText(status);
-      m_cancelTransfer->setVisible(m_transfers.busy());
-      m_cancelTransfer->setParticipatesInLayout(m_transfers.busy());
+      const bool cancellable = m_transfers.busy() || m_trash.busy();
+      m_cancelOperation->setVisible(cancellable);
+      m_cancelOperation->setParticipatesInLayout(cancellable);
+      m_cancelOperation->setTooltip(m_trash.busy() ? "Cancel move to Trash" : "Cancel transfer");
       m_notice->setText(
           snapshot.error
                   || loading
@@ -2048,6 +2162,8 @@ namespace {
         buildScene();
       }
       syncTransferConflict();
+      if (std::exchange(m_trashDirty, false))
+        syncTrash();
       if (std::exchange(m_creationDirty, false))
         syncCreation();
       if (std::exchange(m_renameDirty, false))
@@ -2423,14 +2539,17 @@ namespace {
                .fill = colorSpecFromRole(ColorRole::SurfaceContainerLow)},
               ui::label({.out = &m_status, .maxLines = 1, .flexGrow = 1.0F}),
               ui::button(
-                  {.out = &m_cancelTransfer,
+                  {.out = &m_cancelOperation,
                    .glyph = "x",
                    .controlHeight = Style::controlHeightSm,
                    .variant = ButtonVariant::Ghost,
                    .tooltip = "Cancel transfer",
                    .visible = false,
                    .participatesInLayout = false,
-                   .onClick = [this] { m_transfers.cancel(); }}
+                   .onClick = [this] {
+                     m_transfers.cancel();
+                     m_trash.cancel();
+                   }}
               )
           )
       );
@@ -2709,10 +2828,12 @@ namespace {
     std::optional<DropTarget> m_lastDropTarget;
     bool m_dragScrollInPlaces = false;
     files::TransferService m_transfers;
+    files::TrashService m_trash;
+    bool m_trashDirty = false;
     files::RenameService m_renamer;
     files::CreateService m_creator;
-    Timer m_transferProgress;
-    Button* m_cancelTransfer = nullptr;
+    Timer m_operationProgress;
+    Button* m_cancelOperation = nullptr;
     Box* m_placeDropLine = nullptr;
     std::string m_preferenceError;
     std::size_t m_gridZoom = 1;
