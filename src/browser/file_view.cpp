@@ -41,7 +41,7 @@ namespace {
            .configure = [](Flex& container) { container.setPadding(0, Style::spaceMd); }},
           std::move(icon),
           ui::column(
-              {.align = FlexAlign::Stretch, .flexGrow = 1.0F},
+              {.out = &m_nameColumn, .align = FlexAlign::Stretch},
               ui::label(
                   {.out = &m_name,
                    .maxLines = 1,
@@ -58,8 +58,8 @@ namespace {
           ui::label(
               {.out = &m_kind,
                .fontSize = Style::fontSizeCaption,
-               .minWidth = files::DetailsColumns::typeWidth,
-               .maxWidth = files::DetailsColumns::typeWidth,
+               .minWidth = 144.0F,
+               .maxWidth = 144.0F,
                .maxLines = 1}
           ),
           ui::label(
@@ -83,7 +83,7 @@ namespace {
 
     void bind(
         const files::DirectoryEntry& entry, std::string_view typeLabel, bool selected, bool focused, bool hovered,
-        files::DetailsColumnVisibility columns, files::DetailsColumnOrder order
+        files::DetailsColumns columns, files::DetailsColumnOrder order
     ) {
       m_columns = columns;
       m_columnOrder = order;
@@ -95,7 +95,6 @@ namespace {
       m_name->setText(entry.displayName);
       m_parent->setText(entry.parentDisplayName);
       m_fullDate = modifiedTime(entry.modifiedSeconds, "%Y-%m-%d %H:%M");
-      m_compactDate = modifiedTime(entry.modifiedSeconds, "%Y-%m-%d");
       m_parent->setVisible(!entry.parentDisplayName.empty());
       m_parent->setParticipatesInLayout(!entry.parentDisplayName.empty());
       m_parent->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurfaceVariant));
@@ -140,7 +139,7 @@ namespace {
         }
         m_appliedColumnOrder = m_columnOrder;
       }
-      const auto columns = files::DetailsColumns::forWidth(width(), m_columns);
+      const auto& columns = m_columns;
       m_kind->setVisible(columns.showType);
       m_kind->setParticipatesInLayout(columns.showType);
       m_size->setVisible(columns.showSize);
@@ -151,21 +150,12 @@ namespace {
       m_size->setMaxWidth(columns.sizeWidth);
       m_modified->setMinWidth(columns.modifiedWidth);
       m_modified->setMaxWidth(columns.modifiedWidth);
-      m_modified->setText(columns.compactDate ? m_compactDate : m_fullDate);
-      const float nameWidth = std::max(
-          1.0F,
-          width()
-              - 2 * Style::spaceMd
-              - 24.0F
-              - (1
-                 + static_cast<int>(columns.showType)
-                 + static_cast<int>(columns.showSize)
-                 + static_cast<int>(columns.showModified))
-                  * Style::spaceSm
-              - (columns.showType ? files::DetailsColumns::typeWidth : 0.0F)
-              - (columns.showSize ? columns.sizeWidth : 0.0F)
-              - (columns.showModified ? columns.modifiedWidth : 0.0F)
-      );
+      m_modified->setText(m_fullDate);
+      m_kind->setMinWidth(columns.typeWidth);
+      m_kind->setMaxWidth(columns.typeWidth);
+      m_nameColumn->setMinWidth(columns.nameWidth - 40.0F);
+      m_nameColumn->setMaxWidth(columns.nameWidth - 40.0F);
+      const float nameWidth = columns.nameWidth - 40.0F;
       m_name->setMaxWidth(nameWidth);
       m_parent->setMaxWidth(nameWidth);
       m_background->arrange(renderer, {0, 0, width(), height()});
@@ -175,6 +165,7 @@ namespace {
   private:
     Box* m_background = nullptr;
     Flex* m_row = nullptr;
+    Flex* m_nameColumn = nullptr;
     files::FileIcon* m_icon = nullptr;
     Label* m_name = nullptr;
     Label* m_parent = nullptr;
@@ -182,8 +173,7 @@ namespace {
     Label* m_size = nullptr;
     Label* m_modified = nullptr;
     std::string m_fullDate;
-    std::string m_compactDate;
-    files::DetailsColumnVisibility m_columns;
+    files::DetailsColumns m_columns;
     files::DetailsColumnOrder m_columnOrder = files::kDefaultDetailsColumnOrder;
     files::DetailsColumnOrder m_appliedColumnOrder = files::kDefaultDetailsColumnOrder;
   };

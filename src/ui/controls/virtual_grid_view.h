@@ -147,6 +147,7 @@ public:
   // Content scale of the hosting surface: sets the scrollbar geometry scale and the pointer
   // travel threshold that separates a click from a drag on an adapter-consumed press.
   void setScale(float scale);
+  void setHorizontalOverflow(float width, float offset);
 
   void scrollToIndex(std::size_t index, bool alignToTop = false);
   [[nodiscard]] std::optional<std::size_t> firstVisibleIndex() const noexcept;
@@ -217,6 +218,8 @@ private:
 
   std::size_t m_columns = 0;
   float m_minCellWidth = 96.0F;
+  float m_horizontalWidth = 0.0F;
+  float m_horizontalOffset = 0.0F;
   float m_cellHeight = 96.0F;
   bool m_squareCells = true;
   float m_columnGap = 4.0F;

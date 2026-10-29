@@ -67,6 +67,9 @@ namespace {
         files::DetailsColumn::MODIFIED, files::DetailsColumn::SIZE, files::DetailsColumn::TYPE
     };
     writer.saveColumnOrder(finalOrder);
+    writer.saveColumnWidths({400, 200, 100, 180});
+    const files::DetailsColumnWidths finalWidths{640, 192, 96, 224};
+    writer.saveColumnWidths(finalWidths);
     wait();
     const auto loaded = files::loadSettings(paths);
     require(
@@ -79,7 +82,8 @@ namespace {
             && !loaded->browser.showSidebar
             && loaded->browser.sort == finalSort
             && loaded->browser.columns == hiddenColumns
-            && loaded->browser.columnOrder == finalOrder,
+            && loaded->browser.columnOrder == finalOrder
+            && loaded->browser.columnWidths == finalWidths,
         "rapid changes did not persist the latest view or overwrote unrelated preferences"
     );
     std::ifstream base(paths.base);
@@ -96,13 +100,15 @@ namespace {
             && !shown->browser.showSidebar
             && shown->browser.sort == finalSort
             && shown->browser.columns == hiddenColumns
-            && shown->browser.columnOrder == finalOrder,
+            && shown->browser.columnOrder == finalOrder
+            && shown->browser.columnWidths == finalWidths,
         "showing hidden entries did not persist or lost unrelated overrides"
     );
     const files::SortOptions defaultSort;
     writer.saveSort(defaultSort);
     writer.saveDetailsColumns({});
     writer.saveColumnOrder(files::kDefaultDetailsColumnOrder);
+    writer.saveColumnWidths(files::kDefaultDetailsColumnWidths);
     wait();
     const auto reset = files::loadSettings(paths);
     require(
@@ -112,7 +118,8 @@ namespace {
             && reset->browser.showHidden
             && reset->browser.gridIconSize == 64
             && reset->browser.columns == files::DetailsColumnVisibility{}
-            && reset->browser.columnOrder == files::kDefaultDetailsColumnOrder,
+            && reset->browser.columnOrder == files::kDefaultDetailsColumnOrder
+            && reset->browser.columnWidths == files::kDefaultDetailsColumnWidths,
         "restoring default sort choices did not persist or lost unrelated overrides"
     );
     std::ofstream(paths.overrides) << "[broken\n";

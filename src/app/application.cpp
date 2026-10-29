@@ -126,10 +126,11 @@ namespace {
       m_showSidebar = settings.showSidebar;
       m_columnVisibility = settings.columns;
       m_columnOrder = settings.columnOrder;
+      m_columnWidths = settings.columnWidths;
       m_surface.setRenderContext(&renderer);
       m_surface.setAnimationManager(&m_animations);
       m_surface.setConfigureCallback([this](std::uint32_t, std::uint32_t) {
-        if (m_resizingSidebar || m_columnDrag)
+        if (m_resizingSidebar || m_columnDrag || m_columnResize)
           m_dispatcher.cancelPointerCapture();
         m_surface.requestLayout();
       });
@@ -138,6 +139,16 @@ namespace {
       m_surface.setDebugName("files-window");
       m_dispatcher.setCursorShapeCallback([this](std::uint32_t serial, std::uint32_t shape) {
         m_connection.input().setCursorShape(serial, shape);
+      });
+      m_dispatcher.setFocusChangeCallback([this](InputArea*, InputArea* focused) {
+        if (m_nameHeader == nullptr || m_viewMode != files::ViewMode::LIST)
+          return;
+        for (std::size_t index = 0; index < 4; ++index) {
+          if (widthHeader(index)->inputArea() == focused) {
+            m_revealDetailsHeader = widthHeader(index);
+            m_surface.requestLayout();
+          }
+        }
       });
       m_browser.setChangedCallback([this] {
         m_browserDirty = true;
@@ -363,7 +374,7 @@ namespace {
           && event.pressed
           && event.button == BTN_RIGHT
           && m_notice != nullptr
-          && m_notice->visible()
+          && m_noticeArea->visible()
           && m_filePane->containsScenePoint(x, y)
           && (!m_listHeader->visible() || !m_listHeader->containsScenePoint(x, y))) {
         openFileMenu(std::nullopt, x, y);
@@ -434,6 +445,22 @@ namespace {
         dispatcher->pointerButton(x, y, event.button, event.pressed, event.serial, event.time, event.touch);
         break;
       case PointerEvent::Type::Axis:
+        if (dispatcher == &m_dispatcher
+            && m_viewMode == files::ViewMode::LIST
+            && m_filePane->containsScenePoint(x, y)
+            && (event.axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL
+                || (event.axis == WL_POINTER_AXIS_VERTICAL_SCROLL
+                    && m_connection.input().keyboardModifiers() == KeyMod::Shift))) {
+          if (!m_columnResize && !m_columnDrag) {
+            InputArea::PointerData data;
+            data.axisValue = event.axisValue;
+            data.axisDiscrete = event.axisDiscrete;
+            data.axisValue120 = event.axisValue120;
+            data.axisLines = event.axisLines;
+            scrollDetails(m_detailsOffset + data.scrollDelta(Style::scrollWheelStep));
+          }
+          break;
+        }
         if (dispatcher == &m_dispatcher && zoomFromScroll(event)) {
           break;
         }
@@ -449,7 +476,7 @@ namespace {
       if (event.pressed) {
         m_popupSerial = m_connection.input().lastSerial();
         m_lastBreadcrumb.reset();
-        if (m_columnDrag && KeySymbol::isEscape(event.sym)) {
+        if ((m_columnDrag || m_columnResize) && KeySymbol::isEscape(event.sym)) {
           m_dispatcher.cancelPointerCapture();
           return;
         }
@@ -462,7 +489,7 @@ namespace {
           return;
         }
       }
-      if (m_columnDrag)
+      if (m_columnDrag || m_columnResize)
         return;
       if (m_drag) {
         updateDrag();
@@ -547,6 +574,26 @@ namespace {
         }
         const bool editing = (m_location != nullptr && m_dispatcher.focusedArea() == m_location->inputArea())
             || (m_filterInput != nullptr && m_dispatcher.focusedArea() == m_filterInput->inputArea());
+        if (!editing
+            && m_viewMode == files::ViewMode::LIST
+            && event.modifiers == KeyMod::Ctrl
+            && (event.sym == XKB_KEY_Left || event.sym == XKB_KEY_Right)) {
+          for (std::size_t index = 0; index < 4; ++index) {
+            if (m_dispatcher.focusedArea() == widthHeader(index)->inputArea()) {
+              auto widths = m_columnWidths;
+              const int delta = (event.sym == XKB_KEY_Right ? 16 : -16) * (Style::rtl() ? -1 : 1);
+              widths[index] = std::clamp(
+                  static_cast<int>(std::lround(headerWidth(index))) + delta, files::minimumDetailsColumnWidth(index),
+                  files::maximumDetailsColumnWidth(index)
+              );
+              if (index != 0 && widths[0] == 0 && widths[index] != m_columnWidths[index])
+                widths[0] = static_cast<int>(std::lround(m_detailsColumns.nameWidth));
+              setDetailsColumnWidths(widths);
+              m_revealDetailsHeader = widthHeader(index);
+              return;
+            }
+          }
+        }
         if (!editing && zoomFromKey(event))
           return;
         if (!editing && event.sym == XKB_KEY_F9 && event.modifiers == 0 && !event.repeat) {
@@ -570,7 +617,12 @@ namespace {
               for (const auto candidate : m_columnOrder)
                 if (columnHeader(candidate) == header)
                   column = candidate;
-              openColumnsMenu(sceneRect(*header), column);
+              auto anchor = sceneRect(*header);
+              const auto viewport = sceneRect(*m_detailsHeaderViewport);
+              const float left = std::max(anchor.x, viewport.x);
+              anchor.width = std::max(1.0F, std::min(anchor.x + anchor.width, viewport.x + viewport.width) - left);
+              anchor.x = left;
+              openColumnsMenu(anchor, column);
               return;
             }
           }
@@ -588,7 +640,10 @@ namespace {
             const auto& rows = m_browser.model().rows();
             const auto found = std::ranges::find(rows, *id);
             if (found != rows.end()) {
-              (void)m_list->absoluteAnchorForIndex(static_cast<std::size_t>(found - rows.begin()), x, y);
+              if (const auto rect = m_list->itemRect(static_cast<std::size_t>(found - rows.begin()))) {
+                x = rect->x + rect->width * 0.5F;
+                y = rect->y + rect->height * 0.5F;
+              }
             }
           }
           openFileMenu(id, x, y);
@@ -2093,6 +2148,121 @@ namespace {
       m_surface.requestUpdate();
     }
 
+    struct ColumnResize {
+      std::size_t index;
+      float pressX;
+      float width;
+      files::DetailsColumnWidths before;
+      float offset;
+      int nameWidth;
+    };
+
+    Button* widthHeader(std::size_t index) const {
+      return index == 0 ? m_nameHeader : columnHeader(static_cast<files::DetailsColumn>(index - 1));
+    }
+
+    float headerWidth(std::size_t index) const { return widthHeader(index)->width(); }
+
+    void cancelColumnResize() {
+      if (!m_columnResize)
+        return;
+      m_columnWidths = m_columnResize->before;
+      m_detailsOffset = m_columnResize->offset;
+      m_columnResize.reset();
+      m_columnHoverDirty = true;
+      m_surface.requestLayout();
+    }
+
+    void setDetailsColumnWidths(files::DetailsColumnWidths widths) {
+      if (m_columnWidths == widths)
+        return;
+      captureViewAnchor();
+      m_dispatcher.cancelPointerCapture();
+      m_list->cancelPointerGesture();
+      m_columnWidths = widths;
+      m_preferences.saveColumnWidths(widths);
+      m_surface.requestLayout();
+    }
+
+    void scrollDetails(float offset) {
+      if (m_viewMode != files::ViewMode::LIST || m_columnResize || m_columnDrag)
+        return;
+      const float maximum = std::max(0.0F, m_detailsColumns.contentWidth - m_detailsHeaderViewport->width());
+      const float next = std::clamp(offset, 0.0F, maximum);
+      if (next == m_detailsOffset)
+        return;
+      m_list->cancelPointerGesture();
+      m_detailsOffset = next;
+      m_columnHoverDirty = true;
+      m_surface.requestLayout();
+    }
+
+    void layoutDetails(Renderer& renderer) {
+      const bool list = m_viewMode == files::ViewMode::LIST;
+      // The header remains laid out when the file grid is hidden for an empty
+      // folder or an error. Do not derive its width from that stale grid.
+      const float viewport = list ? m_detailsHeaderViewport->width() : m_list->scrollView().contentViewportWidth(true);
+      const auto columns = files::DetailsColumns::forWidth(viewport, m_columnVisibility, m_columnWidths);
+      const bool columnsChanged = columns != m_detailsColumns;
+      m_detailsColumns = columns;
+      const bool overflow = list && columns.contentWidth > viewport + 0.5F;
+      m_detailsScrollHost->setVisible(overflow);
+      m_detailsScrollHost->setParticipatesInLayout(overflow);
+      for (std::size_t index = 0; index < 4; ++index) {
+        auto* header = widthHeader(index);
+        const bool visible =
+            index == 0 || files::detailsColumnVisible(m_columnVisibility, static_cast<files::DetailsColumn>(index - 1));
+        header->setVisible(visible);
+        header->setParticipatesInLayout(visible);
+        const float allocation = index == 0 ? columns.nameWidth : static_cast<float>(m_columnWidths[index]);
+        header->setMinWidth(allocation);
+        header->setMaxWidth(allocation);
+        if (!visible && m_dispatcher.focusedArea() == header->inputArea())
+          m_dispatcher.setFocus(m_nameHeader->inputArea());
+      }
+      m_detailsOffset = std::clamp(m_detailsOffset, 0.0F, std::max(0.0F, columns.contentWidth - viewport));
+      m_listAdapter.setDetailsColumns(columns);
+      m_list->setHorizontalOverflow(list ? columns.contentWidth : 0.0F, list ? m_detailsOffset : 0.0F);
+      if (columnsChanged)
+        m_list->notifyDataChanged();
+      m_root->arrange(renderer, {0, 0, static_cast<float>(m_surface.width()), static_cast<float>(m_surface.height())});
+      m_detailsHeaderRow->arrange(
+          renderer, {-m_detailsOffset, 0, std::max(viewport, columns.contentWidth), m_detailsHeaderViewport->height()}
+      );
+      // Reveal focused headers without moving the user's horizontal position
+      // on every frame. Pointer resizing retains its own captured offset.
+      auto* focused = m_dispatcher.focusedArea();
+      Button* reveal = std::exchange(m_revealDetailsHeader, nullptr);
+      if (focused != m_lastDetailsFocus && !m_columnResize && !m_columnDrag)
+        for (std::size_t index = 0; index < 4; ++index)
+          if (widthHeader(index)->inputArea() == focused)
+            reveal = widthHeader(index);
+      m_lastDetailsFocus = focused;
+      if (list && reveal && reveal->visible()) {
+        const auto bounds = sceneRect(*reveal);
+        const auto clip = sceneRect(*m_detailsHeaderViewport);
+        const float delta = bounds.width > clip.width
+            ? (Style::rtl() ? bounds.x + bounds.width - clip.x - clip.width : bounds.x - clip.x)
+            : bounds.x < clip.x                             ? bounds.x - clip.x
+            : bounds.x + bounds.width > clip.x + clip.width ? bounds.x + bounds.width - clip.x - clip.width
+                                                            : 0.0F;
+        if (delta != 0.0F)
+          scrollDetails(m_detailsOffset + delta);
+      }
+      m_detailsScrollbar->update(viewport, columns.contentWidth, m_detailsOffset);
+      m_detailsScrollbar->arrange(renderer, {0, 0, viewport, Style::scrollbarWidth});
+      for (std::size_t index = 0; index < 4; ++index) {
+        auto* handle = m_columnResizeHandles[index];
+        auto* header = widthHeader(index);
+        handle->setVisible(list && header->visible());
+        const float edge = header->x() + (Style::rtl() ? 0.0F : header->width()) - m_detailsOffset;
+        handle->arrange(renderer, {edge - 4.0F, 0, 8.0F, m_detailsHeaderViewport->height()});
+        auto* line = m_columnResizeLines[index];
+        line->setVisible(handle->hovered() || (m_columnResize && m_columnResize->index == index));
+        line->arrange(renderer, {3.5F, 4.0F, 1.0F, std::max(0.0F, handle->height() - 8.0F)});
+      }
+    }
+
     struct ColumnDrag {
       files::DetailsColumn source;
       float pressX;
@@ -2106,7 +2276,7 @@ namespace {
     };
 
     std::optional<ColumnDrop> columnDropAt(float x, float y) const {
-      if (!m_columnDrag || !m_listHeader->visible())
+      if (!m_columnDrag || !m_listHeader->visible() || !m_detailsHeaderViewport->containsScenePoint(x, y))
         return std::nullopt;
       const auto source = m_columnDrag->source;
       if (!columnHeader(source)->visible())
@@ -2461,7 +2631,7 @@ namespace {
       m_list->setCellHeight(gridHeight());
       m_list->setMinCellWidth(std::max(88.0F, gridIconSize() + 56.0F));
       m_gridAdapter.setGridIconSize(gridIconSize());
-      m_listAdapter.setDetailsColumnVisibility(m_columnVisibility);
+      m_listAdapter.setDetailsColumns(m_detailsColumns);
       m_listAdapter.setDetailsColumnOrder(m_columnOrder);
       const auto& sort = model.sort();
       const char* indicator = sort.descending ? "arrow-down" : "arrow-up";
@@ -2612,8 +2782,8 @@ namespace {
               : "No visible items."
       );
       const bool empty = model.rows().empty();
-      m_notice->setVisible(empty);
-      m_notice->setParticipatesInLayout(empty);
+      m_noticeArea->setVisible(empty);
+      m_noticeArea->setParticipatesInLayout(empty);
       m_list->setVisible(!empty);
       m_list->setParticipatesInLayout(!empty);
       std::optional<std::size_t> focus;
@@ -2760,28 +2930,7 @@ namespace {
         m_root->arrange(
             renderer, LayoutRect{0, 0, static_cast<float>(m_surface.width()), static_cast<float>(m_surface.height())}
         );
-        const auto columns =
-            files::DetailsColumns::forWidth(m_list->scrollView().contentViewportWidth(true), m_columnVisibility);
-        if (columns != m_detailsColumns) {
-          m_detailsColumns = columns;
-          m_typeHeader->setVisible(columns.showType);
-          m_typeHeader->setParticipatesInLayout(columns.showType);
-          m_sizeHeader->setVisible(columns.showSize);
-          m_sizeHeader->setParticipatesInLayout(columns.showSize);
-          m_modifiedHeader->setVisible(columns.showModified);
-          m_modifiedHeader->setParticipatesInLayout(columns.showModified);
-          for (auto* header : {m_typeHeader, m_sizeHeader, m_modifiedHeader}) {
-            if (!header->visible() && m_dispatcher.focusedArea() == header->inputArea())
-              m_dispatcher.setFocus(m_nameHeader->inputArea());
-          }
-          m_sizeHeader->setMinWidth(columns.sizeWidth + 2 * Style::spaceXs);
-          m_sizeHeader->setMaxWidth(columns.sizeWidth + 2 * Style::spaceXs);
-          m_modifiedHeader->setMinWidth(columns.modifiedWidth + 2 * Style::spaceXs);
-          m_modifiedHeader->setMaxWidth(columns.modifiedWidth + 2 * Style::spaceXs);
-          m_root->arrange(
-              renderer, LayoutRect{0, 0, static_cast<float>(m_surface.width()), static_cast<float>(m_surface.height())}
-          );
-        }
+        layoutDetails(renderer);
         const bool columnHoverDirty = std::exchange(m_columnHoverDirty, false);
         if (columnOrderChanged || columnHoverDirty)
           m_dispatcher.syncPointerHover();
@@ -3087,67 +3236,76 @@ namespace {
               ui::row(
                   {.height = 32.0F},
                   ui::row(
-                      {.out = &m_detailsHeaderRow,
-                       .align = FlexAlign::Center,
-                       .paddingH = Style::spaceMd - Style::spaceXs,
+                      {.out = &m_detailsHeaderViewport,
+                       .align = FlexAlign::Stretch,
+                       .clipChildren = true,
+                       .height = 32.0F,
                        .flexGrow = 1.0F},
-                      ui::button(
-                          {.out = &m_nameHeader,
-                           .text = "Name",
-                           .fontSize = Style::fontSizeCaption,
-                           .controlHeight = Style::controlHeightSm,
-                           .contentAlign = ButtonContentAlign::Start,
-                           .variant = ButtonVariant::Ghost,
-                           .tooltip = "Sort by name; click again to reverse",
-                           .paddingH = Style::spaceXs,
-                           .flexGrow = 1.0F,
-                           .onClick = [this] { sortBy(files::SortField::NAME); }}
-                      ),
-                      ui::button(
-                          {.out = &m_typeHeader,
-                           .text = "Type",
-                           .fontSize = Style::fontSizeCaption,
-                           .controlHeight = Style::controlHeightSm,
-                           .contentAlign = ButtonContentAlign::Start,
-                           .variant = ButtonVariant::Ghost,
-                           .tooltip = "Sort by type; click again to reverse",
-                           .minWidth = files::DetailsColumns::typeWidth + 2 * Style::spaceXs,
-                           .maxWidth = files::DetailsColumns::typeWidth + 2 * Style::spaceXs,
-                           .paddingH = Style::spaceXs,
-                           .onClick = [this] { sortBy(files::SortField::TYPE); }}
-                      ),
-                      ui::button(
-                          {.out = &m_sizeHeader,
-                           .text = "Size",
-                           .fontSize = Style::fontSizeCaption,
-                           .controlHeight = Style::controlHeightSm,
-                           .contentAlign = ButtonContentAlign::Start,
-                           .variant = ButtonVariant::Ghost,
-                           .tooltip = "Sort by size; click again to reverse",
-                           .minWidth = 110.0F + 2 * Style::spaceXs,
-                           .maxWidth = 110.0F + 2 * Style::spaceXs,
-                           .paddingH = Style::spaceXs,
-                           .onClick = [this] { sortBy(files::SortField::SIZE); }}
-                      ),
-                      ui::button(
-                          {.out = &m_modifiedHeader,
-                           .text = "Modified",
-                           .fontSize = Style::fontSizeCaption,
-                           .controlHeight = Style::controlHeightSm,
-                           .contentAlign = ButtonContentAlign::Start,
-                           .variant = ButtonVariant::Ghost,
-                           .tooltip = "Sort by modification time; click again to reverse",
-                           .minWidth = 148.0F + 2 * Style::spaceXs,
-                           .maxWidth = 148.0F + 2 * Style::spaceXs,
-                           .paddingH = Style::spaceXs,
-                           .onClick = [this] { sortBy(files::SortField::MODIFIED); }}
+                      ui::row(
+                          {.out = &m_detailsHeaderRow,
+                           .align = FlexAlign::Center,
+                           .paddingH = Style::spaceMd - Style::spaceXs,
+                           .participatesInLayout = false},
+                          ui::button(
+                              {.out = &m_nameHeader,
+                               .text = "Name",
+                               .fontSize = Style::fontSizeCaption,
+                               .controlHeight = Style::controlHeightSm,
+                               .contentAlign = ButtonContentAlign::Start,
+                               .variant = ButtonVariant::Ghost,
+                               .tooltip = "Sort by name; click again to reverse",
+                               .paddingH = Style::spaceXs,
+                               .onClick = [this] { sortBy(files::SortField::NAME); }}
+                          ),
+                          ui::button(
+                              {.out = &m_typeHeader,
+                               .text = "Type",
+                               .fontSize = Style::fontSizeCaption,
+                               .controlHeight = Style::controlHeightSm,
+                               .contentAlign = ButtonContentAlign::Start,
+                               .variant = ButtonVariant::Ghost,
+                               .tooltip = "Sort by type; click again to reverse",
+                               .minWidth = 144.0F + 2 * Style::spaceXs,
+                               .maxWidth = 144.0F + 2 * Style::spaceXs,
+                               .paddingH = Style::spaceXs,
+                               .onClick = [this] { sortBy(files::SortField::TYPE); }}
+                          ),
+                          ui::button(
+                              {.out = &m_sizeHeader,
+                               .text = "Size",
+                               .fontSize = Style::fontSizeCaption,
+                               .controlHeight = Style::controlHeightSm,
+                               .contentAlign = ButtonContentAlign::Start,
+                               .variant = ButtonVariant::Ghost,
+                               .tooltip = "Sort by size; click again to reverse",
+                               .minWidth = 110.0F + 2 * Style::spaceXs,
+                               .maxWidth = 110.0F + 2 * Style::spaceXs,
+                               .paddingH = Style::spaceXs,
+                               .onClick = [this] { sortBy(files::SortField::SIZE); }}
+                          ),
+                          ui::button(
+                              {.out = &m_modifiedHeader,
+                               .text = "Modified",
+                               .fontSize = Style::fontSizeCaption,
+                               .controlHeight = Style::controlHeightSm,
+                               .contentAlign = ButtonContentAlign::Start,
+                               .variant = ButtonVariant::Ghost,
+                               .tooltip = "Sort by modification time; click again to reverse",
+                               .minWidth = 148.0F + 2 * Style::spaceXs,
+                               .maxWidth = 148.0F + 2 * Style::spaceXs,
+                               .paddingH = Style::spaceXs,
+                               .onClick = [this] { sortBy(files::SortField::MODIFIED); }}
+                          )
                       )
                   ),
                   ui::box({.width = Style::scrollbarWidth + Style::scrollbarGap})
               ),
               ui::separator({})
           ),
-          ui::label({.out = &m_notice, .textAlign = TextAlign::Center, .flexGrow = 1.0F}),
+          ui::column(
+              {.out = &m_noticeArea, .align = FlexAlign::Stretch, .flexGrow = 1.0F},
+              ui::label({.out = &m_notice, .textAlign = TextAlign::Center})
+          ),
           ui::virtualGridView(
               {.out = &m_list,
                .columns = 1,
@@ -3172,6 +3330,19 @@ namespace {
                }}
           )
       );
+      auto horizontalBar = std::make_unique<Scrollbar>();
+      horizontalBar->setOrientation(ScrollOrientation::Horizontal);
+      horizontalBar->setParticipatesInLayout(false);
+      horizontalBar->setOnScrollChanged([this](float offset) { scrollDetails(offset); });
+      m_detailsScrollbar = horizontalBar.get();
+      auto horizontalHost = ui::box(
+          {.out = &m_detailsScrollHost,
+           .height = Style::scrollbarWidth + Style::scrollbarGap,
+           .visible = false,
+           .participatesInLayout = false}
+      );
+      horizontalHost->addChild(std::move(horizontalBar));
+      content->addChild(std::move(horizontalHost));
       m_root = ui::column(
           {.align = FlexAlign::Stretch,
            .fill = colorSpecFromRole(ColorRole::Surface),
@@ -3212,6 +3383,58 @@ namespace {
               )
           )
       );
+      for (std::size_t index = 0; index < 4; ++index) {
+        auto handle = std::make_unique<InputArea>();
+        handle->setParticipatesInLayout(false);
+        handle->setZIndex(10);
+        handle->setCursorShape(WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COL_RESIZE);
+        handle->setAcceptedButtons(InputArea::buttonMask(BTN_LEFT));
+        handle->setOnPress([this, index](const InputArea::PointerData& data) {
+          if (data.pressed) {
+            captureViewAnchor();
+            m_list->cancelPointerGesture();
+            m_columnResize = ColumnResize{
+                index,          data.sceneX,     headerWidth(index),
+                m_columnWidths, m_detailsOffset, static_cast<int>(std::lround(m_detailsColumns.nameWidth))
+            };
+          } else if (m_columnResize) {
+            const auto before = m_columnResize->before;
+            m_columnResize.reset();
+            if (m_columnWidths != before)
+              m_preferences.saveColumnWidths(m_columnWidths);
+            m_columnHoverDirty = true;
+          }
+          m_surface.requestLayout();
+        });
+        handle->setOnMotion([this](const InputArea::PointerData&) {
+          if (!m_columnResize)
+            return;
+          const auto& resize = *m_columnResize;
+          m_columnWidths = resize.before;
+          const int allocation = std::clamp(
+              static_cast<int>(std::lround(resize.width + (m_pointerX - resize.pressX) * (Style::rtl() ? -1 : 1))),
+              files::minimumDetailsColumnWidth(resize.index), files::maximumDetailsColumnWidth(resize.index)
+          );
+          if (allocation != static_cast<int>(std::lround(resize.width))) {
+            m_columnWidths[resize.index] = allocation;
+            if (resize.index != 0 && m_columnWidths[0] == 0)
+              m_columnWidths[0] = resize.nameWidth;
+          }
+          m_surface.requestLayout();
+        });
+        handle->setOnCancel([this] { cancelColumnResize(); });
+        handle->setOnEnter([this](const auto&) { m_surface.requestLayout(); });
+        handle->setOnLeave([this] { m_surface.requestLayout(); });
+        handle->addChild(
+            ui::box(
+                {.out = &m_columnResizeLines[index],
+                 .fill = colorSpecFromRole(ColorRole::Primary),
+                 .participatesInLayout = false,
+                 .configure = [](Box& line) { line.setHitTestVisible(false); }}
+            )
+        );
+        m_columnResizeHandles[index] = static_cast<InputArea*>(m_detailsHeaderViewport->addChild(std::move(handle)));
+      }
       for (const auto column : m_columnOrder) {
         auto* header = columnHeader(column);
         header->setOnPress([this, column, header](float, float, bool pressed) {
@@ -3427,7 +3650,7 @@ namespace {
         std::vector<ContextMenuControlEntry> entries, std::function<void(int)> action, LayoutRect anchor,
         bool alignLeft = false
     ) {
-      if (m_columnDrag)
+      if (m_columnDrag || m_columnResize)
         m_dispatcher.cancelPointerCapture();
       cancelDrag();
       auto menu = std::make_unique<ContextMenuControl>();
@@ -3455,7 +3678,6 @@ namespace {
 
     void openColumnsMenu(const LayoutRect& anchor, std::optional<files::DetailsColumn> column = std::nullopt) {
       std::vector<ContextMenuControlEntry> entries{
-          {.label = "Columns", .header = true},
           {.label = "Name", .enabled = false, .checkmark = true, .toggleState = 1},
       };
       for (const auto candidate : m_columnOrder) {
@@ -3483,9 +3705,25 @@ namespace {
       entries.push_back(
           {.id = 7, .label = "Reset column order", .enabled = m_columnOrder != files::kDefaultDetailsColumnOrder}
       );
+      const std::size_t widthIndex = column ? static_cast<std::size_t>(*column) + 1 : 0;
+      entries.push_back(
+          {.id = 8,
+           .label = "Reset column width",
+           .enabled = m_columnWidths[widthIndex] != files::kDefaultDetailsColumnWidths[widthIndex]}
+      );
+      entries.push_back(
+          {.id = 9, .label = "Reset all column widths", .enabled = m_columnWidths != files::kDefaultDetailsColumnWidths}
+      );
       showContextMenu(
           std::move(entries),
-          [this, column, left](int id) {
+          [this, column, left, widthIndex](int id) {
+            if (id == 8 || id == 9) {
+              auto widths = id == 9 ? files::kDefaultDetailsColumnWidths : m_columnWidths;
+              widths[widthIndex] = files::kDefaultDetailsColumnWidths[widthIndex];
+              setDetailsColumnWidths(widths);
+              m_dispatcher.setFocus(m_list->focusArea());
+              return;
+            }
             if ((id == 5 || id == 6) && column) {
               if (const auto order = movedColumnOrder(*column, id == 5 ? left : -left))
                 setDetailsColumnOrder(*order);
@@ -3658,6 +3896,7 @@ namespace {
     Label* m_status = nullptr;
     Label* m_freeSpace = nullptr;
     Label* m_notice = nullptr;
+    Flex* m_noticeArea = nullptr;
     VirtualGridView* m_list = nullptr;
     Flex* m_listHeader = nullptr;
     Segmented* m_viewSwitch = nullptr;
@@ -3666,6 +3905,16 @@ namespace {
     Button* m_modifiedHeader = nullptr;
     Button* m_typeHeader = nullptr;
     files::DetailsColumns m_detailsColumns;
+    files::DetailsColumnWidths m_columnWidths = files::kDefaultDetailsColumnWidths;
+    std::optional<ColumnResize> m_columnResize;
+    std::array<InputArea*, 4> m_columnResizeHandles{};
+    std::array<Box*, 4> m_columnResizeLines{};
+    Flex* m_detailsHeaderViewport = nullptr;
+    Box* m_detailsScrollHost = nullptr;
+    Scrollbar* m_detailsScrollbar = nullptr;
+    float m_detailsOffset = 0.0F;
+    Button* m_revealDetailsHeader = nullptr;
+    InputArea* m_lastDetailsFocus = nullptr;
     files::DetailsColumnVisibility m_columnVisibility;
     files::DetailsColumnOrder m_columnOrder = files::kDefaultDetailsColumnOrder;
     files::DetailsColumnOrder m_appliedColumnOrder = files::kDefaultDetailsColumnOrder;

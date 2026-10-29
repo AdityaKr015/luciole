@@ -465,11 +465,16 @@ void ScrollView::doLayout(Renderer& renderer) {
     m_scrollbar->update(availableW, contentWidth, m_scrollOffset);
   } else {
     LayoutConstraints contentConstraints;
-    contentConstraints.setExactWidth(availableW);
+    contentConstraints.setExactWidth(std::max(availableW, m_horizontalWidth));
     LayoutSize contentSize = m_content->measure(renderer, contentConstraints);
     m_content->arrange(
         renderer,
-        LayoutRect{.x = m_viewportPaddingH, .y = m_viewportPaddingV, .width = availableW, .height = contentSize.height}
+        LayoutRect{
+            .x = m_viewportPaddingH,
+            .y = m_viewportPaddingV,
+            .width = std::max(availableW, m_horizontalWidth),
+            .height = contentSize.height
+        }
     );
 
     const float naturalH = contentSize.height + insetV * 2.0F;
@@ -487,7 +492,7 @@ void ScrollView::doLayout(Renderer& renderer) {
 
     m_scrollbarShown = m_showScrollbar && m_content->height() > viewportH + 0.5F;
     const float gutter = m_scrollbarShown || m_reserveScrollbarGutter ? scrollbarGutter() : 0.0F;
-    const float contentWidth = std::max(0.0F, availableW - gutter);
+    const float contentWidth = std::max({m_horizontalWidth, 0.0F, availableW - gutter});
     if (std::abs(m_content->width() - contentWidth) >= 0.5F) {
       contentConstraints = {};
       contentConstraints.setExactWidth(contentWidth);
@@ -497,6 +502,10 @@ void ScrollView::doLayout(Renderer& renderer) {
       );
     }
 
+    if (m_horizontalWidth > 0.0F) {
+      m_viewportArea->setPosition(clipInset + (Style::rtl() ? gutter : 0.0F), clipInset);
+      m_viewportArea->setFrameSize(std::max(0.0F, clipW - gutter), clipH);
+    }
     const float contentHeight = m_content->height();
     m_maxScrollOffset = std::max(0.0F, contentHeight - viewportH);
     updateTouchScrollAxis();
@@ -552,13 +561,26 @@ LayoutSize ScrollView::doMeasure(Renderer& renderer, const LayoutConstraints& co
 
 void ScrollView::doArrange(Renderer& renderer, const LayoutRect& rect) { arrangeByLayout(renderer, rect); }
 
+void ScrollView::setHorizontalOverflow(float width, float offset) {
+  width = std::max(0.0F, width);
+  offset = std::max(0.0F, offset);
+  if (width == m_horizontalWidth && offset == m_horizontalOffset)
+    return;
+  m_horizontalWidth = width;
+  m_horizontalOffset = offset;
+  markLayoutDirty();
+}
+
 void ScrollView::applyScrollOffset() {
   if (m_content != nullptr) {
     if (m_orientation == ScrollOrientation::Horizontal) {
       m_content->setPosition(m_viewportPaddingH - m_scrollOffset, m_viewportPaddingV);
     } else {
       const float gutter = Style::rtl() && m_scrollbarShown ? scrollbarGutter() : 0.0F;
-      m_content->setPosition(m_viewportPaddingH + gutter, m_viewportPaddingV - m_scrollOffset);
+      m_content->setPosition(
+          m_viewportPaddingH + (m_horizontalWidth > 0.0F ? -m_horizontalOffset : gutter),
+          m_viewportPaddingV - m_scrollOffset
+      );
     }
   }
   if (m_scrollbar != nullptr && m_scrollbarShown) {

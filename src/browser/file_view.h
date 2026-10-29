@@ -1,6 +1,7 @@
 #pragma once
 
 #include "browser/browser_controller.h"
+#include "browser/details_columns.h"
 #include "browser/file_icon_cache.h"
 #include "ui/controls/virtual_grid_view.h"
 
@@ -33,7 +34,7 @@ namespace files {
     void setContextCallback(std::function<void(std::optional<EntryId>, float, float)> callback);
     void setDragCallback(std::function<void(const std::vector<EntryId>&)> start, std::function<void()> cancel);
     void setGridIconSize(float size) { m_gridIconSize = size; }
-    void setDetailsColumnVisibility(DetailsColumnVisibility visibility) { m_columns = visibility; }
+    void setDetailsColumns(DetailsColumns columns) { m_columns = columns; }
     void setDetailsColumnOrder(DetailsColumnOrder order) { m_columnOrder = order; }
 
   private:
@@ -53,7 +54,7 @@ namespace files {
     std::function<void(const std::vector<EntryId>&)> m_drag;
     std::function<void()> m_cancelDrag;
     float m_gridIconSize = 48.0F;
-    DetailsColumnVisibility m_columns;
+    DetailsColumns m_columns;
     DetailsColumnOrder m_columnOrder = kDefaultDetailsColumnOrder;
     std::vector<EntryId> m_areaRows;
     std::unordered_set<EntryId> m_areaBaseline;

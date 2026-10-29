@@ -33,6 +33,7 @@ namespace {
     std::optional<bool> showSizeColumn;
     std::optional<bool> showModifiedColumn;
     std::optional<files::DetailsColumnOrder> columnOrder;
+    std::array<std::optional<int>, 4> columnWidths;
     bool operator==(const Patch&) const = default;
   };
 
@@ -145,7 +146,22 @@ namespace {
         }
         for (const auto& [name, value] : *browser) {
           const auto path = std::format("browser.{}", name.str());
-          if (name == "column_order") {
+          const auto* widthKey = std::ranges::find(files::kDetailsColumnWidthKeys, name.str());
+          if (widthKey != files::kDetailsColumnWidthKeys.end()) {
+            const auto index = static_cast<std::size_t>(widthKey - files::kDetailsColumnWidthKeys.begin());
+            const auto* width = value.as_integer();
+            if (width != nullptr
+                && width->get() <= files::maximumDetailsColumnWidth(index)
+                && width->get() >= 0
+                && files::validDetailsColumnWidth(index, static_cast<int>(width->get())))
+              patch.columnWidths[index] = static_cast<int>(width->get());
+            else
+              issue(
+                  issues, file, value, path,
+                  index == 0 ? "expected 0 (automatic) or an integer width from 160 to 16384"
+                             : "expected an integer width from 64 to 2048"
+              );
+          } else if (name == "column_order") {
             const auto* columns = value.as_array();
             files::DetailsColumnOrder order{};
             bool valid = columns != nullptr && columns->size() == order.size();
@@ -241,6 +257,9 @@ namespace {
   }
 
   void apply(files::Settings& settings, const Patch& patch) {
+    for (std::size_t index = 0; index < patch.columnWidths.size(); ++index)
+      if (patch.columnWidths[index])
+        settings.browser.columnWidths[index] = *patch.columnWidths[index];
     if (patch.columnOrder)
       settings.browser.columnOrder = *patch.columnOrder;
     if (patch.showTypeColumn)
@@ -275,9 +294,33 @@ namespace {
     }
   }
 
+  std::optional<std::size_t> columnWidthIndex(files::BrowserPreference preference) {
+    using P = files::BrowserPreference;
+    switch (preference) {
+    case P::NAME_COLUMN_WIDTH:
+      return 0;
+    case P::TYPE_COLUMN_WIDTH:
+      return 1;
+    case P::SIZE_COLUMN_WIDTH:
+      return 2;
+    case P::MODIFIED_COLUMN_WIDTH:
+      return 3;
+    default:
+      return std::nullopt;
+    }
+  }
+
   std::string_view preferenceKey(files::BrowserPreference preference) {
     using Preference = files::BrowserPreference;
     switch (preference) {
+    case Preference::NAME_COLUMN_WIDTH:
+      return "browser.name_column_width";
+    case Preference::TYPE_COLUMN_WIDTH:
+      return "browser.type_column_width";
+    case Preference::SIZE_COLUMN_WIDTH:
+      return "browser.size_column_width";
+    case Preference::MODIFIED_COLUMN_WIDTH:
+      return "browser.modified_column_width";
     case Preference::COLUMN_ORDER:
       return "browser.column_order";
     case Preference::SHOW_TYPE_COLUMN:
@@ -308,6 +351,12 @@ namespace {
 
   void editPatch(Patch& patch, const files::OverrideEdit& edit) {
     using Preference = files::BrowserPreference;
+    if (const auto index = columnWidthIndex(edit.preference)) {
+      patch.columnWidths[*index] = std::holds_alternative<std::monostate>(edit.value)
+          ? std::nullopt
+          : std::optional<int>(std::get<int>(edit.value));
+      return;
+    }
     if (edit.preference == Preference::COLUMN_ORDER) {
       patch.columnOrder = std::holds_alternative<std::monostate>(edit.value)
           ? std::nullopt
@@ -363,6 +412,10 @@ namespace {
     case Preference::DIRECTORIES_FIRST:
       patch.directoriesFirst = value;
       break;
+    case Preference::NAME_COLUMN_WIDTH:
+    case Preference::TYPE_COLUMN_WIDTH:
+    case Preference::SIZE_COLUMN_WIDTH:
+    case Preference::MODIFIED_COLUMN_WIDTH:
     case Preference::SORT_BY:
     case Preference::COLUMN_ORDER:
     case Preference::VIEW_MODE:
@@ -374,6 +427,9 @@ namespace {
 
   std::string formatPatch(const Patch& patch) {
     toml::table browser;
+    for (std::size_t index = 0; index < patch.columnWidths.size(); ++index)
+      if (patch.columnWidths[index])
+        browser.insert(files::kDetailsColumnWidthKeys[index], *patch.columnWidths[index]);
     if (patch.columnOrder) {
       toml::array columns;
       for (const auto column : *patch.columnOrder)
@@ -515,7 +571,10 @@ files::AtomicWriteState files::ConfigService::saveOverrides(std::span<const Over
     const auto key = preferenceKey(edit.preference);
     bool valid = !key.empty();
     if (!std::holds_alternative<std::monostate>(edit.value)) {
-      if (edit.preference == BrowserPreference::COLUMN_ORDER) {
+      if (const auto index = columnWidthIndex(edit.preference)) {
+        const auto* width = std::get_if<int>(&edit.value);
+        valid = width != nullptr && validDetailsColumnWidth(*index, *width);
+      } else if (edit.preference == BrowserPreference::COLUMN_ORDER) {
         const auto* order = std::get_if<DetailsColumnOrder>(&edit.value);
         valid = order != nullptr && validDetailsColumnOrder(*order);
       } else if (edit.preference == BrowserPreference::SORT_BY) {

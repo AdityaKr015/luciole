@@ -20,6 +20,7 @@ namespace files {
     bool showSidebar = true;
     DetailsColumnVisibility columns{};
     DetailsColumnOrder columnOrder = kDefaultDetailsColumnOrder;
+    DetailsColumnWidths columnWidths = kDefaultDetailsColumnWidths;
     bool operator==(const BrowserSettings&) const = default;
   };
 
@@ -48,7 +49,11 @@ namespace files {
     SHOW_TYPE_COLUMN,
     SHOW_SIZE_COLUMN,
     SHOW_MODIFIED_COLUMN,
-    COLUMN_ORDER
+    COLUMN_ORDER,
+    NAME_COLUMN_WIDTH,
+    TYPE_COLUMN_WIDTH,
+    SIZE_COLUMN_WIDTH,
+    MODIFIED_COLUMN_WIDTH
   };
   struct OverrideEdit {
     BrowserPreference preference;

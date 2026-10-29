@@ -21,6 +21,7 @@ namespace files {
     void saveSort(SortOptions options);
     void saveDetailsColumns(DetailsColumnVisibility visibility);
     void saveColumnOrder(DetailsColumnOrder order);
+    void saveColumnWidths(DetailsColumnWidths widths);
     [[nodiscard]] bool busy() const;
     void setChangedCallback(std::function<void(const std::string&)> callback);
 

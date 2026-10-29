@@ -434,6 +434,75 @@ namespace {
     }
   }
 
+  void testDetailsColumnWidths() {
+    using P = files::BrowserPreference;
+    using S = files::AtomicWriteState;
+    constexpr std::array preferences{
+        P::NAME_COLUMN_WIDTH, P::TYPE_COLUMN_WIDTH, P::SIZE_COLUMN_WIDTH, P::MODIFIED_COLUMN_WIDTH
+    };
+    Fixture fixture;
+    files::ConfigService config(fixture.paths());
+    require(
+        config.reload() && config.settings().browser.columnWidths == files::kDefaultDetailsColumnWidths,
+        "default column allocations changed"
+    );
+    for (std::size_t index = 0; index < preferences.size(); ++index) {
+      const std::string key(files::kDetailsColumnWidthKeys[index]);
+      const std::string base = "[browser]\n" + key + " = 300\nshow_hidden = true\n";
+      fixture.write("config.toml", base);
+      fixture.write("settings.toml", "[browser]\ngrid_icon_size = 64\n");
+      require(config.reload() && config.settings().browser.columnWidths[index] == 300, "base width did not load");
+      for (const int width :
+           {files::minimumDetailsColumnWidth(index), files::maximumDetailsColumnWidth(index),
+            files::kDefaultDetailsColumnWidths[index]}) {
+        const std::array edit{files::OverrideEdit{preferences[index], width}};
+        require(config.saveOverrides(edit) == S::DURABLE, "valid column width failed to save");
+        const auto loaded = files::loadSettings(fixture.paths());
+        require(
+            loaded
+                && loaded->browser.columnWidths[index] == width
+                && loaded->browser.showHidden
+                && loaded->browser.gridIconSize == 64,
+            "column width roundtrip lost values or unrelated settings"
+        );
+      }
+      const auto saved = read(fixture.paths().overrides);
+      for (const auto& bad : std::array{
+               files::OverrideEdit{preferences[index], -1},
+               files::OverrideEdit{preferences[index], files::maximumDetailsColumnWidth(index) + 1},
+               files::OverrideEdit{preferences[index], true}
+           })
+        require(
+            config.saveOverrides(std::span(&bad, 1)) == S::NOT_COMMITTED && read(fixture.paths().overrides) == saved,
+            "invalid typed width mutated settings"
+        );
+      const std::array inherit{files::OverrideEdit{preferences[index], std::monostate{}}};
+      require(
+          config.saveOverrides(inherit) == S::DURABLE
+              && config.settings().browser.columnWidths[index] == 300
+              && !read(fixture.paths().overrides).contains(key)
+              && read(fixture.paths().base) == base,
+          "width inheritance reset failed or changed the base"
+      );
+      const auto lastGood = config.settings();
+      for (const auto* invalid : {"-1", "1", "63", "16385", "9223372036854775807", "true", "160.0", "'160'", "[]"}) {
+        fixture.write("config.toml", "[browser]\n" + key + " = " + invalid + "\n");
+        const auto issues = files::validateConfigFile(fixture.paths().base);
+        require(
+            issues.size() == 1
+                && issues.front().key == "browser." + key
+                && !config.reload()
+                && config.settings() == lastGood,
+            "invalid width was accepted or replaced last-good settings"
+        );
+      }
+      if (index != 0) {
+        fixture.write("config.toml", "[browser]\n" + key + " = 0\n");
+        require(!files::validateConfigFile(fixture.paths().base).empty(), "automatic metadata width was accepted");
+      }
+    }
+  }
+
   void testDetailsColumnOrder() {
     using Column = files::DetailsColumn;
     using Preference = files::BrowserPreference;
@@ -653,6 +722,7 @@ int main() {
     testSidebarVisibility();
     testDetailsColumnVisibility();
     testDetailsColumnOrder();
+    testDetailsColumnWidths();
     testOverrideSaving();
     std::println("settings checks passed");
     return 0;

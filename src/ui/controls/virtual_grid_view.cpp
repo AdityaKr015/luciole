@@ -159,6 +159,16 @@ void VirtualGridView::notifyItemChanged(std::size_t index) {
   }
 }
 
+void VirtualGridView::setHorizontalOverflow(float width, float offset) {
+  if (m_horizontalWidth == width && m_horizontalOffset == offset)
+    return;
+  m_horizontalWidth = std::max(0.0F, width);
+  m_horizontalOffset = offset;
+  cancelPointerGesture();
+  m_scroll->setHorizontalOverflow(m_horizontalWidth, offset);
+  markLayoutDirty();
+}
+
 void VirtualGridView::setColumns(std::size_t columns) {
   if (m_columns == columns) {
     return;
@@ -337,6 +347,10 @@ void VirtualGridView::doLayout(Renderer& renderer) {
     metrics = resolveMetrics(viewportW);
   }
 
+  // The horizontal extent changes cell geometry, not the vertical viewport or
+  // its scrollbar. Input coordinates remain relative to the translated canvas.
+  viewportW = std::max(viewportW, m_horizontalWidth);
+  metrics = resolveMetrics(viewportW);
   const std::size_t previousLayoutColumns = m_layoutColumns;
   const std::size_t columns = metrics.columns;
   const float cellW = metrics.cellW;
@@ -897,6 +911,13 @@ bool VirtualGridView::absoluteAnchorForIndex(std::size_t index, float& outX, flo
 
 std::optional<std::size_t> VirtualGridView::itemAtScene(float x, float y) const noexcept {
   float localX = 0, localY = 0;
+  if (m_horizontalWidth > 0.0F) {
+    float scrollX = 0, scrollY = 0;
+    Node::absolutePosition(m_scroll, scrollX, scrollY);
+    const float left = scrollX + (Style::rtl() ? m_scroll->scrollbarGutter() : 0.0F);
+    if (x < left || x >= left + m_scroll->contentViewportWidth())
+      return std::nullopt;
+  }
   if (!m_scroll->containsScenePoint(x, y) || !Node::mapFromScene(m_inputArea, x, y, localX, localY)) {
     return std::nullopt;
   }
@@ -909,9 +930,10 @@ std::optional<LayoutRect> VirtualGridView::itemRect(std::size_t index) const noe
   }
   float scrollX = 0, scrollY = 0;
   Node::absolutePosition(m_scroll, scrollX, scrollY);
-  const float left = std::max(x - m_cellWidth * 0.5F, scrollX);
+  const float viewportLeft = scrollX + (Style::rtl() ? m_scroll->scrollbarGutter() : 0.0F);
+  const float left = std::max(x - m_cellWidth * 0.5F, viewportLeft);
   const float top = std::max(y - m_cellHeightResolved * 0.5F, scrollY);
-  const float right = std::min(x + m_cellWidth * 0.5F, scrollX + m_scroll->width());
+  const float right = std::min(x + m_cellWidth * 0.5F, viewportLeft + m_scroll->contentViewportWidth());
   const float bottom = std::min(y + m_cellHeightResolved * 0.5F, scrollY + m_scroll->height());
   return LayoutRect{left, top, std::max(0.0F, right - left), std::max(0.0F, bottom - top)};
 }

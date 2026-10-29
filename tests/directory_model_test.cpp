@@ -1,4 +1,5 @@
 #include "app/glib_poll_source.h"
+#include "browser/details_columns.h"
 #include "browser/directory_model.h"
 
 #include <algorithm>
@@ -97,6 +98,38 @@ namespace {
     model.applySnapshot(data);
     require(model.rows() == order, "collation ties changed after enumeration reorder");
     require(model.entry(4)->name == "same-a", "sorting changed the operation name");
+  }
+
+  void testDetailsLayout() {
+    const auto wide = files::DetailsColumns::forWidth(1000);
+    require(
+        wide.contentWidth == 1000 && wide.nameWidth == 558 && wide.showType,
+        "automatic Name failed to fill the remaining viewport"
+    );
+    const auto ultrawide = files::DetailsColumns::forWidth(4000);
+    require(
+        ultrawide.nameWidth == 3558 && ultrawide.contentWidth == 4000,
+        "automatic Name did not fill an ultrawide viewport"
+    );
+    const auto bounded = files::DetailsColumns::forWidth(100000);
+    require(
+        files::validDetailsColumnWidth(0, static_cast<int>(bounded.nameWidth)),
+        "automatic Name could not be frozen into a valid width preference"
+    );
+    const files::DetailsColumnWidths requested{400, 200, 96, 180};
+    const auto narrow = files::DetailsColumns::forWidth(300, {}, requested);
+    const auto expanded = files::DetailsColumns::forWidth(1600, {}, requested);
+    require(
+        narrow == expanded && narrow.contentWidth == 892 && narrow.showType && narrow.showSize && narrow.showModified,
+        "temporary constraints changed explicit column requests or hid a requested column"
+    );
+    const auto hidden = files::DetailsColumns::forWidth(300, {false, false, false}, requested);
+    require(hidden.contentWidth == 416 && hidden.nameWidth == 400, "hidden metadata left a column gap");
+    const auto automatic = files::DetailsColumns::forWidth(300);
+    require(
+        automatic.nameWidth == 160 && automatic.contentWidth == 602 && automatic.showType,
+        "narrow automatic layout failed to expose horizontal overflow"
+    );
   }
 
   void testDetailsColumnMoves() {
@@ -487,6 +520,7 @@ int main() {
     g_setenv("LANGUAGE", "C", true);
     std::setlocale(LC_ALL, "C");
     testSortAndMetadata();
+    testDetailsLayout();
     testDetailsColumnMoves();
     testDetailsColumnInsertion();
     testTypeSort();

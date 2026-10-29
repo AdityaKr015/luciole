@@ -93,6 +93,15 @@ bool files::ViewPreferenceWriter::busy() const { return m_state->active || !m_st
 void files::ViewPreferenceWriter::saveColumnOrder(DetailsColumnOrder order) {
   m_state->queue({{BrowserPreference::COLUMN_ORDER, order}});
 }
+
+void files::ViewPreferenceWriter::saveColumnWidths(DetailsColumnWidths widths) {
+  m_state->queue(
+      {{BrowserPreference::NAME_COLUMN_WIDTH, widths[0]},
+       {BrowserPreference::TYPE_COLUMN_WIDTH, widths[1]},
+       {BrowserPreference::SIZE_COLUMN_WIDTH, widths[2]},
+       {BrowserPreference::MODIFIED_COLUMN_WIDTH, widths[3]}}
+  );
+}
 void files::ViewPreferenceWriter::saveDetailsColumns(DetailsColumnVisibility visibility) {
   m_state->queue({
       {BrowserPreference::SHOW_TYPE_COLUMN, visibility.type},

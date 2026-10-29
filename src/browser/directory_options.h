@@ -15,6 +15,20 @@ namespace files {
   inline constexpr int kMaxSidebarWidth = 400;
   inline constexpr int kDefaultSidebarWidth = 206;
   enum class ViewMode : std::uint8_t { LIST, GRID };
+  // Complete column allocations, including the gap after their contents. Zero
+  // is the automatic Name width; metadata always has an explicit allocation.
+  using DetailsColumnWidths = std::array<int, 4>;
+  inline constexpr DetailsColumnWidths kDefaultDetailsColumnWidths{0, 152, 118, 156};
+  inline constexpr std::array<std::string_view, 4> kDetailsColumnWidthKeys{
+      "name_column_width", "type_column_width", "size_column_width", "modified_column_width"
+  };
+  inline int minimumDetailsColumnWidth(std::size_t index) { return index == 0 ? 160 : 64; }
+  inline int maximumDetailsColumnWidth(std::size_t index) { return index == 0 ? 16384 : 2048; }
+  inline bool validDetailsColumnWidth(std::size_t index, int width) {
+    return index < 4
+        && ((index == 0 && width == 0)
+            || (width >= minimumDetailsColumnWidth(index) && width <= maximumDetailsColumnWidth(index)));
+  }
   struct DetailsColumnVisibility {
     bool type = true;
     bool size = true;
