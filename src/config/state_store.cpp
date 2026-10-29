@@ -15,7 +15,6 @@ namespace {
   constexpr std::size_t kMaxWindows = 16;
   constexpr std::size_t kMaxTabs = 64;
   constexpr std::size_t kMaxUriBytes = 64 * 1024;
-  constexpr std::size_t kMaxLabelBytes = 256;
 
   std::optional<std::string> uriProblem(const std::string& uri) {
     if (uri.size() > kMaxUriBytes || uri.contains('\0')) {
@@ -57,12 +56,8 @@ namespace {
     for (std::size_t i = 0; i < state.bookmarks.size(); ++i) {
       const auto& bookmark = state.bookmarks[i];
       const auto key = std::format("bookmarks[{}]", i);
-      const bool control = std::ranges::any_of(bookmark.label, [](unsigned char c) { return c < 32 || c == 127; });
-      if (bookmark.label.empty()
-          || bookmark.label.size() > kMaxLabelBytes
-          || control
-          || !g_utf8_validate(bookmark.label.c_str(), static_cast<gssize>(bookmark.label.size()), nullptr)) {
-        add(key + ".label", "expected a nonempty UTF-8 label of at most 256 bytes without ASCII control characters");
+      if (const auto error = files::bookmarkLabelProblem(bookmark.label)) {
+        add(key + ".label", *error);
       }
       location(bookmark.location, key + ".uri");
       if (!uris.insert(bookmark.location.uri()).second) {
@@ -324,6 +319,22 @@ namespace {
     return text;
   }
 } // namespace
+
+std::optional<std::string> files::bookmarkLabelProblem(std::string_view label) {
+  if (label.empty()) {
+    return "Enter a label.";
+  }
+  if (label.size() > 256) {
+    return "Labels can contain at most 256 UTF-8 bytes.";
+  }
+  if (!g_utf8_validate(label.data(), static_cast<gssize>(label.size()), nullptr)) {
+    return "Labels must be valid UTF-8 text.";
+  }
+  if (std::ranges::any_of(label, [](unsigned char c) { return c < 32 || c == 127; })) {
+    return "Labels cannot contain control characters.";
+  }
+  return std::nullopt;
+}
 
 files::StateStore::StateStore(std::filesystem::path path) : m_path(std::move(path)) {}
 

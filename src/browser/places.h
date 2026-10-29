@@ -25,6 +25,7 @@ namespace files {
     bool remove(const Location& location);
     bool removeMany(const std::vector<Location>& locations);
     bool move(const Location& location, std::size_t position);
+    bool rename(const Bookmark& expected, std::string label);
     bool contains(const Location& location) const;
     bool editable() const;
     bool busy() const;

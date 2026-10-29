@@ -31,6 +31,13 @@ void files::PlacesSidebar::setContextCallback(std::function<void(const Bookmark&
 void files::PlacesSidebar::setDragCallback(std::function<void(const Bookmark&)> callback) {
   m_drag = std::move(callback);
 }
+void files::PlacesSidebar::setRenameCallback(std::function<void(const Bookmark&)> callback) {
+  m_rename = std::move(callback);
+}
+InputArea* files::PlacesSidebar::focusArea(const Location& location) const {
+  const auto found = std::ranges::find_if(m_rows, [&](const auto& row) { return row.bookmark.location == location; });
+  return found == m_rows.end() ? nullptr : found->button->inputArea();
+}
 void files::PlacesSidebar::invalidate() {
   m_dirty = true;
   markLayoutDirty();
@@ -79,6 +86,10 @@ void files::PlacesSidebar::addRow(const Bookmark& bookmark, const std::string& i
     if (key.modifiers == 0 && KeySymbol::isEnterOrSpace(key.sym)) {
       if (m_open) {
         m_open(bookmark.location);
+      }
+    } else if (key.sym == XKB_KEY_F2 && key.modifiers == 0) {
+      if (m_rename) {
+        m_rename(bookmark);
       }
     } else if (key.sym == XKB_KEY_Menu || (key.sym == XKB_KEY_F10 && key.modifiers == KeyMod::Shift)) {
       float x = 0, y = 0;

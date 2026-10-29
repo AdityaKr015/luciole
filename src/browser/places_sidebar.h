@@ -19,6 +19,8 @@ namespace files {
     void setOpenCallback(std::function<void(const Location&)> callback);
     void setContextCallback(std::function<void(const Bookmark&, float, float)> callback);
     void setDragCallback(std::function<void(const Bookmark&)> callback);
+    void setRenameCallback(std::function<void(const Bookmark&)> callback);
+    InputArea* focusArea(const Location& location) const;
 
   protected:
     void doLayout(Renderer& renderer) override;
@@ -49,5 +51,6 @@ namespace files {
     std::function<void(const Location&)> m_open;
     std::function<void(const Bookmark&, float, float)> m_context;
     std::function<void(const Bookmark&)> m_drag;
+    std::function<void(const Bookmark&)> m_rename;
   };
 } // namespace files

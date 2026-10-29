@@ -231,3 +231,15 @@ bool files::PinService::move(const Location& location, std::size_t position) {
   proposed.insert(proposed.begin() + static_cast<std::ptrdiff_t>(position), std::move(bookmark));
   return save(std::move(proposed));
 }
+bool files::PinService::rename(const Bookmark& expected, std::string label) {
+  if (!editable() || bookmarkLabelProblem(label)) {
+    return false;
+  }
+  auto proposed = m_state->bookmarks;
+  const auto found = std::ranges::find(proposed, expected.location, &Bookmark::location);
+  if (found == proposed.end() || found->label != expected.label) {
+    return false;
+  }
+  found->label = std::move(label);
+  return save(std::move(proposed));
+}

@@ -4,9 +4,12 @@
 #include "config/diagnostic.h"
 #include "fs/location.h"
 
+#include <string_view>
 #include <vector>
 
 namespace files {
+  std::optional<std::string> bookmarkLabelProblem(std::string_view label);
+
   struct Bookmark {
     std::string label;
     Location location;

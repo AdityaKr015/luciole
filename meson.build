@@ -108,6 +108,7 @@ app_sources = files(
   'src/config/view_preference_writer.cpp',
   'src/platform/file_launcher.cpp',
   'src/browser/places_sidebar.cpp',
+  'src/browser/place_label_editor.cpp',
   'src/core/timer_manager.cpp',
   'src/core/ui_phase.cpp',
   'src/ui/controls/color_swatch_preview.cpp',

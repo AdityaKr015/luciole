@@ -7,6 +7,7 @@
 #include "browser/browser_controller.h"
 #include "browser/file_view.h"
 #include "browser/location_presentation.h"
+#include "browser/place_label_editor.h"
 #include "browser/places_sidebar.h"
 #include "config/settings.h"
 #include "config/view_preference_writer.h"
@@ -617,6 +618,7 @@ namespace {
         const auto index = static_cast<std::size_t>(found - pins.begin());
         entries.push_back({.label = "", .separator = true});
         entries.push_back({.id = 2, .label = "Unpin", .enabled = m_pins.editable()});
+        entries.push_back({.id = 6, .label = "Rename place…", .enabled = m_pins.editable()});
         entries.push_back({.id = 3, .label = "Move up", .enabled = m_pins.editable() && index > 0});
         entries.push_back({.id = 4, .label = "Move down", .enabled = m_pins.editable() && index + 1 < pins.size()});
       }
@@ -633,6 +635,8 @@ namespace {
               m_browser.open(bookmark.location);
             } else if (action == 2) {
               m_pins.remove(bookmark.location);
+            } else if (action == 6) {
+              openPlaceRename(bookmark);
             } else if (action == 3 || action == 4) {
               const auto& pins = m_pins.bookmarks();
               const auto found = std::ranges::find(pins, bookmark.location, &files::Bookmark::location);
@@ -655,6 +659,74 @@ namespace {
           },
           {x, y, 1, 1}
       );
+    }
+
+    void openPlaceRename(const files::Bookmark& bookmark) {
+      const auto found = std::ranges::find(m_pins.bookmarks(), bookmark.location, &files::Bookmark::location);
+      if (!m_pins.editable() || found == m_pins.bookmarks().end()) {
+        actionError("This place is unavailable for editing. Reload Places and try again.");
+        return;
+      }
+      const auto current = *found; // NOLINT(performance-unnecessary-copy-initialization): own the editing snapshot.
+      const float width = std::min(440.0F, static_cast<float>(m_surface.width()) - 32.0F);
+      auto editor = std::make_unique<files::PlaceLabelEditor>(
+          width, current.label, [this](std::string label) { submitPlaceRename(std::move(label)); },
+          [this] { dismissMenu(); }
+      );
+      auto* control = editor.get();
+      UiPhaseScope phase(UiPhase::Layout);
+      LayoutConstraints constraints;
+      constraints.setExactWidth(width);
+      const float height = std::min(
+          editor->measure(m_surface.renderTarget().renderer(), constraints).height,
+          static_cast<float>(m_surface.height()) - 64.0F
+      );
+      showPopup(
+          std::move(editor), nullptr, {(m_surface.width() - width) * 0.5F, (m_surface.height() - height) * 0.5F, 1, 1},
+          width, height
+      );
+      if (m_menuSurface != nullptr) {
+        m_placeEditor = control;
+        m_placeRenameTarget = current;
+        m_menuDispatcher.setFocus(control->input()->inputArea());
+        control->input()->selectAll();
+      }
+    }
+
+    void submitPlaceRename(std::string label) {
+      if (m_placeEditor == nullptr || !m_placeRenameTarget) {
+        return;
+      }
+      m_pendingPlaceLabel = label;
+      m_placeEditor->setSaving(true);
+      if (!m_pins.rename(*m_placeRenameTarget, std::move(label))) {
+        m_pendingPlaceLabel.reset();
+        m_placeEditor->setSaving(false);
+        m_placeEditor->showError(
+            m_pins.busy() ? "Places are being saved. Try again shortly."
+                          : "This place changed. Close this dialog and try again."
+        );
+        return;
+      }
+      syncPlaceRename();
+    }
+
+    void syncPlaceRename() {
+      if (m_placeEditor == nullptr || !m_pendingPlaceLabel || m_pins.busy()) {
+        return;
+      }
+      const auto found =
+          std::ranges::find(m_pins.bookmarks(), m_placeRenameTarget->location, &files::Bookmark::location);
+      if (found != m_pins.bookmarks().end() && found->label == *m_pendingPlaceLabel) {
+        dismissMenu();
+      } else {
+        m_placeEditor->setSaving(false);
+        m_placeEditor->showError(
+            m_pins.error().empty() ? "This place changed. Close this dialog and try again."
+                                   : "Could not save the label. Close this dialog and try again."
+        );
+      }
+      m_pendingPlaceLabel.reset();
     }
 
     void showContaining(const files::Location& location) {
@@ -1377,6 +1449,7 @@ namespace {
       }
       if (m_browserDirty) {
         m_browserDirty = false;
+        syncPlaceRename();
         syncBrowser();
         layout = true;
       }
@@ -1430,6 +1503,12 @@ namespace {
         layoutPinDrag(renderer);
         if (placesFocus) {
           m_dispatcher.restoreTabFocus(std::move(*placesFocus));
+        }
+        if (m_restorePlaceFocus && m_menuSurface == nullptr) {
+          const auto location = *std::exchange(m_restorePlaceFocus, std::nullopt);
+          if (auto* area = m_places->focusArea(location)) {
+            m_dispatcher.setFocus(area);
+          }
         }
         if (m_dispatcher.focusedArea() == m_list->focusArea()) {
           m_textInput.notifyClientStateChanged(this, TextInputChangeCause::Other);
@@ -1647,6 +1726,7 @@ namespace {
         openPlaceMenu(bookmark, x, y);
       });
       places->setDragCallback([this](const files::Bookmark& bookmark) { startPlacePinDrag(bookmark); });
+      places->setRenameCallback([this](const files::Bookmark& bookmark) { openPlaceRename(bookmark); });
       auto content = ui::column(
           {.align = FlexAlign::Stretch, .gap = Style::spaceXs, .padding = Style::spaceSm, .flexGrow = 1.0F},
           ui::column(
@@ -1777,13 +1857,21 @@ namespace {
     }
     void closeMenu() {
       ++m_menuGeneration;
+      if (m_placeRenameTarget) {
+        m_restorePlaceFocus = m_placeRenameTarget->location;
+      }
+      m_placeEditor = nullptr;
+      m_placeRenameTarget.reset();
+      m_pendingPlaceLabel.reset();
       m_menuDispatcher.setSceneRoot(nullptr);
+      m_menuDispatcher.setTextInputContext(nullptr, nullptr);
       if (m_menuSurface != nullptr) {
         m_menuSurface->setSceneRoot(nullptr);
       }
       m_menuRoot.reset();
       m_menu = nullptr;
       m_menuSurface.reset();
+      m_dispatcher.setTextInputContext(m_surface.wlSurface(), &m_textInput);
       m_surface.requestLayout();
     }
     static LayoutRect sceneRect(const Node& node) {
@@ -1837,6 +1925,8 @@ namespace {
               m_surface.xdgSurface(), m_connection.outputForSurface(m_surface.wlSurface()), config
           )) {
         closeMenu();
+      } else {
+        m_menuDispatcher.setTextInputContext(m_menuSurface->wlSurface(), &m_textInput, true, m_surface.wlSurface());
       }
     }
 
@@ -1991,6 +2081,10 @@ namespace {
     std::unique_ptr<PopupSurface> m_menuSurface;
     std::unique_ptr<Flex> m_menuRoot;
     ContextMenuControl* m_menu = nullptr;
+    files::PlaceLabelEditor* m_placeEditor = nullptr;
+    std::optional<files::Bookmark> m_placeRenameTarget;
+    std::optional<std::string> m_pendingPlaceLabel;
+    std::optional<files::Location> m_restorePlaceFocus;
     InputDispatcher m_menuDispatcher;
     std::uint64_t m_menuGeneration = 0;
     std::shared_ptr<int> m_lifetime = std::make_shared<int>(0);

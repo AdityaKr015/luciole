@@ -148,6 +148,60 @@ namespace {
             && observed.state().placesCustomized,
         "an intentional default unpin was lost after initializing Places"
     );
+    require(existing.rename(filesystem, "Root <files> & storage"), "cannot rename a default place");
+    pump.ready(existing);
+    existingRestarted.reload();
+    pump.ready(existingRestarted);
+    const auto renamedRoot =
+        std::ranges::find(existingRestarted.bookmarks(), filesystem.location, &files::Bookmark::location);
+    require(
+        renamedRoot != existingRestarted.bookmarks().end() && renamedRoot->label == "Root <files> & storage",
+        "a default place label was not restored after restart"
+    );
+    require(
+        !existing.rename(filesystem, "stale label") && !existing.busy(), "a stale label editor overwrote a newer label"
+    );
+    const auto renamed = *std::ranges::find(existing.bookmarks(), filesystem.location, &files::Bookmark::location);
+    require(existing.rename(renamed, renamed.label) && !existing.busy(), "unchanged label triggered a save");
+    for (const auto& invalid :
+         {std::string{}, std::string(257, 'x'), std::string("line\nbreak"), std::string(1, static_cast<char>(0xff))}) {
+      require(!existing.rename(renamed, invalid) && !existing.busy(), "invalid place label was accepted");
+    }
+    const auto project =
+        *std::ranges::find(existing.bookmarks(), fixture.location("project-one"), &files::Bookmark::location);
+    const auto oldOrder = existing.bookmarks();
+    require(existing.rename(project, "资料 / <b>Project & work</b>"), "cannot rename a custom place");
+    pump.ready(existing);
+    require(existing.bookmarks().size() == oldOrder.size(), "label editing changed the number of places");
+    for (std::size_t i = 0; i < oldOrder.size(); ++i) {
+      require(
+          existing.bookmarks()[i].location == oldOrder[i].location, "label editing changed a location or its order"
+      );
+    }
+    require(existing.move(project.location, 0), "cannot reorder a renamed place");
+    pump.ready(existing);
+    require(existing.add({project}, 0), "cannot drop an existing renamed place");
+    pump.ready(existing);
+    require(
+        existing.bookmarks().front().label == "资料 / <b>Project & work</b>",
+        "reordering replaced a user label with its old label"
+    );
+    require(existing.remove(project.location), "cannot remove renamed place");
+    pump.ready(existing);
+    require(!existing.rename(project, "recreated"), "renaming a removed place recreated it");
+    auto externalLabels = existing.bookmarks();
+    std::ranges::find(externalLabels, filesystem.location, &files::Bookmark::location)->label = "Another writer";
+    require(
+        observed.load() && observed.saveBookmarks(externalLabels) == files::AtomicWriteState::DURABLE,
+        "cannot seed a conflicting label edit"
+    );
+    require(existing.rename(renamed, "My root"), "cannot start stale-writer rename check");
+    pump.ready(existing);
+    require(
+        !existing.error().empty() && existing.bookmarks() == externalLabels,
+        "a label edit overwrote a concurrent writer"
+    );
+
     require(service.remove(home.location), "Home could not be unpinned");
     pump.ready(service);
     service.reload();
