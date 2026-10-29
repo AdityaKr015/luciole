@@ -181,6 +181,7 @@ filesystem_service = declare_dependency(
     'src/fs/location.cpp',
     'src/fs/filename.cpp',
     'src/fs/file_metadata.cpp',
+    'src/fs/trash_info.cpp',
     'src/fs/file_icon_source.cpp',
     'src/fs/directory_session.cpp',
     'src/fs/recursive_search.cpp',
@@ -251,6 +252,8 @@ build_tests = tests_opt.enabled() or (
   tests_opt.auto() and get_option('buildtype') == 'debug' and get_option('b_sanitize') == 'none'
 )
 if build_tests
+  trash_browse_test = executable('trash-browse-test', 'tests/trash_browse_test.cpp', dependencies: browser_model)
+  test('trash-browse', trash_browse_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   trash_test = executable('trash-service-test', 'tests/trash_service_test.cpp', dependencies: [trash_service, browser_model])
   test('trash-service', trash_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   create_test = executable('create-service-test', 'tests/create_service_test.cpp', dependencies: [create_service, browser_model])

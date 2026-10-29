@@ -35,8 +35,13 @@ files::Location files::Location::fromPath(const std::string& absolutePath) {
 }
 
 std::optional<std::string> files::Location::nativePath() const {
+  if (isTrash())
+    return std::nullopt;
   const GString path(g_file_get_path(file().get()));
   return path ? std::optional<std::string>(path.get()) : std::nullopt;
 }
+
+files::Location files::Location::trash() { return fromUri("trash:///"); }
+bool files::Location::isTrash() const { return g_file_has_uri_scheme(file().get(), "trash"); }
 
 files::GioPtr<GFile> files::Location::file() const { return GioPtr<GFile>(g_file_new_for_uri(m_uri.c_str())); }

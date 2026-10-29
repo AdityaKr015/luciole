@@ -12,9 +12,11 @@ namespace files {
   public:
     static Location fromUri(const std::string& uri);
     static Location fromPath(const std::string& absolutePath);
+    static Location trash();
 
     [[nodiscard]] const std::string& uri() const { return m_uri; }
     [[nodiscard]] std::optional<std::string> nativePath() const;
+    [[nodiscard]] bool isTrash() const;
     [[nodiscard]] GioPtr<GFile> file() const;
 
     bool operator==(const Location&) const = default;

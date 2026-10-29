@@ -75,7 +75,7 @@ namespace {
     pump.ready(service);
     const auto& places = service.userPlaces();
     require(
-        places.size() == 7
+        places.size() == 8
             && places.front().bookmark.label == "Home"
             && places.back().bookmark.location == files::Location::fromPath("/"),
         "Places duplicated disabled/home directories or lost fixed destinations"
@@ -202,6 +202,24 @@ namespace {
         "a label edit overwrote a concurrent writer"
     );
 
+    const files::Bookmark trash{"Trash", files::Location::trash()};
+    const auto beforeTrashEdits = service.bookmarks();
+    require(
+        !service.remove(trash.location)
+            && !service.removeMany({places.front().bookmark.location, trash.location})
+            && !service.rename(trash, "Changed")
+            && service.bookmarks() == beforeTrashEdits,
+        "the protected Trash destination was removed or renamed"
+    );
+    require(service.move(trash.location, 0), "Trash could not be reordered");
+    pump.ready(service);
+    service.reload();
+    pump.ready(service);
+    require(service.bookmarks().front() == trash, "Trash order was not restored");
+    require(service.add({trash}, service.bookmarks().size()), "Trash drag reorder was refused");
+    pump.ready(service);
+    require(service.bookmarks().back() == trash, "Trash drag reorder did not persist");
+
     require(service.remove(home.location), "Home could not be unpinned");
     pump.ready(service);
     service.reload();
@@ -215,25 +233,29 @@ namespace {
     require(service.bookmarks()[1] == home, "repinning a default lost its standard label");
     std::vector<files::Location> defaults;
     for (const auto& pin : service.bookmarks()) {
-      defaults.push_back(pin.location);
+      if (!pin.location.isTrash())
+        defaults.push_back(pin.location);
     }
     require(service.removeMany(defaults), "cannot unpin every default place");
     pump.ready(service);
     files::PinService restarted(path);
     restarted.reload();
     pump.ready(restarted);
-    require(restarted.bookmarks().empty(), "empty saved Places list was reseeded with defaults");
+    require(
+        restarted.bookmarks() == std::vector<files::Bookmark>{trash},
+        "removing custom places lost Trash or reseeded defaults"
+    );
 
     require(service.add({fixture.pin("a"), fixture.pin("b"), fixture.pin("c")}, 0), "cannot add pins");
     pump.ready(service);
-    require(service.error().empty() && service.bookmarks().size() == 3, "pin save failed");
+    require(service.error().empty() && service.bookmarks().size() == 4, "pin save failed");
     require(
         service.add({{"replacement label", fixture.location("b")}, fixture.pin("b")}, 0),
         "duplicate pin drop was rejected"
     );
     pump.ready(service);
     require(
-        service.bookmarks().size() == 3 && service.bookmarks()[0] == fixture.pin("b"),
+        service.bookmarks().size() == 4 && service.bookmarks()[0] == fixture.pin("b"),
         "drop duplicated a pin or lost its label"
     );
     require(service.move(fixture.location("c"), 0), "pin move was rejected");
@@ -244,7 +266,7 @@ namespace {
     );
     require(service.removeMany({fixture.location("a"), fixture.location("b")}), "batch unpin was rejected");
     pump.ready(service);
-    require(service.bookmarks() == std::vector{fixture.pin("c")}, "batch unpin dropped the wrong targets");
+    require(service.bookmarks() == std::vector{fixture.pin("c"), trash}, "batch unpin dropped the wrong targets");
     require(
         state.load() && state.state().windows == windows && state.state().bookmarks == service.bookmarks(),
         "pins overwrote unrelated saved windows"

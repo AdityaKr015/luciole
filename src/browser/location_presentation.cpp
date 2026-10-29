@@ -14,6 +14,8 @@ std::vector<files::Breadcrumb> files::locationBreadcrumbs(const Location& locati
       const GString name(g_file_get_basename(current.get()));
       const GString display(g_filename_display_name(name ? name.get() : uri.get()));
       label = display.get();
+    } else if (location.isTrash()) {
+      label = "Trash";
     } else if (g_file_is_native(current.get())) {
       label = "File System";
     } else {

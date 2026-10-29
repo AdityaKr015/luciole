@@ -16,7 +16,8 @@ namespace {
       "," G_FILE_ATTRIBUTE_STANDARD_ICON "," G_FILE_ATTRIBUTE_STANDARD_SIZE "," G_FILE_ATTRIBUTE_TIME_MODIFIED
       "," G_FILE_ATTRIBUTE_ETAG_VALUE "," G_FILE_ATTRIBUTE_ACCESS_CAN_READ "," G_FILE_ATTRIBUTE_ACCESS_CAN_WRITE
       "," G_FILE_ATTRIBUTE_ACCESS_CAN_EXECUTE "," G_FILE_ATTRIBUTE_ACCESS_CAN_RENAME
-      "," G_FILE_ATTRIBUTE_ACCESS_CAN_TRASH "," G_FILE_ATTRIBUTE_ACCESS_CAN_DELETE;
+      "," G_FILE_ATTRIBUTE_ACCESS_CAN_TRASH "," G_FILE_ATTRIBUTE_ACCESS_CAN_DELETE "," G_FILE_ATTRIBUTE_TRASH_ORIG_PATH
+      "," G_FILE_ATTRIBUTE_TRASH_DELETION_DATE;
   constexpr int kBatchSize = 64;
   constexpr unsigned int kMonitorDelayMs = 80;
 
@@ -208,8 +209,11 @@ struct files::DirectorySession::State : std::enable_shared_from_this<State> {
   void watch() {
     const auto file = snapshot.location->file();
     if (!g_file_is_native(file.get())) {
-      snapshot.monitorError =
-          FileError{.kind = FileErrorKind::UNSUPPORTED, .message = "Remote change monitoring is not implemented yet."};
+      snapshot.monitorError = FileError{
+          .kind = FileErrorKind::UNSUPPORTED,
+          .message = snapshot.location->isTrash() ? "Refresh to update the Trash view."
+                                                  : "Remote change monitoring is not implemented yet."
+      };
       return;
     }
     GError* error = nullptr;
@@ -283,6 +287,10 @@ struct files::DirectorySession::State : std::enable_shared_from_this<State> {
         .parentDisplayName = {},
         .icon = readFileIcon(info, Location::fromUri(uri.get())),
     };
+    if (entry.location.isTrash()) {
+      entry.trash = readTrashInfo(info);
+      entry.parentDisplayName = trashOriginalParentText(entry.trash);
+    }
     if (g_file_info_has_attribute(info, G_FILE_ATTRIBUTE_STANDARD_SIZE)) {
       const auto size = g_file_info_get_size(info);
       if (size >= 0) {
@@ -341,6 +349,8 @@ struct files::DirectorySession::State : std::enable_shared_from_this<State> {
     }
     identities = std::move(retained);
     snapshot.error = std::move(error);
+    if (snapshot.location->isTrash() && snapshot.error && snapshot.error->kind == FileErrorKind::UNSUPPORTED)
+      snapshot.error->message = "Trash browsing is unavailable. The desktop trash service is not accessible.";
     snapshot.status = snapshot.error ? DirectoryStatus::ERROR : DirectoryStatus::READY;
     if (snapshot.error) {
       g_cancellable_cancel(scan->cancellable.get());

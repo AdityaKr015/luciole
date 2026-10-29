@@ -14,6 +14,7 @@
   fontconfig,
   cairo,
   glib,
+  gvfs,
   pango,
   harfbuzz,
   libpng,
@@ -85,6 +86,7 @@ stdenv.mkDerivation (finalAttrs: {
   mesonBuildType = "release";
   postFixup = ''
     wrapProgram "$out/bin/noctalia-files" \
+      --suffix GIO_EXTRA_MODULES : "${gvfs}/lib/gio/modules" \
       --suffix XDG_DATA_DIRS : "${lib.makeSearchPath "share" [ adwaita-icon-theme ]}"
   '';
   mesonFlags = [

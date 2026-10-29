@@ -4,6 +4,7 @@
 #include "fs/file_icon_source.h"
 #include "fs/file_metadata.h"
 #include "fs/location.h"
+#include "fs/trash_info.h"
 
 #include <cstdint>
 #include <functional>
@@ -28,6 +29,7 @@ namespace files {
     FileAccess access{};
     std::string parentDisplayName; // Search result context; never an operation address.
     FileIconSource icon{};
+    TrashInfo trash{};
   };
 
   struct DirectorySnapshot {

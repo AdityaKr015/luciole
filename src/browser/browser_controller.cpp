@@ -193,7 +193,12 @@ void files::BrowserController::activate(EntryId id) {
   if (entry == nullptr || std::ranges::find(m_model.rows(), id) == m_model.rows().end()) {
     return;
   }
-  if (entry->type == G_FILE_TYPE_DIRECTORY || entry->symlink) {
+  if (entry->location.isTrash()) {
+    if (entry->type == G_FILE_TYPE_DIRECTORY && !entry->symlink)
+      open(entry->location);
+    else
+      showMessage("Restore this item before opening it.");
+  } else if (entry->type == G_FILE_TYPE_DIRECTORY || entry->symlink) {
     open(entry->location);
   } else if (m_fileActivated) {
     const auto callback = m_fileActivated;

@@ -639,7 +639,7 @@ namespace {
             {.label = "", .separator = true},
             {.id = 1, .label = "Refresh"}
         };
-        if (location) {
+        if (location && !location->isTrash()) {
           entries.push_back(
               {.id = 2,
                .label = m_pins.contains(*location) ? "Unpin" : "Pin this folder to sidebar",
@@ -687,13 +687,17 @@ namespace {
         return entry.type == G_FILE_TYPE_REGULAR && !entry.symlink;
       });
       std::vector<ContextMenuControlEntry> entries;
-      if (targets.size() == 1 || files) {
+      const bool trash = targets.front().location.isTrash();
+      if ((targets.size() == 1 || files)
+          && (!trash || (targets.front().type == G_FILE_TYPE_DIRECTORY && !targets.front().symlink))) {
         entries.push_back({.id = 1, .label = "Open"});
       }
       if (targets.size() == 1) {
         entries.push_back({.id = 2, .label = "Show in containing folder"});
       }
-      if (folders) {
+      if (targets.size() == 1 && targets.front().trash.original)
+        entries.push_back({.id = 8, .label = "Show original location"});
+      if (folders && !trash) {
         const bool canPin =
             std::ranges::any_of(targets, [this](const auto& entry) { return !m_pins.contains(entry.location); });
         const bool canUnpin =
@@ -711,10 +715,11 @@ namespace {
         }
       }
       entries.push_back({.label = "", .separator = true});
-      if (targets.size() == 1) {
+      if (targets.size() == 1 && !trash) {
         entries.push_back({.id = 6, .label = "Rename…", .enabled = canFileRename(targets.front())});
       }
-      entries.push_back({.id = 7, .label = "Move to Trash", .enabled = canTrashItems(targets)});
+      if (!trash)
+        entries.push_back({.id = 7, .label = "Move to Trash", .enabled = canTrashItems(targets)});
       entries.push_back({.label = "", .separator = true});
       entries.push_back({.id = 5, .label = "Properties"});
       showContextMenu(
@@ -744,6 +749,8 @@ namespace {
                 locations.push_back(target.location);
               }
               m_pins.removeMany(locations);
+            } else if (action == 8 && targets.front().trash.original) {
+              showContaining(*targets.front().trash.original);
             } else if (action == 7) {
               trashItems(targets);
             } else if (action == 6) {
@@ -763,8 +770,10 @@ namespace {
         const auto found = std::ranges::find(pins, bookmark.location, &files::Bookmark::location);
         const auto index = static_cast<std::size_t>(found - pins.begin());
         entries.push_back({.label = "", .separator = true});
-        entries.push_back({.id = 2, .label = "Unpin", .enabled = m_pins.editable()});
-        entries.push_back({.id = 6, .label = "Rename place…", .enabled = m_pins.editable()});
+        if (!bookmark.location.isTrash()) {
+          entries.push_back({.id = 2, .label = "Unpin", .enabled = m_pins.editable()});
+          entries.push_back({.id = 6, .label = "Rename place…", .enabled = m_pins.editable()});
+        }
         entries.push_back({.id = 3, .label = "Move up", .enabled = m_pins.editable() && index > 0});
         entries.push_back({.id = 4, .label = "Move down", .enabled = m_pins.editable() && index + 1 < pins.size()});
       }
@@ -1053,6 +1062,8 @@ namespace {
     }
 
     void openPlaceRename(const files::Bookmark& bookmark) {
+      if (bookmark.location.isTrash())
+        return;
       const auto found = std::ranges::find(m_pins.bookmarks(), bookmark.location, &files::Bookmark::location);
       if (!m_pins.editable() || found == m_pins.bookmarks().end()) {
         actionError("This place is unavailable for editing. Reload Places and try again.");
@@ -1190,6 +1201,10 @@ namespace {
         );
         body->content()->addChild(ui::separator({}));
         field("Location", files::locationEditText(entry.location));
+        if (entry.location.isTrash()) {
+          field("Original", entry.trash.original ? files::locationEditText(*entry.trash.original) : "Unknown");
+          field("Deleted", entry.trash.deletionDate.value_or("Unknown"));
+        }
         if (entry.type != G_FILE_TYPE_DIRECTORY) {
           const files::GString size(entry.size ? g_format_size_full(*entry.size, G_FORMAT_SIZE_IEC_UNITS) : nullptr);
           field("Size", size ? size.get() : "Unknown");
@@ -1487,6 +1502,7 @@ namespace {
       for (const auto id : ids) {
         const auto* entry = m_browser.model().entry(id);
         if (entry == nullptr
+            || entry->location.isTrash()
             || (entry->type != G_FILE_TYPE_DIRECTORY && entry->type != G_FILE_TYPE_REGULAR && !entry->symlink)) {
           return;
         }
@@ -1595,6 +1611,8 @@ namespace {
         return;
       }
       files::FileIconSource icon{.names = {"folder"}, .filePath = {}, .desktopFile = {}};
+      if (m_drag->sourcePin == files::Location::trash())
+        icon.names = {"user-trash"};
       if (!m_drag->entries.empty()) {
         if (const auto* entry = m_browser.model().entry(m_drag->entries.front().id)) {
           icon = entry->icon;
@@ -1848,8 +1866,10 @@ namespace {
     }
 
     float gridHeight() const {
-      const bool search = !m_browser.searchQuery().empty();
-      return m_viewMode == files::ViewMode::GRID ? gridIconSize() + (search ? 72.0F : 52.0F) : (search ? 52.0F : 36.0F);
+      const auto& location = m_browser.model().snapshot().location;
+      const bool context = !m_browser.searchQuery().empty() || (location && location->isTrash());
+      return m_viewMode == files::ViewMode::GRID ? gridIconSize() + (context ? 72.0F : 52.0F)
+                                                 : (context ? 52.0F : 36.0F);
     }
 
     float gridIconSize() const { return static_cast<float>(files::kGridIconSizes[m_gridZoom]); }
@@ -2086,6 +2106,8 @@ namespace {
           status += std::format(" · {} hidden", hidden);
         }
       }
+      if (snapshot.location && snapshot.location->isTrash() && !snapshot.error && !loading)
+        status += " · Refresh to update";
       if (!model.selection().selected.empty()) {
         status += std::format(" · {} selected", model.selection().selected.size());
       }
@@ -2102,8 +2124,9 @@ namespace {
                   || !m_preferenceError.empty()
               ? status
               : !m_browser.searchQuery().empty() ? "No matching files or folders."
-              : snapshot.entries.empty()         ? "This folder is empty."
-                                                 : "No visible items."
+              : snapshot.entries.empty()
+              ? (snapshot.location == files::Location::trash() ? "Trash is empty." : "This folder is empty.")
+              : "No visible items."
       );
       const bool empty = model.rows().empty();
       m_notice->setVisible(empty);

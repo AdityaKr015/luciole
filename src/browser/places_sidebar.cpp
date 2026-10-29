@@ -80,7 +80,9 @@ void files::PlacesSidebar::sync(std::optional<Location> current) {
   m_current = std::move(current);
   bool highlighted = false;
   for (auto& row : m_rows) {
-    const bool selected = !highlighted && m_current == row.bookmark.location;
+    const bool selected = !highlighted
+        && (m_current == row.bookmark.location
+            || (row.bookmark.location == Location::trash() && m_current && m_current->isTrash()));
     row.button->setSelected(selected);
     row.icon->bind(
         {.names = {row.iconName, "folder"}, .filePath = {}, .desktopFile = {}},
@@ -118,7 +120,7 @@ void files::PlacesSidebar::addRow(const Bookmark& bookmark, const std::string& i
         m_open(bookmark.location);
       }
     } else if (key.sym == XKB_KEY_F2 && key.modifiers == 0) {
-      if (m_rename) {
+      if (m_rename && !bookmark.location.isTrash()) {
         m_rename(bookmark);
       }
     } else if (key.sym == XKB_KEY_Menu || (key.sym == XKB_KEY_F10 && key.modifiers == KeyMod::Shift)) {
@@ -205,17 +207,6 @@ void files::PlacesSidebar::rebuild() {
       return place.bookmark.location == pins[i].location;
     });
     addRow(pins[i], known == m_pins.userPlaces().end() ? "folder" : known->iconName, i);
-  }
-  if (pins.empty()) {
-    content->addChild(
-        ui::label(
-            {.text = "Drag folders here to pin",
-             .fontSize = Style::fontSizeCaption,
-             .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
-             .maxWidth = 174.0F,
-             .maxLines = 2}
-        )
-    );
   }
   sync(m_current);
 }
