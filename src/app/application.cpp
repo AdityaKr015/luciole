@@ -2042,6 +2042,7 @@ namespace {
       m_listAdapter.onPointerCancel();
       m_gridAdapter.onPointerCancel();
       m_browser.model().setSort(options);
+      m_preferences.saveSort(options);
       m_dispatcher.setFocus(m_list->focusArea());
     }
 

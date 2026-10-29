@@ -6,7 +6,7 @@
 #include <memory>
 
 namespace files {
-  // Serial worker writes, coalescing rapid changes to the latest requested view.
+  // Serial worker writes, coalescing rapid changes to the latest value per key.
   class ViewPreferenceWriter {
   public:
     explicit ViewPreferenceWriter(ConfigPaths paths);
@@ -18,6 +18,7 @@ namespace files {
     void saveSidebarWidth(int width);
     void saveShowSidebar(bool visible);
     void saveShowHidden(bool visible);
+    void saveSort(SortOptions options);
     [[nodiscard]] bool busy() const;
     void setChangedCallback(std::function<void(const std::string&)> callback);
 

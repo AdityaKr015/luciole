@@ -54,6 +54,10 @@ namespace {
     writer.saveShowHidden(false);
     writer.saveShowHidden(true);
     writer.saveShowHidden(false);
+    writer.saveSort({files::SortField::NAME, true, true});
+    writer.saveSort({files::SortField::SIZE, false, true});
+    const files::SortOptions finalSort{files::SortField::MODIFIED, true, false};
+    writer.saveSort(finalSort);
     wait();
     const auto loaded = files::loadSettings(paths);
     require(
@@ -63,7 +67,8 @@ namespace {
             && !loaded->browser.showHidden
             && loaded->browser.gridIconSize == 64
             && loaded->browser.sidebarWidth == 280
-            && !loaded->browser.showSidebar,
+            && !loaded->browser.showSidebar
+            && loaded->browser.sort == finalSort,
         "rapid changes did not persist the latest view or overwrote unrelated preferences"
     );
     std::ifstream base(paths.base);
@@ -77,8 +82,21 @@ namespace {
             && shown
             && shown->browser.showHidden
             && shown->browser.gridIconSize == 64
-            && !shown->browser.showSidebar,
+            && !shown->browser.showSidebar
+            && shown->browser.sort == finalSort,
         "showing hidden entries did not persist or lost unrelated overrides"
+    );
+    const files::SortOptions defaultSort;
+    writer.saveSort(defaultSort);
+    wait();
+    const auto reset = files::loadSettings(paths);
+    require(
+        error.empty()
+            && reset
+            && reset->browser.sort == defaultSort
+            && reset->browser.showHidden
+            && reset->browser.gridIconSize == 64,
+        "restoring default sort choices did not persist or lost unrelated overrides"
     );
     std::ofstream(paths.overrides) << "[broken\n";
     writer.save(files::ViewMode::LIST);

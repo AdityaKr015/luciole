@@ -56,9 +56,11 @@ struct files::ViewPreferenceWriter::State : std::enable_shared_from_this<State> 
     });
   }
 
-  void queue(OverrideEdit edit) {
-    std::erase_if(pending, [&](const auto& previous) { return previous.preference == edit.preference; });
-    pending.push_back(edit);
+  void queue(const std::vector<OverrideEdit>& edits) {
+    for (const auto& edit : edits) {
+      std::erase_if(pending, [&](const auto& previous) { return previous.preference == edit.preference; });
+      pending.push_back(edit);
+    }
     pump();
   }
 };
@@ -67,18 +69,25 @@ files::ViewPreferenceWriter::ViewPreferenceWriter(ConfigPaths paths) : m_state(s
   m_state->paths = std::move(paths);
 }
 files::ViewPreferenceWriter::~ViewPreferenceWriter() { m_state->changed = {}; }
-void files::ViewPreferenceWriter::save(ViewMode mode) { m_state->queue({BrowserPreference::VIEW_MODE, mode}); }
+void files::ViewPreferenceWriter::save(ViewMode mode) { m_state->queue({{BrowserPreference::VIEW_MODE, mode}}); }
 void files::ViewPreferenceWriter::saveGridIconSize(int size) {
-  m_state->queue({BrowserPreference::GRID_ICON_SIZE, size});
+  m_state->queue({{BrowserPreference::GRID_ICON_SIZE, size}});
 }
 void files::ViewPreferenceWriter::saveSidebarWidth(int width) {
-  m_state->queue({BrowserPreference::SIDEBAR_WIDTH, width});
+  m_state->queue({{BrowserPreference::SIDEBAR_WIDTH, width}});
 }
 void files::ViewPreferenceWriter::saveShowSidebar(bool visible) {
-  m_state->queue({BrowserPreference::SHOW_SIDEBAR, visible});
+  m_state->queue({{BrowserPreference::SHOW_SIDEBAR, visible}});
 }
 void files::ViewPreferenceWriter::saveShowHidden(bool visible) {
-  m_state->queue({BrowserPreference::SHOW_HIDDEN, visible});
+  m_state->queue({{BrowserPreference::SHOW_HIDDEN, visible}});
+}
+void files::ViewPreferenceWriter::saveSort(SortOptions options) {
+  m_state->queue({
+      {BrowserPreference::SORT_BY, options.field},
+      {BrowserPreference::SORT_DESCENDING, options.descending},
+      {BrowserPreference::DIRECTORIES_FIRST, options.directoriesFirst},
+  });
 }
 bool files::ViewPreferenceWriter::busy() const { return m_state->active || !m_state->pending.empty(); }
 void files::ViewPreferenceWriter::setChangedCallback(std::function<void(const std::string&)> callback) {
