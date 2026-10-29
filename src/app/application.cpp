@@ -790,7 +790,7 @@ namespace {
       }
       entries.push_back({.label = "", .separator = true});
       if (bookmark.location == files::Location::trash()) {
-        entries.push_back({.id = 7, .label = "Empty Trash…", .enabled = canEmptyTrash()});
+        entries.push_back({.id = 7, .label = "Empty Trash…", .enabled = canEmptyTrash(), .destructive = true});
         entries.push_back({.label = "", .separator = true});
       }
       entries.push_back({.id = 5, .label = "Properties"});

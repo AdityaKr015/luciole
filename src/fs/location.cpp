@@ -4,6 +4,18 @@
 #include <utility>
 
 namespace {
+  bool trashUri(const std::string& uri) { return g_ascii_strncasecmp(uri.c_str(), "trash:", 6) == 0; }
+
+  files::GioPtr<GFile> fileForUri(const std::string& uri) {
+    if (trashUri(uri)) {
+      // Keep GVfs's interned Trash mount alive across UI/worker handle churn.
+      static const files::GioPtr<GFile> root(g_file_new_for_uri("trash:///"));
+      if (uri == "trash:///")
+        return files::GioPtr<GFile>(G_FILE(g_object_ref(root.get())));
+    }
+    return files::GioPtr<GFile>(g_file_new_for_uri(uri.c_str()));
+  }
+
   void rejectNul(const std::string& value) {
     if (value.contains('\0')) {
       throw std::invalid_argument("locations cannot contain a NUL byte");
@@ -19,7 +31,7 @@ files::Location files::Location::fromUri(const std::string& uri) {
   if (!scheme || !g_uri_is_valid(uri.c_str(), G_URI_FLAGS_ENCODED, nullptr)) {
     throw std::invalid_argument("expected an absolute URI");
   }
-  const GioPtr<GFile> file(g_file_new_for_uri(uri.c_str()));
+  const auto file = fileForUri(uri);
   const GString canonical(g_file_get_uri(file.get()));
   return Location(canonical.get());
 }
@@ -41,7 +53,7 @@ std::optional<std::string> files::Location::nativePath() const {
   return path ? std::optional<std::string>(path.get()) : std::nullopt;
 }
 
-files::Location files::Location::trash() { return fromUri("trash:///"); }
-bool files::Location::isTrash() const { return g_file_has_uri_scheme(file().get(), "trash"); }
+files::Location files::Location::trash() { return Location("trash:///"); }
+bool files::Location::isTrash() const { return trashUri(m_uri); }
 
-files::GioPtr<GFile> files::Location::file() const { return GioPtr<GFile>(g_file_new_for_uri(m_uri.c_str())); }
+files::GioPtr<GFile> files::Location::file() const { return fileForUri(m_uri); }

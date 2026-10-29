@@ -24,9 +24,13 @@ namespace {
 
   float safeScale(float scale) noexcept { return std::max(0.1F, scale); }
 
-  ColorSpec enabledItemColor() { return colorSpecFromRole(ColorRole::OnSurface); }
+  ColorSpec enabledItemColor(bool destructive = false) {
+    return colorSpecFromRole(destructive ? ColorRole::Error : ColorRole::OnSurface);
+  }
 
-  ColorSpec disabledItemColor() { return colorSpecFromRole(ColorRole::OnSurface, 0.55F); }
+  ColorSpec disabledItemColor(bool destructive = false) {
+    return colorSpecFromRole(destructive ? ColorRole::Error : ColorRole::OnSurface, 0.55F);
+  }
 
   bool hasToggle(const ContextMenuControlEntry& entry) { return entry.checkmark || entry.radio; }
 
@@ -343,7 +347,7 @@ void ContextMenuControl::rebuildRows(Renderer& renderer) {
             .out = &togglePtr,
             .glyph = std::string(toggleGlyph),
             .glyphSize = kMenuGlyphSize * scale,
-            .color = entry.enabled ? enabledItemColor() : disabledItemColor(),
+            .color = entry.enabled ? enabledItemColor(entry.destructive) : disabledItemColor(entry.destructive),
         });
         glyph->measure(renderer);
         glyph->setPosition(8.0F * scale + indent, (rowHeight - glyph->height()) * 0.5F);
@@ -376,8 +380,8 @@ void ContextMenuControl::rebuildRows(Renderer& renderer) {
           .fontSize = kMenuFontSize * scale,
           .fontWeight = entry.header ? FontWeight::Bold : FontWeight::Normal,
           .color = entry.header ? colorSpecFromRole(ColorRole::OnSurfaceVariant)
-              : entry.enabled   ? enabledItemColor()
-                                : disabledItemColor(),
+              : entry.enabled   ? enabledItemColor(entry.destructive)
+                                : disabledItemColor(entry.destructive),
           .maxWidth = entry.hasSubmenu ? (rowWidth - 30.0F * scale - indent - toggleSlot - leadingSlot)
                                        : (rowWidth - 16.0F * scale - indent - toggleSlot - leadingSlot),
           .maxLines = 1,
@@ -392,7 +396,7 @@ void ContextMenuControl::rebuildRows(Renderer& renderer) {
             .out = &chevronPtr,
             .glyph = m_submenuDirection == ContextSubmenuDirection::Right ? "chevron-right" : "chevron-left",
             .glyphSize = kMenuGlyphSize * scale,
-            .color = entry.enabled ? enabledItemColor() : disabledItemColor(),
+            .color = entry.enabled ? enabledItemColor(entry.destructive) : disabledItemColor(entry.destructive),
         });
         chevron->measure(renderer);
         chevron->setPosition(rowWidth - 8.0F * scale - chevron->width(), (rowHeight - chevron->height()) * 0.5F);
@@ -439,28 +443,26 @@ void ContextMenuControl::rebuildRows(Renderer& renderer) {
         .interactive = interactive,
     };
     if (rowBgPtr != nullptr && labelPtr != nullptr) {
-      visual.apply = [rowBgPtr, labelPtr, togglePtr, chevronPtr, interactive, separator,
-                      header = entry.header](bool highlighted) {
-        rowBgPtr->setFill(highlighted ? colorSpecFromRole(ColorRole::Hover) : clearColorSpec());
+      visual.apply = [rowBgPtr, labelPtr, togglePtr, chevronPtr, interactive, separator, header = entry.header,
+                      destructive = entry.destructive](bool highlighted) {
+        rowBgPtr->setFill(
+            highlighted
+                ? colorSpecFromRole(destructive ? ColorRole::Error : ColorRole::Hover, destructive ? 0.16F : 1.0F)
+                : clearColorSpec()
+        );
+        const auto foreground = destructive ? (interactive ? enabledItemColor(true) : disabledItemColor(true))
+            : highlighted                   ? colorSpecFromRole(ColorRole::OnHover)
+                                            : (interactive ? enabledItemColor() : disabledItemColor());
         if (separator || header) {
           labelPtr->setColor(colorSpecFromRole(ColorRole::OnSurfaceVariant));
         } else {
-          labelPtr->setColor(
-              highlighted ? colorSpecFromRole(ColorRole::OnHover)
-                          : (interactive ? enabledItemColor() : disabledItemColor())
-          );
+          labelPtr->setColor(foreground);
         }
         if (togglePtr != nullptr) {
-          togglePtr->setColor(
-              highlighted ? colorSpecFromRole(ColorRole::OnHover)
-                          : (interactive ? enabledItemColor() : disabledItemColor())
-          );
+          togglePtr->setColor(foreground);
         }
         if (chevronPtr != nullptr) {
-          chevronPtr->setColor(
-              highlighted ? colorSpecFromRole(ColorRole::OnHover)
-                          : (interactive ? enabledItemColor() : disabledItemColor())
-          );
+          chevronPtr->setColor(foreground);
         }
       };
 

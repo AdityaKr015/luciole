@@ -4,11 +4,15 @@
 #include "fs/trash_info.h"
 
 #include <algorithm>
+#include <array>
+#include <atomic>
+#include <barrier>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <print>
 #include <stdexcept>
+#include <thread>
 
 namespace {
   namespace fs = std::filesystem;
@@ -104,6 +108,27 @@ namespace {
     require(browser.back(), "trash was lost from history");
     pump.until([&] { return browser.model().snapshot().status == files::DirectoryStatus::ERROR; });
   }
+  void concurrentTrashLocations() {
+    std::barrier gate(4);
+    std::atomic<bool> valid{true};
+    std::array<std::jthread, 4> workers;
+    for (auto& worker : workers) {
+      worker = std::jthread([&] {
+        gate.arrive_and_wait();
+        for (int iteration = 0; iteration < 10000; ++iteration) {
+          const auto root = files::Location::trash();
+          const auto nested = files::Location::fromUri("trash:///parallel%20folder/item%23.txt");
+          const auto file = root.file();
+          const files::GString uri(g_file_get_uri(file.get()));
+          if (!root.isTrash() || nested.nativePath() || !nested.isTrash() || root.uri() != uri.get())
+            valid.store(false);
+        }
+      });
+    }
+    for (auto& worker : workers)
+      worker.join();
+    require(valid.load(), "concurrent Trash URI construction changed identity");
+  }
   void providerBrowsing() {
     Fixture fixture;
     const auto a = fixture.root / "first";
@@ -196,11 +221,14 @@ namespace {
 int main(int argc, char** argv) {
   try {
     metadataAndPresentation();
-    if (argc == 2 && std::string_view(argv[1]) == "--provider")
+    if (argc == 2 && std::string_view(argv[1]) == "--uri-stress")
+      concurrentTrashLocations();
+    else if (argc == 2 && std::string_view(argv[1]) == "--provider")
       providerBrowsing();
     else {
       require(argc == 1, "unexpected test arguments");
       unavailableProvider();
+      concurrentTrashLocations();
     }
     std::println("trash-browse checks passed");
     return 0;

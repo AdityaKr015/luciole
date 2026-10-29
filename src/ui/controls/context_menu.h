@@ -21,6 +21,7 @@ struct ContextMenuControlEntry {
   std::int32_t id = 0;
   std::string label;
   bool enabled = true;
+  bool destructive = false;
   bool separator = false;
   // Non-interactive group heading; entries below it read as members of the group.
   bool header = false;
