@@ -46,6 +46,8 @@ namespace {
     writer.save(files::ViewMode::GRID);
     writer.saveGridIconSize(96);
     writer.saveGridIconSize(64);
+    writer.saveSidebarWidth(320);
+    writer.saveSidebarWidth(280);
     wait();
     const auto loaded = files::loadSettings(paths);
     require(
@@ -53,7 +55,8 @@ namespace {
             && loaded
             && loaded->browser.viewMode == files::ViewMode::GRID
             && loaded->browser.showHidden
-            && loaded->browser.gridIconSize == 64,
+            && loaded->browser.gridIconSize == 64
+            && loaded->browser.sidebarWidth == 280,
         "rapid changes did not persist the latest view or overwrote unrelated preferences"
     );
     std::ifstream base(paths.base);

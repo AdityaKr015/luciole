@@ -15,6 +15,7 @@ namespace files {
     ViewPreferenceWriter& operator=(const ViewPreferenceWriter&) = delete;
     void save(ViewMode mode);
     void saveGridIconSize(int size);
+    void saveSidebarWidth(int width);
     [[nodiscard]] bool busy() const;
     void setChangedCallback(std::function<void(const std::string&)> callback);
 

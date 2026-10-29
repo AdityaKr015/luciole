@@ -1,5 +1,6 @@
 #include "browser/places_sidebar.h"
 
+#include "browser/directory_options.h"
 #include "browser/location_presentation.h"
 #include "core/input/key_modifiers.h"
 #include "core/input/key_symbols.h"
@@ -11,8 +12,8 @@
 files::PlacesSidebar::PlacesSidebar(PinService& pins, FileIconCache& icons) : m_pins(pins), m_icons(icons) {
   setDirection(FlexDirection::Vertical);
   setAlign(FlexAlign::Stretch);
-  setMinWidth(206.0F);
-  setMaxWidth(206.0F);
+  setMinWidth(static_cast<float>(kDefaultSidebarWidth));
+  setMaxWidth(static_cast<float>(kDefaultSidebarWidth));
   setFill(colorSpecFromRole(ColorRole::SurfaceContainerLow));
   addChild(
       ui::scrollView(
@@ -108,7 +109,6 @@ void files::PlacesSidebar::addRow(const Bookmark& bookmark, const std::string& i
   auto* raw = button.get();
   raw->setDirection(FlexDirection::Horizontal);
   raw->label()->setUseMarkup(false);
-  raw->label()->setMaxWidth(126.0F);
   raw->setTooltip(locationEditText(bookmark.location));
   raw->inputArea()->setTabFocusKey("place:" + bookmark.location.uri());
   raw->inputArea()->setOnKeyDown([this, bookmark, raw](const InputArea::KeyData& key) {

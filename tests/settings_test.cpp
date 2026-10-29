@@ -259,6 +259,56 @@ namespace {
     );
   }
 
+  void testSidebarWidth() {
+    using Preference = files::BrowserPreference;
+    using State = files::AtomicWriteState;
+    Fixture fixture;
+    files::ConfigService config(fixture.paths());
+    require(config.reload() && config.settings().browser.sidebarWidth == 206, "sidebar default lost");
+    fixture.write("config.toml", "[browser]\nsidebar_width = 280\nshow_hidden = true\n");
+    fixture.write("settings.toml", "[browser]\nsidebar_width = 160\nview_mode = 'grid'\n");
+    require(config.reload() && config.settings().browser.sidebarWidth == 160, "sidebar layering failed");
+    for (const auto* invalid : {"159", "401", "true", "200.0", "'200'"}) {
+      fixture.write("settings.toml", std::string("[browser]\nsidebar_width = ") + invalid + "\n");
+      require(
+          !config.reload() && config.settings().browser.sidebarWidth == 160, "invalid width replaced last-good settings"
+      );
+      require(config.issues().front().key == "browser.sidebar_width", "width diagnostic lost its key");
+    }
+    fixture.write("settings.toml", "[browser]\nview_mode = 'grid'\n");
+    const std::array width{files::OverrideEdit{Preference::SIDEBAR_WIDTH, 400}};
+    require(config.saveOverrides(width) == State::DURABLE, "sidebar override save failed");
+    files::ConfigService reloaded(fixture.paths());
+    require(
+        reloaded.reload()
+            && reloaded.settings().browser.sidebarWidth == 400
+            && reloaded.settings().browser.viewMode == files::ViewMode::GRID
+            && reloaded.settings().browser.showHidden,
+        "sidebar roundtrip lost width or unrelated preferences"
+    );
+    const auto before = read(fixture.paths().overrides);
+    for (const auto& value :
+         {files::OverrideEdit{Preference::SIDEBAR_WIDTH, 159}, files::OverrideEdit{Preference::SIDEBAR_WIDTH, 401},
+          files::OverrideEdit{Preference::SIDEBAR_WIDTH, true}}) {
+      const std::array invalid{value};
+      require(
+          config.saveOverrides(invalid) == State::NOT_COMMITTED && read(fixture.paths().overrides) == before,
+          "invalid width edit changed overrides"
+      );
+    }
+    const std::array inherit{files::OverrideEdit{Preference::SIDEBAR_WIDTH, std::monostate{}}};
+    require(
+        config.saveOverrides(inherit) == State::DURABLE
+            && config.settings().browser.sidebarWidth == 280
+            && !read(fixture.paths().overrides).contains("sidebar_width"),
+        "sidebar reset lost base inheritance"
+    );
+    require(
+        read(fixture.paths().base) == "[browser]\nsidebar_width = 280\nshow_hidden = true\n",
+        "sidebar save changed declarative base"
+    );
+  }
+
   void testOverrideSaving() {
     using Preference = files::BrowserPreference;
     using State = files::AtomicWriteState;
@@ -407,6 +457,7 @@ int main() {
     testEnvironmentPaths();
     testBrowserDefaults();
     testGridIconSize();
+    testSidebarWidth();
     testOverrideSaving();
     std::println("settings checks passed");
     return 0;

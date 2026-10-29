@@ -696,7 +696,7 @@ void Button::applyVisualState() {
   markPaintDirty();
 }
 
-void Button::applyLabelMaxWidth(bool honorAssignedBox) {
+void Button::applyLabelMaxWidth(Renderer& renderer, bool honorAssignedBox) {
   if (m_label == nullptr) {
     return;
   }
@@ -712,13 +712,17 @@ void Button::applyLabelMaxWidth(bool honorAssignedBox) {
   }
 
   const float padding = paddingLeft() + paddingRight();
-  // A glyph only eats into the label's width when it sits beside it; stacked above (vertical
-  // buttons such as the control-center tiles) the label owns the full inner width.
-  const bool glyphSharesRow = m_glyph != nullptr && m_glyph->visible() && direction() == FlexDirection::Horizontal;
-  const float glyphW = glyphSharesRow ? m_glyph->width() + gap() : 0.0F;
+  // Custom artwork shares the same text budget as the built-in glyph.
+  float siblingWidth = 0.0F;
+  if (direction() == FlexDirection::Horizontal) {
+    for (const auto& child : children()) {
+      if (child.get() != m_label && child->visible() && child->participatesInLayout() && child->zIndex() >= 0)
+        siblingWidth += child->measure(renderer, LayoutConstraints::unconstrained()).width + gap();
+    }
+  }
   // Ceil: Label ceils its own box, so a cap derived back out of that box can land a fraction
   // under the text it already fits and ellipsize a label that does not overflow.
-  m_label->setMaxWidth(std::ceil(std::max(0.0F, maxBtnWidth - padding - glyphW)));
+  m_label->setMaxWidth(std::ceil(std::max(1.0F, maxBtnWidth - padding - siblingWidth)));
   // A budget without a line limit wraps instead of ellipsizing: Pango only draws the ellipsis
   // once the content exceeds an explicit line budget.
   m_label->setMaxLines(1);
@@ -737,7 +741,7 @@ void Button::doLayout(Renderer& renderer) {
     m_glyph->measure(renderer);
   }
   if (m_label != nullptr) {
-    applyLabelMaxWidth(/*honorAssignedBox=*/true);
+    applyLabelMaxWidth(renderer, /*honorAssignedBox=*/true);
     m_label->measure(renderer);
   }
 
@@ -840,7 +844,7 @@ void Button::doLayout(Renderer& renderer) {
 
 LayoutSize Button::doMeasure(Renderer& renderer, const LayoutConstraints& constraints) {
   // Measuring reports intrinsic size; the assigned box is last pass's and would cap it.
-  applyLabelMaxWidth(/*honorAssignedBox=*/false);
+  applyLabelMaxWidth(renderer, /*honorAssignedBox=*/false);
   return measureByLayout(renderer, constraints);
 }
 

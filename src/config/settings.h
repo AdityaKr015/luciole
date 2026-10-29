@@ -16,6 +16,7 @@ namespace files {
     ViewMode viewMode = ViewMode::LIST;
     bool showHidden = false;
     int gridIconSize = 48;
+    int sidebarWidth = kDefaultSidebarWidth;
     bool operator==(const BrowserSettings&) const = default;
   };
 
@@ -38,7 +39,8 @@ namespace files {
     SORT_DESCENDING,
     DIRECTORIES_FIRST,
     VIEW_MODE,
-    GRID_ICON_SIZE
+    GRID_ICON_SIZE,
+    SIDEBAR_WIDTH
   };
   struct OverrideEdit {
     BrowserPreference preference;

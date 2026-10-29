@@ -122,9 +122,14 @@ namespace {
       m_gridZoom = static_cast<std::size_t>(
           std::ranges::find(files::kGridIconSizes, settings.gridIconSize) - files::kGridIconSizes.begin()
       );
+      m_sidebarWidth = settings.sidebarWidth;
       m_surface.setRenderContext(&renderer);
       m_surface.setAnimationManager(&m_animations);
-      m_surface.setConfigureCallback([this](std::uint32_t, std::uint32_t) { m_surface.requestLayout(); });
+      m_surface.setConfigureCallback([this](std::uint32_t, std::uint32_t) {
+        if (m_resizingSidebar)
+          m_dispatcher.cancelPointerCapture();
+        m_surface.requestLayout();
+      });
       m_surface.setPrepareFrameCallback([this](bool update, bool layout) { prepareFrame(update, layout); });
       m_surface.setUpdateCallback([] {});
       m_surface.setDebugName("files-window");
@@ -417,6 +422,10 @@ namespace {
       if (event.pressed) {
         m_popupSerial = m_connection.input().lastSerial();
         m_lastBreadcrumb.reset();
+        if (m_resizingSidebar && KeySymbol::isEscape(event.sym)) {
+          m_dispatcher.cancelPointerCapture();
+          return;
+        }
         if (m_drag && KeySymbol::isEscape(event.sym)) {
           cancelDrag();
           return;
@@ -1966,6 +1975,26 @@ namespace {
       m_surface.requestUpdate();
     }
 
+    static constexpr float kSidebarHandleWidth = 6.0F;
+
+    int sidebarMaximumWidth() const {
+      return std::clamp(
+          static_cast<int>(m_surface.width()) - 320 - static_cast<int>(kSidebarHandleWidth), files::kMinSidebarWidth,
+          files::kMaxSidebarWidth
+      );
+    }
+
+    void resizeSidebar(int width, bool persist) {
+      const int bounded = std::clamp(width, files::kMinSidebarWidth, sidebarMaximumWidth());
+      if (bounded == m_sidebarWidth)
+        return;
+      captureViewAnchor();
+      m_sidebarWidth = bounded;
+      if (persist)
+        m_preferences.saveSidebarWidth(m_sidebarWidth);
+      m_surface.requestLayout();
+    }
+
     void captureViewAnchor() {
       if (m_list == nullptr) {
         return;
@@ -2356,6 +2385,11 @@ namespace {
         UiPhaseScope phase(UiPhase::Layout);
         buildScene();
       }
+      m_sidebarResizeLine->setFill(colorSpecFromRole(
+          m_resizingSidebar || m_sidebarResize->focused() ? ColorRole::Primary
+              : m_sidebarResize->hovered()                ? ColorRole::OnSurfaceVariant
+                                                          : ColorRole::OutlineVariant
+      ));
       syncTransferConflict();
       if (std::exchange(m_trashDirty, false))
         syncTrash();
@@ -2400,6 +2434,9 @@ namespace {
           }
         }
         const float searchWidth = m_surface.width() < 800 ? 148.0F : 220.0F;
+        const float sidebarWidth = static_cast<float>(std::min(m_sidebarWidth, sidebarMaximumWidth()));
+        m_places->setMinWidth(sidebarWidth);
+        m_places->setMaxWidth(sidebarWidth);
         m_searchArea->setMinWidth(searchWidth);
         m_searchArea->setMaxWidth(searchWidth);
         if (m_breadcrumbsDirty) {
@@ -2436,6 +2473,7 @@ namespace {
               renderer, LayoutRect{0, 0, static_cast<float>(m_surface.width()), static_cast<float>(m_surface.height())}
           );
         }
+        m_sidebarResizeLine->arrange(renderer, {2.5F, 0, 1.0F, m_sidebarResize->height()});
         layoutDrag(renderer);
         if (placesFocus) {
           m_dispatcher.restoreTabFocus(std::move(*placesFocus));
@@ -2663,6 +2701,65 @@ namespace {
       });
       places->setDragCallback([this](const files::Bookmark& bookmark) { startPlaceDrag(bookmark); });
       places->setRenameCallback([this](const files::Bookmark& bookmark) { openPlaceRename(bookmark); });
+      auto sidebarResize = ui::inputArea(
+          {.out = &m_sidebarResize,
+           .acceptedButtons = InputArea::buttonMask(BTN_LEFT),
+           .cursorShape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COL_RESIZE,
+           .focusable = true,
+           .tabStop = true,
+           .tooltip = "Resize Places; Left/Right adjusts, Home resets",
+           .width = kSidebarHandleWidth,
+           .onEnter = [this](const auto&) { m_surface.requestUpdate(); },
+           .onLeave = [this] { m_surface.requestUpdate(); },
+           .onMotion =
+               [this](const InputArea::PointerData& pointer) {
+                 if (!m_resizingSidebar)
+                   return;
+                 float x = 0, y = 0;
+                 Node::absolutePosition(m_sidebarResize, x, y);
+                 const float delta = (x + pointer.localX - m_sidebarPressX) * (Style::rtl() ? -1.0F : 1.0F);
+                 resizeSidebar(m_sidebarStartVisibleWidth + static_cast<int>(std::lround(delta)), false);
+               },
+           .onPress =
+               [this](const InputArea::PointerData& pointer) {
+                 if (pointer.pressed) {
+                   m_sidebarStartWidth = m_sidebarWidth;
+                   m_sidebarStartVisibleWidth = static_cast<int>(std::lround(m_places->width()));
+                   m_sidebarPressX = pointer.sceneX;
+                   m_resizingSidebar = true;
+                 } else if (std::exchange(m_resizingSidebar, false) && m_sidebarWidth != m_sidebarStartWidth) {
+                   m_preferences.saveSidebarWidth(m_sidebarWidth);
+                 }
+                 m_surface.requestUpdate();
+               },
+           .onKeyDown =
+               [this](const InputArea::KeyData& key) {
+                 if (!key.pressed || key.preedit || (key.modifiers != 0 && key.modifiers != KeyMod::Shift))
+                   return;
+                 const int step = key.modifiers == KeyMod::Shift ? 24 : 8;
+                 if (KeySymbol::isLeft(key.sym) || KeySymbol::isRight(key.sym)) {
+                   const int direction = KeySymbol::isRight(key.sym) != Style::rtl() ? 1 : -1;
+                   resizeSidebar(static_cast<int>(std::lround(m_places->width())) + direction * step, true);
+                 } else if (KeySymbol::isHome(key.sym) && key.modifiers == 0) {
+                   resizeSidebar(files::kDefaultSidebarWidth, true);
+                 }
+               },
+           .onFocusGain = [this] { m_surface.requestUpdate(); },
+           .onFocusLoss = [this] { m_surface.requestUpdate(); },
+           .configure =
+               [this](InputArea& handle) {
+                 handle.setTabFocusKey("places-width");
+                 handle.setOnCancel([this] {
+                   if (std::exchange(m_resizingSidebar, false)) {
+                     m_sidebarWidth = m_sidebarStartWidth;
+                     if (m_dispatcher.focusedArea() == m_sidebarResize)
+                       m_dispatcher.setFocus(nullptr);
+                     m_surface.requestLayout();
+                   }
+                 });
+                 handle.addChild(ui::box({.out = &m_sidebarResizeLine}));
+               }}
+      );
       auto content = ui::column(
           {.out = &m_filePane,
            .align = FlexAlign::Stretch,
@@ -2758,7 +2855,7 @@ namespace {
           std::move(header), std::move(toolbar),
           ui::row(
               {.align = FlexAlign::Stretch, .clipChildren = true, .flexGrow = 1.0F}, std::move(places),
-              std::move(content)
+              std::move(sidebarResize), std::move(content)
           ),
           ui::row(
               {.align = FlexAlign::Center,
@@ -3103,6 +3200,13 @@ namespace {
     std::size_t m_gridZoom = 1;
     double m_zoomScroll = 0;
     files::ViewMode m_viewMode;
+    int m_sidebarWidth = files::kDefaultSidebarWidth;
+    int m_sidebarStartWidth = files::kDefaultSidebarWidth;
+    int m_sidebarStartVisibleWidth = files::kDefaultSidebarWidth;
+    float m_sidebarPressX = 0;
+    bool m_resizingSidebar = false;
+    InputArea* m_sidebarResize = nullptr;
+    Box* m_sidebarResizeLine = nullptr;
     std::optional<files::ViewMode> m_appliedViewMode;
     std::optional<files::EntryId> m_viewAnchor;
     std::unique_ptr<Node> m_root;

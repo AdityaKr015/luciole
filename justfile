@@ -74,7 +74,6 @@ _files kind:
 
     EXCLUDED = {
         ".git",
-        ".agents",
         ".aws",
         ".cache",
         ".direnv",

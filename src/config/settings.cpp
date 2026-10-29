@@ -25,6 +25,7 @@ namespace {
     std::optional<files::SortField> sortBy;
     std::optional<files::ViewMode> viewMode;
     std::optional<int> gridIconSize;
+    std::optional<int> sidebarWidth;
     std::optional<bool> sortDescending;
     std::optional<bool> directoriesFirst;
     bool operator==(const Patch&) const = default;
@@ -157,6 +158,15 @@ namespace {
             } else {
               issue(issues, file, value, path, "expected integer icon size 32, 48, 64, 80, 96, or 128");
             }
+          } else if (name == "sidebar_width") {
+            const auto* width = value.as_integer();
+            if (width != nullptr
+                && width->get() >= files::kMinSidebarWidth
+                && width->get() <= files::kMaxSidebarWidth) {
+              patch.sidebarWidth = static_cast<int>(width->get());
+            } else {
+              issue(issues, file, value, path, "expected integer sidebar width from 160 to 400");
+            }
           } else if (name == "view_mode") {
             const auto* mode = value.as_string();
             if (mode != nullptr && mode->get() == "list") {
@@ -195,6 +205,9 @@ namespace {
   }
 
   void apply(files::Settings& settings, const Patch& patch) {
+    if (patch.sidebarWidth) {
+      settings.browser.sidebarWidth = *patch.sidebarWidth;
+    }
     if (patch.gridIconSize) {
       settings.browser.gridIconSize = *patch.gridIconSize;
     }
@@ -230,12 +243,20 @@ namespace {
       return "browser.view_mode";
     case Preference::GRID_ICON_SIZE:
       return "browser.grid_icon_size";
+    case Preference::SIDEBAR_WIDTH:
+      return "browser.sidebar_width";
     }
     return {};
   }
 
   void editPatch(Patch& patch, const files::OverrideEdit& edit) {
     using Preference = files::BrowserPreference;
+    if (edit.preference == Preference::SIDEBAR_WIDTH) {
+      patch.sidebarWidth = std::holds_alternative<std::monostate>(edit.value)
+          ? std::nullopt
+          : std::optional<int>(std::get<int>(edit.value));
+      return;
+    }
     if (edit.preference == Preference::GRID_ICON_SIZE) {
       patch.gridIconSize = std::holds_alternative<std::monostate>(edit.value)
           ? std::nullopt
@@ -270,12 +291,16 @@ namespace {
     case Preference::SORT_BY:
     case Preference::VIEW_MODE:
     case Preference::GRID_ICON_SIZE:
+    case Preference::SIDEBAR_WIDTH:
       break;
     }
   }
 
   std::string formatPatch(const Patch& patch) {
     toml::table browser;
+    if (patch.sidebarWidth) {
+      browser.insert("sidebar_width", *patch.sidebarWidth);
+    }
     if (patch.gridIconSize) {
       browser.insert("grid_icon_size", *patch.gridIconSize);
     }
@@ -405,6 +430,9 @@ files::AtomicWriteState files::ConfigService::saveOverrides(std::span<const Over
       } else if (edit.preference == BrowserPreference::GRID_ICON_SIZE) {
         const auto* size = std::get_if<int>(&edit.value);
         valid = size != nullptr && std::ranges::contains(kGridIconSizes, *size);
+      } else if (edit.preference == BrowserPreference::SIDEBAR_WIDTH) {
+        const auto* width = std::get_if<int>(&edit.value);
+        valid = width != nullptr && *width >= kMinSidebarWidth && *width <= kMaxSidebarWidth;
       } else if (edit.preference == BrowserPreference::VIEW_MODE) {
         const auto* mode = std::get_if<ViewMode>(&edit.value);
         valid = mode != nullptr && (*mode == ViewMode::LIST || *mode == ViewMode::GRID);
