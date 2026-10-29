@@ -5,6 +5,7 @@
 #include "app/main_loop.h"
 #include "app/timer_poll_source.h"
 #include "browser/browser_controller.h"
+#include "browser/details_columns.h"
 #include "browser/file_view.h"
 #include "browser/location_presentation.h"
 #include "browser/places_sidebar.h"
@@ -2184,10 +2185,13 @@ namespace {
       const char* indicator = sort.descending ? "arrow-down" : "arrow-up";
       m_nameHeader->setGlyph(indicator);
       m_sizeHeader->setGlyph(indicator);
+      m_modifiedHeader->setGlyph(indicator);
       m_nameHeader->glyph()->setVisible(sort.field == files::SortField::NAME);
       m_nameHeader->glyph()->setParticipatesInLayout(sort.field == files::SortField::NAME);
       m_sizeHeader->glyph()->setVisible(sort.field == files::SortField::SIZE);
       m_sizeHeader->glyph()->setParticipatesInLayout(sort.field == files::SortField::SIZE);
+      m_modifiedHeader->glyph()->setVisible(sort.field == files::SortField::MODIFIED);
+      m_modifiedHeader->glyph()->setParticipatesInLayout(sort.field == files::SortField::MODIFIED);
       const char* field = sort.field == files::SortField::NAME ? "Name"
           : sort.field == files::SortField::SIZE               ? "Size"
                                                                : "Modified";
@@ -2419,6 +2423,19 @@ namespace {
         m_root->arrange(
             renderer, LayoutRect{0, 0, static_cast<float>(m_surface.width()), static_cast<float>(m_surface.height())}
         );
+        const auto columns = files::DetailsColumns::forWidth(m_list->scrollView().contentViewportWidth(true));
+        if (columns != m_detailsColumns) {
+          m_detailsColumns = columns;
+          m_typeHeader->setVisible(columns.showType);
+          m_typeHeader->setParticipatesInLayout(columns.showType);
+          m_sizeHeader->setMinWidth(columns.sizeWidth + 2 * Style::spaceXs);
+          m_sizeHeader->setMaxWidth(columns.sizeWidth + 2 * Style::spaceXs);
+          m_modifiedHeader->setMinWidth(columns.modifiedWidth + 2 * Style::spaceXs);
+          m_modifiedHeader->setMaxWidth(columns.modifiedWidth + 2 * Style::spaceXs);
+          m_root->arrange(
+              renderer, LayoutRect{0, 0, static_cast<float>(m_surface.width()), static_cast<float>(m_surface.height())}
+          );
+        }
         layoutDrag(renderer);
         if (placesFocus) {
           m_dispatcher.restoreTabFocus(std::move(*placesFocus));
@@ -2657,7 +2674,7 @@ namespace {
               ui::row(
                   {.height = 32.0F},
                   ui::row(
-                      {.align = FlexAlign::Center, .gap = Style::spaceSm, .paddingH = Style::spaceMd, .flexGrow = 1.0F},
+                      {.align = FlexAlign::Center, .paddingH = Style::spaceMd - Style::spaceXs, .flexGrow = 1.0F},
                       ui::button(
                           {.out = &m_nameHeader,
                            .text = "Name",
@@ -2666,25 +2683,42 @@ namespace {
                            .contentAlign = ButtonContentAlign::Start,
                            .variant = ButtonVariant::Ghost,
                            .tooltip = "Sort by name; click again to reverse",
-                           .paddingH = 0.0F,
+                           .paddingH = Style::spaceXs,
                            .flexGrow = 1.0F,
                            .onClick = [this] { sortBy(files::SortField::NAME); }}
                       ),
-                      ui::label(
-                          {.text = "Type", .fontSize = Style::fontSizeCaption, .minWidth = 100.0F, .maxWidth = 100.0F}
+                      ui::row(
+                          {.out = &m_typeHeader,
+                           .paddingH = Style::spaceXs,
+                           .minWidth = files::DetailsColumns::typeWidth + 2 * Style::spaceXs,
+                           .maxWidth = files::DetailsColumns::typeWidth + 2 * Style::spaceXs},
+                          ui::label({.text = "Type", .fontSize = Style::fontSizeCaption})
                       ),
                       ui::button(
                           {.out = &m_sizeHeader,
                            .text = "Size",
                            .fontSize = Style::fontSizeCaption,
                            .controlHeight = Style::controlHeightSm,
-                           .contentAlign = ButtonContentAlign::End,
+                           .contentAlign = ButtonContentAlign::Start,
                            .variant = ButtonVariant::Ghost,
                            .tooltip = "Sort by size; click again to reverse",
-                           .minWidth = 110.0F,
-                           .maxWidth = 110.0F,
-                           .paddingH = 0.0F,
+                           .minWidth = 110.0F + 2 * Style::spaceXs,
+                           .maxWidth = 110.0F + 2 * Style::spaceXs,
+                           .paddingH = Style::spaceXs,
                            .onClick = [this] { sortBy(files::SortField::SIZE); }}
+                      ),
+                      ui::button(
+                          {.out = &m_modifiedHeader,
+                           .text = "Modified",
+                           .fontSize = Style::fontSizeCaption,
+                           .controlHeight = Style::controlHeightSm,
+                           .contentAlign = ButtonContentAlign::Start,
+                           .variant = ButtonVariant::Ghost,
+                           .tooltip = "Sort by modification time; click again to reverse",
+                           .minWidth = 148.0F + 2 * Style::spaceXs,
+                           .maxWidth = 148.0F + 2 * Style::spaceXs,
+                           .paddingH = Style::spaceXs,
+                           .onClick = [this] { sortBy(files::SortField::MODIFIED); }}
                       )
                   ),
                   ui::box({.width = Style::scrollbarWidth + Style::scrollbarGap})
@@ -3095,6 +3129,9 @@ namespace {
     Segmented* m_viewSwitch = nullptr;
     Button* m_nameHeader = nullptr;
     Button* m_sizeHeader = nullptr;
+    Button* m_modifiedHeader = nullptr;
+    Flex* m_typeHeader = nullptr;
+    files::DetailsColumns m_detailsColumns;
     Button* m_menuButton = nullptr;
     Button* m_back = nullptr;
     Button* m_forward = nullptr;

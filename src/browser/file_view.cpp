@@ -1,5 +1,6 @@
 #include "browser/file_view.h"
 
+#include "browser/details_columns.h"
 #include "browser/file_icon.h"
 #include "core/input/key_modifiers.h"
 #include "ui/builders.h"
@@ -10,6 +11,18 @@
 #include <utility>
 
 namespace {
+  std::string modifiedTime(std::optional<std::uint64_t> seconds, const char* format) {
+    if (!seconds || *seconds > static_cast<std::uint64_t>(G_MAXINT64))
+      return "Unknown";
+    const std::unique_ptr<GDateTime, decltype(&g_date_time_unref)> date(
+        g_date_time_new_from_unix_local(static_cast<gint64>(*seconds)), &g_date_time_unref
+    );
+    if (!date)
+      return "Unknown";
+    const files::GString text(g_date_time_format(date.get(), format));
+    return text ? text.get() : "Unknown";
+  }
+
   // Adapted from Noctalia's FileEntryRow, with URI-backed entries and model selection.
   class FileRow final : public InputArea {
   public:
@@ -42,8 +55,8 @@ namespace {
           ui::label(
               {.out = &m_kind,
                .fontSize = Style::fontSizeCaption,
-               .minWidth = 100.0F,
-               .maxWidth = 100.0F,
+               .minWidth = files::DetailsColumns::typeWidth,
+               .maxWidth = files::DetailsColumns::typeWidth,
                .maxLines = 1}
           ),
           ui::label(
@@ -52,7 +65,14 @@ namespace {
                .minWidth = 110.0F,
                .maxWidth = 110.0F,
                .maxLines = 1,
-               .textAlign = TextAlign::End}
+               .textAlign = TextAlign::Start}
+          ),
+          ui::label(
+              {.out = &m_modified,
+               .fontSize = Style::fontSizeCaption,
+               .minWidth = 148.0F,
+               .maxWidth = 148.0F,
+               .maxLines = 1}
           )
       );
       addChild(std::move(row));
@@ -62,9 +82,9 @@ namespace {
       const bool directory = entry.type == G_FILE_TYPE_DIRECTORY;
       m_icon->bind(entry.icon, colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurface));
       m_name->setText(entry.displayName);
-      m_name->setMaxWidth(std::max(0.0F, width() - 280.0F));
       m_parent->setText(entry.parentDisplayName);
-      m_parent->setMaxWidth(std::max(0.0F, width() - 280.0F));
+      m_fullDate = modifiedTime(entry.modifiedSeconds, "%Y-%m-%d %H:%M");
+      m_compactDate = modifiedTime(entry.modifiedSeconds, "%Y-%m-%d");
       m_parent->setVisible(!entry.parentDisplayName.empty());
       m_parent->setParticipatesInLayout(!entry.parentDisplayName.empty());
       m_parent->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurfaceVariant));
@@ -93,6 +113,7 @@ namespace {
       m_name->setColor(text);
       m_kind->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurfaceVariant));
       m_size->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurfaceVariant));
+      m_modified->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurfaceVariant));
       m_background->setFill(
           !selected && hovered ? colorSpecFromRole(ColorRole::SurfaceContainerHigh) : clearColorSpec()
       );
@@ -104,6 +125,26 @@ namespace {
 
   protected:
     void doLayout(Renderer& renderer) override {
+      const auto columns = files::DetailsColumns::forWidth(width());
+      m_kind->setVisible(columns.showType);
+      m_kind->setParticipatesInLayout(columns.showType);
+      m_size->setMinWidth(columns.sizeWidth);
+      m_size->setMaxWidth(columns.sizeWidth);
+      m_modified->setMinWidth(columns.modifiedWidth);
+      m_modified->setMaxWidth(columns.modifiedWidth);
+      m_modified->setText(columns.compactDate ? m_compactDate : m_fullDate);
+      const float nameWidth = std::max(
+          1.0F,
+          width()
+              - 2 * Style::spaceMd
+              - 24.0F
+              - (columns.showType ? 4.0F : 3.0F) * Style::spaceSm
+              - (columns.showType ? files::DetailsColumns::typeWidth : 0.0F)
+              - columns.sizeWidth
+              - columns.modifiedWidth
+      );
+      m_name->setMaxWidth(nameWidth);
+      m_parent->setMaxWidth(nameWidth);
       m_background->arrange(renderer, {0, 0, width(), height()});
       m_row->arrange(renderer, {0, 0, width(), height()});
     }
@@ -116,6 +157,9 @@ namespace {
     Label* m_parent = nullptr;
     Label* m_kind = nullptr;
     Label* m_size = nullptr;
+    Label* m_modified = nullptr;
+    std::string m_fullDate;
+    std::string m_compactDate;
   };
 
   // Adapted from Noctalia's FileEntryTile without its picker or thumbnail service.
