@@ -18,6 +18,12 @@ class ScrollView;
 class Box;
 struct ScrollViewState;
 
+struct VirtualGridDecorationLayout {
+  std::size_t firstIndex, itemCount, columns;
+  float cellWidth, cellHeight, columnGap, rowGap;
+  bool rtl;
+};
+
 // Adapter that drives a VirtualGridView from an external data source.
 //
 // The grid only ever materializes a small pool of tiles (sized to the
@@ -84,6 +90,8 @@ public:
   // activate items itself; return the index in activateIndex instead.
   virtual PointerReleaseResult onPointerRelease(std::optional<std::size_t> /*index*/) { return {}; }
   virtual void onPointerCancel() {}
+  virtual std::unique_ptr<Node> createDecoration() { return {}; }
+  virtual void bindDecoration(Node&, const VirtualGridDecorationLayout&) {}
 
   // Opt in to empty-space clicks and rectangle selection. Indices are current layout indices.
   virtual bool onBackgroundPointerPress() { return false; }
@@ -148,6 +156,8 @@ public:
   // Surface-local anchor point for item `index` (cell center). False when layout
   // metrics are unavailable or the index is out of range.
   [[nodiscard]] bool absoluteAnchorForIndex(std::size_t index, float& outX, float& outY) const noexcept;
+  [[nodiscard]] std::optional<std::size_t> itemAtScene(float x, float y) const noexcept;
+  [[nodiscard]] std::optional<LayoutRect> itemRect(std::size_t index) const noexcept;
   // Items to move for a Page Up/Down step (one viewport of rows, at least one item).
   [[nodiscard]] std::size_t pageItemStride() const noexcept;
   // Column count from the most recent layout pass (for keyboard navigation).
@@ -157,6 +167,10 @@ public:
 
   [[nodiscard]] ScrollView& scrollView() noexcept { return *m_scroll; }
   void cancelPointerGesture();
+  void scrollDuringDrag(float delta) {
+    m_externalDragScrollDelta += delta;
+    markLayoutDirty();
+  }
 
 protected:
   void doLayout(Renderer& renderer) override;
@@ -175,7 +189,7 @@ private:
   void onPoolTooltipMotion(std::size_t slot, float localX, float localY);
   void onPoolTooltipLeave(std::size_t slot);
   void onSecondaryPointerPress(float localX, float localY);
-  [[nodiscard]] std::optional<std::size_t> indexAt(float localX, float localY) const noexcept;
+  [[nodiscard]] std::optional<std::size_t> indexAt(float localX, float localY, bool contentOnly = true) const noexcept;
   void cellLocalAt(float localX, float localY, std::size_t index, float& cellLocalX, float& cellLocalY) const noexcept;
   [[nodiscard]] std::size_t visualCol(std::size_t col) const noexcept {
     return Style::rtl() ? m_layoutColumns - 1 - col : col;
@@ -191,6 +205,7 @@ private:
   Canvas* m_canvas = nullptr;
   InputArea* m_inputArea = nullptr;
   Box* m_selectionBox = nullptr;
+  Node* m_decoration = nullptr;
 
   VirtualGridAdapter* m_adapter = nullptr;
   std::vector<Node*> m_pool;
@@ -235,6 +250,8 @@ private:
   float m_areaScrollSpeed = 0.0F;
   float m_areaScrollDelta = 0.0F;
   bool m_applyingAreaScroll = false;
+  bool m_applyingExternalDragScroll = false;
+  float m_externalDragScrollDelta = 0;
   Timer m_areaScrollTimer;
   std::chrono::steady_clock::time_point m_areaScrollTick;
   // Press point of the captured press, and whether the pointer has travelled

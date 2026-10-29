@@ -143,6 +143,7 @@ app_sources = files(
   'src/render/text/glyph_registry.cpp',
   'src/ui/builders.cpp',
   'src/ui/controls/box.cpp',
+  'src/ui/controls/selection_surface.cpp',
   'src/ui/controls/button.cpp',
   'src/ui/controls/checkbox.cpp',
   'src/ui/controls/context_menu.cpp',
@@ -213,6 +214,11 @@ places_service = declare_dependency(
   dependencies: state_service,
 )
 
+transfer_service = declare_dependency(
+  sources: files('src/operations/transfer_service.cpp'),
+  dependencies: filesystem_service,
+)
+
 app = executable('noctalia-files',
   app_sources,
   protocol_sources,
@@ -220,7 +226,7 @@ app = executable('noctalia-files',
   build_info,
   completions,
   include_directories: include_directories('src', '.'),
-  dependencies: ui_dependencies + [browser_model, settings_service, state_service, places_service],
+  dependencies: ui_dependencies + [browser_model, settings_service, state_service, places_service, transfer_service],
   install: true,
 )
 
@@ -229,6 +235,8 @@ build_tests = tests_opt.enabled() or (
   tests_opt.auto() and get_option('buildtype') == 'debug' and get_option('b_sanitize') == 'none'
 )
 if build_tests
+  transfer_test = executable('transfer-service-test', 'tests/transfer_service_test.cpp', dependencies: transfer_service)
+  test('transfer-service', transfer_test, timeout: 90, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   places_test = executable('places-test', 'tests/places_test.cpp', dependencies: places_service)
   test('places', places_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   icon_test = executable('file-icon-test',

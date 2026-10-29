@@ -3,6 +3,7 @@
 #include "browser/file_icon.h"
 #include "core/input/key_modifiers.h"
 #include "ui/builders.h"
+#include "ui/controls/selection_surface.h"
 
 #include <algorithm>
 #include <format>
@@ -14,8 +15,7 @@ namespace {
   public:
     explicit FileRow(files::FileIconCache& icons) {
       setHitTestVisible(false);
-      auto background = ui::box({.out = &m_background, .radius = Style::radiusSm});
-      addChild(std::move(background));
+      addChild(ui::box({.out = &m_background, .radius = SelectionSurface::cornerRadius}));
       auto icon = std::make_unique<files::FileIcon>(icons, 24.0F);
       m_icon = icon.get();
       auto row = ui::row(
@@ -93,16 +93,13 @@ namespace {
       m_name->setColor(text);
       m_kind->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurfaceVariant));
       m_size->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurfaceVariant));
-      m_background->setFill(colorSpecFromRole(
-          selected      ? ColorRole::PrimaryContainer
-              : hovered ? ColorRole::SurfaceContainerHigh
-                        : ColorRole::Surface
-      ));
-      if (focused) {
+      m_background->setFill(
+          !selected && hovered ? colorSpecFromRole(ColorRole::SurfaceContainerHigh) : clearColorSpec()
+      );
+      if (!selected && focused)
         m_background->setBorder(colorSpecFromRole(ColorRole::Primary), Style::focusRingWidth);
-      } else {
+      else
         m_background->clearBorder();
-      }
     }
 
   protected:
@@ -126,7 +123,7 @@ namespace {
   public:
     explicit FileTile(files::FileIconCache& icons) {
       setHitTestVisible(false);
-      addChild(ui::box({.out = &m_background, .radius = Style::radiusSm}));
+      addChild(ui::box({.out = &m_background, .radius = SelectionSurface::cornerRadius}));
       m_icon = static_cast<files::FileIcon*>(addChild(std::make_unique<files::FileIcon>(icons, 48.0F)));
       addChild(
           ui::label(
@@ -160,16 +157,13 @@ namespace {
       m_parent->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurfaceVariant));
       m_name->setMaxWidth(std::max(0.0F, width() - Style::spaceSm * 2));
       m_name->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurface));
-      m_background->setFill(colorSpecFromRole(
-          selected      ? ColorRole::PrimaryContainer
-              : hovered ? ColorRole::SurfaceContainerHigh
-                        : ColorRole::Surface
-      ));
-      if (focused) {
+      m_background->setFill(
+          !selected && hovered ? colorSpecFromRole(ColorRole::SurfaceContainerHigh) : clearColorSpec()
+      );
+      if (!selected && focused)
         m_background->setBorder(colorSpecFromRole(ColorRole::Primary), Style::focusRingWidth);
-      } else {
+      else
         m_background->clearBorder();
-      }
     }
 
   protected:
@@ -217,6 +211,22 @@ std::unique_ptr<Node> files::FileViewAdapter::createTile() {
   return std::make_unique<FileRow>(m_icons);
 }
 
+std::unique_ptr<Node> files::FileViewAdapter::createDecoration() { return std::make_unique<SelectionSurface>(); }
+void files::FileViewAdapter::bindDecoration(Node& decoration, const VirtualGridDecorationLayout& layout) {
+  const auto& model = m_browser.model();
+  std::vector<std::uint8_t> selected(layout.itemCount, 0);
+  for (std::size_t i = 0; i < layout.itemCount && layout.firstIndex + i < model.rows().size(); ++i) {
+    const auto col = i % layout.columns;
+    const auto visual = (i / layout.columns) * layout.columns + (layout.rtl ? layout.columns - col - 1 : col);
+    selected[visual] = model.selection().selected.contains(model.rows()[layout.firstIndex + i]) ? 1 : 0;
+  }
+  decoration.setVisible(std::ranges::any_of(selected, [](auto value) { return value != 0; }));
+  static_cast<SelectionSurface&>(decoration)
+      .bind(
+          std::move(selected), layout.columns, layout.cellWidth + layout.columnGap, layout.cellHeight + layout.rowGap
+      );
+}
+
 void files::FileViewAdapter::bindTile(Node& tile, std::size_t index, bool, bool hovered) {
   const auto& model = m_browser.model();
   if (index >= model.rows().size()) {
@@ -226,7 +236,7 @@ void files::FileViewAdapter::bindTile(Node& tile, std::size_t index, bool, bool 
   const auto* entry = model.entry(id);
   if (entry != nullptr) {
     const bool selected = model.selection().selected.contains(id);
-    const bool focused = m_focused() && model.selection().focused == id;
+    const bool focused = selected || (m_focused() && model.selection().focused == id);
     if (m_mode == ViewMode::GRID) {
       static_cast<FileTile&>(tile).bind(*entry, selected, focused, hovered, m_gridIconSize);
     } else {
@@ -244,10 +254,11 @@ bool files::FileViewAdapter::onPointerPress(std::size_t index, float, float, flo
   m_dragged = false;
   m_plainClick = modifiers == 0;
   m_collapseSelectionOnClick = m_plainClick && m_browser.model().selection().selected.contains(*m_pressed);
+  m_toggleSelectionOnClick = modifiers == KeyMod::Ctrl && m_browser.model().selection().selected.contains(*m_pressed);
   const auto mode = (modifiers & KeyMod::Shift) != 0
       ? ((modifiers & KeyMod::Ctrl) != 0 ? SelectionMode::ADD_RANGE : SelectionMode::RANGE)
       : ((modifiers & KeyMod::Ctrl) != 0 ? SelectionMode::TOGGLE : SelectionMode::REPLACE);
-  if (!m_collapseSelectionOnClick) {
+  if (!m_collapseSelectionOnClick && !m_toggleSelectionOnClick) {
     (void)m_browser.model().select(*m_pressed, mode);
   }
   return true;
@@ -268,12 +279,16 @@ VirtualGridAdapter::PointerReleaseResult files::FileViewAdapter::onPointerReleas
   m_areaBaseline.clear();
   const auto pressed = std::exchange(m_pressed, std::nullopt);
   const bool dragged = std::exchange(m_dragged, false);
-  if (!pressed
-      || !index
-      || *index >= itemCount()
-      || m_browser.model().rows()[*index] != *pressed
-      || dragged
-      || !m_plainClick) {
+  if (!pressed || !index || *index >= itemCount() || m_browser.model().rows()[*index] != *pressed || dragged) {
+    m_lastClick.reset();
+    return {};
+  }
+  if (m_toggleSelectionOnClick) {
+    m_lastClick.reset();
+    (void)m_browser.model().select(*pressed, SelectionMode::TOGGLE);
+    return {.rebind = true, .activateIndex = std::nullopt};
+  }
+  if (!m_plainClick) {
     m_lastClick.reset();
     return {};
   }

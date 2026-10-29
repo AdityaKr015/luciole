@@ -15,6 +15,8 @@ namespace files {
     );
     [[nodiscard]] std::size_t itemCount() const override;
     [[nodiscard]] std::unique_ptr<Node> createTile() override;
+    std::unique_ptr<Node> createDecoration() override;
+    void bindDecoration(Node& decoration, const VirtualGridDecorationLayout& layout) override;
     void bindTile(Node& tile, std::size_t index, bool selected, bool hovered) override;
     bool onPointerPress(std::size_t index, float, float, float, float) override;
     bool onPointerDrag(std::optional<std::size_t>, float, float, float, float) override;
@@ -43,6 +45,7 @@ namespace files {
     bool m_dragged = false;
     bool m_plainClick = false;
     bool m_collapseSelectionOnClick = false;
+    bool m_toggleSelectionOnClick = false;
     std::function<void(std::optional<EntryId>, float, float)> m_context;
     std::function<void(const std::vector<EntryId>&)> m_drag;
     std::function<void()> m_cancelDrag;

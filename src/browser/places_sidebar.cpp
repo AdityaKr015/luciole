@@ -42,6 +42,36 @@ void files::PlacesSidebar::invalidate() {
   m_dirty = true;
   markLayoutDirty();
 }
+std::optional<files::Bookmark> files::PlacesSidebar::folderAt(float x, float y) const {
+  if (!containsScenePoint(x, y)) {
+    return std::nullopt;
+  }
+  for (const auto& row : m_rows) {
+    float localX = 0, localY = 0;
+    if (Node::mapFromScene(row.button, x, y, localX, localY)
+        && localX >= 0
+        && localX < row.button->width()
+        && localY >= 8
+        && localY < row.button->height() - 8) {
+      return row.bookmark;
+    }
+  }
+  return std::nullopt;
+}
+std::optional<LayoutRect> files::PlacesSidebar::folderRect(const Location& location) const {
+  for (const auto& row : m_rows) {
+    if (row.bookmark.location == location) {
+      float x = 0, y = 0;
+      Node::absolutePosition(row.button, x, y);
+      float left = 0, top = 0;
+      Node::absolutePosition(this, left, top);
+      const float bottom = std::min(y + row.button->height(), top + height());
+      const float clippedTop = std::max(y, top);
+      return LayoutRect{x, clippedTop, row.button->width(), std::max(0.0F, bottom - clippedTop)};
+    }
+  }
+  return std::nullopt;
+}
 void files::PlacesSidebar::cancelDragCandidate() {
   m_dragCandidate.reset();
   m_dragged = false;

@@ -21,6 +21,8 @@ namespace files {
     void setDragCallback(std::function<void(const Bookmark&)> callback);
     void setRenameCallback(std::function<void(const Bookmark&)> callback);
     InputArea* focusArea(const Location& location) const;
+    std::optional<Bookmark> folderAt(float x, float y) const;
+    std::optional<LayoutRect> folderRect(const Location& location) const;
 
   protected:
     void doLayout(Renderer& renderer) override;
