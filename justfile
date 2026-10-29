@@ -64,6 +64,61 @@ uninstall m: (_check-mode m)
     fi
     ninja -C "build-$1" uninstall
 
+_files kind:
+    #!/usr/bin/env python3
+    """Enumerate owned files without consulting repository metadata."""
+
+    import os
+    import sys
+    from pathlib import Path
+
+    EXCLUDED = {
+        ".git",
+        ".agents",
+        ".aws",
+        ".cache",
+        ".direnv",
+        ".idea",
+        ".vscode",
+        "__pycache__",
+        "node_modules",
+        "result",
+    }
+
+    EXTENSIONS = {
+        "code": {".cpp", ".h"},
+        "nix": {".nix"},
+        "python": {".py"},
+        "text": {".md", ".mdx", ".cpp", ".h", ".in", ".py", ".nix", ".txt", ".build", ".toml", ".bash", ".fish"},
+    }
+
+
+    def project_files(kind):
+        for directory, children, names in os.walk(".", followlinks=False):
+            children[:] = sorted(
+                name
+                for name in children
+                if name not in EXCLUDED
+                and not name.startswith(("build-", "result-"))
+                and not Path(directory, name).is_symlink()
+            )
+            for name in sorted(names):
+                path = Path(directory, name)
+                if path.is_symlink():
+                    continue
+                if path.suffix in EXTENSIONS[kind] or (
+                    kind == "text"
+                    and name in ("justfile", "VERSION", "LICENSE", ".clang-format", ".clang-tidy", "_noctalia-files")
+                ):
+                    yield path
+
+
+    if __name__ == "__main__":
+        if len(sys.argv) != 2 or sys.argv[1] not in ("code", "nix", "python", "text"):
+            sys.exit("usage: just _files <code|nix|python|text>")
+        for item in project_files(sys.argv[1]):
+            sys.stdout.buffer.write(os.fsencode(item) + b"\0")
+
 _check_formatter:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -78,16 +133,16 @@ format: format-code format-nix
 format-check: format-code-check format-nix-check lint-prose
 
 format-code: _check_formatter
-    python3 tools/project_files.py code | xargs -0 -r clang-format -i
+    just _files code | xargs -0 -r clang-format -i
 
 format-code-check: _check_formatter
-    python3 tools/project_files.py code | xargs -0 -r clang-format --dry-run -Werror
+    just _files code | xargs -0 -r clang-format --dry-run -Werror
 
 format-nix:
-    python3 tools/project_files.py nix | xargs -0 -r nixfmt
+    just _files nix | xargs -0 -r nixfmt
 
 format-nix-check:
-    python3 tools/project_files.py nix | xargs -0 -r nixfmt --check
+    just _files nix | xargs -0 -r nixfmt --check
 
 _clang_tidy m=mode: (_ensure-configured m)
     meson compile -C "build-$1" noctalia-files
@@ -96,14 +151,39 @@ _clang_tidy m=mode: (_ensure-configured m)
 lint m=mode: (_clang_tidy m) lint-nix lint-python lint-prose
 
 lint-nix:
-    python3 tools/project_files.py nix | xargs -0 -r -n1 statix check
-    python3 tools/project_files.py nix | xargs -0 -r deadnix --fail
+    just _files nix | xargs -0 -r -n1 statix check
+    just _files nix | xargs -0 -r deadnix --fail
 
 lint-prose:
-    python3 tools/lint_prose.py
+    #!/usr/bin/env python3
+    """Check owned source and guidance for the project's punctuation and whitespace rules."""
+
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    def project_files(kind):
+        paths = subprocess.check_output(["just", "_files", kind]).split(b"\0")
+        return (Path(os.fsdecode(path)) for path in paths if path)
+
+    errors = []
+    for path in project_files("text"):
+        text = path.read_text(encoding="utf-8")
+        if not text.endswith("\n"):
+            errors.append(f"{path}: missing final newline")
+        for number, line in enumerate(text.splitlines(), 1):
+            if "\u2014" in line:
+                errors.append(f"{path}:{number}: em dashes are prohibited")
+            if line != line.rstrip():
+                errors.append(f"{path}:{number}: trailing whitespace")
+
+    if errors:
+        print("\n".join(errors), file=sys.stderr)
+        sys.exit(1)
 
 lint-python:
-    python3 tools/project_files.py python | xargs -0 -r python3 -m py_compile
+    just _files python | xargs -0 -r python3 -m py_compile
 
 fix m=mode: (_ensure-configured m)
     meson compile -C "build-$1" noctalia-files

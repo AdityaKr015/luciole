@@ -227,7 +227,7 @@ rename_service = declare_dependency(
 )
 
 trash_service = declare_dependency(
-  sources: files('src/operations/trash_service.cpp'),
+  sources: files('src/operations/trash_service.cpp', 'src/operations/empty_trash_service.cpp'),
   dependencies: filesystem_service,
 )
 
@@ -252,6 +252,8 @@ build_tests = tests_opt.enabled() or (
   tests_opt.auto() and get_option('buildtype') == 'debug' and get_option('b_sanitize') == 'none'
 )
 if build_tests
+  empty_trash_test = executable('empty-trash-service-test', 'tests/empty_trash_service_test.cpp', dependencies: trash_service)
+  test('empty-trash-service', empty_trash_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   trash_browse_test = executable('trash-browse-test', 'tests/trash_browse_test.cpp', dependencies: browser_model)
   test('trash-browse', trash_browse_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   trash_test = executable('trash-service-test', 'tests/trash_service_test.cpp', dependencies: [trash_service, browser_model])

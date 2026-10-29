@@ -19,6 +19,7 @@
 #include "cursor-shape-v1-client-protocol.h"
 #include "fs/filename.h"
 #include "operations/create_service.h"
+#include "operations/empty_trash_service.h"
 #include "operations/rename_service.h"
 #include "operations/transfer_service.h"
 #include "operations/trash_service.h"
@@ -161,6 +162,12 @@ namespace {
         m_browserDirty = true;
         m_surface.requestUpdate();
       });
+      m_emptyTrash.setChangedCallback([this] {
+        updateOperationProgress();
+        m_emptyTrashDirty = true;
+        m_browserDirty = true;
+        m_surface.requestUpdate();
+      });
       m_trash.setChangedCallback([this] {
         updateOperationProgress();
         m_trashDirty = true;
@@ -214,6 +221,7 @@ namespace {
       m_operationProgress.stop();
       m_transfers.setChangedCallback({});
       m_trash.setChangedCallback({});
+      m_emptyTrash.setChangedCallback({});
       m_renamer.setChangedCallback({});
       m_creator.setChangedCallback({});
       m_browser.setChangedCallback({});
@@ -259,6 +267,8 @@ namespace {
       if (!m_surface.isRunning() && m_transfers.busy()) {
         m_transfers.cancel();
       }
+      if (!m_surface.isRunning() && m_emptyTrash.pending())
+        m_emptyTrash.cancel();
       if (!m_surface.isRunning() && (m_trash.busy() || m_trash.canTrash()))
         m_trash.cancel();
       if (!m_surface.isRunning() && m_renamer.busy())
@@ -271,6 +281,7 @@ namespace {
           || m_launcher.busy()
           || m_transfers.busy()
           || m_trash.busy()
+          || m_emptyTrash.busy()
           || m_renamer.busy()
           || m_creator.busy();
     }
@@ -778,6 +789,10 @@ namespace {
         entries.push_back({.id = 4, .label = "Move down", .enabled = m_pins.editable() && index + 1 < pins.size()});
       }
       entries.push_back({.label = "", .separator = true});
+      if (bookmark.location == files::Location::trash()) {
+        entries.push_back({.id = 7, .label = "Empty Trash…", .enabled = canEmptyTrash()});
+        entries.push_back({.label = "", .separator = true});
+      }
       entries.push_back({.id = 5, .label = "Properties"});
       showContextMenu(
           std::move(entries),
@@ -790,6 +805,8 @@ namespace {
               m_browser.open(bookmark.location);
             } else if (action == 2) {
               m_pins.remove(bookmark.location);
+            } else if (action == 7 && bookmark.location == files::Location::trash()) {
+              openEmptyTrash();
             } else if (action == 6) {
               openPlaceRename(bookmark);
             } else if (action == 3 || action == 4) {
@@ -816,8 +833,143 @@ namespace {
       );
     }
 
+    bool canEmptyTrash() const {
+      return !m_transfers.busy()
+          && !m_trash.busy()
+          && !m_trash.canTrash()
+          && !m_emptyTrash.pending()
+          && !m_renamer.busy()
+          && !m_creator.busy();
+    }
+    void openEmptyTrash() {
+      if (!canEmptyTrash()) {
+        actionError("Another file operation is still finishing.");
+        return;
+      }
+      cancelDrag();
+      const float width = std::min(420.0F, static_cast<float>(m_surface.width()) - 32.0F);
+      Button* cancel = nullptr;
+      Label* message = nullptr;
+      Label* size = nullptr;
+      Button* confirm = nullptr;
+      auto root = ui::column(
+          {.align = FlexAlign::Stretch,
+           .gap = Style::spaceMd,
+           .padding = Style::spaceMd,
+           .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
+           .radius = Style::radiusLg,
+           .border = colorSpecFromRole(ColorRole::OutlineVariant)},
+          ui::label({.text = "Empty Trash?", .fontWeight = FontWeight::SemiBold}),
+          ui::label(
+              {.out = &message,
+               .text = "Reading Trash…",
+               .maxWidth = width - 24.0F,
+               .maxLines = 4,
+               .configure = [](Label& label) { label.setUseMarkup(false); }}
+          ),
+          ui::label(
+              {.out = &size,
+               .text = "Size: calculating…",
+               .fontSize = Style::fontSizeCaption,
+               .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
+               .maxWidth = width - 24.0F,
+               .maxLines = 2}
+          ),
+          ui::row(
+              {.align = FlexAlign::Center, .justify = FlexJustify::End, .gap = Style::spaceSm},
+              ui::button(
+                  {.out = &cancel,
+                   .text = "Cancel",
+                   .variant = ButtonVariant::Default,
+                   .onClick = [this] { dismissMenu(); }}
+              ),
+              ui::button(
+                  {.out = &confirm,
+                   .text = "Empty Trash",
+                   .enabled = false,
+                   .variant = ButtonVariant::Destructive,
+                   .onClick = [this] { confirmEmptyTrash(); }}
+              )
+          )
+      );
+      UiPhaseScope phase(UiPhase::Layout);
+      LayoutConstraints constraints;
+      constraints.setExactWidth(width);
+      const float height = root->measure(m_surface.renderTarget().renderer(), constraints).height;
+      showPopup(
+          std::move(root), nullptr, {(m_surface.width() - width) * 0.5F, (m_surface.height() - height) * 0.5F, 1, 1},
+          width, height
+      );
+      if (m_menuSurface != nullptr) {
+        m_emptyTrashDialog = true;
+        m_emptyTrashMessage = message;
+        m_emptyTrashSize = size;
+        m_emptyTrashConfirm = confirm;
+        m_menuDispatcher.setFocus(cancel->inputArea());
+        if (!m_emptyTrash.prepare())
+          message->setText("Another Empty Trash operation is still finishing.");
+      }
+    }
+    void confirmEmptyTrash() {
+      if (!m_emptyTrashDialog || !m_emptyTrash.empty())
+        return;
+      m_emptyTrashConfirm->setEnabled(false);
+      m_emptyTrashDialog = false;
+      dismissMenu();
+    }
+    void syncEmptyTrash() {
+      const auto& snapshot = m_emptyTrash.snapshot();
+      if (m_emptyTrashDialog && m_emptyTrashMessage != nullptr) {
+        if (snapshot.status == files::EmptyTrashStatus::READY) {
+          const auto count = snapshot.results.size();
+          m_emptyTrashMessage->setText(
+              count == 0 ? "Trash is already empty."
+                         : std::format(
+                               "Permanently delete {} item{} and their contents? This cannot be undone.", count,
+                               count == 1 ? "" : "s"
+                           )
+          );
+          m_emptyTrashConfirm->setEnabled(m_emptyTrash.canEmpty());
+        } else if (snapshot.status == files::EmptyTrashStatus::ERROR) {
+          m_emptyTrashMessage->setText("Could not read Trash: " + snapshot.error);
+          m_emptyTrashConfirm->setEnabled(false);
+        }
+        std::string sizeText = "Size: calculating…";
+        if (snapshot.size) {
+          const files::GString value(g_format_size_full(*snapshot.size, G_FORMAT_SIZE_IEC_UNITS));
+          sizeText = std::format("Size: {}{}", snapshot.sizeIncomplete ? "at least " : "", value.get());
+        } else if (!m_emptyTrash.busy()) {
+          sizeText = "Size unavailable";
+        }
+        m_emptyTrashSize->setText(sizeText);
+        m_menuSurface->requestLayout();
+      } else if (snapshot.status == files::EmptyTrashStatus::FINISHED) {
+        const auto count = [&](files::EmptyTrashOutcome outcome) {
+          return std::ranges::count(snapshot.results, outcome, &files::EmptyTrashResult::outcome);
+        };
+        const auto done = count(files::EmptyTrashOutcome::DELETED);
+        std::string message = std::format("{} item{} permanently deleted", done, done == 1 ? "" : "s");
+        for (const auto& [outcome, label] :
+             {std::pair{files::EmptyTrashOutcome::SKIPPED, "skipped"},
+              std::pair{files::EmptyTrashOutcome::FAILED, "failed"},
+              std::pair{files::EmptyTrashOutcome::CANCELLED, "cancelled"},
+              std::pair{files::EmptyTrashOutcome::UNCONFIRMED, "could not be confirmed"}}) {
+          if (const auto amount = count(outcome); amount != 0)
+            message += std::format(" · {} {}", amount, label);
+        }
+        const auto error = std::ranges::find_if(snapshot.results, [](const auto& item) { return !item.error.empty(); });
+        if (error != snapshot.results.end())
+          message += std::format(" · {}: {}", error->displayName, error->error);
+        actionError(std::move(message));
+        if (const auto& location = m_browser.model().snapshot().location; location && location->isTrash())
+          m_browser.open(files::Location::trash());
+      } else if (snapshot.status == files::EmptyTrashStatus::ERROR) {
+        actionError("Could not empty Trash: " + snapshot.error);
+      }
+    }
+
     void updateOperationProgress() {
-      if (m_transfers.busy() || m_trash.busy()) {
+      if (m_transfers.busy() || m_trash.busy() || m_emptyTrash.busy()) {
         m_operationProgress.startRepeating(std::chrono::milliseconds(100), [this] {
           m_browserDirty = true;
           m_surface.requestUpdate();
@@ -837,6 +989,7 @@ namespace {
           && !m_transfers.busy()
           && !m_trash.busy()
           && !m_trash.canTrash()
+          && !m_emptyTrash.pending()
           && !m_renamer.busy()
           && !m_creator.busy()
           && std::ranges::all_of(targets, [](const auto& entry) {
@@ -900,7 +1053,8 @@ namespace {
           && !m_renamer.busy()
           && !m_transfers.busy()
           && !m_trash.busy()
-          && !m_trash.canTrash();
+          && !m_trash.canTrash()
+          && !m_emptyTrash.pending();
     }
     void openCreateItem(files::Location parent, files::CreateKind kind) {
       if (!canCreateItem() || m_browser.model().snapshot().location != parent) {
@@ -982,6 +1136,7 @@ namespace {
           && !m_transfers.busy()
           && !m_trash.busy()
           && !m_trash.canTrash()
+          && !m_emptyTrash.pending()
           && !m_renamer.busy()
           && !m_creator.busy();
     }
@@ -1389,6 +1544,7 @@ namespace {
       return !m_transfers.busy()
           && !m_trash.busy()
           && !m_trash.canTrash()
+          && !m_emptyTrash.pending()
           && !m_renamer.busy()
           && !m_creator.busy()
           && std::ranges::all_of(m_drag->entries, [this](const auto& target) {
@@ -1493,6 +1649,7 @@ namespace {
           || m_transfers.busy()
           || m_trash.busy()
           || m_trash.canTrash()
+          || m_emptyTrash.pending()
           || m_renamer.busy()
           || m_creator.busy()) {
         return;
@@ -2060,6 +2217,13 @@ namespace {
             : std::format("Preparing {} creation…", kind);
       } else if (m_renamer.busy()) {
         status = m_renamer.snapshot().status == files::RenameStatus::RENAMING ? "Renaming…" : "Preparing rename…";
+      } else if (m_emptyTrash.busy()) {
+        status = m_emptyTrash.snapshot().status == files::EmptyTrashStatus::PREPARING ? "Reading Trash…"
+            : m_emptyTrash.snapshot().status == files::EmptyTrashStatus::READY
+            ? "Calculating Trash size…"
+            : std::format(
+                  "Emptying Trash… · {} of {} items", m_emptyTrash.completed(), m_emptyTrash.snapshot().results.size()
+              );
       } else if (m_trash.busy()) {
         status = m_trash.snapshot().status == files::TrashStatus::PREPARING
             ? "Preparing move to Trash…"
@@ -2112,10 +2276,14 @@ namespace {
         status += std::format(" · {} selected", model.selection().selected.size());
       }
       m_status->setText(status);
-      const bool cancellable = m_transfers.busy() || m_trash.busy();
+      const bool cancellable = m_transfers.busy() || m_trash.busy() || m_emptyTrash.busy();
       m_cancelOperation->setVisible(cancellable);
       m_cancelOperation->setParticipatesInLayout(cancellable);
-      m_cancelOperation->setTooltip(m_trash.busy() ? "Cancel move to Trash" : "Cancel transfer");
+      m_cancelOperation->setTooltip(
+          m_emptyTrash.busy()  ? "Cancel emptying Trash"
+              : m_trash.busy() ? "Cancel move to Trash"
+                               : "Cancel transfer"
+      );
       m_notice->setText(
           snapshot.error
                   || loading
@@ -2187,6 +2355,8 @@ namespace {
       syncTransferConflict();
       if (std::exchange(m_trashDirty, false))
         syncTrash();
+      if (std::exchange(m_emptyTrashDirty, false))
+        syncEmptyTrash();
       if (std::exchange(m_creationDirty, false))
         syncCreation();
       if (std::exchange(m_renameDirty, false))
@@ -2572,6 +2742,7 @@ namespace {
                    .onClick = [this] {
                      m_transfers.cancel();
                      m_trash.cancel();
+                     m_emptyTrash.cancel();
                    }}
               )
           )
@@ -2643,6 +2814,11 @@ namespace {
     }
     void closeMenu() {
       ++m_menuGeneration;
+      if (std::exchange(m_emptyTrashDialog, false))
+        m_emptyTrash.cancel();
+      m_emptyTrashMessage = nullptr;
+      m_emptyTrashSize = nullptr;
+      m_emptyTrashConfirm = nullptr;
       if (const auto id = std::exchange(m_activeTransferConflict, std::nullopt)) {
         (void)m_transfers.resolve(*id, files::TransferConflictChoice::CANCEL);
       }
@@ -2707,6 +2883,31 @@ namespace {
           return;
         }
         UiPhaseScope phase(UiPhase::Layout);
+        if (m_emptyTrashDialog) {
+          LayoutConstraints constraints;
+          constraints.setExactWidth(static_cast<float>(m_menuSurface->width()));
+          const auto height = static_cast<std::uint32_t>(std::ceil(
+              std::clamp(
+                  m_menuRoot->measure(m_menuSurface->renderTarget().renderer(), constraints).height, 1.0F,
+                  static_cast<float>(m_surface.height()) - 64.0F
+              )
+          ));
+          if (height != m_menuSurface->height()) {
+            const auto width = m_menuSurface->width();
+            (void)m_menuSurface->resize(width, height, false);
+            (void)m_menuSurface->repositionAnchor(
+                {.anchorX = static_cast<int>((m_surface.width() - width) / 2),
+                 .anchorY = static_cast<int>((m_surface.height() - height) / 2),
+                 .anchorWidth = 1,
+                 .anchorHeight = 1,
+                 .anchor = XDG_POSITIONER_ANCHOR_BOTTOM_RIGHT,
+                 .gravity = XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT,
+                 .constraintAdjustment =
+                     XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X | XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y},
+                false
+            );
+          }
+        }
         m_menuRoot->arrange(
             m_menuSurface->renderTarget().renderer(),
             {0, 0, static_cast<float>(m_menuSurface->width()), static_cast<float>(m_menuSurface->height())}
@@ -2852,6 +3053,12 @@ namespace {
     bool m_dragScrollInPlaces = false;
     files::TransferService m_transfers;
     files::TrashService m_trash;
+    files::EmptyTrashService m_emptyTrash;
+    bool m_emptyTrashDirty = false;
+    bool m_emptyTrashDialog = false;
+    Label* m_emptyTrashMessage = nullptr;
+    Label* m_emptyTrashSize = nullptr;
+    Button* m_emptyTrashConfirm = nullptr;
     bool m_trashDirty = false;
     files::RenameService m_renamer;
     files::CreateService m_creator;
