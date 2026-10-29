@@ -15,7 +15,7 @@ namespace files {
     SortOptions sort;
     ViewMode viewMode = ViewMode::LIST;
     bool showHidden = false;
-    int gridIconSize = 48;
+    int gridIconSize = kDefaultGridIconSize;
     int sidebarWidth = kDefaultSidebarWidth;
     bool showSidebar = true;
     bool operator==(const BrowserSettings&) const = default;

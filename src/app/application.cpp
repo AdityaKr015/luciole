@@ -515,6 +515,8 @@ namespace {
         }
         const bool editing = (m_location != nullptr && m_dispatcher.focusedArea() == m_location->inputArea())
             || (m_filterInput != nullptr && m_dispatcher.focusedArea() == m_filterInput->inputArea());
+        if (!editing && zoomFromKey(event))
+          return;
         if (!editing && event.sym == XKB_KEY_F9 && event.modifiers == 0 && !event.repeat) {
           setSidebarVisible(!m_showSidebar);
           return;
@@ -2087,6 +2089,44 @@ namespace {
 
     float gridIconSize() const { return static_cast<float>(files::kGridIconSizes[m_gridZoom]); }
 
+    void changeGridZoom(int requested) {
+      const auto zoom =
+          static_cast<std::size_t>(std::clamp(requested, 0, static_cast<int>(files::kGridIconSizes.size()) - 1));
+      if (zoom == m_gridZoom)
+        return;
+      captureViewAnchor();
+      m_listAdapter.onPointerCancel();
+      m_gridAdapter.onPointerCancel();
+      m_gridZoom = zoom;
+      m_preferences.saveGridIconSize(files::kGridIconSizes[m_gridZoom]);
+      m_browserDirty = true;
+      m_surface.requestUpdate();
+    }
+
+    bool zoomFromKey(const KeyboardEvent& event) {
+      if (m_viewMode != files::ViewMode::GRID || m_list == nullptr)
+        return false;
+      int zoom = static_cast<int>(m_gridZoom);
+      const bool ctrl = event.modifiers == KeyMod::Ctrl;
+      const bool ctrlShift = event.modifiers == (KeyMod::Ctrl | KeyMod::Shift);
+      if (!ctrl && !ctrlShift)
+        return false;
+      if (event.sym == XKB_KEY_plus || event.sym == XKB_KEY_KP_Add || (ctrl && event.sym == XKB_KEY_equal)) {
+        ++zoom;
+      } else if (ctrl && (event.sym == XKB_KEY_minus || event.sym == XKB_KEY_KP_Subtract)) {
+        --zoom;
+      } else if (ctrl && (event.sym == XKB_KEY_0 || event.sym == XKB_KEY_KP_0)) {
+        zoom = static_cast<int>(
+            std::ranges::find(files::kGridIconSizes, files::kDefaultGridIconSize) - files::kGridIconSizes.begin()
+        );
+      } else {
+        return false;
+      }
+      m_zoomScroll = 0;
+      changeGridZoom(zoom);
+      return true;
+    }
+
     bool zoomFromScroll(const PointerEvent& event) {
       if (m_viewMode != files::ViewMode::GRID
           || m_list == nullptr
@@ -2113,16 +2153,7 @@ namespace {
       m_zoomScroll = std::clamp(m_zoomScroll - steps, -6.0, 6.0);
       const auto delta = static_cast<int>(m_zoomScroll);
       m_zoomScroll -= delta;
-      const auto zoom = static_cast<std::size_t>(std::clamp(static_cast<int>(m_gridZoom) + delta, 0, 5));
-      if (zoom != m_gridZoom) {
-        captureViewAnchor();
-        m_listAdapter.onPointerCancel();
-        m_gridAdapter.onPointerCancel();
-        m_gridZoom = zoom;
-        m_preferences.saveGridIconSize(files::kGridIconSizes[m_gridZoom]);
-        m_browserDirty = true;
-        m_surface.requestUpdate();
-      }
+      changeGridZoom(static_cast<int>(m_gridZoom) + delta);
       return true;
     }
 

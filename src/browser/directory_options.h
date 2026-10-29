@@ -6,6 +6,7 @@
 
 namespace files {
   inline constexpr std::array<int, 6> kGridIconSizes{32, 48, 64, 80, 96, 128};
+  inline constexpr int kDefaultGridIconSize = 48;
   inline constexpr int kMinSidebarWidth = 160;
   inline constexpr int kMaxSidebarWidth = 400;
   inline constexpr int kDefaultSidebarWidth = 206;
