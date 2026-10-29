@@ -51,13 +51,16 @@ namespace {
     writer.saveShowSidebar(false);
     writer.saveShowSidebar(true);
     writer.saveShowSidebar(false);
+    writer.saveShowHidden(false);
+    writer.saveShowHidden(true);
+    writer.saveShowHidden(false);
     wait();
     const auto loaded = files::loadSettings(paths);
     require(
         error.empty()
             && loaded
             && loaded->browser.viewMode == files::ViewMode::GRID
-            && loaded->browser.showHidden
+            && !loaded->browser.showHidden
             && loaded->browser.gridIconSize == 64
             && loaded->browser.sidebarWidth == 280
             && !loaded->browser.showSidebar,
@@ -65,7 +68,18 @@ namespace {
     );
     std::ifstream base(paths.base);
     const std::string content((std::istreambuf_iterator<char>(base)), {});
-    require(content.contains("view_mode = 'list'"), "writer changed the declarative base");
+    require(content == "[browser]\nshow_hidden = true\nview_mode = 'list'\n", "writer changed the declarative base");
+    writer.saveShowHidden(true);
+    wait();
+    const auto shown = files::loadSettings(paths);
+    require(
+        error.empty()
+            && shown
+            && shown->browser.showHidden
+            && shown->browser.gridIconSize == 64
+            && !shown->browser.showSidebar,
+        "showing hidden entries did not persist or lost unrelated overrides"
+    );
     std::ofstream(paths.overrides) << "[broken\n";
     writer.save(files::ViewMode::LIST);
     wait();

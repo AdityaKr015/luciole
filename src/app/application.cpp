@@ -593,7 +593,7 @@ namespace {
           return;
         }
         if (!editing && event.sym == XKB_KEY_h && event.modifiers == KeyMod::Ctrl) {
-          m_browser.toggleHidden();
+          toggleHidden();
           return;
         }
         if (m_list != nullptr && m_dispatcher.focusedArea() == m_list->focusArea() && listKey(event)) {
@@ -3193,6 +3193,11 @@ namespace {
       showPopup(std::move(root), control, anchor, width + 16.0F, height + 16.0F, alignLeft);
     }
 
+    void toggleHidden() {
+      m_browser.toggleHidden();
+      m_preferences.saveShowHidden(m_browser.model().filter().showHidden);
+    }
+
     void openMenu() {
       if (m_menuSurface != nullptr) {
         dismissMenu();
@@ -3240,7 +3245,7 @@ namespace {
               }
               changeSort(options);
             } else if (id == 7) {
-              m_browser.toggleHidden();
+              toggleHidden();
             } else if (id == 8) {
               openFilter();
               return;

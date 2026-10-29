@@ -77,6 +77,9 @@ void files::ViewPreferenceWriter::saveSidebarWidth(int width) {
 void files::ViewPreferenceWriter::saveShowSidebar(bool visible) {
   m_state->queue({BrowserPreference::SHOW_SIDEBAR, visible});
 }
+void files::ViewPreferenceWriter::saveShowHidden(bool visible) {
+  m_state->queue({BrowserPreference::SHOW_HIDDEN, visible});
+}
 bool files::ViewPreferenceWriter::busy() const { return m_state->active || !m_state->pending.empty(); }
 void files::ViewPreferenceWriter::setChangedCallback(std::function<void(const std::string&)> callback) {
   m_state->changed = std::move(callback);
