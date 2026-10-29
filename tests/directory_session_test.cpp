@@ -274,7 +274,9 @@ namespace {
   void testMetadataAbsenceAndTypes() {
     const files::GioPtr<GFileInfo> info(g_file_info_new());
     require(
-        unknown(files::readFileAccess(info.get())) && !files::readFilesystemInfo(info.get()).readOnly.has_value(),
+        unknown(files::readFileAccess(info.get()))
+            && !files::readFilesystemInfo(info.get()).readOnly.has_value()
+            && !files::readFilesystemInfo(info.get()).freeBytes.has_value(),
         "missing provider attributes became false"
     );
     g_file_info_set_attribute_boolean(info.get(), G_FILE_ATTRIBUTE_ACCESS_CAN_READ, true);
@@ -282,6 +284,7 @@ namespace {
     g_file_info_set_attribute_string(info.get(), G_FILE_ATTRIBUTE_ACCESS_CAN_WRITE, "false");
     g_file_info_set_attribute_boolean(info.get(), G_FILE_ATTRIBUTE_FILESYSTEM_READONLY, false);
     g_file_info_set_attribute_uint32(info.get(), G_FILE_ATTRIBUTE_FILESYSTEM_TYPE, 1);
+    g_file_info_set_attribute_string(info.get(), G_FILE_ATTRIBUTE_FILESYSTEM_FREE, "1024");
     const auto access = files::readFileAccess(info.get());
     const auto filesystem = files::readFilesystemInfo(info.get());
     require(
@@ -289,9 +292,16 @@ namespace {
         "negative or mistyped provider attributes were misclassified"
     );
     require(
-        filesystem.readOnly == false && !filesystem.remote.has_value() && !filesystem.type.has_value(),
+        filesystem.readOnly == false
+            && !filesystem.remote.has_value()
+            && !filesystem.type.has_value()
+            && !filesystem.freeBytes.has_value(),
         "filesystem false/unknown/type distinction was lost"
     );
+    g_file_info_set_attribute_uint64(info.get(), G_FILE_ATTRIBUTE_FILESYSTEM_FREE, 0);
+    require(files::readFilesystemInfo(info.get()).freeBytes == 0, "zero free bytes became unknown");
+    g_file_info_set_attribute_uint64(info.get(), G_FILE_ATTRIBUTE_FILESYSTEM_FREE, G_MAXUINT64);
+    require(files::readFilesystemInfo(info.get()).freeBytes == G_MAXUINT64, "large free byte count was narrowed");
   }
 
   void testCapabilityLifecycle(Pump& pump) {
@@ -316,6 +326,9 @@ namespace {
     );
     require(session.snapshot().metadata.filesystem.readOnly == false, "writable fixture filesystem not reported");
     require(
+        session.snapshot().metadata.filesystem.freeBytes.has_value(), "native asynchronous free-space query missing"
+    );
+    require(
         entry(session, "plain").access.read == true
             && entry(session, "plain").access.write == true
             && entry(session, "plain").access.execute == false,
@@ -327,6 +340,7 @@ namespace {
     session.setChangedCallback([&] {
       if (session.snapshot().generation == generation
           && session.snapshot().metadataLoading
+          && !session.snapshot().metadata.filesystem.freeBytes.has_value()
           && unknown(session.snapshot().metadata.access)
           && unknown(entry(session, "plain").access)) {
         invalidated = true;
@@ -351,6 +365,7 @@ namespace {
     session.refresh();
     require(
         session.snapshot().metadataLoading
+            && !session.snapshot().metadata.filesystem.freeBytes.has_value()
             && unknown(session.snapshot().metadata.access)
             && unknown(entry(session, "plain").access),
         "refresh kept old capability facts"
@@ -364,6 +379,7 @@ namespace {
     session.cancel();
     require(
         !session.snapshot().metadataLoading
+            && !session.snapshot().metadata.filesystem.freeBytes.has_value()
             && unknown(session.snapshot().metadata.access)
             && unknown(entry(session, "plain").access),
         "cancel kept active capability facts"

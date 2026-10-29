@@ -3,6 +3,7 @@
 #include "fs/name_matching.h"
 
 #include <algorithm>
+#include <limits>
 #include <utility>
 
 bool files::DirectoryModel::applySnapshot(DirectorySnapshot snapshot) {
@@ -136,6 +137,31 @@ std::vector<files::EntryId> files::DirectoryModel::selectedIds() const {
     }
   }
   return ids;
+}
+
+files::SelectionSummary files::DirectoryModel::selectionSummary() const {
+  SelectionSummary summary;
+  for (const auto id : m_selection.selected) {
+    const auto* item = entry(id);
+    if (item == nullptr)
+      continue;
+    if (!item->symlink && item->type == G_FILE_TYPE_DIRECTORY) {
+      ++summary.folders;
+    } else if (!item->symlink && item->type == G_FILE_TYPE_REGULAR) {
+      ++summary.files;
+      if (!item->size) {
+        ++summary.unknownSizes;
+      } else if (*item->size > std::numeric_limits<std::uint64_t>::max() - summary.bytes) {
+        summary.bytes = std::numeric_limits<std::uint64_t>::max();
+        summary.overflow = true;
+      } else {
+        summary.bytes += *item->size;
+      }
+    } else {
+      ++summary.others;
+    }
+  }
+  return summary;
 }
 
 bool files::DirectoryModel::select(EntryId id, SelectionMode mode) {

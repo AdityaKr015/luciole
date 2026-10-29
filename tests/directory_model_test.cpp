@@ -7,6 +7,7 @@
 #include <clocale>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <print>
 #include <stdexcept>
 
@@ -96,6 +97,58 @@ namespace {
     model.applySnapshot(data);
     require(model.rows() == order, "collation ties changed after enumeration reorder");
     require(model.entry(4)->name == "same-a", "sorting changed the operation name");
+  }
+
+  void testSelectionSummary() {
+    DirectoryModel model;
+    auto data = snapshot(
+        {entry(1, "empty"), entry(2, "known"), entry(3, "unknown"), entry(4, "folder", G_FILE_TYPE_DIRECTORY),
+         entry(5, "link"), entry(6, "special", G_FILE_TYPE_SPECIAL), entry(7, ".hidden")}
+    );
+    data.entries[0].size = 0;
+    data.entries[1].size = 5;
+    data.entries[3].size = 4096;
+    data.entries[4].symlink = true;
+    data.entries[4].size = 900;
+    data.entries[5].size = 777;
+    data.entries[6].hidden = true;
+    data.entries[6].size = 12;
+    model.applySnapshot(data);
+    model.selectAll();
+    const files::SelectionSummary expected{.files = 3, .folders = 1, .others = 2, .bytes = 5, .unknownSizes = 1};
+    require(
+        model.selectionSummary() == expected, "selection summary counted unknown/folder/link sizes as file contents"
+    );
+    model.setFilter({.showHidden = true, .text = {}});
+    model.selectAll();
+    require(
+        model.selectionSummary().bytes == 17 && model.selectionSummary().files == 4, "hidden selection size missing"
+    );
+    model.setFilter({});
+    require(model.selectionSummary() == expected, "filtered-out selections still contributed sizes");
+    data.entries[1].size = 10;
+    model.applySnapshot(data);
+    require(model.selectionSummary().bytes == 10, "metadata refresh left stale selected bytes");
+    require(model.replaceSelection(std::array<EntryId, 2>{1, 2}), "cannot select known-size files");
+    require(
+        model.selectionSummary() == files::SelectionSummary{.files = 2, .bytes = 10}, "zero-byte file became unknown"
+    );
+    data.status = DirectoryStatus::CANCELLED;
+    model.applySnapshot(data);
+    require(model.selectionSummary() == files::SelectionSummary{}, "cancelled selection retained totals");
+    auto huge = snapshot({entry(10, "large"), entry(11, "one")}, 2);
+    huge.entries[0].size = std::numeric_limits<std::uint64_t>::max();
+    huge.entries[1].size = 1;
+    model.applySnapshot(huge);
+    model.selectAll();
+    require(
+        model.selectionSummary()
+            == files::
+                SelectionSummary{.files = 2, .bytes = std::numeric_limits<std::uint64_t>::max(), .overflow = true},
+        "selected byte totals wrapped on overflow"
+    );
+    model.clearSelection();
+    require(model.selectionSummary() == files::SelectionSummary{}, "clearing selection retained totals");
   }
 
   void testFiltering() {
@@ -323,6 +376,7 @@ int main() {
   try {
     std::setlocale(LC_ALL, "C");
     testSortAndMetadata();
+    testSelectionSummary();
     testFiltering();
     testSelectionAndAnchors();
     testBulkSelection();

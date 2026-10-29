@@ -11,6 +11,9 @@
 #include <utility>
 
 namespace {
+  constexpr float kHiddenIconOpacity = 0.6F;
+  constexpr float kHiddenTextOpacity = 0.7F;
+
   std::string modifiedTime(std::optional<std::uint64_t> seconds, const char* format) {
     if (!seconds || *seconds > static_cast<std::uint64_t>(G_MAXINT64))
       return "Unknown";
@@ -79,6 +82,9 @@ namespace {
     }
 
     void bind(const files::DirectoryEntry& entry, bool selected, bool focused, bool hovered) {
+      m_icon->setOpacity(entry.hidden ? kHiddenIconOpacity : 1.0F);
+      for (auto* label : {m_name, m_parent, m_kind, m_size, m_modified})
+        label->setOpacity(entry.hidden && !selected ? kHiddenTextOpacity : 1.0F);
       const bool directory = entry.type == G_FILE_TYPE_DIRECTORY;
       m_icon->bind(entry.icon, colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurface));
       m_name->setText(entry.displayName);
@@ -191,6 +197,9 @@ namespace {
     }
 
     void bind(const files::DirectoryEntry& entry, bool selected, bool focused, bool hovered, float iconSize) {
+      m_icon->setOpacity(entry.hidden ? kHiddenIconOpacity : 1.0F);
+      for (auto* label : {m_name, m_parent})
+        label->setOpacity(entry.hidden && !selected ? kHiddenTextOpacity : 1.0F);
       m_iconSize = iconSize;
       m_icon->setIconSize(iconSize);
       m_icon->bind(entry.icon, colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurface));

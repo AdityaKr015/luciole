@@ -157,7 +157,7 @@ namespace {
             if (size != nullptr && std::ranges::contains(files::kGridIconSizes, size->get())) {
               patch.gridIconSize = static_cast<int>(size->get());
             } else {
-              issue(issues, file, value, path, "expected integer icon size 32, 48, 64, 80, 96, or 128");
+              issue(issues, file, value, path, "expected integer icon size 32, 48, 64, 80, 96, 128, 160, 192, or 256");
             }
           } else if (name == "sidebar_width") {
             const auto* width = value.as_integer();

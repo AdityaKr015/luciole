@@ -18,6 +18,16 @@ namespace files {
     std::optional<EntryId> anchor;
   };
 
+  struct SelectionSummary {
+    std::size_t files = 0;
+    std::size_t folders = 0;
+    std::size_t others = 0;
+    std::uint64_t bytes = 0;
+    std::size_t unknownSizes = 0;
+    bool overflow = false;
+    bool operator==(const SelectionSummary&) const = default;
+  };
+
   // One model per DirectorySession, updated on the main thread by its observer.
   // The model owns its snapshot; borrowed rows/entries expire on mutation.
   class DirectoryModel {
@@ -42,6 +52,7 @@ namespace files {
     [[nodiscard]] const SelectionState& selection() const { return m_selection; }
     [[nodiscard]] std::optional<EntryId> scrollAnchor() const { return m_scrollAnchor; }
     [[nodiscard]] std::vector<EntryId> selectedIds() const; // Visible order, for action dispatch.
+    [[nodiscard]] SelectionSummary selectionSummary() const;
 
     // Reject invisible or unknown IDs without changing focus or selection.
     bool select(EntryId id, SelectionMode mode = SelectionMode::REPLACE);

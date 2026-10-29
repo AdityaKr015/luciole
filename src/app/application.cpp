@@ -2150,7 +2150,8 @@ namespace {
       if (!std::isfinite(steps)) {
         return true;
       }
-      m_zoomScroll = std::clamp(m_zoomScroll - steps, -6.0, 6.0);
+      const auto limit = static_cast<double>(files::kGridIconSizes.size());
+      m_zoomScroll = std::clamp(m_zoomScroll - steps, -limit, limit);
       const auto delta = static_cast<int>(m_zoomScroll);
       m_zoomScroll -= delta;
       changeGridZoom(static_cast<int>(m_gridZoom) + delta);
@@ -2364,8 +2365,33 @@ namespace {
         status += " · Refresh to update";
       if (!model.selection().selected.empty()) {
         status += std::format(" · {} selected", model.selection().selected.size());
+        const auto summary = model.selectionSummary();
+        if (summary.overflow) {
+          status += " · file size exceeds limit";
+        } else if (summary.files != 0 && summary.unknownSizes == summary.files) {
+          status += " · file size unknown";
+        } else if (summary.files != 0) {
+          const files::GString size(g_format_size_full(summary.bytes, G_FORMAT_SIZE_IEC_UNITS));
+          status += std::format(
+              " · {}{}{}", summary.unknownSizes == 0 ? "" : "at least ", size.get(),
+              summary.folders != 0 || summary.others != 0 ? " in files" : ""
+          );
+        }
       }
       m_status->setText(status);
+      const auto freeBytes = snapshot.metadata.filesystem.freeBytes;
+      const bool showFree = freeBytes
+          && !snapshot.metadataLoading
+          && !snapshot.filesystemError
+          && !snapshot.error
+          && snapshot.location
+          && !snapshot.location->isTrash();
+      if (showFree) {
+        const files::GString size(g_format_size_full(*freeBytes, G_FORMAT_SIZE_IEC_UNITS));
+        m_freeSpace->setText(std::format("{} free", size.get()));
+      }
+      m_freeSpace->setVisible(showFree);
+      m_freeSpace->setParticipatesInLayout(showFree);
       const bool cancellable = m_transfers.busy() || m_trash.busy() || m_emptyTrash.busy();
       m_cancelOperation->setVisible(cancellable);
       m_cancelOperation->setParticipatesInLayout(cancellable);
@@ -2922,9 +2948,18 @@ namespace {
           ),
           ui::row(
               {.align = FlexAlign::Center,
+               .gap = Style::spaceMd,
                .padding = Style::spaceSm,
                .fill = colorSpecFromRole(ColorRole::SurfaceContainerLow)},
               ui::label({.out = &m_status, .maxLines = 1, .flexGrow = 1.0F}),
+              ui::label(
+                  {.out = &m_freeSpace,
+                   .fontSize = Style::fontSizeCaption,
+                   .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
+                   .maxWidth = 160.0F,
+                   .maxLines = 1,
+                   .textAlign = TextAlign::End}
+              ),
               ui::button(
                   {.out = &m_cancelOperation,
                    .glyph = "x",
@@ -3294,6 +3329,7 @@ namespace {
     bool m_editingLocation = false;
     bool m_filterOpen = false;
     Label* m_status = nullptr;
+    Label* m_freeSpace = nullptr;
     Label* m_notice = nullptr;
     VirtualGridView* m_list = nullptr;
     Flex* m_listHeader = nullptr;

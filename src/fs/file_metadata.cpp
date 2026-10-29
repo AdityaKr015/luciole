@@ -29,5 +29,8 @@ files::FilesystemInfo files::readFilesystemInfo(GFileInfo* info) {
   if (g_file_info_get_attribute_type(info, G_FILE_ATTRIBUTE_FILESYSTEM_TYPE) == G_FILE_ATTRIBUTE_TYPE_STRING) {
     result.type = g_file_info_get_attribute_string(info, G_FILE_ATTRIBUTE_FILESYSTEM_TYPE);
   }
+  if (g_file_info_get_attribute_type(info, G_FILE_ATTRIBUTE_FILESYSTEM_FREE) == G_FILE_ATTRIBUTE_TYPE_UINT64) {
+    result.freeBytes = g_file_info_get_attribute_uint64(info, G_FILE_ATTRIBUTE_FILESYSTEM_FREE);
+  }
   return result;
 }

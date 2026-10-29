@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <gio/gio.h>
 #include <optional>
 #include <string>
@@ -20,6 +21,7 @@ namespace files {
     std::optional<bool> readOnly;
     std::optional<bool> remote;
     std::optional<std::string> type;
+    std::optional<std::uint64_t> freeBytes = std::nullopt;
   };
 
   struct DirectoryMetadata {
