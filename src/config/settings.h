@@ -19,6 +19,7 @@ namespace files {
     int sidebarWidth = kDefaultSidebarWidth;
     bool showSidebar = true;
     DetailsColumnVisibility columns{};
+    DetailsColumnOrder columnOrder = kDefaultDetailsColumnOrder;
     bool operator==(const BrowserSettings&) const = default;
   };
 
@@ -46,11 +47,12 @@ namespace files {
     SHOW_SIDEBAR,
     SHOW_TYPE_COLUMN,
     SHOW_SIZE_COLUMN,
-    SHOW_MODIFIED_COLUMN
+    SHOW_MODIFIED_COLUMN,
+    COLUMN_ORDER
   };
   struct OverrideEdit {
     BrowserPreference preference;
-    std::variant<std::monostate, bool, SortField, ViewMode, int>
+    std::variant<std::monostate, bool, SortField, ViewMode, int, DetailsColumnOrder>
         value; // monostate restores inheritance from the base/defaults.
   };
 

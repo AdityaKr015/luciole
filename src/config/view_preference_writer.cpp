@@ -90,6 +90,9 @@ void files::ViewPreferenceWriter::saveSort(SortOptions options) {
   });
 }
 bool files::ViewPreferenceWriter::busy() const { return m_state->active || !m_state->pending.empty(); }
+void files::ViewPreferenceWriter::saveColumnOrder(DetailsColumnOrder order) {
+  m_state->queue({{BrowserPreference::COLUMN_ORDER, order}});
+}
 void files::ViewPreferenceWriter::saveDetailsColumns(DetailsColumnVisibility visibility) {
   m_state->queue({
       {BrowserPreference::SHOW_TYPE_COLUMN, visibility.type},

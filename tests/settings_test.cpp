@@ -1,6 +1,7 @@
 #include "browser/directory_model.h"
 #include "config/settings.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <fstream>
@@ -433,6 +434,74 @@ namespace {
     }
   }
 
+  void testDetailsColumnOrder() {
+    using Column = files::DetailsColumn;
+    using Preference = files::BrowserPreference;
+    using State = files::AtomicWriteState;
+    Fixture fixture;
+    files::ConfigService config(fixture.paths());
+    require(
+        config.reload() && config.settings().browser.columnOrder == files::kDefaultDetailsColumnOrder,
+        "default column order changed"
+    );
+    const files::DetailsColumnOrder baseOrder{Column::MODIFIED, Column::TYPE, Column::SIZE};
+    const std::string base = "[browser]\ncolumn_order = ['modified', 'type', 'size']\nshow_size_column = false\n";
+    fixture.write("config.toml", base);
+    fixture.write("settings.toml", "[browser]\ngrid_icon_size = 64\n");
+    require(config.reload() && config.settings().browser.columnOrder == baseOrder, "base column order did not load");
+    auto order = files::kDefaultDetailsColumnOrder;
+    do {
+      const std::array edit{files::OverrideEdit{Preference::COLUMN_ORDER, order}};
+      require(config.saveOverrides(edit) == State::DURABLE, "column permutation did not save");
+      const auto loaded = files::loadSettings(fixture.paths());
+      require(
+          loaded
+              && loaded->browser.columnOrder == order
+              && !loaded->browser.columns.size
+              && loaded->browser.gridIconSize == 64,
+          "column permutation roundtrip lost order or unrelated preferences"
+      );
+    } while (std::ranges::next_permutation(order).found);
+    const auto saved = read(fixture.paths().overrides);
+    for (const auto& edit : std::array{
+             files::OverrideEdit{Preference::COLUMN_ORDER, true},
+             files::OverrideEdit{
+                 Preference::COLUMN_ORDER, files::DetailsColumnOrder{Column::TYPE, Column::TYPE, Column::SIZE}
+             },
+             files::OverrideEdit{
+                 Preference::COLUMN_ORDER,
+                 files::DetailsColumnOrder{Column::TYPE, Column::SIZE, static_cast<Column>(99)}
+             }
+         }) {
+      require(
+          config.saveOverrides(std::span(&edit, 1)) == State::NOT_COMMITTED && read(fixture.paths().overrides) == saved,
+          "invalid typed column order changed overrides"
+      );
+    }
+    const std::array inherit{files::OverrideEdit{Preference::COLUMN_ORDER, std::monostate{}}};
+    require(
+        config.saveOverrides(inherit) == State::DURABLE
+            && config.settings().browser.columnOrder == baseOrder
+            && !read(fixture.paths().overrides).contains("column_order")
+            && read(fixture.paths().base) == base,
+        "column order reset changed base or failed to restore inheritance"
+    );
+    const auto lastGood = config.settings();
+    for (const auto* invalid :
+         {"true", "'type'", "[]", "['type', 'size']", "['type', 'size', 'size']", "['name', 'type', 'size']",
+          "['Type', 'size', 'modified']", "['type', 'size', 1]", "['type', 'size', 'modified', 'name']"}) {
+      fixture.write("config.toml", std::string("[browser]\ncolumn_order = ") + invalid + "\n");
+      const auto issues = files::validateConfigFile(fixture.paths().base);
+      require(
+          issues.size() == 1
+              && issues.front().key == "browser.column_order"
+              && !config.reload()
+              && config.settings() == lastGood,
+          "invalid column array was accepted, misdiagnosed or replaced last-good settings"
+      );
+    }
+  }
+
   void testOverrideSaving() {
     using Preference = files::BrowserPreference;
     using State = files::AtomicWriteState;
@@ -583,6 +652,7 @@ int main() {
     testSidebarWidth();
     testSidebarVisibility();
     testDetailsColumnVisibility();
+    testDetailsColumnOrder();
     testOverrideSaving();
     std::println("settings checks passed");
     return 0;

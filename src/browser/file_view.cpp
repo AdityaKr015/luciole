@@ -83,9 +83,10 @@ namespace {
 
     void bind(
         const files::DirectoryEntry& entry, std::string_view typeLabel, bool selected, bool focused, bool hovered,
-        files::DetailsColumnVisibility columns
+        files::DetailsColumnVisibility columns, files::DetailsColumnOrder order
     ) {
       m_columns = columns;
+      m_columnOrder = order;
       m_icon->setOpacity(entry.hidden ? kHiddenIconOpacity : 1.0F);
       for (auto* label : {m_name, m_parent, m_kind, m_size, m_modified})
         label->setOpacity(entry.hidden && !selected ? kHiddenTextOpacity : 1.0F);
@@ -130,6 +131,15 @@ namespace {
 
   protected:
     void doLayout(Renderer& renderer) override {
+      if (m_columnOrder != m_appliedColumnOrder) {
+        for (const auto column : m_columnOrder) {
+          Node* label = column == files::DetailsColumn::TYPE ? m_kind
+              : column == files::DetailsColumn::SIZE         ? m_size
+                                                             : m_modified;
+          m_row->addChild(m_row->removeChild(label));
+        }
+        m_appliedColumnOrder = m_columnOrder;
+      }
       const auto columns = files::DetailsColumns::forWidth(width(), m_columns);
       m_kind->setVisible(columns.showType);
       m_kind->setParticipatesInLayout(columns.showType);
@@ -174,6 +184,8 @@ namespace {
     std::string m_fullDate;
     std::string m_compactDate;
     files::DetailsColumnVisibility m_columns;
+    files::DetailsColumnOrder m_columnOrder = files::kDefaultDetailsColumnOrder;
+    files::DetailsColumnOrder m_appliedColumnOrder = files::kDefaultDetailsColumnOrder;
   };
 
   // Adapted from Noctalia's FileEntryTile without its picker or thumbnail service.
@@ -310,7 +322,9 @@ void files::FileViewAdapter::bindTile(Node& tile, std::size_t index, bool, bool 
     if (m_mode == ViewMode::GRID) {
       static_cast<FileTile&>(tile).bind(*entry, selected, focused, hovered, m_gridIconSize);
     } else {
-      static_cast<FileRow&>(tile).bind(*entry, model.typeLabel(id), selected, focused, hovered, m_columns);
+      static_cast<FileRow&>(tile).bind(
+          *entry, model.typeLabel(id), selected, focused, hovered, m_columns, m_columnOrder
+      );
     }
   }
 }

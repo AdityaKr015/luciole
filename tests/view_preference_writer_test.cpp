@@ -62,6 +62,11 @@ namespace {
     writer.saveDetailsColumns({false, true, false});
     const files::DetailsColumnVisibility hiddenColumns{false, false, false};
     writer.saveDetailsColumns(hiddenColumns);
+    writer.saveColumnOrder({files::DetailsColumn::SIZE, files::DetailsColumn::TYPE, files::DetailsColumn::MODIFIED});
+    const files::DetailsColumnOrder finalOrder{
+        files::DetailsColumn::MODIFIED, files::DetailsColumn::SIZE, files::DetailsColumn::TYPE
+    };
+    writer.saveColumnOrder(finalOrder);
     wait();
     const auto loaded = files::loadSettings(paths);
     require(
@@ -73,7 +78,8 @@ namespace {
             && loaded->browser.sidebarWidth == 280
             && !loaded->browser.showSidebar
             && loaded->browser.sort == finalSort
-            && loaded->browser.columns == hiddenColumns,
+            && loaded->browser.columns == hiddenColumns
+            && loaded->browser.columnOrder == finalOrder,
         "rapid changes did not persist the latest view or overwrote unrelated preferences"
     );
     std::ifstream base(paths.base);
@@ -89,12 +95,14 @@ namespace {
             && shown->browser.gridIconSize == 64
             && !shown->browser.showSidebar
             && shown->browser.sort == finalSort
-            && shown->browser.columns == hiddenColumns,
+            && shown->browser.columns == hiddenColumns
+            && shown->browser.columnOrder == finalOrder,
         "showing hidden entries did not persist or lost unrelated overrides"
     );
     const files::SortOptions defaultSort;
     writer.saveSort(defaultSort);
     writer.saveDetailsColumns({});
+    writer.saveColumnOrder(files::kDefaultDetailsColumnOrder);
     wait();
     const auto reset = files::loadSettings(paths);
     require(
@@ -103,7 +111,8 @@ namespace {
             && reset->browser.sort == defaultSort
             && reset->browser.showHidden
             && reset->browser.gridIconSize == 64
-            && reset->browser.columns == files::DetailsColumnVisibility{},
+            && reset->browser.columns == files::DetailsColumnVisibility{}
+            && reset->browser.columnOrder == files::kDefaultDetailsColumnOrder,
         "restoring default sort choices did not persist or lost unrelated overrides"
     );
     std::ofstream(paths.overrides) << "[broken\n";

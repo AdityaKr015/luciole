@@ -99,6 +99,38 @@ namespace {
     require(model.entry(4)->name == "same-a", "sorting changed the operation name");
   }
 
+  void testDetailsColumnMoves() {
+    using Column = files::DetailsColumn;
+    const auto defaults = files::kDefaultDetailsColumnOrder;
+    require(
+        !files::moveDetailsColumn(defaults, Column::TYPE, -1, {})
+            && !files::moveDetailsColumn(defaults, Column::MODIFIED, 1, {}),
+        "column movement crossed a protected end"
+    );
+    require(
+        files::moveDetailsColumn(defaults, Column::TYPE, 1, {})
+            == files::DetailsColumnOrder{Column::SIZE, Column::TYPE, Column::MODIFIED},
+        "column did not move to its next visible neighbor"
+    );
+    require(
+        files::moveDetailsColumn(defaults, Column::MODIFIED, -1, {})
+            == files::DetailsColumnOrder{Column::TYPE, Column::MODIFIED, Column::SIZE},
+        "column did not move to its previous visible neighbor"
+    );
+    require(
+        files::moveDetailsColumn(defaults, Column::TYPE, 1, {.size = false})
+            == files::DetailsColumnOrder{Column::MODIFIED, Column::SIZE, Column::TYPE},
+        "hidden neighbor consumed a visible move"
+    );
+    require(
+        !files::moveDetailsColumn(defaults, Column::TYPE, -1, {.type = false})
+            && !files::moveDetailsColumn(defaults, Column::TYPE, 1, {.size = false, .modified = false})
+            && !files::moveDetailsColumn(defaults, Column::TYPE, 0, {})
+            && !files::moveDetailsColumn({Column::TYPE, Column::TYPE, Column::SIZE}, Column::TYPE, 1, {}),
+        "hidden, solitary or invalid column movement changed order"
+    );
+  }
+
   void testTypeSort() {
     DirectoryModel model;
     auto data = snapshot(
@@ -427,6 +459,7 @@ int main() {
     g_setenv("LANGUAGE", "C", true);
     std::setlocale(LC_ALL, "C");
     testSortAndMetadata();
+    testDetailsColumnMoves();
     testTypeSort();
     testSelectionSummary();
     testFiltering();

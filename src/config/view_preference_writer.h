@@ -20,6 +20,7 @@ namespace files {
     void saveShowHidden(bool visible);
     void saveSort(SortOptions options);
     void saveDetailsColumns(DetailsColumnVisibility visibility);
+    void saveColumnOrder(DetailsColumnOrder order);
     [[nodiscard]] bool busy() const;
     void setChangedCallback(std::function<void(const std::string&)> callback);
 

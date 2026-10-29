@@ -125,6 +125,7 @@ namespace {
       m_sidebarWidth = settings.sidebarWidth;
       m_showSidebar = settings.showSidebar;
       m_columnVisibility = settings.columns;
+      m_columnOrder = settings.columnOrder;
       m_surface.setRenderContext(&renderer);
       m_surface.setAnimationManager(&m_animations);
       m_surface.setConfigureCallback([this](std::uint32_t, std::uint32_t) {
@@ -339,7 +340,13 @@ namespace {
           && event.button == BTN_RIGHT
           && m_listHeader->visible()
           && m_listHeader->containsScenePoint(x, y)) {
-        openColumnsMenu({x, y, 1, 1});
+        std::optional<files::DetailsColumn> column;
+        for (const auto candidate : m_columnOrder) {
+          auto* header = columnHeader(candidate);
+          if (header->visible() && header->containsScenePoint(x, y))
+            column = candidate;
+        }
+        openColumnsMenu({x, y, 1, 1}, column);
         return;
       }
       if (dispatcher == &m_dispatcher
@@ -544,7 +551,11 @@ namespace {
                 || (event.sym == XKB_KEY_F10 && event.modifiers == KeyMod::Shift))) {
           for (auto* header : {m_nameHeader, m_typeHeader, m_sizeHeader, m_modifiedHeader}) {
             if (m_dispatcher.focusedArea() == header->inputArea()) {
-              openColumnsMenu(sceneRect(*header));
+              std::optional<files::DetailsColumn> column;
+              for (const auto candidate : m_columnOrder)
+                if (columnHeader(candidate) == header)
+                  column = candidate;
+              openColumnsMenu(sceneRect(*header), column);
               return;
             }
           }
@@ -2067,6 +2078,38 @@ namespace {
       m_surface.requestUpdate();
     }
 
+    Button* columnHeader(files::DetailsColumn column) const {
+      switch (column) {
+      case files::DetailsColumn::TYPE:
+        return m_typeHeader;
+      case files::DetailsColumn::SIZE:
+        return m_sizeHeader;
+      case files::DetailsColumn::MODIFIED:
+        return m_modifiedHeader;
+      }
+      return nullptr;
+    }
+
+    std::optional<files::DetailsColumnOrder> movedColumnOrder(files::DetailsColumn column, int direction) const {
+      return files::moveDetailsColumn(
+          m_columnOrder, column, direction,
+          {m_detailsColumns.showType, m_detailsColumns.showSize, m_detailsColumns.showModified}
+      );
+    }
+
+    void setDetailsColumnOrder(files::DetailsColumnOrder order) {
+      if (order == m_columnOrder || !files::validDetailsColumnOrder(order))
+        return;
+      captureViewAnchor();
+      m_dispatcher.cancelPointerCapture();
+      m_listAdapter.onPointerCancel();
+      m_gridAdapter.onPointerCancel();
+      m_columnOrder = order;
+      m_preferences.saveColumnOrder(order);
+      m_browserDirty = true;
+      m_surface.requestUpdate();
+    }
+
     void changeSort(files::SortOptions options) {
       if (options == m_browser.model().sort()) {
         return;
@@ -2303,6 +2346,7 @@ namespace {
       m_list->setMinCellWidth(std::max(88.0F, gridIconSize() + 56.0F));
       m_gridAdapter.setGridIconSize(gridIconSize());
       m_listAdapter.setDetailsColumnVisibility(m_columnVisibility);
+      m_listAdapter.setDetailsColumnOrder(m_columnOrder);
       const auto& sort = model.sort();
       const char* indicator = sort.descending ? "arrow-down" : "arrow-up";
       m_nameHeader->setGlyph(indicator);
@@ -2587,6 +2631,14 @@ namespace {
           m_viewAnchor.reset();
         }
         const bool clientHeader = !m_surface.serverDecorated() && !m_surface.fullscreen();
+        const bool columnOrderChanged = m_columnOrder != m_appliedColumnOrder;
+        if (columnOrderChanged) {
+          for (const auto column : m_columnOrder) {
+            auto* header = columnHeader(column);
+            m_detailsHeaderRow->addChild(m_detailsHeaderRow->removeChild(header));
+          }
+          m_appliedColumnOrder = m_columnOrder;
+        }
         m_titlebar->setVisible(clientHeader);
         m_titlebar->setParticipatesInLayout(clientHeader);
         m_root->arrange(
@@ -2614,6 +2666,8 @@ namespace {
               renderer, LayoutRect{0, 0, static_cast<float>(m_surface.width()), static_cast<float>(m_surface.height())}
           );
         }
+        if (columnOrderChanged)
+          m_dispatcher.syncPointerHover();
         m_sidebarResizeLine->arrange(renderer, {2.5F, 0, 1.0F, m_sidebarResize->height()});
         layoutDrag(renderer);
         if (placesFocus) {
@@ -2635,6 +2689,7 @@ namespace {
 
     void buildScene() {
       uiAssertNotRendering("Window::buildScene");
+      m_appliedColumnOrder = files::kDefaultDetailsColumnOrder;
       m_titlebar = nullptr;
       auto title = ui::inputArea(
           {
@@ -2914,7 +2969,10 @@ namespace {
               ui::row(
                   {.height = 32.0F},
                   ui::row(
-                      {.align = FlexAlign::Center, .paddingH = Style::spaceMd - Style::spaceXs, .flexGrow = 1.0F},
+                      {.out = &m_detailsHeaderRow,
+                       .align = FlexAlign::Center,
+                       .paddingH = Style::spaceMd - Style::spaceXs,
+                       .flexGrow = 1.0F},
                       ui::button(
                           {.out = &m_nameHeader,
                            .text = "Name",
@@ -3253,16 +3311,50 @@ namespace {
       showPopup(std::move(root), control, anchor, width + 16.0F, height + 16.0F, alignLeft);
     }
 
-    void openColumnsMenu(const LayoutRect& anchor) {
+    void openColumnsMenu(const LayoutRect& anchor, std::optional<files::DetailsColumn> column = std::nullopt) {
+      std::vector<ContextMenuControlEntry> entries{
+          {.label = "Columns", .header = true},
+          {.label = "Name", .enabled = false, .checkmark = true, .toggleState = 1},
+      };
+      for (const auto candidate : m_columnOrder) {
+        const char* label = candidate == files::DetailsColumn::TYPE ? "Type"
+            : candidate == files::DetailsColumn::SIZE               ? "Size"
+                                                                    : "Modified";
+        entries.push_back(
+            {.id = static_cast<int>(candidate) + 1,
+             .label = label,
+             .checkmark = true,
+             .toggleState = files::detailsColumnVisible(m_columnVisibility, candidate) ? 1 : 0}
+        );
+      }
+      entries.push_back({.label = "", .separator = true});
+      entries.push_back(
+          {.id = 4, .label = "Show all columns", .enabled = m_columnVisibility != files::DetailsColumnVisibility{}}
+      );
+      const int left = Style::rtl() ? 1 : -1;
+      if (column) {
+        entries.push_back({.label = "", .separator = true});
+        entries.push_back({.id = 5, .label = "Move left", .enabled = movedColumnOrder(*column, left).has_value()});
+        entries.push_back({.id = 6, .label = "Move right", .enabled = movedColumnOrder(*column, -left).has_value()});
+      }
+      entries.push_back({.label = "", .separator = true});
+      entries.push_back(
+          {.id = 7, .label = "Reset column order", .enabled = m_columnOrder != files::kDefaultDetailsColumnOrder}
+      );
       showContextMenu(
-          {{.label = "Columns", .header = true},
-           {.label = "Name", .enabled = false, .checkmark = true, .toggleState = 1},
-           {.id = 1, .label = "Type", .checkmark = true, .toggleState = m_columnVisibility.type ? 1 : 0},
-           {.id = 2, .label = "Size", .checkmark = true, .toggleState = m_columnVisibility.size ? 1 : 0},
-           {.id = 3, .label = "Modified", .checkmark = true, .toggleState = m_columnVisibility.modified ? 1 : 0},
-           {.label = "", .separator = true},
-           {.id = 4, .label = "Show all columns", .enabled = m_columnVisibility != files::DetailsColumnVisibility{}}},
-          [this](int id) {
+          std::move(entries),
+          [this, column, left](int id) {
+            if ((id == 5 || id == 6) && column) {
+              if (const auto order = movedColumnOrder(*column, id == 5 ? left : -left))
+                setDetailsColumnOrder(*order);
+              m_dispatcher.setFocus(m_list->focusArea());
+              return;
+            }
+            if (id == 7) {
+              setDetailsColumnOrder(files::kDefaultDetailsColumnOrder);
+              m_dispatcher.setFocus(m_list->focusArea());
+              return;
+            }
             auto visibility = m_columnVisibility;
             if (id == 1)
               visibility.type = !visibility.type;
@@ -3433,6 +3525,9 @@ namespace {
     Button* m_typeHeader = nullptr;
     files::DetailsColumns m_detailsColumns;
     files::DetailsColumnVisibility m_columnVisibility;
+    files::DetailsColumnOrder m_columnOrder = files::kDefaultDetailsColumnOrder;
+    files::DetailsColumnOrder m_appliedColumnOrder = files::kDefaultDetailsColumnOrder;
+    Flex* m_detailsHeaderRow = nullptr;
     Button* m_menuButton = nullptr;
     Button* m_back = nullptr;
     Button* m_forward = nullptr;

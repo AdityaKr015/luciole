@@ -32,6 +32,7 @@ namespace {
     std::optional<bool> showTypeColumn;
     std::optional<bool> showSizeColumn;
     std::optional<bool> showModifiedColumn;
+    std::optional<files::DetailsColumnOrder> columnOrder;
     bool operator==(const Patch&) const = default;
   };
 
@@ -144,7 +145,28 @@ namespace {
         }
         for (const auto& [name, value] : *browser) {
           const auto path = std::format("browser.{}", name.str());
-          if (name == "sort_by") {
+          if (name == "column_order") {
+            const auto* columns = value.as_array();
+            files::DetailsColumnOrder order{};
+            bool valid = columns != nullptr && columns->size() == order.size();
+            if (valid) {
+              for (std::size_t index = 0; index < order.size(); ++index) {
+                const auto* text = columns->get(index)->as_string();
+                const auto column = text != nullptr ? files::detailsColumnFromName(text->get()) : std::nullopt;
+                if (!column) {
+                  valid = false;
+                  break;
+                }
+                order[index] = *column;
+              }
+            }
+            if (valid && files::validDetailsColumnOrder(order))
+              patch.columnOrder = order;
+            else
+              issue(
+                  issues, file, value, path, "expected an array containing 'type', 'size', and 'modified' exactly once"
+              );
+          } else if (name == "sort_by") {
             const auto* sort = value.as_string();
             if (sort != nullptr && sort->get() == "name") {
               patch.sortBy = files::SortField::NAME;
@@ -219,6 +241,8 @@ namespace {
   }
 
   void apply(files::Settings& settings, const Patch& patch) {
+    if (patch.columnOrder)
+      settings.browser.columnOrder = *patch.columnOrder;
     if (patch.showTypeColumn)
       settings.browser.columns.type = *patch.showTypeColumn;
     if (patch.showSizeColumn)
@@ -254,6 +278,8 @@ namespace {
   std::string_view preferenceKey(files::BrowserPreference preference) {
     using Preference = files::BrowserPreference;
     switch (preference) {
+    case Preference::COLUMN_ORDER:
+      return "browser.column_order";
     case Preference::SHOW_TYPE_COLUMN:
       return "browser.show_type_column";
     case Preference::SHOW_SIZE_COLUMN:
@@ -282,6 +308,12 @@ namespace {
 
   void editPatch(Patch& patch, const files::OverrideEdit& edit) {
     using Preference = files::BrowserPreference;
+    if (edit.preference == Preference::COLUMN_ORDER) {
+      patch.columnOrder = std::holds_alternative<std::monostate>(edit.value)
+          ? std::nullopt
+          : std::optional<files::DetailsColumnOrder>(std::get<files::DetailsColumnOrder>(edit.value));
+      return;
+    }
     if (edit.preference == Preference::SIDEBAR_WIDTH) {
       patch.sidebarWidth = std::holds_alternative<std::monostate>(edit.value)
           ? std::nullopt
@@ -332,6 +364,7 @@ namespace {
       patch.directoriesFirst = value;
       break;
     case Preference::SORT_BY:
+    case Preference::COLUMN_ORDER:
     case Preference::VIEW_MODE:
     case Preference::GRID_ICON_SIZE:
     case Preference::SIDEBAR_WIDTH:
@@ -341,6 +374,12 @@ namespace {
 
   std::string formatPatch(const Patch& patch) {
     toml::table browser;
+    if (patch.columnOrder) {
+      toml::array columns;
+      for (const auto column : *patch.columnOrder)
+        columns.push_back(files::detailsColumnName(column));
+      browser.insert("column_order", std::move(columns));
+    }
     if (patch.showTypeColumn)
       browser.insert("show_type_column", *patch.showTypeColumn);
     if (patch.showSizeColumn)
@@ -476,7 +515,10 @@ files::AtomicWriteState files::ConfigService::saveOverrides(std::span<const Over
     const auto key = preferenceKey(edit.preference);
     bool valid = !key.empty();
     if (!std::holds_alternative<std::monostate>(edit.value)) {
-      if (edit.preference == BrowserPreference::SORT_BY) {
+      if (edit.preference == BrowserPreference::COLUMN_ORDER) {
+        const auto* order = std::get_if<DetailsColumnOrder>(&edit.value);
+        valid = order != nullptr && validDetailsColumnOrder(*order);
+      } else if (edit.preference == BrowserPreference::SORT_BY) {
         const auto* sort = std::get_if<SortField>(&edit.value);
         valid = sort != nullptr
             && (*sort == SortField::NAME
