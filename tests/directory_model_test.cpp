@@ -131,6 +131,34 @@ namespace {
     );
   }
 
+  void testDetailsColumnInsertion() {
+    using Column = files::DetailsColumn;
+    const auto defaults = files::kDefaultDetailsColumnOrder;
+    require(
+        files::insertDetailsColumnBefore(defaults, Column::TYPE, std::nullopt)
+            == files::DetailsColumnOrder{Column::SIZE, Column::MODIFIED, Column::TYPE},
+        "column insertion did not append after the final target"
+    );
+    require(
+        files::insertDetailsColumnBefore(defaults, Column::MODIFIED, Column::TYPE)
+            == files::DetailsColumnOrder{Column::MODIFIED, Column::TYPE, Column::SIZE},
+        "column insertion did not preserve the other columns' relative order"
+    );
+    require(
+        files::insertDetailsColumnBefore(defaults, Column::TYPE, Column::TYPE) == defaults
+            && files::insertDetailsColumnBefore(defaults, Column::SIZE, Column::MODIFIED) == defaults,
+        "self or adjacent insertion changed the order"
+    );
+    require(
+        !files::insertDetailsColumnBefore(defaults, static_cast<Column>(99), std::nullopt)
+            && !files::insertDetailsColumnBefore(defaults, Column::TYPE, static_cast<Column>(99))
+            && !files::insertDetailsColumnBefore(
+                {Column::TYPE, Column::TYPE, Column::SIZE}, Column::TYPE, std::nullopt
+            ),
+        "invalid column insertion was accepted"
+    );
+  }
+
   void testTypeSort() {
     DirectoryModel model;
     auto data = snapshot(
@@ -460,6 +488,7 @@ int main() {
     std::setlocale(LC_ALL, "C");
     testSortAndMetadata();
     testDetailsColumnMoves();
+    testDetailsColumnInsertion();
     testTypeSort();
     testSelectionSummary();
     testFiltering();

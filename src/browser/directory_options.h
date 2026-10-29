@@ -77,6 +77,27 @@ namespace files {
     }
     return std::nullopt;
   }
+  inline std::optional<DetailsColumnOrder>
+  insertDetailsColumnBefore(DetailsColumnOrder order, DetailsColumn column, std::optional<DetailsColumn> before) {
+    if (!validDetailsColumnOrder(order)
+        || !std::ranges::contains(order, column)
+        || (before && !std::ranges::contains(order, *before)))
+      return std::nullopt;
+    if (before == column)
+      return order;
+    DetailsColumnOrder result{};
+    std::size_t index = 0;
+    for (const auto candidate : order) {
+      if (candidate == column)
+        continue;
+      if (before == candidate)
+        result[index++] = column;
+      result[index++] = candidate;
+    }
+    if (!before)
+      result[index] = column;
+    return result;
+  }
   enum class SortField : std::uint8_t { NAME, SIZE, MODIFIED, TYPE };
   struct SortOptions {
     SortField field = SortField::NAME;

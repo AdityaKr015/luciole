@@ -129,7 +129,7 @@ namespace {
       m_surface.setRenderContext(&renderer);
       m_surface.setAnimationManager(&m_animations);
       m_surface.setConfigureCallback([this](std::uint32_t, std::uint32_t) {
-        if (m_resizingSidebar)
+        if (m_resizingSidebar || m_columnDrag)
           m_dispatcher.cancelPointerCapture();
         m_surface.requestLayout();
       });
@@ -335,6 +335,15 @@ namespace {
         }
       }
       if (dispatcher == &m_dispatcher
+          && m_columnDrag
+          && m_columnDrag->active
+          && event.type == PointerEvent::Type::Button
+          && event.button == BTN_LEFT
+          && !event.pressed) {
+        finishColumnDrag(x, y);
+        return;
+      }
+      if (dispatcher == &m_dispatcher
           && event.type == PointerEvent::Type::Button
           && event.pressed
           && event.button == BTN_RIGHT
@@ -440,6 +449,10 @@ namespace {
       if (event.pressed) {
         m_popupSerial = m_connection.input().lastSerial();
         m_lastBreadcrumb.reset();
+        if (m_columnDrag && KeySymbol::isEscape(event.sym)) {
+          m_dispatcher.cancelPointerCapture();
+          return;
+        }
         if (m_resizingSidebar && KeySymbol::isEscape(event.sym)) {
           m_dispatcher.cancelPointerCapture();
           return;
@@ -449,6 +462,8 @@ namespace {
           return;
         }
       }
+      if (m_columnDrag)
+        return;
       if (m_drag) {
         updateDrag();
         return;
@@ -2078,6 +2093,107 @@ namespace {
       m_surface.requestUpdate();
     }
 
+    struct ColumnDrag {
+      files::DetailsColumn source;
+      float pressX;
+      float pressY;
+      std::uint32_t cursor;
+      bool active = false;
+    };
+    struct ColumnDrop {
+      files::DetailsColumnOrder order;
+      LayoutRect marker;
+    };
+
+    std::optional<ColumnDrop> columnDropAt(float x, float y) const {
+      if (!m_columnDrag || !m_listHeader->visible())
+        return std::nullopt;
+      const auto source = m_columnDrag->source;
+      if (!columnHeader(source)->visible())
+        return std::nullopt;
+      std::vector<std::pair<files::DetailsColumn, LayoutRect>> visible;
+      auto left = static_cast<float>(m_surface.width());
+      float right = 0;
+      for (const auto column : m_columnOrder) {
+        auto* header = columnHeader(column);
+        if (!header->visible())
+          continue;
+        const auto rect = sceneRect(*header);
+        left = std::min(left, rect.x);
+        right = std::max(right, rect.x + rect.width);
+        if (column != source)
+          visible.emplace_back(column, rect);
+      }
+      const auto bounds = sceneRect(*columnHeader(source));
+      if (visible.empty() || x < left || x > right || y < bounds.y || y > bounds.y + bounds.height)
+        return std::nullopt;
+      std::optional<files::DetailsColumn> before;
+      float marker = Style::rtl() ? visible.back().second.x : visible.back().second.x + visible.back().second.width;
+      for (const auto& [column, rect] : visible) {
+        if (Style::rtl() ? x > rect.x + rect.width * 0.5F : x < rect.x + rect.width * 0.5F) {
+          before = column;
+          marker = Style::rtl() ? rect.x + rect.width : rect.x;
+          break;
+        }
+      }
+      const auto order = files::insertDetailsColumnBefore(m_columnOrder, source, before);
+      if (!order)
+        return std::nullopt;
+      return ColumnDrop{*order, {marker - 1.0F, bounds.y, 2.0F, bounds.height}};
+    }
+
+    void cancelColumnDrag() {
+      const auto drag = std::exchange(m_columnDrag, std::nullopt);
+      if (!drag)
+        return;
+      auto* header = columnHeader(drag->source);
+      header->setCursorShape(drag->cursor);
+      header->setHoverSuppressed(false);
+      header->setOpacity(1.0F);
+      if (m_dispatcher.focusedArea() == header->inputArea())
+        m_dispatcher.setFocus(m_list->focusArea());
+      m_columnHoverDirty = true;
+      m_surface.requestLayout();
+    }
+
+    void updateColumnDrag() {
+      if (!m_columnDrag)
+        return;
+      if (!m_columnDrag->active
+          && std::hypot(m_pointerX - m_columnDrag->pressX, m_pointerY - m_columnDrag->pressY) < 6.0F)
+        return;
+      m_columnDrag->active = true;
+      auto* header = columnHeader(m_columnDrag->source);
+      header->setHoverSuppressed(true);
+      header->setCursorShape(
+          columnDropAt(m_pointerX, m_pointerY) ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_GRABBING
+                                               : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP
+      );
+      m_surface.requestLayout();
+    }
+
+    void finishColumnDrag(float x, float y) {
+      const auto drop = columnDropAt(x, y);
+      m_dispatcher.cancelPointerCapture();
+      cancelColumnDrag();
+      if (drop)
+        setDetailsColumnOrder(drop->order);
+      m_dispatcher.setFocus(m_list->focusArea());
+      m_dispatcher.syncPointerHover();
+      m_surface.requestLayout();
+    }
+
+    void layoutColumnDrag(Renderer& renderer) {
+      const bool active = m_columnDrag && m_columnDrag->active;
+      for (const auto column : m_columnOrder)
+        columnHeader(column)->setOpacity(active && m_columnDrag->source == column ? 0.65F : 1.0F);
+      const auto drop = active ? columnDropAt(m_pointerX, m_pointerY) : std::nullopt;
+      const bool changed = drop && drop->order != m_columnOrder;
+      m_columnDropLine->setVisible(changed);
+      if (changed)
+        m_columnDropLine->arrange(renderer, drop->marker);
+    }
+
     Button* columnHeader(files::DetailsColumn column) const {
       switch (column) {
       case files::DetailsColumn::TYPE:
@@ -2666,8 +2782,10 @@ namespace {
               renderer, LayoutRect{0, 0, static_cast<float>(m_surface.width()), static_cast<float>(m_surface.height())}
           );
         }
-        if (columnOrderChanged)
+        const bool columnHoverDirty = std::exchange(m_columnHoverDirty, false);
+        if (columnOrderChanged || columnHoverDirty)
           m_dispatcher.syncPointerHover();
+        layoutColumnDrag(renderer);
         m_sidebarResizeLine->arrange(renderer, {2.5F, 0, 1.0F, m_sidebarResize->height()});
         layoutDrag(renderer);
         if (placesFocus) {
@@ -3094,6 +3212,28 @@ namespace {
               )
           )
       );
+      for (const auto column : m_columnOrder) {
+        auto* header = columnHeader(column);
+        header->setOnPress([this, column, header](float, float, bool pressed) {
+          if (pressed) {
+            m_columnDrag = ColumnDrag{column, m_pointerX, m_pointerY, header->inputArea()->cursorShape()};
+          } else {
+            cancelColumnDrag();
+          }
+        });
+        header->setOnMotion([this] { updateColumnDrag(); });
+        header->inputArea()->setOnCancel([this] { cancelColumnDrag(); });
+      }
+      m_root->addChild(
+          ui::box(
+              {.out = &m_columnDropLine,
+               .fill = colorSpecFromRole(ColorRole::Primary),
+               .visible = false,
+               .participatesInLayout = false}
+          )
+      );
+      m_columnDropLine->setZIndex(102);
+      m_columnDropLine->setHitTestVisible(false);
       auto dragIcon = std::make_unique<files::FileIcon>(m_icons, 40);
       m_dragIcon = dragIcon.get();
       m_dragIcon->setVisible(false);
@@ -3287,6 +3427,8 @@ namespace {
         std::vector<ContextMenuControlEntry> entries, std::function<void(int)> action, LayoutRect anchor,
         bool alignLeft = false
     ) {
+      if (m_columnDrag)
+        m_dispatcher.cancelPointerCapture();
       cancelDrag();
       auto menu = std::make_unique<ContextMenuControl>();
       auto* control = menu.get();
@@ -3527,6 +3669,9 @@ namespace {
     files::DetailsColumnVisibility m_columnVisibility;
     files::DetailsColumnOrder m_columnOrder = files::kDefaultDetailsColumnOrder;
     files::DetailsColumnOrder m_appliedColumnOrder = files::kDefaultDetailsColumnOrder;
+    std::optional<ColumnDrag> m_columnDrag;
+    bool m_columnHoverDirty = false;
+    Box* m_columnDropLine = nullptr;
     Flex* m_detailsHeaderRow = nullptr;
     Button* m_menuButton = nullptr;
     Button* m_back = nullptr;
