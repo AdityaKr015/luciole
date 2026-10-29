@@ -309,6 +309,55 @@ namespace {
     );
   }
 
+  void testSidebarVisibility() {
+    using Preference = files::BrowserPreference;
+    using State = files::AtomicWriteState;
+    Fixture fixture;
+    files::ConfigService config(fixture.paths());
+    require(config.reload() && config.settings().browser.showSidebar, "sidebar should be visible by default");
+    const std::string base = "[browser]\nshow_sidebar = false\nsidebar_width = 280\n";
+    fixture.write("config.toml", base);
+    fixture.write("settings.toml", "[browser]\nshow_sidebar = true\ngrid_icon_size = 64\n");
+    require(config.reload() && config.settings().browser.showSidebar, "sidebar visibility layering failed");
+    const std::array hide{files::OverrideEdit{Preference::SHOW_SIDEBAR, false}};
+    require(config.saveOverrides(hide) == State::DURABLE, "hidden sidebar preference did not save");
+    const auto loaded = files::loadSettings(fixture.paths());
+    require(
+        loaded
+            && !loaded->browser.showSidebar
+            && loaded->browser.sidebarWidth == 280
+            && loaded->browser.gridIconSize == 64,
+        "visibility roundtrip lost false or changed unrelated preferences"
+    );
+    const auto saved = read(fixture.paths().overrides);
+    const std::array invalid{files::OverrideEdit{Preference::SHOW_SIDEBAR, 0}};
+    require(
+        config.saveOverrides(invalid) == State::NOT_COMMITTED && read(fixture.paths().overrides) == saved,
+        "mistyped visibility edit changed settings"
+    );
+    const std::array show{files::OverrideEdit{Preference::SHOW_SIDEBAR, true}};
+    require(
+        config.saveOverrides(show) == State::DURABLE && config.settings().browser.showSidebar,
+        "sidebar show did not save"
+    );
+    const std::array inherit{files::OverrideEdit{Preference::SHOW_SIDEBAR, std::monostate{}}};
+    require(
+        config.saveOverrides(inherit) == State::DURABLE
+            && !config.settings().browser.showSidebar
+            && !read(fixture.paths().overrides).contains("show_sidebar"),
+        "visibility reset lost base inheritance"
+    );
+    require(read(fixture.paths().base) == base, "visibility save changed declarative base");
+    for (const auto* value : {"0", "'false'", "1.0"}) {
+      fixture.write("config.toml", std::string("[browser]\nshow_sidebar = ") + value + "\n");
+      const auto issues = files::validateConfigFile(fixture.paths().base);
+      require(
+          issues.size() == 1 && issues.front().key == "browser.show_sidebar",
+          "invalid visibility value accepted or misdiagnosed"
+      );
+    }
+  }
+
   void testOverrideSaving() {
     using Preference = files::BrowserPreference;
     using State = files::AtomicWriteState;
@@ -458,6 +507,7 @@ int main() {
     testBrowserDefaults();
     testGridIconSize();
     testSidebarWidth();
+    testSidebarVisibility();
     testOverrideSaving();
     std::println("settings checks passed");
     return 0;

@@ -16,6 +16,7 @@ namespace files {
     void save(ViewMode mode);
     void saveGridIconSize(int size);
     void saveSidebarWidth(int width);
+    void saveShowSidebar(bool visible);
     [[nodiscard]] bool busy() const;
     void setChangedCallback(std::function<void(const std::string&)> callback);
 

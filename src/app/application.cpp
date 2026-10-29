@@ -123,6 +123,7 @@ namespace {
           std::ranges::find(files::kGridIconSizes, settings.gridIconSize) - files::kGridIconSizes.begin()
       );
       m_sidebarWidth = settings.sidebarWidth;
+      m_showSidebar = settings.showSidebar;
       m_surface.setRenderContext(&renderer);
       m_surface.setAnimationManager(&m_animations);
       m_surface.setConfigureCallback([this](std::uint32_t, std::uint32_t) {
@@ -514,6 +515,10 @@ namespace {
         }
         const bool editing = (m_location != nullptr && m_dispatcher.focusedArea() == m_location->inputArea())
             || (m_filterInput != nullptr && m_dispatcher.focusedArea() == m_filterInput->inputArea());
+        if (!editing && event.sym == XKB_KEY_F9 && event.modifiers == 0 && !event.repeat) {
+          setSidebarVisible(!m_showSidebar);
+          return;
+        }
         if (!editing
             && (event.sym == XKB_KEY_n || event.sym == XKB_KEY_N)
             && event.modifiers == (KeyMod::Ctrl | KeyMod::Shift)
@@ -1592,7 +1597,7 @@ namespace {
       if (!m_drag || m_drag->sourcePin) {
         return std::nullopt;
       }
-      if (const auto place = m_places->folderAt(m_pointerX, m_pointerY)) {
+      if (const auto place = m_showSidebar ? m_places->folderAt(m_pointerX, m_pointerY) : std::nullopt) {
         if (validDropFolder(place->location)) {
           if (const auto rect = m_places->folderRect(place->location)) {
             return DropTarget{place->location, *rect};
@@ -1645,7 +1650,7 @@ namespace {
     }
 
     std::optional<std::size_t> pinDropSlot() const {
-      if (!m_drag || !m_pins.editable()) {
+      if (!m_drag || !m_pins.editable() || !m_showSidebar) {
         return std::nullopt;
       }
       if (!m_drag->sourcePin && (!m_drag->foldersOnly || m_places->folderAt(m_pointerX, m_pointerY))) {
@@ -1707,7 +1712,7 @@ namespace {
       m_surface.requestLayout();
     }
     float dragScrollSpeed(bool& places) const {
-      places = m_places->containsScenePoint(m_pointerX, m_pointerY);
+      places = m_showSidebar && m_places->containsScenePoint(m_pointerX, m_pointerY);
       if (places) {
         return m_places->dragScrollSpeed(m_pointerX, m_pointerY);
       }
@@ -1976,6 +1981,27 @@ namespace {
     }
 
     static constexpr float kSidebarHandleWidth = 6.0F;
+
+    void setSidebarVisible(bool visible) {
+      if (visible == m_showSidebar)
+        return;
+      m_dispatcher.cancelPointerCapture();
+      if (m_drag)
+        cancelDrag();
+      captureViewAnchor();
+      m_showSidebar = visible;
+      if (!visible) {
+        m_restorePlaceFocus.reset();
+        for (const Node* node = m_dispatcher.focusedArea(); node != nullptr; node = node->parent()) {
+          if (node == m_places || node == m_sidebarResize) {
+            m_dispatcher.setFocus(m_list->focusArea());
+            break;
+          }
+        }
+      }
+      m_preferences.saveShowSidebar(visible);
+      m_surface.requestLayout();
+    }
 
     int sidebarMaximumWidth() const {
       return std::clamp(
@@ -2434,6 +2460,10 @@ namespace {
           }
         }
         const float searchWidth = m_surface.width() < 800 ? 148.0F : 220.0F;
+        m_places->setVisible(m_showSidebar);
+        m_places->setParticipatesInLayout(m_showSidebar);
+        m_sidebarResize->setVisible(m_showSidebar);
+        m_sidebarResize->setParticipatesInLayout(m_showSidebar);
         const float sidebarWidth = static_cast<float>(std::min(m_sidebarWidth, sidebarMaximumWidth()));
         m_places->setMinWidth(sidebarWidth);
         m_places->setMaxWidth(sidebarWidth);
@@ -2480,8 +2510,10 @@ namespace {
         }
         if (m_restorePlaceFocus && m_menuSurface == nullptr) {
           const auto location = *std::exchange(m_restorePlaceFocus, std::nullopt);
-          if (auto* area = m_places->focusArea(location)) {
-            m_dispatcher.setFocus(area);
+          if (m_showSidebar) {
+            if (auto* area = m_places->focusArea(location)) {
+              m_dispatcher.setFocus(area);
+            }
           }
         }
         if (m_dispatcher.focusedArea() == m_list->focusArea()) {
@@ -3120,6 +3152,7 @@ namespace {
            .toggleState = m_browser.model().filter().showHidden ? 1 : 0},
           {.label = "", .separator = true},
           {.id = 8, .label = "Search files (Ctrl+F)"},
+          {.id = 9, .label = "Show Places sidebar (F9)", .checkmark = true, .toggleState = m_showSidebar ? 1 : 0},
       };
       showContextMenu(
           std::move(entries),
@@ -3145,6 +3178,8 @@ namespace {
             } else if (id == 8) {
               openFilter();
               return;
+            } else if (id == 9) {
+              setSidebarVisible(!m_showSidebar);
             }
             m_dispatcher.setFocus(m_list->focusArea());
           },
@@ -3201,6 +3236,7 @@ namespace {
     double m_zoomScroll = 0;
     files::ViewMode m_viewMode;
     int m_sidebarWidth = files::kDefaultSidebarWidth;
+    bool m_showSidebar = true;
     int m_sidebarStartWidth = files::kDefaultSidebarWidth;
     int m_sidebarStartVisibleWidth = files::kDefaultSidebarWidth;
     float m_sidebarPressX = 0;

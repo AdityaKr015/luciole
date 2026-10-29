@@ -17,6 +17,7 @@ namespace files {
     bool showHidden = false;
     int gridIconSize = 48;
     int sidebarWidth = kDefaultSidebarWidth;
+    bool showSidebar = true;
     bool operator==(const BrowserSettings&) const = default;
   };
 
@@ -40,7 +41,8 @@ namespace files {
     DIRECTORIES_FIRST,
     VIEW_MODE,
     GRID_ICON_SIZE,
-    SIDEBAR_WIDTH
+    SIDEBAR_WIDTH,
+    SHOW_SIDEBAR
   };
   struct OverrideEdit {
     BrowserPreference preference;

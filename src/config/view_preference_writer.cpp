@@ -74,6 +74,9 @@ void files::ViewPreferenceWriter::saveGridIconSize(int size) {
 void files::ViewPreferenceWriter::saveSidebarWidth(int width) {
   m_state->queue({BrowserPreference::SIDEBAR_WIDTH, width});
 }
+void files::ViewPreferenceWriter::saveShowSidebar(bool visible) {
+  m_state->queue({BrowserPreference::SHOW_SIDEBAR, visible});
+}
 bool files::ViewPreferenceWriter::busy() const { return m_state->active || !m_state->pending.empty(); }
 void files::ViewPreferenceWriter::setChangedCallback(std::function<void(const std::string&)> callback) {
   m_state->changed = std::move(callback);

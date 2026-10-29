@@ -26,6 +26,7 @@ namespace {
     std::optional<files::ViewMode> viewMode;
     std::optional<int> gridIconSize;
     std::optional<int> sidebarWidth;
+    std::optional<bool> showSidebar;
     std::optional<bool> sortDescending;
     std::optional<bool> directoriesFirst;
     bool operator==(const Patch&) const = default;
@@ -180,6 +181,8 @@ namespace {
             std::optional<bool>* target = nullptr;
             if (name == "show_hidden") {
               target = &patch.showHidden;
+            } else if (name == "show_sidebar") {
+              target = &patch.showSidebar;
             } else if (name == "sort_descending") {
               target = &patch.sortDescending;
             } else if (name == "directories_first") {
@@ -205,6 +208,9 @@ namespace {
   }
 
   void apply(files::Settings& settings, const Patch& patch) {
+    if (patch.showSidebar) {
+      settings.browser.showSidebar = *patch.showSidebar;
+    }
     if (patch.sidebarWidth) {
       settings.browser.sidebarWidth = *patch.sidebarWidth;
     }
@@ -245,6 +251,8 @@ namespace {
       return "browser.grid_icon_size";
     case Preference::SIDEBAR_WIDTH:
       return "browser.sidebar_width";
+    case Preference::SHOW_SIDEBAR:
+      return "browser.show_sidebar";
     }
     return {};
   }
@@ -279,6 +287,9 @@ namespace {
         ? std::nullopt
         : std::optional<bool>(std::get<bool>(edit.value));
     switch (edit.preference) {
+    case Preference::SHOW_SIDEBAR:
+      patch.showSidebar = value;
+      break;
     case Preference::SHOW_HIDDEN:
       patch.showHidden = value;
       break;
@@ -298,6 +309,9 @@ namespace {
 
   std::string formatPatch(const Patch& patch) {
     toml::table browser;
+    if (patch.showSidebar) {
+      browser.insert("show_sidebar", *patch.showSidebar);
+    }
     if (patch.sidebarWidth) {
       browser.insert("sidebar_width", *patch.sidebarWidth);
     }
