@@ -31,4 +31,5 @@ namespace files {
 
   [[nodiscard]] FileAccess readFileAccess(GFileInfo* info);
   [[nodiscard]] FilesystemInfo readFilesystemInfo(GFileInfo* info);
+  [[nodiscard]] std::optional<std::string> readFastContentType(GFileInfo* info);
 } // namespace files

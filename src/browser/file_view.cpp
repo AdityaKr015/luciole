@@ -81,7 +81,8 @@ namespace {
       addChild(std::move(row));
     }
 
-    void bind(const files::DirectoryEntry& entry, bool selected, bool focused, bool hovered) {
+    void
+    bind(const files::DirectoryEntry& entry, std::string_view typeLabel, bool selected, bool focused, bool hovered) {
       m_icon->setOpacity(entry.hidden ? kHiddenIconOpacity : 1.0F);
       for (auto* label : {m_name, m_parent, m_kind, m_size, m_modified})
         label->setOpacity(entry.hidden && !selected ? kHiddenTextOpacity : 1.0F);
@@ -94,13 +95,8 @@ namespace {
       m_parent->setVisible(!entry.parentDisplayName.empty());
       m_parent->setParticipatesInLayout(!entry.parentDisplayName.empty());
       m_parent->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurfaceVariant));
-      m_kind->setText(
-          entry.symlink                           ? "Link"
-              : directory                         ? "Folder"
-              : entry.type == G_FILE_TYPE_REGULAR ? "File"
-              : entry.type == G_FILE_TYPE_SPECIAL ? "Special"
-                                                  : "Unknown"
-      );
+      m_kind->setUseMarkup(false);
+      m_kind->setText(typeLabel);
       std::string size;
       if (!directory && entry.size) {
         constexpr const char* units[] = {"B", "KiB", "MiB", "GiB", "TiB"};
@@ -280,6 +276,15 @@ void files::FileViewAdapter::bindDecoration(Node& decoration, const VirtualGridD
       );
 }
 
+std::string files::FileViewAdapter::itemTooltip(std::size_t index) const {
+  const auto& model = m_browser.model();
+  if (m_mode != ViewMode::LIST || index >= model.rows().size())
+    return {};
+  const auto id = model.rows()[index];
+  const auto* entry = model.entry(id);
+  return entry != nullptr ? std::format("{}\n{}", entry->displayName, model.typeLabel(id)) : std::string{};
+}
+
 void files::FileViewAdapter::bindTile(Node& tile, std::size_t index, bool, bool hovered) {
   const auto& model = m_browser.model();
   if (index >= model.rows().size()) {
@@ -293,7 +298,7 @@ void files::FileViewAdapter::bindTile(Node& tile, std::size_t index, bool, bool 
     if (m_mode == ViewMode::GRID) {
       static_cast<FileTile&>(tile).bind(*entry, selected, focused, hovered, m_gridIconSize);
     } else {
-      static_cast<FileRow&>(tile).bind(*entry, selected, focused, hovered);
+      static_cast<FileRow&>(tile).bind(*entry, model.typeLabel(id), selected, focused, hovered);
     }
   }
 }

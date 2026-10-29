@@ -99,6 +99,54 @@ namespace {
     require(model.entry(4)->name == "same-a", "sorting changed the operation name");
   }
 
+  void testTypeSort() {
+    DirectoryModel model;
+    auto data = snapshot(
+        {entry(10, "z-folder", G_FILE_TYPE_DIRECTORY), entry(2, "link"), entry(3, "note10.txt"), entry(4, "note2.txt"),
+         entry(5, "z.png"), entry(6, "a.bin"), entry(7, "b"), entry(8, "special", G_FILE_TYPE_SPECIAL),
+         entry(9, "c", G_FILE_TYPE_UNKNOWN)}
+    );
+    data.entries[1].symlink = true;
+    data.entries[1].contentType = "image/png";
+    data.entries[2].contentType = "text/plain";
+    data.entries[3].contentType = "text/plain";
+    data.entries[4].contentType = "image/png";
+    data.entries[5].contentType = "application/octet-stream";
+    model.applySnapshot(data);
+    model.select(3);
+    model.select(5, SelectionMode::TOGGLE);
+    model.setScrollAnchor(3);
+    model.setSort({.field = SortField::TYPE, .directoriesFirst = false});
+    rows(model, {10, 2, 4, 3, 5, 8, 6, 7, 9});
+    require(
+        model.typeLabel(10) == "Folder"
+            && model.typeLabel(2) == "Link"
+            && model.typeLabel(3) == model.typeLabel(4)
+            && model.typeLabel(3) != model.typeLabel(5)
+            && model.typeLabel(6) == "File"
+            && model.typeLabel(9) == "Unknown",
+        "type labels lost MIME distinctions or link/unknown classification"
+    );
+    model.setSort({.field = SortField::TYPE, .descending = true, .directoriesFirst = false});
+    rows(model, {8, 5, 3, 4, 2, 10, 9, 7, 6});
+    selected(model, {5, 3});
+    require(
+        model.selection().focused == 5 && model.selection().anchor == 5 && model.scrollAnchor() == 3,
+        "type sorting changed stable selection/focus/scroll anchors"
+    );
+    std::ranges::reverse(data.entries);
+    model.applySnapshot(data);
+    rows(model, {8, 5, 3, 4, 2, 10, 9, 7, 6});
+    model.setSort({.field = SortField::TYPE, .descending = true});
+    rows(model, {10, 8, 5, 3, 4, 2, 9, 7, 6});
+    for (auto& item : data.entries)
+      if (item.id == 3)
+        item.contentType = "image/png";
+    model.applySnapshot(data);
+    require(model.typeLabel(3) == model.typeLabel(5), "metadata update retained an obsolete type label");
+    selected(model, {5, 3});
+  }
+
   void testSelectionSummary() {
     DirectoryModel model;
     auto data = snapshot(
@@ -374,8 +422,12 @@ namespace {
 
 int main() {
   try {
+    // MIME descriptions consult language environment variables independently of collation.
+    g_setenv("LC_ALL", "C", true);
+    g_setenv("LANGUAGE", "C", true);
     std::setlocale(LC_ALL, "C");
     testSortAndMetadata();
+    testTypeSort();
     testSelectionSummary();
     testFiltering();
     testSelectionAndAnchors();

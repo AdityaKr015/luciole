@@ -2274,14 +2274,18 @@ namespace {
       m_nameHeader->setGlyph(indicator);
       m_sizeHeader->setGlyph(indicator);
       m_modifiedHeader->setGlyph(indicator);
+      m_typeHeader->setGlyph(indicator);
       m_nameHeader->glyph()->setVisible(sort.field == files::SortField::NAME);
       m_nameHeader->glyph()->setParticipatesInLayout(sort.field == files::SortField::NAME);
       m_sizeHeader->glyph()->setVisible(sort.field == files::SortField::SIZE);
       m_sizeHeader->glyph()->setParticipatesInLayout(sort.field == files::SortField::SIZE);
       m_modifiedHeader->glyph()->setVisible(sort.field == files::SortField::MODIFIED);
       m_modifiedHeader->glyph()->setParticipatesInLayout(sort.field == files::SortField::MODIFIED);
+      m_typeHeader->glyph()->setVisible(sort.field == files::SortField::TYPE);
+      m_typeHeader->glyph()->setParticipatesInLayout(sort.field == files::SortField::TYPE);
       const char* field = sort.field == files::SortField::NAME ? "Name"
           : sort.field == files::SortField::SIZE               ? "Size"
+          : sort.field == files::SortField::TYPE               ? "Type"
                                                                : "Modified";
       const char* direction = sort.field == files::SortField::MODIFIED
           ? (sort.descending ? "newest first" : "oldest first")
@@ -2874,12 +2878,18 @@ namespace {
                            .flexGrow = 1.0F,
                            .onClick = [this] { sortBy(files::SortField::NAME); }}
                       ),
-                      ui::row(
+                      ui::button(
                           {.out = &m_typeHeader,
-                           .paddingH = Style::spaceXs,
+                           .text = "Type",
+                           .fontSize = Style::fontSizeCaption,
+                           .controlHeight = Style::controlHeightSm,
+                           .contentAlign = ButtonContentAlign::Start,
+                           .variant = ButtonVariant::Ghost,
+                           .tooltip = "Sort by type; click again to reverse",
                            .minWidth = files::DetailsColumns::typeWidth + 2 * Style::spaceXs,
-                           .maxWidth = files::DetailsColumns::typeWidth + 2 * Style::spaceXs},
-                          ui::label({.text = "Type", .fontSize = Style::fontSizeCaption})
+                           .maxWidth = files::DetailsColumns::typeWidth + 2 * Style::spaceXs,
+                           .paddingH = Style::spaceXs,
+                           .onClick = [this] { sortBy(files::SortField::TYPE); }}
                       ),
                       ui::button(
                           {.out = &m_sizeHeader,
@@ -3206,8 +3216,8 @@ namespace {
       }
       const auto& sort = m_browser.model().sort();
       std::vector<ContextMenuControlEntry> entries{
-          {.label = "Sort by", .header = true},
           {.id = 1, .label = "Name", .radio = true, .toggleState = sort.field == files::SortField::NAME ? 1 : 0},
+          {.id = 10, .label = "Type", .radio = true, .toggleState = sort.field == files::SortField::TYPE ? 1 : 0},
           {.id = 2, .label = "Size", .radio = true, .toggleState = sort.field == files::SortField::SIZE ? 1 : 0},
           {.id = 3,
            .label = "Modified",
@@ -3229,11 +3239,12 @@ namespace {
       showContextMenu(
           std::move(entries),
           [this](int id) {
-            if (id <= 6) {
+            if (id <= 6 || id == 10) {
               auto options = m_browser.model().sort();
-              if (id >= 1 && id <= 3) {
+              if ((id >= 1 && id <= 3) || id == 10) {
                 const auto field = id == 1 ? files::SortField::NAME
                     : id == 2              ? files::SortField::SIZE
+                    : id == 10             ? files::SortField::TYPE
                                            : files::SortField::MODIFIED;
                 if (field != options.field) {
                   options.field = field;
@@ -3343,7 +3354,7 @@ namespace {
     Button* m_nameHeader = nullptr;
     Button* m_sizeHeader = nullptr;
     Button* m_modifiedHeader = nullptr;
-    Flex* m_typeHeader = nullptr;
+    Button* m_typeHeader = nullptr;
     files::DetailsColumns m_detailsColumns;
     Button* m_menuButton = nullptr;
     Button* m_back = nullptr;

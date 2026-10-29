@@ -77,6 +77,10 @@ namespace {
     }
     fixture.write("config.toml", "");
     require(files::validateConfigFile(fixture.paths().base).empty(), "empty partial settings rejected");
+    fixture.write("config.toml", "[browser]\nsort_by = 'type'\n");
+    std::filesystem::remove(fixture.paths().overrides);
+    const auto typed = files::loadSettings(fixture.paths());
+    require(typed && typed->browser.sort.field == files::SortField::TYPE, "type sort configuration rejected");
   }
 
   void testLayersAndReload() {
@@ -440,10 +444,9 @@ namespace {
             && !std::filesystem::exists(fixture.paths().overrides),
         "mistyped preference created an override"
     );
-    const std::array sort{files::OverrideEdit{Preference::SORT_BY, files::SortField::MODIFIED}};
+    const std::array sort{files::OverrideEdit{Preference::SORT_BY, files::SortField::TYPE}};
     require(
-        second.saveOverrides(sort) == State::DURABLE
-            && second.settings().browser.sort.field == files::SortField::MODIFIED,
+        second.saveOverrides(sort) == State::DURABLE && second.settings().browser.sort.field == files::SortField::TYPE,
         "typed sort override failed"
     );
     const std::array grid{files::OverrideEdit{Preference::VIEW_MODE, files::ViewMode::GRID}};
@@ -452,7 +455,7 @@ namespace {
     require(
         reloaded.reload()
             && reloaded.settings().browser.viewMode == files::ViewMode::GRID
-            && reloaded.settings().browser.sort.field == files::SortField::MODIFIED,
+            && reloaded.settings().browser.sort.field == files::SortField::TYPE,
         "view preference roundtrip lost a typed value or unrelated key"
     );
     const auto gridBytes = read(fixture.paths().overrides);

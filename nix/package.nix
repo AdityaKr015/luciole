@@ -24,6 +24,7 @@
   autoAddDriverRunpath,
   makeWrapper,
   adwaita-icon-theme,
+  shared-mime-info,
   buildRevision ? "unknown",
 }:
 stdenv.mkDerivation (finalAttrs: {
@@ -87,7 +88,12 @@ stdenv.mkDerivation (finalAttrs: {
   postFixup = ''
     wrapProgram "$out/bin/noctalia-files" \
       --suffix GIO_EXTRA_MODULES : "${gvfs}/lib/gio/modules" \
-      --suffix XDG_DATA_DIRS : "${lib.makeSearchPath "share" [ adwaita-icon-theme ]}"
+      --suffix XDG_DATA_DIRS : "${
+        lib.makeSearchPath "share" [
+          adwaita-icon-theme
+          shared-mime-info
+        ]
+      }"
   '';
   mesonFlags = [
     "-Dtests=disabled"

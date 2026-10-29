@@ -5,6 +5,7 @@
 
 #include <functional>
 #include <span>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -47,6 +48,7 @@ namespace files {
     [[nodiscard]] const DirectorySnapshot& snapshot() const { return m_snapshot; }
     [[nodiscard]] const std::vector<EntryId>& rows() const { return m_rows; }
     [[nodiscard]] const DirectoryEntry* entry(EntryId id) const;
+    [[nodiscard]] std::string_view typeLabel(EntryId id) const;
     [[nodiscard]] const SortOptions& sort() const { return m_sort; }
     [[nodiscard]] const FilterOptions& filter() const { return m_filter; }
     [[nodiscard]] const SelectionState& selection() const { return m_selection; }
@@ -67,6 +69,8 @@ namespace files {
       std::size_t sourceIndex = 0;
       std::string sortKey;
       std::string filterKey;
+      std::string typeLabel;
+      std::optional<std::string> typeSortKey;
     };
 
     void rebuildProjection();

@@ -14,6 +14,7 @@ namespace files {
         std::function<bool()> focused
     );
     [[nodiscard]] std::size_t itemCount() const override;
+    [[nodiscard]] std::string itemTooltip(std::size_t index) const override;
     [[nodiscard]] std::unique_ptr<Node> createTile() override;
     std::unique_ptr<Node> createDecoration() override;
     void bindDecoration(Node& decoration, const VirtualGridDecorationLayout& layout) override;

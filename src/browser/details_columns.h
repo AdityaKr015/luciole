@@ -6,7 +6,7 @@ namespace files {
     bool compactDate = false;
     float sizeWidth = 110.0F;
     float modifiedWidth = 148.0F;
-    static constexpr float typeWidth = 64.0F;
+    static constexpr float typeWidth = 144.0F;
 
     static DetailsColumns forWidth(float width) {
       const bool compact = width < 560.0F;

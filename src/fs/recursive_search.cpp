@@ -11,7 +11,7 @@ namespace {
       "standard::name,standard::display-name,standard::type,standard::is-hidden,standard::is-symlink,"
       "standard::icon,standard::size,time::modified,etag::value,id::file,id::filesystem,"
       "access::can-read,access::can-write,access::can-execute,access::can-rename,access::can-trash,access::can-delete,"
-      "trash::orig-path,trash::deletion-date";
+      "trash::orig-path,trash::deletion-date,standard::fast-content-type";
   constexpr unsigned int kMaxDepth = 256;
   constexpr std::size_t kMaxPending = 65536;
 
@@ -209,7 +209,8 @@ struct files::RecursiveSearch::State : std::enable_shared_from_this<State> {
          .access = readFileAccess(info),
          .parentDisplayName = parentName.get(),
          .icon = readFileIcon(info, location),
-         .trash = location.isTrash() ? readTrashInfo(info) : TrashInfo{}}
+         .trash = location.isTrash() ? readTrashInfo(info) : TrashInfo{},
+         .contentType = readFastContentType(info)}
     );
   }
 };

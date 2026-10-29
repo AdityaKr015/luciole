@@ -149,8 +149,10 @@ namespace {
               patch.sortBy = files::SortField::SIZE;
             } else if (sort != nullptr && sort->get() == "modified") {
               patch.sortBy = files::SortField::MODIFIED;
+            } else if (sort != nullptr && sort->get() == "type") {
+              patch.sortBy = files::SortField::TYPE;
             } else {
-              issue(issues, file, value, path, "expected 'name', 'size', or 'modified'");
+              issue(issues, file, value, path, "expected 'name', 'size', 'modified', or 'type'");
             }
           } else if (name == "grid_icon_size") {
             const auto* size = value.as_integer();
@@ -327,6 +329,7 @@ namespace {
     if (patch.sortBy) {
       const auto* name = *patch.sortBy == files::SortField::NAME ? "name"
           : *patch.sortBy == files::SortField::SIZE              ? "size"
+          : *patch.sortBy == files::SortField::TYPE              ? "type"
                                                                  : "modified";
       browser.insert("sort_by", name);
     }
@@ -439,8 +442,11 @@ files::AtomicWriteState files::ConfigService::saveOverrides(std::span<const Over
     if (!std::holds_alternative<std::monostate>(edit.value)) {
       if (edit.preference == BrowserPreference::SORT_BY) {
         const auto* sort = std::get_if<SortField>(&edit.value);
-        valid =
-            sort != nullptr && (*sort == SortField::NAME || *sort == SortField::SIZE || *sort == SortField::MODIFIED);
+        valid = sort != nullptr
+            && (*sort == SortField::NAME
+                || *sort == SortField::SIZE
+                || *sort == SortField::MODIFIED
+                || *sort == SortField::TYPE);
       } else if (edit.preference == BrowserPreference::GRID_ICON_SIZE) {
         const auto* size = std::get_if<int>(&edit.value);
         valid = size != nullptr && std::ranges::contains(kGridIconSizes, *size);

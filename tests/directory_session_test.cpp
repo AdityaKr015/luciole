@@ -140,6 +140,7 @@ namespace {
     require(entry(session, "folder").type == G_FILE_TYPE_DIRECTORY, "directory type missing");
     require(entry(session, "0").id != entry(session, "hard-link").id, "hard links share an entry ID");
     const auto id = entry(session, unusual).id;
+    require(entry(session, "folder").contentType == "inode/directory", "asynchronous fast type metadata missing");
     session.refresh();
     ready(pump, session);
     require(entry(session, unusual).id == id, "refresh changed identity");
@@ -273,6 +274,15 @@ namespace {
 
   void testMetadataAbsenceAndTypes() {
     const files::GioPtr<GFileInfo> info(g_file_info_new());
+    require(!files::readFastContentType(info.get()), "missing content type became known");
+    g_file_info_set_attribute_boolean(info.get(), G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE, true);
+    require(!files::readFastContentType(info.get()), "mistyped content type became known");
+    g_file_info_set_attribute_string(info.get(), G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE, "");
+    require(!files::readFastContentType(info.get()), "empty content type became known");
+    g_file_info_set_attribute_string(info.get(), G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE, "\xff");
+    require(!files::readFastContentType(info.get()), "invalid UTF-8 content type became known");
+    g_file_info_set_attribute_string(info.get(), G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE, "text/plain");
+    require(files::readFastContentType(info.get()) == "text/plain", "typed content type was lost");
     require(
         unknown(files::readFileAccess(info.get()))
             && !files::readFilesystemInfo(info.get()).readOnly.has_value()

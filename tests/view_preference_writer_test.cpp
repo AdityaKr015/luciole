@@ -56,7 +56,7 @@ namespace {
     writer.saveShowHidden(false);
     writer.saveSort({files::SortField::NAME, true, true});
     writer.saveSort({files::SortField::SIZE, false, true});
-    const files::SortOptions finalSort{files::SortField::MODIFIED, true, false};
+    const files::SortOptions finalSort{files::SortField::TYPE, true, false};
     writer.saveSort(finalSort);
     wait();
     const auto loaded = files::loadSettings(paths);

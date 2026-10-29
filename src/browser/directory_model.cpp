@@ -27,12 +27,52 @@ bool files::DirectoryModel::applySnapshot(DirectorySnapshot snapshot) {
   m_snapshot = std::move(snapshot);
   m_presentations.clear();
   m_presentations.reserve(m_snapshot.entries.size());
+  std::unordered_map<std::string, std::string> typeLabels;
   for (std::size_t i = 0; i < m_snapshot.entries.size(); ++i) {
     const auto& entry = m_snapshot.entries[i];
     auto key = foldedDisplayText(entry.displayName);
     const GString sortKey(g_utf8_collate_key_for_filename(key.c_str(), -1));
+    std::string typeLabel;
+    bool knownType = true;
+    if (entry.symlink || entry.type == G_FILE_TYPE_SYMBOLIC_LINK) {
+      typeLabel = "Link";
+    } else if (entry.type == G_FILE_TYPE_DIRECTORY) {
+      typeLabel = "Folder";
+    } else if (entry.type == G_FILE_TYPE_SPECIAL) {
+      typeLabel = "Special";
+    } else if (entry.type == G_FILE_TYPE_SHORTCUT) {
+      typeLabel = "Shortcut";
+    } else if (entry.type == G_FILE_TYPE_MOUNTABLE) {
+      typeLabel = "Mount";
+    } else if (entry.type == G_FILE_TYPE_REGULAR) {
+      knownType = entry.contentType && !g_content_type_is_unknown(entry.contentType->c_str());
+      typeLabel = "File";
+      if (knownType) {
+        auto [label, inserted] = typeLabels.try_emplace(*entry.contentType);
+        if (inserted) {
+          const GString description(g_content_type_get_description(entry.contentType->c_str()));
+          label->second = description && *description ? description.get() : *entry.contentType;
+        }
+        typeLabel = label->second;
+      }
+    } else {
+      typeLabel = "Unknown";
+      knownType = false;
+    }
+    std::optional<std::string> typeSortKey;
+    if (knownType) {
+      const GString collated(g_utf8_collate_key_for_filename(foldedDisplayText(typeLabel).c_str(), -1));
+      typeSortKey = collated.get();
+    }
     m_presentations.emplace(
-        entry.id, Presentation{.sourceIndex = i, .sortKey = sortKey.get(), .filterKey = std::move(key)}
+        entry.id,
+        Presentation{
+            .sourceIndex = i,
+            .sortKey = sortKey.get(),
+            .filterKey = std::move(key),
+            .typeLabel = std::move(typeLabel),
+            .typeSortKey = std::move(typeSortKey)
+        }
     );
   }
   rebuildProjection();
@@ -66,6 +106,11 @@ const files::DirectoryEntry* files::DirectoryModel::entry(EntryId id) const {
   return it == m_presentations.end() ? nullptr : &m_snapshot.entries[it->second.sourceIndex];
 }
 
+std::string_view files::DirectoryModel::typeLabel(EntryId id) const {
+  const auto it = m_presentations.find(id);
+  return it == m_presentations.end() ? std::string_view{} : it->second.typeLabel;
+}
+
 bool files::DirectoryModel::less(EntryId left, EntryId right) const {
   const auto& leftPresentation = m_presentations.at(left);
   const auto& rightPresentation = m_presentations.at(right);
@@ -74,7 +119,14 @@ bool files::DirectoryModel::less(EntryId left, EntryId right) const {
   if (m_sort.directoriesFirst && (a.type == G_FILE_TYPE_DIRECTORY) != (b.type == G_FILE_TYPE_DIRECTORY)) {
     return a.type == G_FILE_TYPE_DIRECTORY;
   }
-  if (m_sort.field != SortField::NAME) {
+  if (m_sort.field == SortField::TYPE) {
+    const auto& first = leftPresentation.typeSortKey;
+    const auto& second = rightPresentation.typeSortKey;
+    if (first.has_value() != second.has_value())
+      return first.has_value();
+    if (first && first != second)
+      return m_sort.descending ? first > second : first < second;
+  } else if (m_sort.field != SortField::NAME) {
     const auto& first = m_sort.field == SortField::SIZE ? a.size : a.modifiedSeconds;
     const auto& second = m_sort.field == SortField::SIZE ? b.size : b.modifiedSeconds;
     // Unknown metadata stays last in both directions; zero is a real value.

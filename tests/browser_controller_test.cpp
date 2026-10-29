@@ -198,6 +198,8 @@ namespace {
     for (const auto& entry : browser.model().snapshot().entries) {
       targets.insert(entry.location.uri());
       require(!entry.parentDisplayName.empty() && entry.id != oldId, "result lost parent context or source identity");
+      if (entry.type == G_FILE_TYPE_REGULAR && !entry.symlink)
+        require(entry.contentType == "text/plain", "recursive results lost fast content-type metadata");
     }
     require(
         targets.contains(Location::fromPath((fixture.path / "child/deep/target.txt").native()).uri())

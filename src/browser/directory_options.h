@@ -11,7 +11,7 @@ namespace files {
   inline constexpr int kMaxSidebarWidth = 400;
   inline constexpr int kDefaultSidebarWidth = 206;
   enum class ViewMode : std::uint8_t { LIST, GRID };
-  enum class SortField : std::uint8_t { NAME, SIZE, MODIFIED };
+  enum class SortField : std::uint8_t { NAME, SIZE, MODIFIED, TYPE };
   struct SortOptions {
     SortField field = SortField::NAME;
     bool descending = false;

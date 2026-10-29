@@ -9,6 +9,15 @@ namespace {
   }
 } // namespace
 
+std::optional<std::string> files::readFastContentType(GFileInfo* info) {
+  if (g_file_info_get_attribute_type(info, G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE) != G_FILE_ATTRIBUTE_TYPE_STRING)
+    return std::nullopt;
+  const char* value = g_file_info_get_attribute_string(info, G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE);
+  if (value == nullptr || *value == '\0' || !g_utf8_validate(value, -1, nullptr))
+    return std::nullopt;
+  return value;
+}
+
 files::FileAccess files::readFileAccess(GFileInfo* info) {
   return {
       .read = boolean(info, G_FILE_ATTRIBUTE_ACCESS_CAN_READ),
