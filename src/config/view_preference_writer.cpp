@@ -90,6 +90,13 @@ void files::ViewPreferenceWriter::saveSort(SortOptions options) {
   });
 }
 bool files::ViewPreferenceWriter::busy() const { return m_state->active || !m_state->pending.empty(); }
+void files::ViewPreferenceWriter::saveDetailsColumns(DetailsColumnVisibility visibility) {
+  m_state->queue({
+      {BrowserPreference::SHOW_TYPE_COLUMN, visibility.type},
+      {BrowserPreference::SHOW_SIZE_COLUMN, visibility.size},
+      {BrowserPreference::SHOW_MODIFIED_COLUMN, visibility.modified},
+  });
+}
 void files::ViewPreferenceWriter::setChangedCallback(std::function<void(const std::string&)> callback) {
   m_state->changed = std::move(callback);
 }

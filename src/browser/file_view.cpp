@@ -81,8 +81,11 @@ namespace {
       addChild(std::move(row));
     }
 
-    void
-    bind(const files::DirectoryEntry& entry, std::string_view typeLabel, bool selected, bool focused, bool hovered) {
+    void bind(
+        const files::DirectoryEntry& entry, std::string_view typeLabel, bool selected, bool focused, bool hovered,
+        files::DetailsColumnVisibility columns
+    ) {
+      m_columns = columns;
       m_icon->setOpacity(entry.hidden ? kHiddenIconOpacity : 1.0F);
       for (auto* label : {m_name, m_parent, m_kind, m_size, m_modified})
         label->setOpacity(entry.hidden && !selected ? kHiddenTextOpacity : 1.0F);
@@ -127,9 +130,13 @@ namespace {
 
   protected:
     void doLayout(Renderer& renderer) override {
-      const auto columns = files::DetailsColumns::forWidth(width());
+      const auto columns = files::DetailsColumns::forWidth(width(), m_columns);
       m_kind->setVisible(columns.showType);
       m_kind->setParticipatesInLayout(columns.showType);
+      m_size->setVisible(columns.showSize);
+      m_size->setParticipatesInLayout(columns.showSize);
+      m_modified->setVisible(columns.showModified);
+      m_modified->setParticipatesInLayout(columns.showModified);
       m_size->setMinWidth(columns.sizeWidth);
       m_size->setMaxWidth(columns.sizeWidth);
       m_modified->setMinWidth(columns.modifiedWidth);
@@ -140,10 +147,14 @@ namespace {
           width()
               - 2 * Style::spaceMd
               - 24.0F
-              - (columns.showType ? 4.0F : 3.0F) * Style::spaceSm
+              - (1
+                 + static_cast<int>(columns.showType)
+                 + static_cast<int>(columns.showSize)
+                 + static_cast<int>(columns.showModified))
+                  * Style::spaceSm
               - (columns.showType ? files::DetailsColumns::typeWidth : 0.0F)
-              - columns.sizeWidth
-              - columns.modifiedWidth
+              - (columns.showSize ? columns.sizeWidth : 0.0F)
+              - (columns.showModified ? columns.modifiedWidth : 0.0F)
       );
       m_name->setMaxWidth(nameWidth);
       m_parent->setMaxWidth(nameWidth);
@@ -162,6 +173,7 @@ namespace {
     Label* m_modified = nullptr;
     std::string m_fullDate;
     std::string m_compactDate;
+    files::DetailsColumnVisibility m_columns;
   };
 
   // Adapted from Noctalia's FileEntryTile without its picker or thumbnail service.
@@ -298,7 +310,7 @@ void files::FileViewAdapter::bindTile(Node& tile, std::size_t index, bool, bool 
     if (m_mode == ViewMode::GRID) {
       static_cast<FileTile&>(tile).bind(*entry, selected, focused, hovered, m_gridIconSize);
     } else {
-      static_cast<FileRow&>(tile).bind(*entry, model.typeLabel(id), selected, focused, hovered);
+      static_cast<FileRow&>(tile).bind(*entry, model.typeLabel(id), selected, focused, hovered, m_columns);
     }
   }
 }

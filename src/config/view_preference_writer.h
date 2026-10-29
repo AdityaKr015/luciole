@@ -19,6 +19,7 @@ namespace files {
     void saveShowSidebar(bool visible);
     void saveShowHidden(bool visible);
     void saveSort(SortOptions options);
+    void saveDetailsColumns(DetailsColumnVisibility visibility);
     [[nodiscard]] bool busy() const;
     void setChangedCallback(std::function<void(const std::string&)> callback);
 

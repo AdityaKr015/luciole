@@ -366,6 +366,73 @@ namespace {
     }
   }
 
+  void testDetailsColumnVisibility() {
+    using Preference = files::BrowserPreference;
+    using State = files::AtomicWriteState;
+    struct Column {
+      const char* key;
+      Preference preference;
+      bool files::DetailsColumnVisibility::* member;
+    };
+    const std::array columns{
+        Column{"show_type_column", Preference::SHOW_TYPE_COLUMN, &files::DetailsColumnVisibility::type},
+        Column{"show_size_column", Preference::SHOW_SIZE_COLUMN, &files::DetailsColumnVisibility::size},
+        Column{"show_modified_column", Preference::SHOW_MODIFIED_COLUMN, &files::DetailsColumnVisibility::modified},
+    };
+    for (const auto& column : columns) {
+      Fixture fixture;
+      files::ConfigService config(fixture.paths());
+      require(
+          config.reload() && config.settings().browser.columns == files::DetailsColumnVisibility{},
+          "detail columns must be visible by default"
+      );
+      const auto base = std::string("[browser]\n") + column.key + " = false\nshow_hidden = true\n";
+      fixture.write("config.toml", base);
+      fixture.write("settings.toml", std::string("[browser]\n") + column.key + " = true\ngrid_icon_size = 64\n");
+      require(
+          config.reload() && config.settings().browser.columns.*column.member,
+          "column override did not take precedence over base"
+      );
+      const std::array hide{files::OverrideEdit{column.preference, false}};
+      require(config.saveOverrides(hide) == State::DURABLE, "column hide did not persist");
+      const auto loaded = files::loadSettings(fixture.paths());
+      require(
+          loaded
+              && !(loaded->browser.columns.*column.member)
+              && loaded->browser.showHidden
+              && loaded->browser.gridIconSize == 64,
+          "column roundtrip lost false or unrelated preferences"
+      );
+      const auto saved = read(fixture.paths().overrides);
+      const std::array invalid{files::OverrideEdit{column.preference, 0}};
+      require(
+          config.saveOverrides(invalid) == State::NOT_COMMITTED && read(fixture.paths().overrides) == saved,
+          "mistyped column edit changed overrides"
+      );
+      const std::array inherit{files::OverrideEdit{column.preference, std::monostate{}}};
+      require(
+          config.saveOverrides(inherit) == State::DURABLE
+              && !(config.settings().browser.columns.*column.member)
+              && !read(fixture.paths().overrides).contains(column.key),
+          "column reset did not restore base inheritance"
+      );
+      const std::array show{files::OverrideEdit{column.preference, true}};
+      require(
+          config.saveOverrides(show) == State::DURABLE && config.settings().browser.columns.*column.member,
+          "column show did not persist"
+      );
+      require(read(fixture.paths().base) == base, "column save modified declarative base");
+      for (const auto* value : {"0", "'false'", "[]"}) {
+        fixture.write("config.toml", std::string("[browser]\n") + column.key + " = " + value + "\n");
+        const auto issues = files::validateConfigFile(fixture.paths().base);
+        require(
+            issues.size() == 1 && issues.front().key == std::string("browser.") + column.key,
+            "invalid column type accepted or misdiagnosed"
+        );
+      }
+    }
+  }
+
   void testOverrideSaving() {
     using Preference = files::BrowserPreference;
     using State = files::AtomicWriteState;
@@ -515,6 +582,7 @@ int main() {
     testGridIconSize();
     testSidebarWidth();
     testSidebarVisibility();
+    testDetailsColumnVisibility();
     testOverrideSaving();
     std::println("settings checks passed");
     return 0;

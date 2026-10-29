@@ -29,6 +29,9 @@ namespace {
     std::optional<bool> showSidebar;
     std::optional<bool> sortDescending;
     std::optional<bool> directoriesFirst;
+    std::optional<bool> showTypeColumn;
+    std::optional<bool> showSizeColumn;
+    std::optional<bool> showModifiedColumn;
     bool operator==(const Patch&) const = default;
   };
 
@@ -189,6 +192,12 @@ namespace {
               target = &patch.sortDescending;
             } else if (name == "directories_first") {
               target = &patch.directoriesFirst;
+            } else if (name == "show_type_column") {
+              target = &patch.showTypeColumn;
+            } else if (name == "show_size_column") {
+              target = &patch.showSizeColumn;
+            } else if (name == "show_modified_column") {
+              target = &patch.showModifiedColumn;
             }
             if (target == nullptr) {
               issue(issues, file, value, path, "unknown setting");
@@ -210,6 +219,12 @@ namespace {
   }
 
   void apply(files::Settings& settings, const Patch& patch) {
+    if (patch.showTypeColumn)
+      settings.browser.columns.type = *patch.showTypeColumn;
+    if (patch.showSizeColumn)
+      settings.browser.columns.size = *patch.showSizeColumn;
+    if (patch.showModifiedColumn)
+      settings.browser.columns.modified = *patch.showModifiedColumn;
     if (patch.showSidebar) {
       settings.browser.showSidebar = *patch.showSidebar;
     }
@@ -239,6 +254,12 @@ namespace {
   std::string_view preferenceKey(files::BrowserPreference preference) {
     using Preference = files::BrowserPreference;
     switch (preference) {
+    case Preference::SHOW_TYPE_COLUMN:
+      return "browser.show_type_column";
+    case Preference::SHOW_SIZE_COLUMN:
+      return "browser.show_size_column";
+    case Preference::SHOW_MODIFIED_COLUMN:
+      return "browser.show_modified_column";
     case Preference::SHOW_HIDDEN:
       return "browser.show_hidden";
     case Preference::SORT_BY:
@@ -289,6 +310,15 @@ namespace {
         ? std::nullopt
         : std::optional<bool>(std::get<bool>(edit.value));
     switch (edit.preference) {
+    case Preference::SHOW_TYPE_COLUMN:
+      patch.showTypeColumn = value;
+      break;
+    case Preference::SHOW_SIZE_COLUMN:
+      patch.showSizeColumn = value;
+      break;
+    case Preference::SHOW_MODIFIED_COLUMN:
+      patch.showModifiedColumn = value;
+      break;
     case Preference::SHOW_SIDEBAR:
       patch.showSidebar = value;
       break;
@@ -311,6 +341,12 @@ namespace {
 
   std::string formatPatch(const Patch& patch) {
     toml::table browser;
+    if (patch.showTypeColumn)
+      browser.insert("show_type_column", *patch.showTypeColumn);
+    if (patch.showSizeColumn)
+      browser.insert("show_size_column", *patch.showSizeColumn);
+    if (patch.showModifiedColumn)
+      browser.insert("show_modified_column", *patch.showModifiedColumn);
     if (patch.showSidebar) {
       browser.insert("show_sidebar", *patch.showSidebar);
     }

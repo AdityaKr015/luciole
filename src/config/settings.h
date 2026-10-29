@@ -18,6 +18,7 @@ namespace files {
     int gridIconSize = kDefaultGridIconSize;
     int sidebarWidth = kDefaultSidebarWidth;
     bool showSidebar = true;
+    DetailsColumnVisibility columns{};
     bool operator==(const BrowserSettings&) const = default;
   };
 
@@ -42,7 +43,10 @@ namespace files {
     VIEW_MODE,
     GRID_ICON_SIZE,
     SIDEBAR_WIDTH,
-    SHOW_SIDEBAR
+    SHOW_SIDEBAR,
+    SHOW_TYPE_COLUMN,
+    SHOW_SIZE_COLUMN,
+    SHOW_MODIFIED_COLUMN
   };
   struct OverrideEdit {
     BrowserPreference preference;

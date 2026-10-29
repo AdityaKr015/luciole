@@ -124,6 +124,7 @@ namespace {
       );
       m_sidebarWidth = settings.sidebarWidth;
       m_showSidebar = settings.showSidebar;
+      m_columnVisibility = settings.columns;
       m_surface.setRenderContext(&renderer);
       m_surface.setAnimationManager(&m_animations);
       m_surface.setConfigureCallback([this](std::uint32_t, std::uint32_t) {
@@ -336,6 +337,15 @@ namespace {
           && event.type == PointerEvent::Type::Button
           && event.pressed
           && event.button == BTN_RIGHT
+          && m_listHeader->visible()
+          && m_listHeader->containsScenePoint(x, y)) {
+        openColumnsMenu({x, y, 1, 1});
+        return;
+      }
+      if (dispatcher == &m_dispatcher
+          && event.type == PointerEvent::Type::Button
+          && event.pressed
+          && event.button == BTN_RIGHT
           && m_notice != nullptr
           && m_notice->visible()
           && m_filePane->containsScenePoint(x, y)
@@ -528,6 +538,16 @@ namespace {
           if (const auto parent = m_browser.model().snapshot().location)
             openCreateItem(*parent, files::CreateKind::FOLDER);
           return;
+        }
+        if (!editing
+            && ((event.sym == XKB_KEY_Menu && event.modifiers == 0)
+                || (event.sym == XKB_KEY_F10 && event.modifiers == KeyMod::Shift))) {
+          for (auto* header : {m_nameHeader, m_typeHeader, m_sizeHeader, m_modifiedHeader}) {
+            if (m_dispatcher.focusedArea() == header->inputArea()) {
+              openColumnsMenu(sceneRect(*header));
+              return;
+            }
+          }
         }
         if (!editing
             && m_list != nullptr
@@ -2034,6 +2054,19 @@ namespace {
       }
     }
 
+    void setDetailsColumnVisibility(files::DetailsColumnVisibility visibility) {
+      if (visibility == m_columnVisibility)
+        return;
+      captureViewAnchor();
+      m_dispatcher.cancelPointerCapture();
+      m_listAdapter.onPointerCancel();
+      m_gridAdapter.onPointerCancel();
+      m_columnVisibility = visibility;
+      m_preferences.saveDetailsColumns(visibility);
+      m_browserDirty = true;
+      m_surface.requestUpdate();
+    }
+
     void changeSort(files::SortOptions options) {
       if (options == m_browser.model().sort()) {
         return;
@@ -2224,7 +2257,7 @@ namespace {
                   : files::SelectionMode::REPLACE
         );
       }
-      m_list->scrollToIndex(row);
+      m_keyboardReveal = id;
       return true;
     }
 
@@ -2269,6 +2302,7 @@ namespace {
       m_list->setCellHeight(gridHeight());
       m_list->setMinCellWidth(std::max(88.0F, gridIconSize() + 56.0F));
       m_gridAdapter.setGridIconSize(gridIconSize());
+      m_listAdapter.setDetailsColumnVisibility(m_columnVisibility);
       const auto& sort = model.sort();
       const char* indicator = sort.descending ? "arrow-down" : "arrow-up";
       m_nameHeader->setGlyph(indicator);
@@ -2431,6 +2465,12 @@ namespace {
       }
       m_list->setSelectedIndex(focus, false);
       m_list->notifyDataChanged();
+      if (const auto reveal = std::exchange(m_keyboardReveal, std::nullopt);
+          reveal && model.selection().focused == reveal) {
+        const auto found = std::ranges::find(model.rows(), *reveal);
+        if (found != model.rows().end())
+          m_list->scrollToIndex(static_cast<std::size_t>(found - model.rows().begin()));
+      }
       if (m_revealTarget && snapshot.status != files::DirectoryStatus::LOADING) {
         const auto target = *std::exchange(m_revealTarget, std::nullopt);
         const auto found = std::ranges::find_if(model.rows(), [&](files::EntryId id) {
@@ -2552,11 +2592,20 @@ namespace {
         m_root->arrange(
             renderer, LayoutRect{0, 0, static_cast<float>(m_surface.width()), static_cast<float>(m_surface.height())}
         );
-        const auto columns = files::DetailsColumns::forWidth(m_list->scrollView().contentViewportWidth(true));
+        const auto columns =
+            files::DetailsColumns::forWidth(m_list->scrollView().contentViewportWidth(true), m_columnVisibility);
         if (columns != m_detailsColumns) {
           m_detailsColumns = columns;
           m_typeHeader->setVisible(columns.showType);
           m_typeHeader->setParticipatesInLayout(columns.showType);
+          m_sizeHeader->setVisible(columns.showSize);
+          m_sizeHeader->setParticipatesInLayout(columns.showSize);
+          m_modifiedHeader->setVisible(columns.showModified);
+          m_modifiedHeader->setParticipatesInLayout(columns.showModified);
+          for (auto* header : {m_typeHeader, m_sizeHeader, m_modifiedHeader}) {
+            if (!header->visible() && m_dispatcher.focusedArea() == header->inputArea())
+              m_dispatcher.setFocus(m_nameHeader->inputArea());
+          }
           m_sizeHeader->setMinWidth(columns.sizeWidth + 2 * Style::spaceXs);
           m_sizeHeader->setMaxWidth(columns.sizeWidth + 2 * Style::spaceXs);
           m_modifiedHeader->setMinWidth(columns.modifiedWidth + 2 * Style::spaceXs);
@@ -3204,6 +3253,32 @@ namespace {
       showPopup(std::move(root), control, anchor, width + 16.0F, height + 16.0F, alignLeft);
     }
 
+    void openColumnsMenu(const LayoutRect& anchor) {
+      showContextMenu(
+          {{.label = "Columns", .header = true},
+           {.label = "Name", .enabled = false, .checkmark = true, .toggleState = 1},
+           {.id = 1, .label = "Type", .checkmark = true, .toggleState = m_columnVisibility.type ? 1 : 0},
+           {.id = 2, .label = "Size", .checkmark = true, .toggleState = m_columnVisibility.size ? 1 : 0},
+           {.id = 3, .label = "Modified", .checkmark = true, .toggleState = m_columnVisibility.modified ? 1 : 0},
+           {.label = "", .separator = true},
+           {.id = 4, .label = "Show all columns", .enabled = m_columnVisibility != files::DetailsColumnVisibility{}}},
+          [this](int id) {
+            auto visibility = m_columnVisibility;
+            if (id == 1)
+              visibility.type = !visibility.type;
+            else if (id == 2)
+              visibility.size = !visibility.size;
+            else if (id == 3)
+              visibility.modified = !visibility.modified;
+            else if (id == 4)
+              visibility = {};
+            setDetailsColumnVisibility(visibility);
+            m_dispatcher.setFocus(m_list->focusArea());
+          },
+          anchor
+      );
+    }
+
     void toggleHidden() {
       m_browser.toggleHidden();
       m_preferences.saveShowHidden(m_browser.model().filter().showHidden);
@@ -3328,6 +3403,7 @@ namespace {
     Box* m_sidebarResizeLine = nullptr;
     std::optional<files::ViewMode> m_appliedViewMode;
     std::optional<files::EntryId> m_viewAnchor;
+    std::optional<files::EntryId> m_keyboardReveal;
     std::unique_ptr<Node> m_root;
     InputDispatcher m_dispatcher;
     Flex* m_titlebar = nullptr;
@@ -3356,6 +3432,7 @@ namespace {
     Button* m_modifiedHeader = nullptr;
     Button* m_typeHeader = nullptr;
     files::DetailsColumns m_detailsColumns;
+    files::DetailsColumnVisibility m_columnVisibility;
     Button* m_menuButton = nullptr;
     Button* m_back = nullptr;
     Button* m_forward = nullptr;

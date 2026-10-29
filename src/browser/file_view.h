@@ -33,6 +33,7 @@ namespace files {
     void setContextCallback(std::function<void(std::optional<EntryId>, float, float)> callback);
     void setDragCallback(std::function<void(const std::vector<EntryId>&)> start, std::function<void()> cancel);
     void setGridIconSize(float size) { m_gridIconSize = size; }
+    void setDetailsColumnVisibility(DetailsColumnVisibility visibility) { m_columns = visibility; }
 
   private:
     BrowserController& m_browser;
@@ -51,6 +52,7 @@ namespace files {
     std::function<void(const std::vector<EntryId>&)> m_drag;
     std::function<void()> m_cancelDrag;
     float m_gridIconSize = 48.0F;
+    DetailsColumnVisibility m_columns;
     std::vector<EntryId> m_areaRows;
     std::unordered_set<EntryId> m_areaBaseline;
     std::uint64_t m_areaGeneration = 0;

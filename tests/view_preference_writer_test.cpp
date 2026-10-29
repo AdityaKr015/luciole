@@ -58,6 +58,10 @@ namespace {
     writer.saveSort({files::SortField::SIZE, false, true});
     const files::SortOptions finalSort{files::SortField::TYPE, true, false};
     writer.saveSort(finalSort);
+    writer.saveDetailsColumns({true, false, true});
+    writer.saveDetailsColumns({false, true, false});
+    const files::DetailsColumnVisibility hiddenColumns{false, false, false};
+    writer.saveDetailsColumns(hiddenColumns);
     wait();
     const auto loaded = files::loadSettings(paths);
     require(
@@ -68,7 +72,8 @@ namespace {
             && loaded->browser.gridIconSize == 64
             && loaded->browser.sidebarWidth == 280
             && !loaded->browser.showSidebar
-            && loaded->browser.sort == finalSort,
+            && loaded->browser.sort == finalSort
+            && loaded->browser.columns == hiddenColumns,
         "rapid changes did not persist the latest view or overwrote unrelated preferences"
     );
     std::ifstream base(paths.base);
@@ -83,11 +88,13 @@ namespace {
             && shown->browser.showHidden
             && shown->browser.gridIconSize == 64
             && !shown->browser.showSidebar
-            && shown->browser.sort == finalSort,
+            && shown->browser.sort == finalSort
+            && shown->browser.columns == hiddenColumns,
         "showing hidden entries did not persist or lost unrelated overrides"
     );
     const files::SortOptions defaultSort;
     writer.saveSort(defaultSort);
+    writer.saveDetailsColumns({});
     wait();
     const auto reset = files::loadSettings(paths);
     require(
@@ -95,7 +102,8 @@ namespace {
             && reset
             && reset->browser.sort == defaultSort
             && reset->browser.showHidden
-            && reset->browser.gridIconSize == 64,
+            && reset->browser.gridIconSize == 64
+            && reset->browser.columns == files::DetailsColumnVisibility{},
         "restoring default sort choices did not persist or lost unrelated overrides"
     );
     std::ofstream(paths.overrides) << "[broken\n";
