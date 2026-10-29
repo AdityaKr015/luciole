@@ -18,7 +18,7 @@
 #include "core/ui_phase.h"
 #include "cursor-shape-v1-client-protocol.h"
 #include "fs/filename.h"
-#include "operations/create_folder_service.h"
+#include "operations/create_service.h"
 #include "operations/rename_service.h"
 #include "operations/transfer_service.h"
 #include "platform/file_launcher.h"
@@ -492,7 +492,7 @@ namespace {
             && event.modifiers == (KeyMod::Ctrl | KeyMod::Shift)
             && !event.repeat) {
           if (const auto parent = m_browser.model().snapshot().location)
-            openNewFolder(*parent);
+            openCreateItem(*parent, files::CreateKind::FOLDER);
           return;
         }
         if (!editing
@@ -613,7 +613,8 @@ namespace {
       if (!id) {
         const auto location = m_browser.model().snapshot().location;
         std::vector<ContextMenuControlEntry> entries{
-            {.id = 4, .label = "New Folder…", .enabled = canCreateFolder()},
+            {.id = 4, .label = "New Folder…", .enabled = canCreateItem()},
+            {.id = 5, .label = "Empty File…", .enabled = canCreateItem()},
             {.label = "", .separator = true},
             {.id = 1, .label = "Refresh"}
         };
@@ -629,8 +630,8 @@ namespace {
         showContextMenu(
             std::move(entries),
             [this, location](int action) {
-              if (action == 4 && location) {
-                openNewFolder(*location);
+              if ((action == 4 || action == 5) && location) {
+                openCreateItem(*location, action == 4 ? files::CreateKind::FOLDER : files::CreateKind::EMPTY_FILE);
               } else if (action == 1) {
                 m_browser.refresh();
               } else if (action == 3) {
@@ -781,7 +782,7 @@ namespace {
       );
     }
 
-    bool canCreateFolder() const {
+    bool canCreateItem() const {
       const auto& snapshot = m_browser.model().snapshot();
       return snapshot.location
           && snapshot.location->nativePath().has_value()
@@ -793,15 +794,16 @@ namespace {
           && !m_renamer.busy()
           && !m_transfers.busy();
     }
-    void openNewFolder(files::Location parent) {
-      if (!canCreateFolder() || m_browser.model().snapshot().location != parent) {
-        actionError("Return to an available writable folder before creating a folder.");
+    void openCreateItem(files::Location parent, files::CreateKind kind) {
+      if (!canCreateItem() || m_browser.model().snapshot().location != parent) {
+        actionError("Open an available writable folder to create a file or folder.");
         return;
       }
       const float width = std::min(420.0F, static_cast<float>(m_surface.width()) - 32.0F);
       auto editor = std::make_unique<NameEditor>(
-          width, "New folder", "New Folder", "", files::filenameProblem,
-          [this](std::string name) { submitNewFolder(std::move(name)); }, [this] { dismissMenu(); }, "Create",
+          width, kind == files::CreateKind::FOLDER ? "New folder" : "New file",
+          kind == files::CreateKind::FOLDER ? "New Folder" : "New File", "", files::filenameProblem,
+          [this](std::string name) { submitCreateItem(std::move(name)); }, [this] { dismissMenu(); }, "Create",
           "Creating…"
       );
       auto* control = editor.get();
@@ -814,55 +816,53 @@ namespace {
           width, height
       );
       if (m_menuSurface != nullptr) {
-        m_folderEditor = control;
+        m_createEditor = control;
         m_createParent = std::move(parent);
         m_creationPreparing = true;
         control->setSaving(true);
-        if (!m_creator.prepare(*m_createParent))
-          control->showError("Another folder creation is still finishing.");
+        if (!m_creator.prepare(*m_createParent, kind))
+          control->showError("Another creation is still finishing.");
       }
     }
-    void submitNewFolder(std::string name) {
-      if (m_folderEditor == nullptr || !m_createParent)
+    void submitCreateItem(std::string name) {
+      if (m_createEditor == nullptr || !m_createParent)
         return;
       if (m_browser.model().snapshot().location != m_createParent || !m_browser.searchQuery().empty()) {
-        m_folderEditor->showError("The destination changed. Reopen New folder.");
+        m_createEditor->showError("The destination changed. Close this dialog and try again.");
         return;
       }
       if (m_creator.create(std::move(name))) {
-        m_folderEditor->setSaving(true);
+        m_createEditor->setSaving(true);
       } else {
-        m_folderEditor->showError(
-            m_creator.snapshot().error.empty() ? "The destination is unavailable. Reopen New folder."
+        m_createEditor->showError(
+            m_creator.snapshot().error.empty() ? "The destination is unavailable. Close this dialog and try again."
                                                : m_creator.snapshot().error
         );
       }
     }
-    void syncFolderCreation() {
+    void syncCreation() {
       if (m_creator.busy())
         return;
       const auto& snapshot = m_creator.snapshot();
-      if (snapshot.status == files::CreateFolderStatus::SUCCEEDED) {
-        m_actionError.clear();
+      if (snapshot.status == files::CreateStatus::SUCCEEDED || snapshot.status == files::CreateStatus::PARTIAL) {
+        m_actionError = snapshot.error;
         if (m_browser.model().snapshot().location == snapshot.parent) {
           m_revealTarget = snapshot.destination;
           m_browser.refresh();
         }
-        if (m_folderEditor != nullptr) {
-          m_folderEditor = nullptr;
+        if (m_createEditor != nullptr) {
+          m_createEditor = nullptr;
           dismissMenu();
         }
-      } else if (m_folderEditor == nullptr) {
-        if (snapshot.status == files::CreateFolderStatus::ERROR)
-          actionError("Could not create folder: " + snapshot.error);
-      } else if (
-          snapshot.status == files::CreateFolderStatus::READY || snapshot.status == files::CreateFolderStatus::ERROR
-      ) {
-        m_folderEditor->setSaving(false);
-        m_folderEditor->showError(snapshot.error);
+      } else if (m_createEditor == nullptr) {
+        if (snapshot.status == files::CreateStatus::ERROR)
+          actionError("Could not create: " + snapshot.error);
+      } else if (snapshot.status == files::CreateStatus::READY || snapshot.status == files::CreateStatus::ERROR) {
+        m_createEditor->setSaving(false);
+        m_createEditor->showError(snapshot.error);
         if (std::exchange(m_creationPreparing, false)) {
-          m_menuDispatcher.setFocus(m_folderEditor->input()->inputArea());
-          m_folderEditor->input()->selectAll();
+          m_menuDispatcher.setFocus(m_createEditor->input()->inputArea());
+          m_createEditor->input()->selectAll();
         }
         m_menuSurface->requestLayout();
       }
@@ -1926,8 +1926,10 @@ namespace {
       m_refresh->setTooltip(loading ? "Stop loading" : "Refresh");
       std::string status;
       if (m_creator.busy()) {
-        status = m_creator.snapshot().status == files::CreateFolderStatus::CREATING ? "Creating folder…"
-                                                                                    : "Preparing folder creation…";
+        const char* kind = m_creator.snapshot().kind == files::CreateKind::FOLDER ? "folder" : "file";
+        status = m_creator.snapshot().status == files::CreateStatus::CREATING
+            ? std::format("Creating {}…", kind)
+            : std::format("Preparing {} creation…", kind);
       } else if (m_renamer.busy()) {
         status = m_renamer.snapshot().status == files::RenameStatus::RENAMING ? "Renaming…" : "Preparing rename…";
       } else if (m_transfers.busy()) {
@@ -2047,7 +2049,7 @@ namespace {
       }
       syncTransferConflict();
       if (std::exchange(m_creationDirty, false))
-        syncFolderCreation();
+        syncCreation();
       if (std::exchange(m_renameDirty, false))
         syncFileRename();
       if (m_browserDirty) {
@@ -2515,7 +2517,7 @@ namespace {
         if (m_list != nullptr)
           m_dispatcher.setFocus(m_list->focusArea());
       }
-      m_folderEditor = nullptr;
+      m_createEditor = nullptr;
       m_createParent.reset();
       m_creationPreparing = false;
       m_fileRenameEditor = nullptr;
@@ -2708,7 +2710,7 @@ namespace {
     bool m_dragScrollInPlaces = false;
     files::TransferService m_transfers;
     files::RenameService m_renamer;
-    files::CreateFolderService m_creator;
+    files::CreateService m_creator;
     Timer m_transferProgress;
     Button* m_cancelTransfer = nullptr;
     Box* m_placeDropLine = nullptr;
@@ -2756,7 +2758,7 @@ namespace {
     ContextMenuControl* m_menu = nullptr;
     NameEditor* m_placeEditor = nullptr;
     NameEditor* m_fileRenameEditor = nullptr;
-    NameEditor* m_folderEditor = nullptr;
+    NameEditor* m_createEditor = nullptr;
     std::optional<files::Location> m_createParent;
     bool m_creationPreparing = false;
     bool m_creationDirty = false;

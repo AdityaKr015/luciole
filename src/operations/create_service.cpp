@@ -1,4 +1,4 @@
-#include "operations/create_folder_service.h"
+#include "operations/create_service.h"
 
 #include "fs/filename.h"
 
@@ -19,7 +19,11 @@ namespace {
       if (fd < 0)
         throw std::runtime_error(std::strerror(errno));
     }
-    ~Fd() { ::close(m_fd); }
+    ~Fd() {
+      if (m_fd >= 0)
+        ::close(m_fd);
+    }
+    int close() { return ::close(std::exchange(m_fd, -1)); }
     Fd(const Fd&) = delete;
     Fd& operator=(const Fd&) = delete;
     int get() const { return m_fd; }
@@ -44,7 +48,7 @@ namespace {
     void requireCurrent() const {
       Fd current(::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
       if (!sameIdentity(metadata(current.get()), metadata(directory.get())))
-        throw std::runtime_error("The destination folder changed. Reopen New folder.");
+        throw std::runtime_error("The destination folder changed. Close this dialog and try again.");
     }
   };
   struct Reply {
@@ -65,8 +69,8 @@ namespace {
   }
 } // namespace
 
-struct files::CreateFolderService::State {
-  CreateFolderSnapshot snapshot;
+struct files::CreateService::State {
+  CreateSnapshot snapshot;
   std::shared_ptr<Target> target;
   std::atomic<bool> cancelled{false};
   bool active = false;
@@ -93,16 +97,16 @@ struct files::CreateFolderService::State {
           owner->snapshot.error = reply->error;
           if (reply->destination) {
             owner->snapshot.destination = std::move(reply->destination);
-            owner->snapshot.status = CreateFolderStatus::SUCCEEDED;
+            owner->snapshot.status = reply->error.empty() ? CreateStatus::SUCCEEDED : CreateStatus::PARTIAL;
             owner->target.reset();
           } else if (owner->cancelled.load()) {
-            owner->snapshot.status = CreateFolderStatus::CANCELLED;
+            owner->snapshot.status = CreateStatus::CANCELLED;
             owner->target.reset();
           } else if (!reply->error.empty()) {
-            owner->snapshot.status = CreateFolderStatus::ERROR;
+            owner->snapshot.status = CreateStatus::ERROR;
           } else {
             owner->target = std::move(reply->target);
-            owner->snapshot.status = CreateFolderStatus::READY;
+            owner->snapshot.status = CreateStatus::READY;
           }
           owner->notify();
         },
@@ -125,61 +129,82 @@ struct files::CreateFolderService::State {
     owner->notify();
   }
 };
-files::CreateFolderService::CreateFolderService() : m_state(std::make_shared<State>()) {}
-files::CreateFolderService::~CreateFolderService() {
+files::CreateService::CreateService() : m_state(std::make_shared<State>()) {}
+files::CreateService::~CreateService() {
   m_state->changed = {};
   cancel();
 }
-void files::CreateFolderService::setChangedCallback(std::function<void()> callback) {
+void files::CreateService::setChangedCallback(std::function<void()> callback) {
   m_state->changed = std::move(callback);
 }
-bool files::CreateFolderService::busy() const { return m_state->active; }
-bool files::CreateFolderService::canCreate() const { return !busy() && m_state->target != nullptr; }
-const files::CreateFolderSnapshot& files::CreateFolderService::snapshot() const { return m_state->snapshot; }
-void files::CreateFolderService::cancel() {
+bool files::CreateService::busy() const { return m_state->active; }
+bool files::CreateService::canCreate() const { return !busy() && m_state->target != nullptr; }
+const files::CreateSnapshot& files::CreateService::snapshot() const { return m_state->snapshot; }
+void files::CreateService::cancel() {
   m_state->cancelled.store(true);
   m_state->target.reset();
-  if (!busy() && m_state->snapshot.status != CreateFolderStatus::SUCCEEDED)
-    m_state->snapshot.status = CreateFolderStatus::CANCELLED;
+  if (!busy()
+      && m_state->snapshot.status != CreateStatus::SUCCEEDED
+      && m_state->snapshot.status != CreateStatus::PARTIAL)
+    m_state->snapshot.status = CreateStatus::CANCELLED;
 }
-bool files::CreateFolderService::prepare(const Location& parent) {
-  if (busy())
+bool files::CreateService::prepare(const Location& parent, CreateKind kind) {
+  if (busy() || (kind != CreateKind::FOLDER && kind != CreateKind::EMPTY_FILE))
     return false;
   m_state->target.reset();
   m_state->snapshot = {
-      .status = CreateFolderStatus::PREPARING, .parent = parent, .destination = std::nullopt, .error = {}
+      .status = CreateStatus::PREPARING, .kind = kind, .parent = parent, .destination = std::nullopt, .error = {}
   };
   State::launch(m_state, [parent] {
     const auto path = parent.nativePath();
     if (!path)
-      throw std::runtime_error("Creating remote folders is not supported yet.");
+      throw std::runtime_error("Creating remote files or folders is not supported yet.");
     return Reply{.target = std::make_shared<Target>(*path), .destination = std::nullopt, .error = {}};
   });
   return true;
 }
-bool files::CreateFolderService::create(std::string name) {
+bool files::CreateService::create(std::string name) {
   if (!canCreate())
     return false;
   if (const auto error = filenameProblem(name)) {
-    m_state->snapshot.status = CreateFolderStatus::ERROR;
+    m_state->snapshot.status = CreateStatus::ERROR;
     m_state->snapshot.error = *error;
     m_state->notify();
     return false;
   }
-  m_state->snapshot.status = CreateFolderStatus::CREATING;
+  m_state->snapshot.status = CreateStatus::CREATING;
   m_state->snapshot.error.clear();
-  State::launch(m_state, [owner = m_state, target = m_state->target, name = std::move(name)] {
-    auto destination = Location::fromPath((std::filesystem::path(target->path) / name).native());
-    target->requireCurrent();
-    const auto limit = ::fpathconf(target->directory.get(), _PC_NAME_MAX);
-    if (limit >= 0 && name.size() > static_cast<std::size_t>(limit))
-      throw std::runtime_error(creationError(ENAMETOOLONG));
-    if (owner->cancelled.load())
-      return Reply{};
-    // mkdirat refuses every existing entry atomically and honors umask/default ACLs.
-    if (::mkdirat(target->directory.get(), name.c_str(), 0777) != 0)
-      throw std::runtime_error(creationError(errno));
-    return Reply{.target = {}, .destination = std::move(destination), .error = {}};
-  });
+  State::launch(
+      m_state, [owner = m_state, target = m_state->target, kind = m_state->snapshot.kind, name = std::move(name)] {
+        Reply result{
+            .target = {},
+            .destination = Location::fromPath((std::filesystem::path(target->path) / name).native()),
+            .error = {}
+        };
+        std::string closeError = "The file was created, but it could not be closed cleanly.";
+        target->requireCurrent();
+        const auto limit = ::fpathconf(target->directory.get(), _PC_NAME_MAX);
+        if (limit >= 0 && name.size() > static_cast<std::size_t>(limit))
+          throw std::runtime_error(creationError(ENAMETOOLONG));
+        if (owner->cancelled.load())
+          return Reply{};
+        if (kind == CreateKind::FOLDER) {
+          if (::mkdirat(target->directory.get(), name.c_str(), 0777) != 0)
+            throw std::runtime_error(creationError(errno));
+        } else {
+          // Exclusive creation refuses every existing entry, including dangling links and FIFOs.
+          const int fd = ::openat(
+              target->directory.get(), name.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0666
+          );
+          if (fd < 0)
+            throw std::runtime_error(creationError(errno));
+          Fd output(fd);
+          // Linux closes the descriptor even on EINTR; retrying could close an unrelated descriptor.
+          if (output.close() != 0)
+            result.error = std::move(closeError);
+        }
+        return result;
+      }
+  );
   return true;
 }
