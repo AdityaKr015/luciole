@@ -179,6 +179,7 @@ app_sources = files(
 filesystem_service = declare_dependency(
   sources: files(
     'src/fs/location.cpp',
+    'src/fs/filename.cpp',
     'src/fs/file_metadata.cpp',
     'src/fs/file_icon_source.cpp',
     'src/fs/directory_session.cpp',
@@ -214,6 +215,11 @@ places_service = declare_dependency(
   dependencies: state_service,
 )
 
+create_folder_service = declare_dependency(
+  sources: files('src/operations/create_folder_service.cpp'),
+  dependencies: filesystem_service,
+)
+
 rename_service = declare_dependency(
   sources: files('src/operations/rename_service.cpp'),
   dependencies: filesystem_service,
@@ -231,7 +237,7 @@ app = executable('noctalia-files',
   build_info,
   completions,
   include_directories: include_directories('src', '.'),
-  dependencies: ui_dependencies + [browser_model, settings_service, state_service, places_service, transfer_service, rename_service],
+  dependencies: ui_dependencies + [browser_model, settings_service, state_service, places_service, transfer_service, rename_service, create_folder_service],
   install: true,
 )
 
@@ -240,6 +246,8 @@ build_tests = tests_opt.enabled() or (
   tests_opt.auto() and get_option('buildtype') == 'debug' and get_option('b_sanitize') == 'none'
 )
 if build_tests
+  create_folder_test = executable('create-folder-service-test', 'tests/create_folder_service_test.cpp', dependencies: [create_folder_service, browser_model])
+  test('create-folder-service', create_folder_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   rename_test = executable('rename-service-test', 'tests/rename_service_test.cpp', dependencies: [rename_service, browser_model])
   test('rename-service', rename_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   transfer_test = executable('transfer-service-test', 'tests/transfer_service_test.cpp', dependencies: transfer_service)

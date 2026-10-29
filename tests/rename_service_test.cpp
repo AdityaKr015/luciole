@@ -1,5 +1,6 @@
 #include "app/glib_poll_source.h"
 #include "browser/directory_model.h"
+#include "fs/filename.h"
 #include "operations/rename_service.h"
 
 #include <algorithm>

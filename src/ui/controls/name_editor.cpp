@@ -5,9 +5,10 @@
 NameEditor::NameEditor(
     float width, const std::string& title, const std::string& value, std::string hint,
     std::function<std::optional<std::string>(const std::string&)> validate, std::function<void(std::string)> submit,
-    std::function<void()> cancel
+    std::function<void()> cancel, std::string action, std::string busyAction
 )
-    : m_hint(std::move(hint)), m_validate(std::move(validate)), m_submit(std::move(submit)) {
+    : m_hint(std::move(hint)), m_action(std::move(action)), m_busyAction(std::move(busyAction)),
+      m_validate(std::move(validate)), m_submit(std::move(submit)) {
   setDirection(FlexDirection::Vertical);
   setAlign(FlexAlign::Stretch);
   setGap(Style::spaceMd);
@@ -65,7 +66,7 @@ NameEditor::NameEditor(
           ),
           ui::button(
               {.out = &m_save,
-               .text = "Rename",
+               .text = m_action,
                .variant = ButtonVariant::Primary,
                .minWidth = 88.0F,
                .onClick = [this] { this->submit(); }}
@@ -78,7 +79,7 @@ void NameEditor::setSaving(bool saving) {
   m_saving = saving;
   m_input->setEnabled(!saving);
   m_save->setEnabled(!saving);
-  m_save->setText(saving ? "Renaming…" : "Rename");
+  m_save->setText(saving ? m_busyAction : m_action);
   m_cancel->setText(saving ? "Close" : "Cancel");
 }
 

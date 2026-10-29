@@ -8,8 +8,6 @@
 #include <string>
 
 namespace files {
-  std::optional<std::string> filenameProblem(const std::string& name);
-  std::size_t filenameStemLength(const std::string& name, bool directory);
   enum class RenameStatus { IDLE, PREPARING, READY, RENAMING, SUCCEEDED, ERROR, CANCELLED };
   struct RenameSnapshot {
     RenameStatus status = RenameStatus::IDLE;

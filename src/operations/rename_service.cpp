@@ -1,5 +1,7 @@
 #include "operations/rename_service.h"
 
+#include "fs/filename.h"
+
 #include <atomic>
 #include <cerrno>
 #include <cstring>
@@ -62,22 +64,6 @@ namespace {
     return std::strerror(code);
   }
 } // namespace
-
-std::optional<std::string> files::filenameProblem(const std::string& name) {
-  if (name.empty())
-    return "Enter a name.";
-  if (name == "." || name == "..")
-    return "Names cannot be . or ..";
-  if (name.contains('/') || name.contains('\0'))
-    return "Names cannot contain / or a NUL byte.";
-  if (!g_utf8_validate(name.data(), static_cast<gssize>(name.size()), nullptr))
-    return "Enter a valid UTF-8 name.";
-  return std::nullopt;
-}
-std::size_t files::filenameStemLength(const std::string& name, bool directory) {
-  const auto dot = name.rfind('.');
-  return !directory && dot != std::string::npos && dot != 0 && dot + 1 < name.size() ? dot : name.size();
-}
 
 struct files::RenameService::State {
   RenameSnapshot snapshot;
@@ -184,6 +170,7 @@ bool files::RenameService::rename(std::string name) {
   m_state->snapshot.status = RenameStatus::RENAMING;
   m_state->snapshot.error.clear();
   State::launch(m_state, [owner = m_state, target = m_state->target, name = std::move(name)] {
+    auto destination = Location::fromPath((std::filesystem::path(target->parentPath) / name).native());
     Fd parent(::open(target->parentPath.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
     if (!sameIdentity(metadata(parent.get()), metadata(target->parent.get())))
       throw std::runtime_error("The containing folder changed. Reopen Rename.");
@@ -203,11 +190,7 @@ bool files::RenameService::rename(std::string name) {
                RENAME_NOREPLACE
            ) != 0)
       throw std::runtime_error(renameError(errno));
-    return Reply{
-        .target = {},
-        .destination = Location::fromPath((std::filesystem::path(target->parentPath) / name).native()),
-        .error = {}
-    };
+    return Reply{.target = {}, .destination = std::move(destination), .error = {}};
   });
   return true;
 }
