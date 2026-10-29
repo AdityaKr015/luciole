@@ -642,11 +642,14 @@ void Input::setPasswordMaskStyle(PasswordMaskStyle style) noexcept { g_passwordM
 
 void Input::setReadlineShortcutsEnabled(bool enabled) noexcept { g_readlineShortcuts = enabled; }
 
-void Input::selectAll() {
+void Input::selectAll() { selectRange(0, m_value.size()); }
+
+void Input::selectRange(std::size_t start, std::size_t end) {
   resetUndoCoalescing();
-  m_selectionAnchor = 0;
-  m_cursorPos = m_value.size();
+  m_selectionAnchor = clampToUtf8End(m_value, start);
+  m_cursorPos = clampToUtf8End(m_value, end);
   updateInteractiveGeometry();
+  revealCursor();
   notifyTextInputStateChanged(TextInputChangeCause::Other);
   markPaintDirty();
 }

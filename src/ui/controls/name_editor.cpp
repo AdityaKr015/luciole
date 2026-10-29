@@ -1,12 +1,13 @@
-#include "browser/place_label_editor.h"
+#include "ui/controls/name_editor.h"
 
-#include "config/state_store.h"
 #include "ui/builders.h"
 
-files::PlaceLabelEditor::PlaceLabelEditor(
-    float width, const std::string& label, std::function<void(std::string)> submit, std::function<void()> cancel
+NameEditor::NameEditor(
+    float width, const std::string& title, const std::string& value, std::string hint,
+    std::function<std::optional<std::string>(const std::string&)> validate, std::function<void(std::string)> submit,
+    std::function<void()> cancel
 )
-    : m_submit(std::move(submit)) {
+    : m_hint(std::move(hint)), m_validate(std::move(validate)), m_submit(std::move(submit)) {
   setDirection(FlexDirection::Vertical);
   setAlign(FlexAlign::Stretch);
   setGap(Style::spaceMd);
@@ -17,7 +18,7 @@ files::PlaceLabelEditor::PlaceLabelEditor(
   addChild(
       ui::row(
           {.align = FlexAlign::Center, .gap = Style::spaceSm},
-          ui::label({.text = "Rename place", .fontWeight = FontWeight::SemiBold, .flexGrow = 1.0F}),
+          ui::label({.text = title, .fontWeight = FontWeight::SemiBold, .flexGrow = 1.0F}),
           ui::button(
               {.glyph = "x",
                .controlHeight = Style::controlHeightSm,
@@ -32,8 +33,8 @@ files::PlaceLabelEditor::PlaceLabelEditor(
   addChild(
       ui::input(
           {.out = &m_input,
-           .value = label,
-           .placeholder = "Places label",
+           .value = value,
+           .placeholder = "Name",
            .onChange = [this](const std::string&) { showError({}); },
            .onSubmit = [this](const std::string&) { this->submit(); }}
       )
@@ -43,7 +44,7 @@ files::PlaceLabelEditor::PlaceLabelEditor(
           {.align = FlexAlign::Stretch, .minHeight = 44.0F, .maxHeight = 44.0F},
           ui::label(
               {.out = &m_message,
-               .text = "Changes the sidebar label only.",
+               .text = m_hint,
                .fontSize = Style::fontSizeCaption,
                .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
                .maxWidth = width - 24.0F,
@@ -73,30 +74,26 @@ files::PlaceLabelEditor::PlaceLabelEditor(
   );
 }
 
-void files::PlaceLabelEditor::setSaving(bool saving) {
+void NameEditor::setSaving(bool saving) {
   m_saving = saving;
   m_input->setEnabled(!saving);
   m_save->setEnabled(!saving);
-  m_save->setText(saving ? "Saving…" : "Rename");
+  m_save->setText(saving ? "Renaming…" : "Rename");
   m_cancel->setText(saving ? "Close" : "Cancel");
 }
 
-void files::PlaceLabelEditor::showError(const std::string& error) {
+void NameEditor::showError(const std::string& error) {
   m_input->setInvalid(!error.empty());
-  m_message->setText(error.empty() ? "Changes the sidebar label only." : error);
+  m_message->setText(error.empty() ? m_hint : error);
   m_message->setColor(colorSpecFromRole(error.empty() ? ColorRole::OnSurfaceVariant : ColorRole::Error));
 }
 
-void files::PlaceLabelEditor::submit() {
+void NameEditor::submit() {
   if (m_saving) {
     return;
   }
-  if (const auto error = bookmarkLabelProblem(m_input->value())) {
+  if (const auto error = m_validate(m_input->value())) {
     showError(*error);
-    return;
-  }
-  if (m_input->value().find_first_not_of(' ') == std::string::npos) {
-    showError("Enter a label.");
     return;
   }
   if (m_submit) {

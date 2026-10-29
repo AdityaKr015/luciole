@@ -7,7 +7,6 @@
 #include "browser/browser_controller.h"
 #include "browser/file_view.h"
 #include "browser/location_presentation.h"
-#include "browser/place_label_editor.h"
 #include "browser/places_sidebar.h"
 #include "config/settings.h"
 #include "config/view_preference_writer.h"
@@ -18,6 +17,7 @@
 #include "core/timer_manager.h"
 #include "core/ui_phase.h"
 #include "cursor-shape-v1-client-protocol.h"
+#include "operations/rename_service.h"
 #include "operations/transfer_service.h"
 #include "platform/file_launcher.h"
 #include "render/animation/animation_manager.h"
@@ -29,6 +29,7 @@
 #include "ui/builders.h"
 #include "ui/controls/context_menu.h"
 #include "ui/controls/input.h"
+#include "ui/controls/name_editor.h"
 #include "ui/controls/scroll_view.h"
 #include "ui/palette.h"
 #include "wayland/popup_surface.h"
@@ -162,6 +163,11 @@ namespace {
         m_browserDirty = true;
         m_surface.requestUpdate();
       });
+      m_renamer.setChangedCallback([this] {
+        m_renameDirty = true;
+        m_browserDirty = true;
+        m_surface.requestUpdate();
+      });
       m_pins.setChangedCallback([this] {
         m_placesDirty = true;
         m_browserDirty = true;
@@ -198,6 +204,7 @@ namespace {
       m_dragScroll.stop();
       m_transferProgress.stop();
       m_transfers.setChangedCallback({});
+      m_renamer.setChangedCallback({});
       m_browser.setChangedCallback({});
       m_browser.setFileActivatedCallback({});
       m_launcher.setChangedCallback({});
@@ -241,7 +248,14 @@ namespace {
       if (!m_surface.isRunning() && m_transfers.busy()) {
         m_transfers.cancel();
       }
-      return m_surface.isRunning() || m_preferences.busy() || m_pins.busy() || m_launcher.busy() || m_transfers.busy();
+      if (!m_surface.isRunning() && m_renamer.busy())
+        m_renamer.cancel();
+      return m_surface.isRunning()
+          || m_preferences.busy()
+          || m_pins.busy()
+          || m_launcher.busy()
+          || m_transfers.busy()
+          || m_renamer.busy();
     }
 
     void outputChanged(wl_output* output) {
@@ -470,6 +484,19 @@ namespace {
           openFileMenu(id, x, y);
           return;
         }
+        if (!editing
+            && event.sym == XKB_KEY_F2
+            && event.modifiers == 0
+            && !event.repeat
+            && m_list != nullptr
+            && m_dispatcher.focusedArea() == m_list->focusArea()) {
+          const auto ids = m_browser.model().selectedIds();
+          if (ids.size() == 1) {
+            if (const auto* entry = m_browser.model().entry(ids.front()))
+              openFileRename(*entry);
+          }
+          return;
+        }
         if (!editing && event.sym == XKB_KEY_Return && event.modifiers == KeyMod::Alt) {
           std::vector<files::DirectoryEntry> targets;
           for (const auto id : m_browser.model().selectedIds()) {
@@ -626,6 +653,9 @@ namespace {
         }
       }
       entries.push_back({.label = "", .separator = true});
+      if (targets.size() == 1) {
+        entries.push_back({.id = 6, .label = "Rename…", .enabled = canFileRename(targets.front())});
+      }
       entries.push_back({.id = 5, .label = "Properties"});
       showContextMenu(
           std::move(entries),
@@ -654,6 +684,8 @@ namespace {
                 locations.push_back(target.location);
               }
               m_pins.removeMany(locations);
+            } else if (action == 6) {
+              openFileRename(targets.front());
             } else if (action == 5) {
               showProperties(targets);
             }
@@ -713,6 +745,88 @@ namespace {
       );
     }
 
+    bool canFileRename(const files::DirectoryEntry& entry) const {
+      return entry.location.nativePath().has_value()
+          && entry.access.rename != false
+          && !m_transfers.busy()
+          && !m_renamer.busy();
+    }
+    void openFileRename(files::DirectoryEntry target) {
+      if (!canFileRename(target) || !targetsCurrent({target})) {
+        actionError("This item cannot be renamed right now.");
+        return;
+      }
+      const float width = std::min(420.0F, static_cast<float>(m_surface.width()) - 32.0F);
+      const bool validText = g_utf8_validate(target.name.data(), static_cast<gssize>(target.name.size()), nullptr);
+      auto editor = std::make_unique<NameEditor>(
+          width, target.type == G_FILE_TYPE_DIRECTORY && !target.symlink ? "Rename folder" : "Rename file",
+          validText ? target.name : "", validText ? "" : "Enter a new UTF-8 name for this item.",
+          files::filenameProblem, [this](std::string name) { submitFileRename(std::move(name)); },
+          [this] { dismissMenu(); }
+      );
+      auto* control = editor.get();
+      UiPhaseScope phase(UiPhase::Layout);
+      LayoutConstraints constraints;
+      constraints.setExactWidth(width);
+      const float height = editor->measure(m_surface.renderTarget().renderer(), constraints).height;
+      const LayoutRect anchor{(m_surface.width() - width) * 0.5F, (m_surface.height() - height) * 0.5F, 1, 1};
+      showPopup(std::move(editor), nullptr, anchor, width, height);
+      if (m_menuSurface != nullptr) {
+        m_fileRenameEditor = control;
+        m_fileRenameTarget = std::move(target);
+        m_fileRenamePreparing = true;
+        control->setSaving(true);
+        if (!m_renamer.prepare(m_fileRenameTarget->location)) {
+          control->showError("Another rename is still finishing.");
+        }
+      }
+    }
+    void submitFileRename(std::string name) {
+      if (m_fileRenameEditor == nullptr || !m_fileRenameTarget)
+        return;
+      if (!targetsCurrent({*m_fileRenameTarget})) {
+        m_fileRenameEditor->showError("The item changed. Close this editor and try again.");
+        return;
+      }
+      if (!m_renamer.rename(std::move(name))) {
+        m_fileRenameEditor->showError(
+            m_renamer.snapshot().error.empty() ? "The item is unavailable. Reopen Rename." : m_renamer.snapshot().error
+        );
+      } else {
+        m_fileRenameEditor->setSaving(true);
+      }
+    }
+    void syncFileRename() {
+      const auto& snapshot = m_renamer.snapshot();
+      if (m_renamer.busy())
+        return;
+      if (snapshot.status == files::RenameStatus::SUCCEEDED) {
+        m_actionError.clear();
+        const auto& current = m_browser.model().snapshot().location;
+        if (current && snapshot.source && g_file_has_prefix(snapshot.source->file().get(), current->file().get())) {
+          m_revealTarget = snapshot.destination;
+          m_browser.refresh();
+        }
+        if (m_fileRenameEditor != nullptr) {
+          m_fileRenameEditor = nullptr;
+          dismissMenu();
+        }
+      } else if (m_fileRenameEditor == nullptr) {
+        if (snapshot.status == files::RenameStatus::ERROR)
+          actionError("Could not rename: " + snapshot.error);
+      } else if (snapshot.status == files::RenameStatus::READY || snapshot.status == files::RenameStatus::ERROR) {
+        m_fileRenameEditor->setSaving(false);
+        m_fileRenameEditor->showError(snapshot.error);
+        if (std::exchange(m_fileRenamePreparing, false)) {
+          m_menuDispatcher.setFocus(m_fileRenameEditor->input()->inputArea());
+          const auto& value = m_fileRenameEditor->input()->value();
+          const bool directory = m_fileRenameTarget->type == G_FILE_TYPE_DIRECTORY && !m_fileRenameTarget->symlink;
+          m_fileRenameEditor->input()->selectRange(0, files::filenameStemLength(value, directory));
+        }
+        m_menuSurface->requestLayout();
+      }
+    }
+
     void openPlaceRename(const files::Bookmark& bookmark) {
       const auto found = std::ranges::find(m_pins.bookmarks(), bookmark.location, &files::Bookmark::location);
       if (!m_pins.editable() || found == m_pins.bookmarks().end()) {
@@ -721,9 +835,16 @@ namespace {
       }
       const auto current = *found; // NOLINT(performance-unnecessary-copy-initialization): own the editing snapshot.
       const float width = std::min(440.0F, static_cast<float>(m_surface.width()) - 32.0F);
-      auto editor = std::make_unique<files::PlaceLabelEditor>(
-          width, current.label, [this](std::string label) { submitPlaceRename(std::move(label)); },
-          [this] { dismissMenu(); }
+      auto editor = std::make_unique<NameEditor>(
+          width, "Rename place", current.label, "Changes the sidebar label only.",
+          [](const std::string& label) -> std::optional<std::string> {
+            if (const auto error = files::bookmarkLabelProblem(label))
+              return error;
+            if (label.find_first_not_of(' ') == std::string::npos)
+              return "Enter a label.";
+            return std::nullopt;
+          },
+          [this](std::string label) { submitPlaceRename(std::move(label)); }, [this] { dismissMenu(); }
       );
       auto* control = editor.get();
       UiPhaseScope phase(UiPhase::Layout);
@@ -1025,12 +1146,14 @@ namespace {
       if (m_drag->sourcePin) {
         return m_pins.editable() && m_pins.contains(*m_drag->sourcePin);
       }
-      return !m_transfers.busy() && std::ranges::all_of(m_drag->entries, [this](const auto& target) {
-        const auto* entry = m_browser.model().entry(target.id);
-        return entry != nullptr
-            && entry->location == target.location
-            && std::ranges::contains(m_browser.model().rows(), target.id);
-      });
+      return !m_transfers.busy()
+          && !m_renamer.busy()
+          && std::ranges::all_of(m_drag->entries, [this](const auto& target) {
+               const auto* entry = m_browser.model().entry(target.id);
+               return entry != nullptr
+                   && entry->location == target.location
+                   && std::ranges::contains(m_browser.model().rows(), target.id);
+             });
     }
 
     bool validDropFolder(const files::Location& destination) const {
@@ -1123,7 +1246,7 @@ namespace {
     }
 
     void startFileDrag(const std::vector<files::EntryId>& ids) {
-      if (ids.empty() || m_transfers.busy()) {
+      if (ids.empty() || m_transfers.busy() || m_renamer.busy()) {
         return;
       }
       Drag drag;
@@ -1677,7 +1800,9 @@ namespace {
       m_refresh->setGlyph(loading ? "square" : "refresh");
       m_refresh->setTooltip(loading ? "Stop loading" : "Refresh");
       std::string status;
-      if (m_transfers.busy()) {
+      if (m_renamer.busy()) {
+        status = m_renamer.snapshot().status == files::RenameStatus::RENAMING ? "Renaming…" : "Preparing rename…";
+      } else if (m_transfers.busy()) {
         const files::GString size(g_format_size(m_transfers.bytes()));
         status = std::format(
             "{} {} of {} items · {}", m_transfers.action() == files::TransferAction::COPY ? "Copying" : "Moving",
@@ -1793,6 +1918,8 @@ namespace {
         buildScene();
       }
       syncTransferConflict();
+      if (std::exchange(m_renameDirty, false))
+        syncFileRename();
       if (m_browserDirty) {
         m_browserDirty = false;
         syncPlaceRename();
@@ -2248,6 +2375,14 @@ namespace {
       if (m_placeRenameTarget) {
         m_restorePlaceFocus = m_placeRenameTarget->location;
       }
+      if (m_fileRenameTarget) {
+        m_renamer.cancel();
+        if (m_list != nullptr)
+          m_dispatcher.setFocus(m_list->focusArea());
+      }
+      m_fileRenameEditor = nullptr;
+      m_fileRenameTarget.reset();
+      m_fileRenamePreparing = false;
       m_placeEditor = nullptr;
       m_placeRenameTarget.reset();
       m_pendingPlaceLabel.reset();
@@ -2434,6 +2569,7 @@ namespace {
     std::optional<DropTarget> m_lastDropTarget;
     bool m_dragScrollInPlaces = false;
     files::TransferService m_transfers;
+    files::RenameService m_renamer;
     Timer m_transferProgress;
     Button* m_cancelTransfer = nullptr;
     Box* m_placeDropLine = nullptr;
@@ -2479,7 +2615,11 @@ namespace {
     std::unique_ptr<PopupSurface> m_menuSurface;
     std::unique_ptr<Flex> m_menuRoot;
     ContextMenuControl* m_menu = nullptr;
-    files::PlaceLabelEditor* m_placeEditor = nullptr;
+    NameEditor* m_placeEditor = nullptr;
+    NameEditor* m_fileRenameEditor = nullptr;
+    std::optional<files::DirectoryEntry> m_fileRenameTarget;
+    bool m_fileRenamePreparing = false;
+    bool m_renameDirty = false;
     std::optional<files::Bookmark> m_placeRenameTarget;
     std::optional<std::string> m_pendingPlaceLabel;
     std::optional<files::Location> m_restorePlaceFocus;

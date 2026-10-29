@@ -108,7 +108,7 @@ app_sources = files(
   'src/config/view_preference_writer.cpp',
   'src/platform/file_launcher.cpp',
   'src/browser/places_sidebar.cpp',
-  'src/browser/place_label_editor.cpp',
+  'src/ui/controls/name_editor.cpp',
   'src/core/timer_manager.cpp',
   'src/core/ui_phase.cpp',
   'src/ui/controls/color_swatch_preview.cpp',
@@ -214,6 +214,11 @@ places_service = declare_dependency(
   dependencies: state_service,
 )
 
+rename_service = declare_dependency(
+  sources: files('src/operations/rename_service.cpp'),
+  dependencies: filesystem_service,
+)
+
 transfer_service = declare_dependency(
   sources: files('src/operations/transfer_service.cpp'),
   dependencies: filesystem_service,
@@ -226,7 +231,7 @@ app = executable('noctalia-files',
   build_info,
   completions,
   include_directories: include_directories('src', '.'),
-  dependencies: ui_dependencies + [browser_model, settings_service, state_service, places_service, transfer_service],
+  dependencies: ui_dependencies + [browser_model, settings_service, state_service, places_service, transfer_service, rename_service],
   install: true,
 )
 
@@ -235,6 +240,8 @@ build_tests = tests_opt.enabled() or (
   tests_opt.auto() and get_option('buildtype') == 'debug' and get_option('b_sanitize') == 'none'
 )
 if build_tests
+  rename_test = executable('rename-service-test', 'tests/rename_service_test.cpp', dependencies: [rename_service, browser_model])
+  test('rename-service', rename_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   transfer_test = executable('transfer-service-test', 'tests/transfer_service_test.cpp', dependencies: transfer_service)
   test('transfer-service', transfer_test, timeout: 90, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   places_test = executable('places-test', 'tests/places_test.cpp', dependencies: places_service)
