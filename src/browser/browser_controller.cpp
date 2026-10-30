@@ -51,13 +51,14 @@ files::BrowserController::BrowserController(SortOptions sort, bool showHidden)
     }
   });
   m_search.setChangedCallback([this] {
-    if (!m_switchingSources && !m_query.empty()) {
+    if (!m_switchingSources && m_searchActive && !m_query.empty()) {
       publish(m_search.snapshot());
     }
   });
 }
 
 files::BrowserController::~BrowserController() {
+  cancelSearchTimeout();
   m_activation->resolved = {};
   g_cancellable_cancel(m_activation->cancellable.get());
   m_session.setChangedCallback({});
@@ -66,6 +67,7 @@ files::BrowserController::~BrowserController() {
 }
 
 void files::BrowserController::advanceContext() {
+  cancelSearchTimeout();
   ++m_contextSerial;
   g_cancellable_cancel(m_activation->cancellable.get());
   m_activation->cancellable.reset(g_cancellable_new());
@@ -119,6 +121,8 @@ void files::BrowserController::loadVisit() {
   ++m_visitSerial;
   m_message.clear();
   m_query = query;
+  m_searchComposing = false;
+  m_searchActive = false;
   advanceContext();
   m_switchingSources = true;
   m_search.cancel();
@@ -128,6 +132,7 @@ void files::BrowserController::loadVisit() {
   } else {
     // Browse metadata continues loading independently of the search projection.
     m_session.open(destination);
+    m_searchActive = true;
     m_search.start(destination, query, m_model.filter().showHidden);
   }
 }
@@ -138,6 +143,8 @@ void files::BrowserController::open(const Location& location) {
     m_restoredViewport.reset();
     if (!m_query.empty()) {
       m_query.clear();
+      m_searchActive = false;
+      m_searchComposing = false;
       advanceContext();
       m_search.cancel();
     }
@@ -219,8 +226,8 @@ void files::BrowserController::refresh() {
   m_message.clear();
   if (m_query.empty()) {
     m_session.refresh();
-  } else if (m_session.snapshot().location) {
-    m_search.start(*m_session.snapshot().location, m_query, m_model.filter().showHidden);
+  } else {
+    startSearch();
   }
 }
 
@@ -231,7 +238,11 @@ void files::BrowserController::stop() {
   if (m_query.empty()) {
     m_session.cancel();
   } else {
+    m_searchActive = false;
     m_search.cancel();
+    auto snapshot = m_model.snapshot();
+    snapshot.status = DirectoryStatus::CANCELLED;
+    publish(std::move(snapshot));
   }
 }
 
@@ -244,21 +255,111 @@ void files::BrowserController::toggleHidden() {
   }
 }
 
+void files::BrowserController::cancelSearchTimeout() {
+  if (auto* source = std::exchange(m_searchTimeout, nullptr)) {
+    g_source_destroy(source);
+    g_source_unref(source);
+  }
+  m_searchPending = false;
+}
+
+void files::BrowserController::scheduleSearch() {
+  if (!m_searchPending || m_searchComposing)
+    return;
+  if (m_searchTimeout) {
+    g_source_destroy(m_searchTimeout);
+    g_source_unref(m_searchTimeout);
+  }
+  m_searchTimeout = g_timeout_source_new(175);
+  g_source_set_callback(
+      m_searchTimeout,
+      [](gpointer data) -> gboolean {
+        auto* owner = static_cast<BrowserController*>(data);
+        auto* source = std::exchange(owner->m_searchTimeout, nullptr);
+        g_source_unref(source);
+        // startSearch may publish to an observer that destroys the controller.
+        owner->startSearch();
+        return G_SOURCE_REMOVE;
+      },
+      this, nullptr
+  );
+  g_source_attach(m_searchTimeout, g_main_context_default());
+}
+
+void files::BrowserController::startSearch() {
+  cancelSearchTimeout();
+  if (m_query.empty() || !m_session.snapshot().location)
+    return;
+  m_searchActive = true;
+  m_search.start(*m_session.snapshot().location, m_query, m_model.filter().showHidden);
+}
+
+void files::BrowserController::publishPendingSearch() {
+  publish(
+      {.location = m_session.snapshot().location,
+       .status = DirectoryStatus::LOADING,
+       .entries = {},
+       .error = std::nullopt,
+       .monitorError = std::nullopt,
+       .incrementalResults = true}
+  );
+}
+
+void files::BrowserController::editSearchQuery(std::string text) {
+  if (m_query == text)
+    return;
+  m_restoring = false;
+  m_restoredViewport.reset();
+  advanceContext();
+  m_searchActive = false;
+  m_query = std::move(text);
+  m_message.clear();
+  m_search.cancel();
+  if (m_query.empty()) {
+    publish(m_session.snapshot());
+    return;
+  }
+  m_searchPending = true;
+  scheduleSearch();
+  publishPendingSearch();
+}
+
+void files::BrowserController::submitSearchQuery() {
+  if (m_searchPending && !m_searchComposing)
+    startSearch();
+}
+
+void files::BrowserController::setSearchComposing(bool composing) {
+  if (m_searchComposing == composing)
+    return;
+  m_searchComposing = composing;
+  if (!m_searchPending)
+    return;
+  if (composing) {
+    if (auto* source = std::exchange(m_searchTimeout, nullptr)) {
+      g_source_destroy(source);
+      g_source_unref(source);
+    }
+  } else
+    scheduleSearch();
+}
+
 void files::BrowserController::setSearchQuery(std::string text) {
   if (m_query == text) {
+    submitSearchQuery();
     return;
   }
   m_restoring = false;
   m_restoredViewport.reset();
   advanceContext();
+  m_searchActive = false;
   m_query = std::move(text);
   m_message.clear();
   if (m_query.empty()) {
     m_search.cancel();
     publish(m_session.snapshot());
-  } else if (m_session.snapshot().location) {
-    m_search.start(*m_session.snapshot().location, m_query, m_model.filter().showHidden);
-  }
+  } else
+    startSearch();
 }
 
 void files::BrowserController::publish(DirectorySnapshot snapshot) {

@@ -46,7 +46,12 @@ namespace files {
     void refresh();
     void stop();
     void toggleHidden();
+    // Programmatic/history changes apply immediately; editor changes use the trailing debounce.
     void setSearchQuery(std::string text);
+    void editSearchQuery(std::string text);
+    void submitSearchQuery();
+    void setSearchComposing(bool composing);
+    [[nodiscard]] bool searchPending() const { return m_searchPending; }
     void activate(EntryId id);
 
     [[nodiscard]] std::uint64_t contextSerial() const { return m_contextSerial; }
@@ -55,7 +60,7 @@ namespace files {
     [[nodiscard]] bool canUp() const;
     [[nodiscard]] const std::string& message() const { return m_message; }
     [[nodiscard]] const std::string& searchQuery() const { return m_query; }
-    [[nodiscard]] std::size_t skippedSearchFolders() const { return m_search.skippedFolders(); }
+    [[nodiscard]] std::size_t skippedSearchFolders() const { return m_searchActive ? m_search.skippedFolders() : 0; }
     [[nodiscard]] DirectoryModel& model() { return m_model; }
     [[nodiscard]] const DirectoryModel& model() const { return m_model; }
 
@@ -66,10 +71,18 @@ namespace files {
     void notify() const;
     void publish(DirectorySnapshot snapshot);
     void showMessage(std::string message);
+    void cancelSearchTimeout();
+    void scheduleSearch();
+    void startSearch();
+    void publishPendingSearch();
     DirectoryModel m_model;
     DirectorySession m_session;
     RecursiveSearch m_search;
     std::string m_query;
+    GSource* m_searchTimeout = nullptr;
+    bool m_searchPending = false;
+    bool m_searchComposing = false;
+    bool m_searchActive = false;
     std::uint64_t m_revision = 0;
     std::uint64_t m_contextSerial = 0;
     struct Reference {

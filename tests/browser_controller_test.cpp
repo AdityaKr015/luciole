@@ -64,6 +64,10 @@ namespace {
           browser.model().snapshot().error ? browser.model().snapshot().error->message : "browser not ready"
       );
     }
+    void drainFor(std::chrono::milliseconds duration) {
+      const auto deadline = std::chrono::steady_clock::now() + duration;
+      until([&] { return std::chrono::steady_clock::now() >= deadline; });
+    }
 
   private:
     GlibPollSource m_source;
@@ -488,6 +492,148 @@ namespace {
     );
   }
 
+  void testDebouncedSearch() {
+    Fixture fixture;
+    Pump pump;
+    BrowserController browser({}, false);
+    const auto root = Location::fromPath(fixture.path.native());
+    const auto child = Location::fromPath((fixture.path / "child").native());
+    browser.open(root);
+    pump.ready(browser);
+    browser.model().select(id(browser, "file"));
+    browser.editSearchQuery("file");
+    require(
+        browser.searchPending()
+            && browser.searchQuery() == "file"
+            && browser.model().snapshot().status == DirectoryStatus::LOADING
+            && browser.model().rows().empty()
+            && !browser.model().selectionAvailable()
+            && browser.model().selectedIds().empty(),
+        "pending query retained actionable browse results or started synchronously"
+    );
+    browser.editSearchQuery("ins");
+    pump.drainFor(80ms);
+    browser.editSearchQuery("inside");
+    const auto edited = std::chrono::steady_clock::now();
+    pump.ready(browser);
+    require(std::chrono::steady_clock::now() - edited >= 160ms, "search ignored the trailing debounce");
+    require(
+        !browser.searchPending()
+            && browser.model().rows().size() == 1
+            && browser.model().snapshot().entries.front().name == "inside",
+        "trailing query did not traverse descendants or accepted an obsolete query"
+    );
+    browser.editSearchQuery("file");
+    browser.submitSearchQuery();
+    require(!browser.searchPending(), "Enter left a query waiting for the timer");
+    pump.ready(browser);
+    require(browser.model().rows().size() == 1 && id(browser, "file"), "submitted query returned wrong results");
+    browser.editSearchQuery("inside");
+    browser.editSearchQuery({});
+    require(
+        !browser.searchPending()
+            && browser.searchQuery().empty()
+            && browser.model().snapshot().status == DirectoryStatus::READY
+            && browser.model().selectionAvailable()
+            && browser.model().rows().size() == 4,
+        "clearing a pending query did not restore browsing immediately"
+    );
+    pump.drainFor(230ms);
+    require(browser.searchQuery().empty() && browser.model().rows().size() == 4, "cleared timer repopulated search");
+    browser.editSearchQuery("inside");
+    browser.stop();
+    pump.drainFor(230ms);
+    require(
+        !browser.searchPending()
+            && browser.model().snapshot().status == DirectoryStatus::CANCELLED
+            && browser.model().rows().empty(),
+        "stopping a pending query revived old results"
+    );
+    browser.refresh();
+    pump.ready(browser);
+    require(browser.model().rows().size() == 1 && id(browser, "inside"), "refresh did not restart a stopped query");
+    browser.editSearchQuery("hidden");
+    browser.toggleHidden();
+    pump.ready(browser);
+    require(!browser.searchPending() && id(browser, ".hidden"), "hidden policy did not replace the pending traversal");
+    browser.editSearchQuery("inside");
+    browser.open(child);
+    pump.ready(browser);
+    pump.drainFor(230ms);
+    require(
+        !browser.searchPending()
+            && browser.searchQuery().empty()
+            && browser.model().snapshot().location == child
+            && browser.model().rows().size() == 1,
+        "pending query survived navigation"
+    );
+    browser.back();
+    pump.ready(browser);
+    require(browser.searchQuery() == "inside" && id(browser, "inside"), "history lost the latest pending query");
+    browser.editSearchQuery("file");
+    browser.forward();
+    pump.ready(browser);
+    pump.drainFor(230ms);
+    require(
+        browser.searchQuery().empty() && browser.model().snapshot().location == child, "history retained an old timer"
+    );
+    browser.editSearchQuery("inside");
+    browser.open(child);
+    pump.ready(browser);
+    pump.drainFor(230ms);
+    require(
+        !browser.searchPending() && browser.searchQuery().empty(), "same-folder navigation did not cancel debounce"
+    );
+  }
+
+  void testSearchCompositionAndTimeoutLifetime() {
+    Fixture fixture;
+    Pump pump;
+    const auto root = Location::fromPath(fixture.path.native());
+    auto browser = std::make_unique<BrowserController>(files::SortOptions{}, false);
+    browser->open(root);
+    pump.ready(*browser);
+    browser->editSearchQuery("in");
+    browser->setSearchComposing(true);
+    browser->submitSearchQuery();
+    pump.drainFor(230ms);
+    require(
+        browser->searchPending() && browser->model().rows().empty(),
+        "preedit or Enter during composition launched a query"
+    );
+    browser->editSearchQuery("inside");
+    pump.drainFor(230ms);
+    require(browser->searchPending(), "committed changes launched while composition remained active");
+    browser->setSearchComposing(false);
+    const auto committed = std::chrono::steady_clock::now();
+    pump.ready(*browser);
+    require(
+        std::chrono::steady_clock::now() - committed >= 160ms && id(*browser, "inside"),
+        "composition completion did not resume the trailing query"
+    );
+    browser->editSearchQuery("file");
+    browser->setSearchComposing(true);
+    browser->editSearchQuery({});
+    browser->setSearchComposing(false);
+    pump.drainFor(230ms);
+    require(
+        !browser->searchPending() && browser->model().rows().size() == 4, "cleared composition revived a pending query"
+    );
+    browser->editSearchQuery("inside");
+    browser.reset();
+    pump.drainFor(230ms);
+    browser = std::make_unique<BrowserController>(files::SortOptions{}, false);
+    browser->open(root);
+    pump.ready(*browser);
+    browser->editSearchQuery("inside");
+    browser->setChangedCallback([&] {
+      if (!browser->searchPending())
+        browser.reset();
+    });
+    pump.until([&] { return !browser; });
+    pump.drainFor(230ms);
+  }
+
   void testLocationPresentation() {
     const auto path = Location::fromPath("/tmp/space here/<literal>/café");
     const auto crumbs = files::locationBreadcrumbs(path);
@@ -525,6 +671,8 @@ int main() {
     testSearchLifetimeAndPartialFailure();
     testLocationPresentation();
     testHistoryState();
+    testDebouncedSearch();
+    testSearchCompositionAndTimeoutLifetime();
     std::println("browser controller checks passed");
     return 0;
   } catch (const std::exception& error) {

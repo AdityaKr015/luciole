@@ -198,6 +198,17 @@ void TextInputService::clearFocusedClient(TextInputClient* client) {
   m_pendingEdit = {};
 }
 
+bool TextInputService::transferFocusedClient(wl_surface* surface, TextInputClient* from, TextInputClient* to) {
+  if (!m_applyingEdit || !m_enabled || !to || !from || from != m_activeClient || surface != m_activeSurface)
+    return false;
+  // Keep the protocol conversation alive while a type-to-search edit moves into its editor.
+  // Disabling/enabling here would reset the input method's composition.
+  m_activeClient = to;
+  from->textInputDeactivated(*this);
+  to->textInputActivated(*this);
+  return true;
+}
+
 void TextInputService::notifyClientStateChanged(TextInputClient* client, TextInputChangeCause cause) {
   if (client == nullptr || client != m_activeClient) {
     return;
@@ -277,7 +288,9 @@ void TextInputService::handleDone(std::uint32_t serial) {
   m_pendingEdit = {};
 
   if (m_activeClient != nullptr) {
+    m_applyingEdit = true;
     m_activeClient->textInputApplyEdit(edit);
+    m_applyingEdit = false;
     if (serial == m_commitSerial) {
       commitActiveState(TextInputChangeCause::InputMethod);
     }

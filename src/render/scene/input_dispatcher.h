@@ -51,7 +51,8 @@ public:
   void keyEvent(std::uint32_t sym, std::uint32_t utf32, std::uint32_t modifiers, bool pressed, bool preedit = false);
 
   // Focus management
-  void setFocus(InputArea* area);
+  // Preserve the input-method conversation only when forwarding an in-flight text-input edit.
+  void setFocus(InputArea* area, bool preserveTextInput = false);
   void stashTabFocus();
   void restoreStashedTabFocus();
   [[nodiscard]] TabFocusSnapshot captureTabFocus() const;

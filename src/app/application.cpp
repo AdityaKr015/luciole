@@ -151,6 +151,7 @@ namespace {
       m_surface.setRenderContext(&renderer);
       m_surface.setAnimationManager(&m_animations);
       m_surface.setConfigureCallback([this](std::uint32_t, std::uint32_t) {
+        m_blankLocationClick.reset();
         if (m_resizingSidebar || m_columnDrag || m_columnResize)
           m_dispatcher.cancelPointerCapture();
         m_surface.requestLayout();
@@ -368,6 +369,13 @@ namespace {
       m_pointerX = x;
       m_pointerY = y;
       if (dispatcher == &m_dispatcher
+          && m_blankLocationClick
+          && (event.type == PointerEvent::Type::Leave
+              || event.type == PointerEvent::Type::Axis
+              || (event.type == PointerEvent::Type::Motion
+                  && (std::abs(x - m_blankLocationClick->x) > 6.0F || std::abs(y - m_blankLocationClick->y) > 6.0F))))
+        m_blankLocationClick.reset();
+      if (dispatcher == &m_dispatcher
           && event.type == PointerEvent::Type::Button
           && event.pressed
           && m_editingLocation
@@ -451,6 +459,35 @@ namespace {
           return;
         }
       }
+      if (dispatcher == &m_dispatcher && event.type == PointerEvent::Type::Button && event.pressed) {
+        const auto& location = m_browser.model().snapshot().location;
+        const bool blank = event.button == BTN_LEFT
+            && m_connection.input().keyboardModifiers() == 0
+            && !m_editingLocation
+            && location
+            && m_locationArea
+            && m_locationArea->containsScenePoint(x, y)
+            && std::ranges::none_of(m_dropBreadcrumbs, [x, y](const auto& crumb) {
+                             return crumb.second->containsScenePoint(x, y);
+                           });
+        if (blank) {
+          const auto now = std::chrono::steady_clock::now();
+          const bool twice = m_blankLocationClick
+              && m_blankLocationClick->location == location
+              && m_blankLocationClick->context == m_browser.contextSerial()
+              && now - m_blankLocationClick->time < std::chrono::milliseconds(400)
+              && std::abs(x - m_blankLocationClick->x) <= 6.0F
+              && std::abs(y - m_blankLocationClick->y) <= 6.0F;
+          if (twice) {
+            m_blankLocationClick.reset();
+            m_breadcrumbEditTarget = location;
+            m_surface.requestUpdate();
+            return;
+          }
+          m_blankLocationClick = LocationBlankClick{*location, m_browser.contextSerial(), now, x, y};
+        } else
+          m_blankLocationClick.reset();
+      }
       if (dispatcher == &m_dispatcher
           && event.type == PointerEvent::Type::Button
           && event.pressed
@@ -515,6 +552,7 @@ namespace {
       if (event.pressed) {
         m_popupSerial = m_connection.input().lastSerial();
         m_lastBreadcrumb.reset();
+        m_blankLocationClick.reset();
         if ((m_columnDrag || m_columnResize) && KeySymbol::isEscape(event.sym)) {
           m_dispatcher.cancelPointerCapture();
           return;
@@ -855,6 +893,8 @@ namespace {
       );
     }
     void dispatchAction(Action action, const files::ActionRequest& request) {
+      if (action == Action::OPEN)
+        Logger("file-launch").debug("Open action dispatch ({} targets)", request.targets.size());
       const auto state = actionState(action, request);
       if (!state.enabled) {
         actionError(std::string(state.reason));
@@ -2305,7 +2345,7 @@ namespace {
       if ((edit.hasCommitText && !edit.commitText.empty())
           || (edit.hasPreedit && !edit.preeditText.empty())
           || (edit.hasDelete && !m_browser.searchQuery().empty())) {
-        openFilter(false);
+        openFilter(false, true);
         m_filterInput->textInputApplyEdit(edit);
       }
     }
@@ -2445,6 +2485,7 @@ namespace {
       );
     }
     void beginLocationEdit() {
+      m_blankLocationClick.reset();
       m_lastBreadcrumb.reset();
       m_breadcrumbEditTarget.reset();
       clearCompletions();
@@ -2605,7 +2646,8 @@ namespace {
       m_breadcrumbScroll->requestScrollToBottom();
     }
 
-    void openFilter(bool selectAll = true) {
+    void openFilter(bool selectAll = true, bool preserveTextInput = false) {
+      m_blankLocationClick.reset();
       clearTypeahead();
       m_lastBreadcrumb.reset();
       m_breadcrumbEditTarget.reset();
@@ -2613,10 +2655,10 @@ namespace {
         endLocationEdit(false);
       }
       m_filterOpen = true;
-      if (m_filterInput->value() != m_browser.searchQuery()) {
+      if (!m_filterInput->composing() && m_filterInput->value() != m_browser.searchQuery()) {
         m_filterInput->setValue(m_browser.searchQuery());
       }
-      m_dispatcher.setFocus(m_filterInput->inputArea());
+      m_dispatcher.setFocus(m_filterInput->inputArea(), preserveTextInput);
       if (selectAll) {
         m_filterInput->selectAll();
       }
@@ -2626,6 +2668,7 @@ namespace {
 
     void changeNameFilter(const std::string& text) {
       m_filterOpen = true;
+      m_browser.setSearchComposing(m_filterInput->composing());
       if (text == m_browser.searchQuery()) {
         return;
       }
@@ -2633,7 +2676,7 @@ namespace {
       m_gridAdapter.onPointerCancel();
       m_viewAnchor.reset();
       m_list->scrollView().requestScrollToOffset(0);
-      m_browser.setSearchQuery(text);
+      m_browser.editSearchQuery(text);
     }
 
     void closeFilter() {
@@ -3222,7 +3265,7 @@ namespace {
         m_viewAnchor.reset();
       }
       m_location->setInvalid(m_locationInvalid);
-      if (m_filterInput->value() != m_browser.searchQuery()) {
+      if (!m_filterInput->composing() && m_filterInput->value() != m_browser.searchQuery()) {
         m_filterInput->setValue(m_browser.searchQuery());
       }
       const bool searchFocused = m_dispatcher.focusedArea() == m_filterInput->inputArea();
@@ -3700,12 +3743,16 @@ namespace {
                .onChange = [this](const std::string& text) { changeNameFilter(text); },
                .onSubmit =
                    [this](const std::string&) {
+                     if (m_filterInput->composing())
+                       return;
+                     m_browser.submitSearchQuery();
                      if (!m_browser.model().rows().empty()) {
                        m_dispatcher.setFocus(m_list->focusArea());
                      }
                    },
                .configure =
                    [this](Input& input) {
+                     input.setOnCompositionChange([this](bool composing) { m_browser.setSearchComposing(composing); });
                      input.setClearButtonWidth(24.0F);
                      input.inputArea()->setTooltip("Search names in this folder and all subfolders");
                      input.setOnFocusGain([this] {
@@ -4579,6 +4626,13 @@ namespace {
     Flex* m_locationArea = nullptr;
     ScrollView* m_breadcrumbScroll = nullptr;
     Flex* m_breadcrumbs = nullptr;
+    struct LocationBlankClick {
+      files::Location location;
+      std::uint64_t context;
+      std::chrono::steady_clock::time_point time;
+      float x, y;
+    };
+    std::optional<LocationBlankClick> m_blankLocationClick;
     std::optional<files::Location> m_lastBreadcrumb;
     std::optional<files::Location> m_breadcrumbEditTarget;
     std::chrono::steady_clock::time_point m_breadcrumbClickTime;

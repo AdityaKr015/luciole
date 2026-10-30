@@ -3,6 +3,7 @@
 #include "browser/details_columns.h"
 #include "browser/file_icon.h"
 #include "core/input/key_modifiers.h"
+#include "core/log.h"
 #include "ui/builders.h"
 #include "ui/controls/selection_surface.h"
 
@@ -478,6 +479,7 @@ bool files::FileViewAdapter::itemHitTest(std::size_t, float x, float y, float wi
 }
 
 void files::FileViewAdapter::onActivate(std::size_t index) {
+  Logger("file-launch").debug("File-view activation received");
   if (index < itemCount()) {
     if (m_activate)
       m_activate(m_browser.model().rows()[index]);

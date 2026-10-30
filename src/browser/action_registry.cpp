@@ -20,7 +20,7 @@ namespace {
        {A::GRID, "Grid view", "Ctrl+1"},
        {A::LIST, "List view", "Ctrl+2"},
        {A::SHOW_HIDDEN, "Show hidden files", "Ctrl+H"},
-       {A::SHOW_SIDEBAR, "Show Places sidebar", "F9"},
+       {A::SHOW_SIDEBAR, "Show sidebar", "F9"},
        {A::SORT_NAME, "Name", ""},
        {A::SORT_TYPE, "Type", ""},
        {A::SORT_SIZE, "Size", ""},

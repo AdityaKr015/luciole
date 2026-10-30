@@ -742,6 +742,8 @@ TextInputState Input::textInputState() const {
 }
 
 void Input::textInputApplyEdit(const TextInputEdit& edit) {
+  const bool wasComposing = composing();
+  const std::weak_ptr<int> alive = m_aliveToken;
   clampEditState();
 
   const bool permanentEdit = edit.hasDelete || edit.hasCommitText;
@@ -813,8 +815,16 @@ void Input::textInputApplyEdit(const TextInputEdit& edit) {
   const std::optional<std::string> submitValue = edit.submit ? std::optional<std::string>{m_value} : std::nullopt;
   const auto onChange = m_onChange;
   const auto onSubmit = m_onSubmit;
+  const auto onCompositionChange = m_onCompositionChange;
+  if (wasComposing != composing() && onCompositionChange) {
+    onCompositionChange(composing());
+    if (alive.expired())
+      return;
+  }
   if (permanentValue.has_value() && onChange) {
     onChange(*permanentValue);
+    if (alive.expired())
+      return;
   }
   if (submitValue.has_value() && onSubmit) {
     onSubmit(*submitValue);
@@ -830,6 +840,8 @@ void Input::textInputResetPreedit() {
   updateInteractiveGeometry();
   revealCursor();
   markPaintDirty();
+  if (m_onCompositionChange)
+    m_onCompositionChange(false);
 }
 
 void Input::textInputActivated(TextInputService& service) { m_textInputService = &service; }

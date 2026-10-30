@@ -58,6 +58,7 @@ public:
   void setMinLayoutWidth(float width);
   void setTextAlign(TextAlign align);
   void setOnChange(std::function<void(const std::string&)> callback);
+  void setOnCompositionChange(std::function<void(bool)> callback) { m_onCompositionChange = std::move(callback); }
   void setOnSubmit(std::function<void(const std::string&)> callback);
   void setOnKeyEvent(std::function<bool(std::uint32_t sym, std::uint32_t modifiers)> callback);
   void setOnFocusLoss(std::function<void()> callback);
@@ -248,6 +249,7 @@ private:
   Timer m_cursorBlinkTimer;
 
   std::function<void(const std::string&)> m_onChange;
+  std::function<void(bool)> m_onCompositionChange;
   std::function<void(const std::string&)> m_onSubmit;
   std::function<bool(std::uint32_t, std::uint32_t)> m_onKeyEvent;
   std::function<void()> m_onFocusLoss;

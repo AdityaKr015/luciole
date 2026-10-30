@@ -18,11 +18,9 @@ bool files::DirectoryModel::applySnapshot(DirectorySnapshot snapshot) {
   }
   if (snapshot.status == DirectoryStatus::IDLE || snapshot.status == DirectoryStatus::CANCELLED) {
     m_selectionAvailable = false;
-  } else if (
-      snapshot.status == DirectoryStatus::READY
-      || snapshot.status == DirectoryStatus::ERROR
-      || (snapshot.status == DirectoryStatus::LOADING && snapshot.incrementalResults && !snapshot.entries.empty())
-  ) {
+  } else if (snapshot.status == DirectoryStatus::LOADING && snapshot.incrementalResults) {
+    m_selectionAvailable = !snapshot.entries.empty();
+  } else if (snapshot.status == DirectoryStatus::READY || snapshot.status == DirectoryStatus::ERROR) {
     m_selectionAvailable = true;
   }
   m_snapshot = std::move(snapshot);

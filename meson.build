@@ -254,6 +254,7 @@ build_tests = tests_opt.enabled() or (
   tests_opt.auto() and get_option('buildtype') == 'debug' and get_option('b_sanitize') == 'none'
 )
 if build_tests
+  python = import('python').find_installation('python3')
   actions_test = executable('browser-actions-test', 'tests/browser_actions_test.cpp', dependencies: browser_model)
   test('browser-actions', actions_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   empty_trash_test = executable('empty-trash-service-test', 'tests/empty_trash_service_test.cpp', dependencies: trash_service)
@@ -302,6 +303,13 @@ if build_tests
   test('directory-model', browser_test, timeout: 30,
     env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],
   )
+  file_launcher_test = executable('file-launcher-test',
+    'tests/file_launcher_test.cpp', 'src/platform/file_launcher.cpp', 'src/core/log.cpp',
+    dependencies: filesystem_service,
+  )
+  test('file-launcher', python,
+    args: [files('tests/file_launcher_test.py'), file_launcher_test], timeout: 30,
+  )
   controller_test = executable('browser-controller-test',
     'tests/browser_controller_test.cpp',
     dependencies: browser_model,
@@ -335,7 +343,6 @@ if build_tests
   test('state-store', state_test, timeout: 30,
     env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],
   )
-  python = import('python').find_installation('python3')
   test('headless-cli', python,
     args: [files('tests/cli_test.py'), app, meson.project_version()],
     timeout: 30,
