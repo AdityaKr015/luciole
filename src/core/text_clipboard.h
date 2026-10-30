@@ -1,11 +1,10 @@
 #pragma once
 
+#include <functional>
 #include <optional>
 #include <string>
 
-// Minimal text-clipboard abstraction. UI controls (e.g. Input) copy and paste
-// through this interface so they stay agnostic of the Wayland data-control
-// transport and the clipboard-history service that implements it.
+// Text controls share the ordinary application clipboard transport.
 class TextClipboard {
 public:
   virtual ~TextClipboard() = default;
@@ -15,4 +14,5 @@ public:
 
   // Replace the system clipboard selection with the given text.
   virtual void setClipboardText(std::string text) = 0;
+  virtual void requestClipboardText(std::function<void(std::optional<std::string>)> callback) = 0;
 };

@@ -9,6 +9,7 @@
 #include "browser/details_columns.h"
 #include "browser/file_view.h"
 #include "browser/location_presentation.h"
+#include "browser/path_completion.h"
 #include "browser/places_sidebar.h"
 #include "browser/selection_tools.h"
 #include "config/settings.h"
@@ -27,6 +28,8 @@
 #include "operations/transfer_service.h"
 #include "operations/trash_service.h"
 #include "platform/file_launcher.h"
+#include "platform/terminal_launcher.h"
+#include "platform/text_clipboard.h"
 #include "render/animation/animation_manager.h"
 #include "render/gl_shared_context.h"
 #include "render/render_context.h"
@@ -109,7 +112,7 @@ namespace {
   public:
     Window(
         WaylandConnection& connection, RenderContext& renderer, TextInputService& textInput,
-        const files::BrowserSettings& settings, files::ConfigPaths paths
+        const files::BrowserSettings& settings, files::ConfigPaths paths, files::WaylandTextClipboard& clipboard
     )
         : m_connection(connection), m_renderer(renderer), m_textInput(textInput), m_surface(connection),
           m_browser(settings.sort, settings.showHidden),
@@ -122,10 +125,22 @@ namespace {
               [this] { return m_fileKeyboardFocus && m_list != nullptr && m_list->focusArea()->focused(); }
           ),
           m_preferences(std::move(paths)), m_pins(files::StateStore::pathFromEnvironment()),
-          m_viewMode(settings.viewMode) {
+          m_viewMode(settings.viewMode), m_clipboard(clipboard) {
       m_gridZoom = static_cast<std::size_t>(
           std::ranges::find(files::kGridIconSizes, settings.gridIconSize) - files::kGridIconSizes.begin()
       );
+      m_browser.setViewDefaults(settings.viewMode, settings.gridIconSize);
+      m_browser.setCaptureViewport([this] {
+        files::BrowseViewport viewport{.mode = m_viewMode, .iconSize = static_cast<int>(gridIconSize())};
+        if (m_list) {
+          viewport.vertical = m_list->scrollView().scrollOffset();
+          viewport.horizontal = m_detailsOffset;
+          viewport.withinRow = m_list->firstVisibleOffset();
+          if (const auto first = m_list->firstVisibleIndex(); first && *first < m_browser.model().rows().size())
+            viewport.first = m_browser.model().rows()[*first];
+        }
+        return viewport;
+      });
       m_sidebarWidth = settings.sidebarWidth;
       m_showSidebar = settings.showSidebar;
       m_columnVisibility = settings.columns;
@@ -352,6 +367,13 @@ namespace {
       const auto x = static_cast<float>(event.sx), y = static_cast<float>(event.sy);
       m_pointerX = x;
       m_pointerY = y;
+      if (dispatcher == &m_dispatcher
+          && event.type == PointerEvent::Type::Button
+          && event.pressed
+          && m_editingLocation
+          && m_completionFrame
+          && !m_completionFrame->containsScenePoint(x, y))
+        clearCompletions();
       if (event.type == PointerEvent::Type::Button && event.pressed && dispatcher == &m_dispatcher)
         clearTypeahead();
       if (event.type == PointerEvent::Type::Button && event.pressed) {
@@ -537,10 +559,12 @@ namespace {
           dismissMenu();
         } else if (KeySymbol::isUp(event.sym)) {
           if (m_menu->moveHighlight(-1)) {
+            revealMenuHighlight();
             m_menuSurface->requestRedraw();
           }
         } else if (KeySymbol::isDown(event.sym)) {
           if (m_menu->moveHighlight(1)) {
+            revealMenuHighlight();
             m_menuSurface->requestRedraw();
           }
         } else if (KeySymbol::isEnter(event.sym)) {
@@ -556,6 +580,16 @@ namespace {
             clearTypeahead();
           return;
         }
+        if ((event.sym == XKB_KEY_Menu && event.modifiers == 0)
+            || (event.sym == XKB_KEY_F10 && event.modifiers == KeyMod::Shift)) {
+          for (const auto& [target, button] : m_dropBreadcrumbs)
+            if (m_dispatcher.focusedArea() == button->inputArea()) {
+              openBreadcrumbMenu(target, sceneRect(*button));
+              return;
+            }
+        }
+        if (m_editingLocation && completionKey(event.sym, event.modifiers))
+          return;
         if (KeySymbol::isTab(event.sym)) {
           (void)m_dispatcher.cycleTabFocus((event.modifiers & KeyMod::Shift) != 0);
           m_surface.requestRedraw();
@@ -781,6 +815,8 @@ namespace {
           .pinned = [this](const auto& location) { return m_pins.contains(location); },
           .viewMode = m_viewMode,
           .showSidebar = m_showSidebar,
+          .clipboardAvailable = m_clipboard.available(),
+          .terminalAvailable = m_terminal.available(),
           .activationMode = m_activationMode,
           .typingMode = m_typingMode
       };
@@ -836,6 +872,39 @@ namespace {
         if (const auto* entry = m_browser.model().entry(target.id))
           targets.push_back(*entry);
       switch (action) {
+      case Action::COPY_PATH:
+      case Action::COPY_URI:
+      case Action::COPY_TARGET_PATH:
+      case Action::COPY_TARGET_URI: {
+        std::string text;
+        const bool uri = action == Action::COPY_URI || action == Action::COPY_TARGET_URI;
+        const auto append = [&](const files::Location& location) {
+          if (!text.empty())
+            text += '\n';
+          text += uri ? location.uri() : files::locationEditText(location);
+        };
+        if (action == Action::COPY_PATH || action == Action::COPY_URI)
+          append(*request.folder);
+        else
+          for (const auto& target : targets)
+            append(target.location);
+        if (text.size() > 1024 * 1024)
+          actionError("The selected paths exceed the clipboard text limit.");
+        else
+          m_clipboard.setClipboardText(std::move(text));
+        break;
+      }
+      case Action::TERMINAL:
+      case Action::TARGET_TERMINAL: {
+        const auto target = action == Action::TERMINAL ? *request.folder : targets.front().location;
+        const auto context = m_browser.contextSerial();
+        const std::weak_ptr<int> lifetime = m_lifetime;
+        m_terminal.open(target, [this, lifetime, context](std::string error) {
+          if (!lifetime.expired() && context == m_browser.contextSerial() && !error.empty())
+            actionError(std::move(error));
+        });
+        break;
+      }
       case Action::BACK:
         (void)m_browser.back();
         break;
@@ -1089,6 +1158,10 @@ namespace {
         if (request.folder && !request.folder->isTrash())
           add(m_pins.contains(*request.folder) ? Action::UNPIN_CURRENT : Action::PIN_CURRENT);
         add(Action::RELOAD_PINS);
+        separator();
+        add(Action::COPY_PATH);
+        add(Action::COPY_URI);
+        add(Action::TERMINAL);
       } else {
         if (request.targets.empty())
           return;
@@ -1119,6 +1192,11 @@ namespace {
           add(Action::RENAME);
         if (!trash)
           add(Action::TRASH);
+        separator();
+        add(Action::COPY_TARGET_PATH);
+        add(Action::COPY_TARGET_URI);
+        if (folders && request.targets.size() == 1)
+          add(Action::TARGET_TERMINAL);
         separator();
         add(Action::PROPERTIES);
       }
@@ -2241,9 +2319,135 @@ namespace {
     void textInputActivated(TextInputService&) override {}
     void textInputDeactivated(TextInputService&) override { clearTypeahead(); }
 
+    void clearCompletions() {
+      m_pathCompletion.cancel();
+      m_completionText.clear();
+      m_completionItems = {};
+      m_completionIndex.reset();
+      m_completionDirty = true;
+      m_surface.requestLayout();
+    }
+    void requestCompletions(const std::string& text) {
+      clearCompletions();
+      if (!m_editingLocation || !m_browser.model().snapshot().location || m_location->composing())
+        return;
+      const auto edit = m_location->textInputState();
+      if (edit.cursor != static_cast<std::int32_t>(text.size()) || edit.anchor != edit.cursor)
+        return;
+      const auto context = m_browser.contextSerial();
+      m_pathCompletion.complete(
+          text, *m_browser.model().snapshot().location, m_browser.model().filter().showHidden,
+          [this, text, context](files::PathSuggestions suggestions) {
+            if (!m_editingLocation
+                || context != m_browser.contextSerial()
+                || m_location->value() != text
+                || m_location->composing())
+              return;
+            const auto edit = m_location->textInputState();
+            if (edit.cursor != static_cast<std::int32_t>(text.size()) || edit.anchor != edit.cursor)
+              return;
+            m_completionText = text;
+            m_completionContext = context;
+            m_completionItems = std::move(suggestions);
+            m_completionIndex.reset();
+            m_completionDirty = true;
+            m_surface.requestLayout();
+          }
+      );
+    }
+    void acceptCompletion(std::size_t index, bool navigate) {
+      if (index >= m_completionItems.items.size())
+        return;
+      const auto suggestion = m_completionItems.items[index];
+      clearCompletions();
+      if (navigate) {
+        m_browser.open(suggestion.location);
+        endLocationEdit(true);
+      } else {
+        m_location->setValue(suggestion.text);
+        m_location->selectRange(suggestion.text.size(), suggestion.text.size());
+        m_dispatcher.setFocus(m_location->inputArea());
+      }
+    }
+    bool completionKey(std::uint32_t key, std::uint32_t modifiers) {
+      const auto edit = m_location->textInputState();
+      if (m_location->composing()
+          || m_completionContext != m_browser.contextSerial()
+          || m_location->value() != m_completionText
+          || edit.cursor != static_cast<std::int32_t>(m_completionText.size())
+          || edit.anchor != edit.cursor) {
+        clearCompletions();
+        return false;
+      }
+      if (modifiers != 0 && (!KeySymbol::isTab(key) || modifiers != KeyMod::Shift))
+        return false;
+      if (m_completionItems.items.empty())
+        return false;
+      if (KeySymbol::isEscape(key)) {
+        clearCompletions();
+        return true;
+      }
+      if (KeySymbol::isTab(key)) {
+        acceptCompletion(m_completionIndex.value_or(0), false);
+        return true;
+      }
+      if (KeySymbol::isEnter(key) && m_completionIndex) {
+        acceptCompletion(*m_completionIndex, true);
+        return true;
+      }
+      if (KeySymbol::isDown(key) || KeySymbol::isUp(key)) {
+        const auto count = m_completionItems.items.size();
+        m_completionIndex = m_completionIndex
+            ? (*m_completionIndex + count + (KeySymbol::isDown(key) ? 1 : count - 1)) % count
+            : KeySymbol::isDown(key) ? 0
+                                     : count - 1;
+        m_completionDirty = true;
+        m_surface.requestLayout();
+        return true;
+      }
+      if (KeySymbol::isLeft(key) || KeySymbol::isRight(key) || KeySymbol::isHome(key) || KeySymbol::isEnd(key))
+        clearCompletions();
+      return false;
+    }
+    void layoutCompletions(Renderer& renderer) {
+      if (m_completionDirty) {
+        m_completionDirty = false;
+        std::vector<ContextMenuControlEntry> entries;
+        constexpr std::size_t pageSize = 6;
+        const auto page = m_completionIndex.value_or(0) / pageSize * pageSize;
+        for (auto i = page; i < std::min(page + pageSize, m_completionItems.items.size()); ++i)
+          entries.push_back({.id = static_cast<int>(i), .label = m_completionItems.items[i].label});
+        if (m_completionItems.items.size() > pageSize || m_completionItems.truncated)
+          entries.push_back(
+              {.label = m_completionItems.truncated ? "More matches; type to narrow" : "Arrow keys for more matches",
+               .enabled = false}
+          );
+        if (!m_completionItems.error.empty() && entries.empty())
+          entries.push_back({.label = "Folder suggestions unavailable", .enabled = false});
+        const bool visible = m_editingLocation && !entries.empty() && !m_menuSurface;
+        m_completionFrame->setVisible(visible);
+        m_completionControl->setMaxVisible(entries.size());
+        m_completionControl->setEntries(std::move(entries));
+        if (m_completionIndex)
+          m_completionControl->setHighlightedIndex(*m_completionIndex - page);
+        else
+          m_completionControl->setHighlightedIndex(m_completionControl->entryCount());
+      }
+      if (!m_completionFrame->visible())
+        return;
+      const auto anchor = sceneRect(*m_locationArea);
+      const float width = std::min(anchor.width, static_cast<float>(m_surface.width()) - 16.0F);
+      m_completionControl->setMenuWidth(width);
+      m_completionFrame->arrange(
+          renderer,
+          {std::clamp(anchor.x, 8.0F, std::max(8.0F, static_cast<float>(m_surface.width()) - width - 8.0F)),
+           anchor.y + anchor.height + 4.0F, width, m_completionControl->preferredHeight()}
+      );
+    }
     void beginLocationEdit() {
       m_lastBreadcrumb.reset();
       m_breadcrumbEditTarget.reset();
+      clearCompletions();
       m_editingLocation = true;
       m_locationInvalid = false;
       m_location->setValue(
@@ -2260,6 +2464,7 @@ namespace {
       m_surface.requestUpdate();
     }
     void endLocationEdit(bool focusFiles) {
+      clearCompletions();
       m_editingLocation = false;
       m_locationInvalid = false;
       m_location->setVisible(false);
@@ -2281,6 +2486,73 @@ namespace {
       }
       m_browser.open(target);
       m_dispatcher.setFocus(m_list->focusArea());
+    }
+    void openBreadcrumbMenu(const files::Location& target, LayoutRect anchor) {
+      const auto context = m_browser.contextSerial();
+      auto targets = std::make_shared<std::vector<files::Location>>();
+      std::vector<ContextMenuControlEntry> entries;
+      for (const auto& crumb : files::locationBreadcrumbs(target)) {
+        const auto index = targets->size();
+        targets->push_back(crumb.location);
+        entries.push_back({.id = static_cast<int>(index), .label = crumb.label});
+      }
+      entries.push_back({.label = "", .separator = true});
+      const auto request = actionRequest(false);
+      for (const auto action : {Action::COPY_PATH, Action::COPY_URI, Action::TERMINAL}) {
+        auto entry = actionEntry(action, request);
+        entry.id = -1 - static_cast<int>(action);
+        if (action == Action::TERMINAL)
+          entry.enabled = target.nativePath().has_value() && m_terminal.available();
+        entries.push_back(std::move(entry));
+      }
+      entries.push_back({.label = "", .separator = true});
+      entries.push_back({.label = "Sibling folders", .header = true});
+      entries.push_back({.label = "Loading folders…", .enabled = false});
+      const auto activate = [this, context, target, targets](int id) {
+        if (context != m_browser.contextSerial())
+          return;
+        if (id >= 0) {
+          if (static_cast<std::size_t>(id) < targets->size())
+            breadcrumbClick((*targets)[static_cast<std::size_t>(id)]);
+          return;
+        }
+        const auto action = static_cast<Action>(-1 - id);
+        if (action == Action::TERMINAL) {
+          if (!target.nativePath() || !m_terminal.available())
+            return;
+          const std::weak_ptr<int> lifetime = m_lifetime;
+          m_terminal.open(target, [this, lifetime, context](std::string error) {
+            if (!lifetime.expired() && context == m_browser.contextSerial() && !error.empty())
+              actionError(std::move(error));
+          });
+        } else if (m_clipboard.available())
+          m_clipboard.setClipboardText(action == Action::COPY_URI ? target.uri() : files::locationEditText(target));
+      };
+      showContextMenu(entries, activate, anchor);
+      const auto generation = m_menuGeneration;
+      const files::GioPtr<GFile> parent(g_file_get_parent(target.file().get()));
+      const files::GString uri(parent ? g_file_get_uri(parent.get()) : nullptr);
+      const auto siblingParent = uri ? files::Location::fromUri(uri.get()) : target;
+      m_siblingCompletion.children(
+          siblingParent, m_browser.model().filter().showHidden,
+          [this, context, generation, anchor, targets, entries = std::move(entries),
+           activate](const files::PathSuggestions& suggestions) mutable {
+            if (context != m_browser.contextSerial() || generation != m_menuGeneration || !m_menuSurface)
+              return;
+            entries.pop_back();
+            for (const auto& item : suggestions.items) {
+              entries.push_back({.id = static_cast<int>(targets->size()), .label = item.label});
+              targets->push_back(item.location);
+            }
+            if (suggestions.items.empty())
+              entries.push_back(
+                  {.label = suggestions.error.empty() ? "No sibling folders" : "Folders unavailable", .enabled = false}
+              );
+            if (suggestions.truncated)
+              entries.push_back({.label = "First 256 folders; open parent for all", .enabled = false});
+            showContextMenu(std::move(entries), activate, anchor);
+          }
+      );
     }
     void rebuildBreadcrumbs() {
       m_dropBreadcrumbs.clear();
@@ -2317,10 +2589,14 @@ namespace {
                      [this, target](Button& button) {
                        m_dropBreadcrumbs.emplace_back(target, &button);
                        button.label()->setUseMarkup(false);
+                       button.inputArea()->setAcceptedButtons(
+                           InputArea::buttonMask(BTN_LEFT) | InputArea::buttonMask(BTN_RIGHT)
+                       );
                        button.inputArea()->setOnClick([this, target](const InputArea::PointerData& pointer) {
                          if (pointer.button == BTN_LEFT) {
                            breadcrumbClick(target, &pointer);
-                         }
+                         } else if (pointer.button == BTN_RIGHT)
+                           openBreadcrumbMenu(target, {pointer.sceneX, pointer.sceneY, 1, 1});
                        });
                      }}
             )
@@ -2720,6 +2996,7 @@ namespace {
       }
       m_viewMode = mode;
       m_preferences.save(mode);
+      m_browser.setDefaultViewMode(m_viewMode);
       m_browserDirty = true;
       m_surface.requestUpdate();
     }
@@ -2756,6 +3033,7 @@ namespace {
       m_gridAdapter.onPointerCancel();
       m_gridZoom = zoom;
       m_preferences.saveGridIconSize(files::kGridIconSizes[m_gridZoom]);
+      m_browser.setDefaultIconSize(static_cast<int>(gridIconSize()));
       m_browserDirty = true;
       m_surface.requestUpdate();
     }
@@ -2904,8 +3182,20 @@ namespace {
         clearTypeahead();
       const auto& model = m_browser.model();
       const auto& snapshot = model.snapshot();
+      if (m_visitSerial != m_browser.visitSerial()) {
+        m_visitSerial = m_browser.visitSerial();
+        const auto& viewport = m_browser.viewport();
+        m_viewMode = viewport.mode;
+        m_gridZoom = static_cast<std::size_t>(
+            std::ranges::find(files::kGridIconSizes, viewport.iconSize) - files::kGridIconSizes.begin()
+        );
+        m_detailsOffset = 0;
+        m_keyboardReveal.reset();
+      }
       const auto uri = snapshot.location ? snapshot.location->uri() : std::string{};
       if (uri != m_displayedLocation) {
+        clearCompletions();
+        m_siblingCompletion.cancel();
         if (snapshot.location != m_lastBreadcrumb) {
           m_lastBreadcrumb.reset();
         }
@@ -2926,6 +3216,10 @@ namespace {
         m_gridAdapter.onPointerCancel();
         m_viewAnchor.reset();
         m_list->scrollView().requestScrollToOffset(0);
+      }
+      if (auto restored = m_browser.takeRestoredViewport()) {
+        m_pendingHistoryViewport = restored;
+        m_viewAnchor.reset();
       }
       m_location->setInvalid(m_locationInvalid);
       if (m_filterInput->value() != m_browser.searchQuery()) {
@@ -3241,6 +3535,17 @@ namespace {
           }
           m_viewAnchor.reset();
         }
+        if (m_pendingHistoryViewport) {
+          const auto viewport = *m_pendingHistoryViewport;
+          m_pendingHistoryViewport.reset();
+          m_detailsOffset = viewport.horizontal;
+          const auto& rows = m_browser.model().rows();
+          const auto found = viewport.first ? std::ranges::find(rows, *viewport.first) : rows.end();
+          if (found != rows.end())
+            m_list->scrollToIndex(static_cast<std::size_t>(found - rows.begin()), true, viewport.withinRow);
+          else
+            m_list->scrollView().requestScrollToOffset(viewport.vertical);
+        }
         const bool clientHeader = !m_surface.serverDecorated() && !m_surface.fullscreen();
         const bool columnOrderChanged = m_columnOrder != m_appliedColumnOrder;
         if (columnOrderChanged) {
@@ -3262,6 +3567,7 @@ namespace {
         layoutColumnDrag(renderer);
         m_sidebarResizeLine->arrange(renderer, {2.5F, 0, 1.0F, m_sidebarResize->height()});
         layoutDrag(renderer);
+        layoutCompletions(renderer);
         if (placesFocus) {
           m_dispatcher.restoreTabFocus(std::move(*placesFocus));
         }
@@ -3347,6 +3653,7 @@ namespace {
                .flexGrow = 1.0F,
                .visible = false,
                .participatesInLayout = false,
+               .onChange = [this](const std::string& text) { requestCompletions(text); },
                .onSubmit =
                    [this](const std::string& text) {
                      m_locationInvalid = !m_browser.openText(text);
@@ -3831,6 +4138,22 @@ namespace {
       );
       m_folderDropHighlight->setZIndex(99);
       m_folderDropHighlight->setHitTestVisible(false);
+      auto completion = std::make_unique<ContextMenuControl>();
+      m_completionControl = completion.get();
+      completion->setOnActivate([this](const ContextMenuControlEntry& entry) {
+        acceptCompletion(static_cast<std::size_t>(entry.id), false);
+      });
+      auto completionFrame = ui::column(
+          {.out = &m_completionFrame,
+           .fill = colorSpecFromRole(ColorRole::SurfaceContainerHigh),
+           .radius = Style::radiusLg,
+           .border = colorSpecFromRole(ColorRole::OutlineVariant),
+           .visible = false,
+           .participatesInLayout = false},
+          std::move(completion)
+      );
+      completionFrame->setZIndex(110);
+      m_root->addChild(std::move(completionFrame));
       m_root->setAnimationManager(&m_animations);
       m_surface.setSceneRoot(m_root.get());
       m_dispatcher.setSceneRoot(m_root.get());
@@ -3838,6 +4161,18 @@ namespace {
       m_dispatcher.setFocus(m_list->focusArea());
     }
 
+    void revealMenuHighlight() {
+      if (!m_menuScroll || !m_menu)
+        return;
+      const auto index = m_menu->highlightedIndex();
+      const float top = m_menu->rowTop(index), bottom = m_menu->rowBottom(index);
+      const float offset = m_menuScroll->scrollOffset();
+      if (top < offset)
+        m_menuScroll->requestScrollToOffset(top);
+      else if (bottom > offset + m_menuScroll->height())
+        m_menuScroll->requestScrollToOffset(bottom - m_menuScroll->height());
+      m_menuSurface->requestLayout();
+    }
     void dismissMenu() {
       const auto generation = m_menuGeneration;
       const std::weak_ptr<int> lifetime = m_lifetime;
@@ -3887,6 +4222,7 @@ namespace {
       m_patternEditor = nullptr;
       m_menuRoot.reset();
       m_menu = nullptr;
+      m_menuScroll = nullptr;
       m_menuSurface.reset();
       m_dispatcher.setTextInputContext(m_surface.wlSurface(), &m_textInput);
       m_surface.requestLayout();
@@ -3902,6 +4238,7 @@ namespace {
         bool alignLeft = false
     ) {
       clearTypeahead();
+      clearCompletions();
       closeMenu();
       m_menu = menu;
       m_menuRoot = std::move(root);
@@ -3982,10 +4319,15 @@ namespace {
       cancelDrag();
       auto menu = std::make_unique<ContextMenuControl>();
       auto* control = menu.get();
-      const float height = ContextMenuControl::preferredHeight(entries, entries.size(), 1.0F);
+      const float contentHeight = ContextMenuControl::preferredHeight(entries, entries.size(), 1.0F);
+      const float height = std::min(contentHeight, std::max(120.0F, static_cast<float>(m_surface.height()) - 32.0F));
+      control->setMaxVisible(entries.size());
       constexpr float width = 264.0F;
       control->setEntries(std::move(entries));
-      control->setMenuWidth(width);
+      const bool overflowing = contentHeight > height + 0.5F;
+      const float gutter = overflowing ? Style::scrollbarWidth + Style::scrollbarGap : 0.0F;
+      // The menu has an intrinsic width; reserve the scroller's lane explicitly.
+      control->setMenuWidth(width - gutter);
       control->setOnActivate([this, action = std::move(action)](const ContextMenuControlEntry& entry) {
         const int id = entry.id;
         const std::weak_ptr<int> lifetime = m_lifetime;
@@ -3996,10 +4338,17 @@ namespace {
           }
         });
       });
+      ScrollView* scroll = nullptr;
+      auto scrolling = ui::scrollView(
+          {.out = &scroll, .viewportPaddingH = 0.0F, .viewportPaddingV = 0.0F, .height = height, .flexGrow = 1.0F}
+      );
+      scrolling->setReserveScrollbarGutter(overflowing);
+      scrolling->content()->addChild(std::move(menu));
       auto root = ui::column(
-          {.fill = colorSpecFromRole(ColorRole::SurfaceContainerHigh), .radius = Style::radiusLg}, std::move(menu)
+          {.fill = colorSpecFromRole(ColorRole::SurfaceContainerHigh), .radius = Style::radiusLg}, std::move(scrolling)
       );
       showPopup(std::move(root), control, anchor, width, height, alignLeft);
+      m_menuScroll = scroll;
     }
 
     void openColumnsMenu(const LayoutRect& anchor, std::optional<files::DetailsColumn> column = std::nullopt) {
@@ -4197,6 +4546,17 @@ namespace {
     std::size_t m_gridZoom = 1;
     double m_zoomScroll = 0;
     files::ViewMode m_viewMode;
+    files::WaylandTextClipboard& m_clipboard;
+    files::TerminalLauncher m_terminal;
+    files::PathCompletion m_pathCompletion;
+    files::PathCompletion m_siblingCompletion;
+    files::PathSuggestions m_completionItems;
+    std::string m_completionText;
+    std::uint64_t m_completionContext = 0;
+    std::optional<std::size_t> m_completionIndex;
+    bool m_completionDirty = false;
+    ContextMenuControl* m_completionControl = nullptr;
+    Flex* m_completionFrame = nullptr;
     int m_sidebarWidth = files::kDefaultSidebarWidth;
     bool m_showSidebar = true;
     int m_sidebarStartWidth = files::kDefaultSidebarWidth;
@@ -4207,6 +4567,8 @@ namespace {
     Box* m_sidebarResizeLine = nullptr;
     std::optional<files::ViewMode> m_appliedViewMode;
     std::optional<files::EntryId> m_viewAnchor;
+    std::uint64_t m_visitSerial = 0;
+    std::optional<files::BrowseViewport> m_pendingHistoryViewport;
     std::optional<files::EntryId> m_keyboardReveal;
     std::unique_ptr<Node> m_root;
     InputDispatcher m_dispatcher;
@@ -4266,6 +4628,7 @@ namespace {
     std::unique_ptr<PopupSurface> m_menuSurface;
     std::unique_ptr<Flex> m_menuRoot;
     ContextMenuControl* m_menu = nullptr;
+    ScrollView* m_menuScroll = nullptr;
     NameEditor* m_placeEditor = nullptr;
     NameEditor* m_fileRenameEditor = nullptr;
     NameEditor* m_createEditor = nullptr;
@@ -4308,11 +4671,20 @@ int files::runApplication(const std::optional<std::string>& initialLocation) {
       throw std::runtime_error(error);
     }
     connection.bindTextInput(textInput);
+    WaylandTextClipboard clipboard(connection.dataDeviceManager(), connection.seat(), [&connection] {
+      return connection.input().lastSerial();
+    });
+    Input::setTextClipboard(&clipboard);
+    struct ClipboardBinding {
+      ~ClipboardBinding() { Input::setTextClipboard(nullptr); }
+    } clipboardBinding;
     GlSharedContext graphics;
     graphics.initialize(connection.display());
     RenderContext renderer;
     renderer.initialize(graphics);
-    Window window(connection, renderer, textInput, config.settings().browser, ConfigPaths::fromEnvironment());
+    Window window(
+        connection, renderer, textInput, config.settings().browser, ConfigPaths::fromEnvironment(), clipboard
+    );
     if (!window.initialize(initialLocation)) {
       throw std::runtime_error("cannot create the application window");
     }

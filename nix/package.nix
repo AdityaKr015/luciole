@@ -25,6 +25,7 @@
   makeWrapper,
   adwaita-icon-theme,
   shared-mime-info,
+  xdg-terminal-exec,
   buildRevision ? "unknown",
 }:
 stdenv.mkDerivation (finalAttrs: {
@@ -87,6 +88,7 @@ stdenv.mkDerivation (finalAttrs: {
   mesonBuildType = "release";
   postFixup = ''
     wrapProgram "$out/bin/noctalia-files" \
+      --prefix PATH : "${lib.makeBinPath [ xdg-terminal-exec ]}" \
       --suffix GIO_EXTRA_MODULES : "${gvfs}/lib/gio/modules" \
       --suffix XDG_DATA_DIRS : "${
         lib.makeSearchPath "share" [

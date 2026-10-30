@@ -66,6 +66,7 @@ namespace files {
     [[nodiscard]] std::optional<EntryId> prefixMatch(const std::string& prefix, bool cycle = false) const;
     void clearSelection();
     bool replaceSelection(std::span<const EntryId> ids);
+    void restoreInteraction(SelectionState selection, std::optional<EntryId> scroll);
     bool setFocus(std::optional<EntryId> id);
     bool setScrollAnchor(std::optional<EntryId> id);
 

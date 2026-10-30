@@ -53,7 +53,13 @@ namespace files {
     VIEW_MENU,
     SORT_MENU,
     SELECTION_MENU,
-    INTERACTION_MENU
+    INTERACTION_MENU,
+    COPY_PATH,
+    COPY_URI,
+    TERMINAL,
+    COPY_TARGET_PATH,
+    COPY_TARGET_URI,
+    TARGET_TERMINAL
   };
   enum class ActionScope : std::uint8_t { GLOBAL, LOCATION, TARGETS, SELECTION };
   struct ActionDefinition {
@@ -84,6 +90,8 @@ namespace files {
     std::function<bool(const Location&)> pinned;
     ViewMode viewMode = ViewMode::LIST;
     bool showSidebar = true;
+    bool clipboardAvailable = false;
+    bool terminalAvailable = false;
     ActivationMode activationMode = ActivationMode::DOUBLE_CLICK;
     TypingMode typingMode = TypingMode::SEARCH;
   };

@@ -53,7 +53,13 @@ namespace {
        {A::VIEW_MENU, "Back", ""},
        {A::SORT_MENU, "Sort…", ""},
        {A::SELECTION_MENU, "Selection…", ""},
-       {A::INTERACTION_MENU, "Interaction…", ""}}
+       {A::INTERACTION_MENU, "Interaction…", ""},
+       {A::COPY_PATH, "Copy folder path", "", S::LOCATION},
+       {A::COPY_URI, "Copy folder URI", "", S::LOCATION},
+       {A::TERMINAL, "Open Terminal Here", "", S::LOCATION},
+       {A::COPY_TARGET_PATH, "Copy path", "", S::TARGETS},
+       {A::COPY_TARGET_URI, "Copy URI", "", S::TARGETS},
+       {A::TARGET_TERMINAL, "Open in Terminal", "", S::TARGETS}}
   );
   files::ActionState unavailable(std::string_view reason) { return {.enabled = false, .reason = reason}; }
 } // namespace
@@ -113,6 +119,32 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
     return {};
   };
   switch (action) {
+  case A::COPY_PATH:
+  case A::COPY_URI:
+    if (!r.folder)
+      return unavailable("Open a folder first.");
+    [[fallthrough]];
+  case A::COPY_TARGET_PATH:
+  case A::COPY_TARGET_URI:
+    return c.clipboardAvailable ? ActionState{} : unavailable("The application clipboard is unavailable.");
+  case A::TERMINAL:
+  case A::TARGET_TERMINAL:
+    if (!c.terminalAvailable)
+      return unavailable("Install xdg-terminal-exec to open a terminal.");
+    if (action == A::TERMINAL) {
+      if (!native || r.folder->isTrash())
+        return unavailable("Terminals require a native folder.");
+      if (snapshot.metadata.access.execute == false)
+        return unavailable("Access to this folder is not permitted.");
+    } else {
+      if (!single() || !all([](const auto& entry) {
+            return entry.type == G_FILE_TYPE_DIRECTORY
+                && entry.location.nativePath().has_value()
+                && entry.access.execute.value_or(true);
+          }))
+        return unavailable("Select one accessible native folder.");
+    }
+    return {};
   case A::BACK:
     return c.canBack ? ActionState{} : unavailable("There is no previous folder.");
   case A::FORWARD:

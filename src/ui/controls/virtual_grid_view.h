@@ -149,7 +149,8 @@ public:
   void setScale(float scale);
   void setHorizontalOverflow(float width, float offset);
 
-  void scrollToIndex(std::size_t index, bool alignToTop = false);
+  void scrollToIndex(std::size_t index, bool alignToTop = false, float withinRow = 0);
+  [[nodiscard]] float firstVisibleOffset() const;
   [[nodiscard]] std::optional<std::size_t> firstVisibleIndex() const noexcept;
   // Pointer selection can keep the viewport stable until release.
   void setSelectedIndex(std::optional<std::size_t> index, bool scrollToSelection = true);
@@ -244,6 +245,7 @@ private:
   std::size_t m_itemCount = 0;
   bool m_pendingScrollToIndex = false;
   bool m_pendingScrollAlignTop = false;
+  float m_pendingScrollWithinRow = 0;
   std::size_t m_pendingScrollIndex = 0;
   bool m_adapterPointerCapture = false;
   bool m_areaPointerCapture = false;

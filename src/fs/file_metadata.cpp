@@ -43,3 +43,14 @@ files::FilesystemInfo files::readFilesystemInfo(GFileInfo* info) {
   }
   return result;
 }
+
+std::optional<files::FileIdentity> files::readFileIdentity(GFileInfo* info) {
+  if (g_file_info_get_attribute_type(info, G_FILE_ATTRIBUTE_ID_FILESYSTEM) != G_FILE_ATTRIBUTE_TYPE_STRING
+      || g_file_info_get_attribute_type(info, G_FILE_ATTRIBUTE_ID_FILE) != G_FILE_ATTRIBUTE_TYPE_STRING)
+    return std::nullopt;
+  const char* filesystem = g_file_info_get_attribute_string(info, G_FILE_ATTRIBUTE_ID_FILESYSTEM);
+  const char* file = g_file_info_get_attribute_string(info, G_FILE_ATTRIBUTE_ID_FILE);
+  if (!filesystem || !*filesystem || !file || !*file)
+    return std::nullopt;
+  return FileIdentity{filesystem, file};
+}

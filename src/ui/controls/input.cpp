@@ -40,10 +40,6 @@ namespace {
   bool g_readlineShortcuts = false;
   std::function<bool(std::uint32_t, std::uint32_t)> g_validateKeyMatcher;
 
-  std::optional<std::string> readClipboardText() {
-    return g_clipboard != nullptr ? g_clipboard->clipboardText() : std::nullopt;
-  }
-
   constexpr float kMinWidth = 48.0F;
   constexpr float kCursorWidth = 1.25F;
   constexpr float kCursorPadV = 4.0F;
@@ -1334,16 +1330,24 @@ void Input::handleKey(std::uint32_t sym, std::uint32_t utf32, std::uint32_t modi
     }
   } else if (pasteShortcut) {
     if (g_clipboard != nullptr) {
-      if (auto text = readClipboardText(); text.has_value()) {
+      const auto revision = ++m_editRevision;
+      g_clipboard->requestClipboardText([this, alive, revision](std::optional<std::string> text) {
+        if (alive.expired() || revision != m_editRevision || !m_inputArea->focused() || composing() || !text)
+          return;
         pushUndoSnapshot(EditCoalesceKind::Discrete);
-        if (hasSelection()) {
+        if (hasSelection())
           deleteSelection();
-        }
         m_value.insert(m_cursorPos, *text);
         m_cursorPos += text->size();
         m_selectionAnchor = m_cursorPos;
-        changed = true;
-      }
+        updateDisplayText();
+        markTextContentChanged();
+        revealCursor();
+        notifyTextInputStateChanged(TextInputChangeCause::Other);
+        if (m_onChange)
+          m_onChange(m_value);
+      });
+      return;
     }
   } else if (KeySymbol::isBackspace(sym)) {
     if (hasSelection()) {
@@ -1485,6 +1489,7 @@ void Input::handleKey(std::uint32_t sym, std::uint32_t utf32, std::uint32_t modi
 }
 
 void Input::notifyTextInputStateChanged(TextInputChangeCause cause) {
+  ++m_editRevision;
   if (m_textInputService == nullptr) {
     return;
   }

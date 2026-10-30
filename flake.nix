@@ -53,6 +53,9 @@
         headless-cli = self.packages.${pkgs.stdenv.hostPlatform.system}.default.overrideAttrs (_: {
           mesonFlags = [ "-Dtests=enabled" ];
           doCheck = true;
+          preCheck = ''
+            export XDG_DATA_DIRS="${pkgs.shared-mime-info}/share"
+          '';
         });
       });
 

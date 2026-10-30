@@ -4,6 +4,15 @@
 #include "fs/recursive_search.h"
 
 namespace files {
+  struct BrowseViewport {
+    ViewMode mode = ViewMode::GRID;
+    int iconSize = 48;
+    float vertical = 0;
+    float horizontal = 0;
+    float withinRow = 0;
+    std::optional<EntryId> first = std::nullopt;
+  };
+
   class BrowserController {
   public:
     BrowserController(SortOptions sort, bool showHidden);
@@ -15,6 +24,21 @@ namespace files {
     void setFileActivatedCallback(std::function<void(const Location&)> callback);
     void open(const Location& location);
     bool openText(const std::string& text);
+    void setCaptureViewport(std::function<BrowseViewport()> callback);
+    void setViewDefaults(ViewMode mode, int iconSize);
+    void setDefaultViewMode(ViewMode mode) {
+      m_defaults.mode = mode;
+      m_restoring = false;
+      m_restoredViewport.reset();
+    }
+    void setDefaultIconSize(int size) {
+      m_defaults.iconSize = size;
+      m_restoring = false;
+      m_restoredViewport.reset();
+    }
+    [[nodiscard]] const BrowseViewport& viewport() const { return m_viewport; }
+    [[nodiscard]] std::uint64_t visitSerial() const { return m_visitSerial; }
+    [[nodiscard]] std::optional<BrowseViewport> takeRestoredViewport();
     void home();
     bool back();
     bool forward();
@@ -48,7 +72,31 @@ namespace files {
     std::string m_query;
     std::uint64_t m_revision = 0;
     std::uint64_t m_contextSerial = 0;
-    std::vector<Location> m_history;
+    struct Reference {
+      std::string uri;
+      FileIdentity identity;
+    };
+    struct Visit {
+      Location location;
+      std::string query;
+      BrowseViewport viewport;
+      std::vector<Reference> selected;
+      std::optional<Reference> focus;
+      std::optional<Reference> anchor;
+      std::optional<Reference> first;
+    };
+    void saveVisit();
+    void loadVisit();
+    [[nodiscard]] std::optional<Reference> reference(std::optional<EntryId> id) const;
+    std::vector<Visit> m_history;
+    BrowseViewport m_defaults;
+    BrowseViewport m_viewport;
+    std::optional<BrowseViewport> m_restoredViewport;
+    std::function<BrowseViewport()> m_captureViewport;
+    std::uint64_t m_visitSerial = 0;
+    bool m_restoring = false;
+    bool m_publishing = false;
+    bool m_switchingSources = false;
     std::size_t m_historyIndex = 0;
     std::string m_message;
     std::function<void()> m_changed;

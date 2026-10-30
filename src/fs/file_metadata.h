@@ -8,6 +8,13 @@
 namespace files {
   // Provider-reported access facts, not promises that an operation will succeed.
   // nullopt is unknown; false is a reported negative, not a missing attribute.
+  struct FileIdentity {
+    std::string filesystem;
+    std::string file;
+    bool operator==(const FileIdentity&) const = default;
+  };
+  [[nodiscard]] std::optional<FileIdentity> readFileIdentity(GFileInfo* info);
+
   struct FileAccess {
     std::optional<bool> read;
     std::optional<bool> write;

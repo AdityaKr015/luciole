@@ -16,6 +16,7 @@ pkgs.mkShell {
     statix
     deadnix
     gdb
+    xdg-terminal-exec
   ];
 
   shellHook = ''

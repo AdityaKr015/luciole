@@ -1,7 +1,9 @@
 #include "browser/location_presentation.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <memory>
+#include <stdexcept>
 
 std::vector<files::Breadcrumb> files::locationBreadcrumbs(const Location& location) {
   std::vector<Breadcrumb> result;
@@ -38,4 +40,23 @@ std::vector<files::Breadcrumb> files::locationBreadcrumbs(const Location& locati
 std::string files::locationEditText(const Location& location) {
   const auto path = location.nativePath();
   return path && g_utf8_validate(path->c_str(), static_cast<gssize>(path->size()), nullptr) ? *path : location.uri();
+}
+
+files::Location files::resolveLocationText(const std::string& text, const Location& base) {
+  if (text.empty() || text.contains('\0'))
+    throw std::invalid_argument("Enter a path or URI without NUL bytes.");
+  std::string expanded = text;
+  if (text == "~" || text.starts_with("~/")) {
+    const char* home = std::getenv("HOME");
+    if (!home || !g_path_is_absolute(home))
+      throw std::invalid_argument("HOME must be an absolute path");
+    expanded = std::string(home) + text.substr(1);
+  }
+  if (g_path_is_absolute(expanded.c_str()))
+    return Location::fromPath(expanded);
+  if (const GString scheme(g_uri_parse_scheme(expanded.c_str())); scheme)
+    return Location::fromUri(expanded);
+  const GioPtr<GFile> file(g_file_resolve_relative_path(base.file().get(), expanded.c_str()));
+  const GString uri(g_file_get_uri(file.get()));
+  return Location::fromUri(uri.get());
 }

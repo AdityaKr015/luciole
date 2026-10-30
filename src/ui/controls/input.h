@@ -92,6 +92,7 @@ public:
 
   [[nodiscard]] const std::string& value() const noexcept { return m_value; }
   [[nodiscard]] InputArea* inputArea() const noexcept { return m_inputArea; }
+  [[nodiscard]] bool composing() const noexcept { return m_preeditLen != 0; }
   [[nodiscard]] bool invalid() const noexcept { return m_invalid; }
 
   [[nodiscard]] TextInputState textInputState() const override;
@@ -209,6 +210,7 @@ private:
 
   std::string m_value;
   std::string m_placeholder;
+  std::uint64_t m_editRevision = 0;
   std::size_t m_cursorPos = 0;
   std::size_t m_selectionAnchor = 0;
   std::size_t m_preeditStart = 0;

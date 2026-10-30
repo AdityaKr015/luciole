@@ -37,6 +37,7 @@ public:
   bool initialize(std::string& error);
   [[nodiscard]] wl_display* display() const noexcept { return m_display; }
   [[nodiscard]] wl_compositor* compositor() const noexcept { return m_compositor; }
+  [[nodiscard]] wl_data_device_manager* dataDeviceManager() const noexcept { return m_dataDeviceManager; }
   [[nodiscard]] wl_seat* seat() const noexcept { return m_seat; }
   [[nodiscard]] xdg_wm_base* xdgWmBase() const noexcept { return m_xdgWmBase; }
   [[nodiscard]] wp_viewporter* viewporter() const noexcept { return m_viewporter; }
@@ -73,6 +74,7 @@ private:
   wl_compositor* m_compositor = nullptr;
   wl_seat* m_seat = nullptr;
   wl_shm* m_shm = nullptr;
+  wl_data_device_manager* m_dataDeviceManager = nullptr;
   xdg_wm_base* m_xdgWmBase = nullptr;
   wp_viewporter* m_viewporter = nullptr;
   wp_fractional_scale_manager_v1* m_fractionalScale = nullptr;

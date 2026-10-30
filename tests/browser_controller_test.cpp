@@ -314,7 +314,10 @@ namespace {
     browser.setSearchQuery("missing");
     require(browser.back(), "Back from search failed");
     pump.ready(browser);
-    require(browser.searchQuery().empty() && browser.model().snapshot().location == root, "history retained search");
+    require(
+        browser.searchQuery() == "target" && browser.model().snapshot().location == root,
+        "history did not restore the search visit"
+    );
 
     for (int i = 0; i < 180; ++i) {
       std::ofstream(fixture.path / ("batch-match-" + std::to_string(i))) << "batch";
@@ -403,6 +406,88 @@ namespace {
     require(!browser.model().rows().empty(), "search failed after observer destruction");
   }
 
+  void testHistoryState() {
+    Fixture fixture;
+    Pump pump;
+    BrowserController browser({}, false);
+    files::BrowseViewport viewport{
+        .mode = files::ViewMode::LIST, .iconSize = 96, .vertical = 123.5F, .horizontal = 42.0F, .withinRow = 9.5F
+    };
+    browser.setViewDefaults(files::ViewMode::GRID, 48);
+    browser.setCaptureViewport([&] { return viewport; });
+    browser.open(Location::fromPath(fixture.path.native()));
+    pump.ready(browser);
+    (void)browser.takeRestoredViewport();
+    const auto selected = id(browser, "file");
+    const auto focus = id(browser, "child");
+    const auto anchor = id(browser, "other");
+    browser.model().restoreInteraction({{selected}, focus, anchor}, selected);
+    viewport.first = selected;
+    browser.open(Location::fromPath((fixture.path / "child").native()));
+    pump.ready(browser);
+    require(
+        browser.viewport().mode == files::ViewMode::GRID && browser.viewport().iconSize == 48,
+        "visit view leaked into global defaults"
+    );
+    require(browser.back(), "history return unavailable");
+    pump.ready(browser);
+    require(
+        browser.model().selectedIds() == std::vector{id(browser, "file")} && id(browser, "file") != selected,
+        "history reused an obsolete row ID or lost surviving selection"
+    );
+    require(
+        browser.model().selection().focused == id(browser, "child")
+            && browser.model().selection().anchor == id(browser, "other"),
+        "history conflated focus, range anchor and selection"
+    );
+    auto restored = browser.takeRestoredViewport();
+    require(
+        restored
+            && restored->mode == files::ViewMode::LIST
+            && restored->iconSize == 96
+            && restored->first == id(browser, "file")
+            && restored->withinRow == 9.5F
+            && restored->horizontal == 42.0F
+            && restored->vertical == 123.5F,
+        "history lost viewport geometry"
+    );
+    require(!browser.takeRestoredViewport(), "viewport restoration was not one-shot");
+    browser.model().setSort({.field = files::SortField::SIZE, .descending = true, .directoriesFirst = false});
+    browser.toggleHidden();
+    browser.forward();
+    pump.ready(browser);
+    // Preserve the old object under another name so inode reuse cannot weaken the replacement check.
+    fs::rename(fixture.path / "file", fixture.path / "old-file");
+    std::ofstream(fixture.path / "file") << "replacement";
+    browser.back();
+    pump.ready(browser);
+    require(browser.model().selectedIds().empty(), "a replacement at the same path inherited history selection");
+    require(
+        browser.model().sort().field == files::SortField::SIZE && browser.model().filter().showHidden,
+        "history restored obsolete global sort or hidden preferences"
+    );
+    browser.setSearchQuery("inside");
+    pump.ready(browser);
+    browser.model().select(id(browser, "inside"));
+    viewport.first = id(browser, "inside");
+    browser.open(Location::fromPath((fixture.path / "other").native()));
+    pump.ready(browser);
+    browser.back();
+    pump.ready(browser);
+    require(
+        browser.searchQuery() == "inside" && browser.model().selectedIds() == std::vector{id(browser, "inside")},
+        "history did not restore a search visit"
+    );
+    browser.forward();
+    browser.back();
+    browser.open(Location::fromPath((fixture.path / "child").native()));
+    pump.ready(browser);
+    require(
+        browser.searchQuery().empty() && browser.model().selectedIds().empty() && !browser.canForward(),
+        "late history results reached a new visit"
+    );
+  }
+
   void testLocationPresentation() {
     const auto path = Location::fromPath("/tmp/space here/<literal>/café");
     const auto crumbs = files::locationBreadcrumbs(path);
@@ -439,6 +524,7 @@ int main() {
     testRecursiveSearch();
     testSearchLifetimeAndPartialFailure();
     testLocationPresentation();
+    testHistoryState();
     std::println("browser controller checks passed");
     return 0;
   } catch (const std::exception& error) {

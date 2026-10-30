@@ -71,6 +71,10 @@ void WaylandConnection::handleGlobal(
   } else if (id == wl_seat_interface.name && self.m_seat == nullptr) {
     self.m_seat = static_cast<wl_seat*>(wl_registry_bind(registry, name, &wl_seat_interface, std::min(version, 8U)));
     self.m_input.bind(self.m_seat);
+  } else if (id == wl_data_device_manager_interface.name) {
+    self.m_dataDeviceManager = static_cast<wl_data_device_manager*>(
+        wl_registry_bind(registry, name, &wl_data_device_manager_interface, std::min(version, 3U))
+    );
   } else if (id == wl_shm_interface.name) {
     self.m_shm = static_cast<wl_shm*>(wl_registry_bind(registry, name, &wl_shm_interface, 1));
   } else if (id == xdg_wm_base_interface.name) {
@@ -238,6 +242,8 @@ void WaylandConnection::cleanup() {
   if (m_seat != nullptr) {
     wl_seat_destroy(m_seat);
   }
+  if (m_dataDeviceManager != nullptr)
+    wl_data_device_manager_destroy(m_dataDeviceManager);
   if (m_shm != nullptr) {
     wl_shm_destroy(m_shm);
   }

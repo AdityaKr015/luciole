@@ -30,6 +30,7 @@ namespace files {
     std::string parentDisplayName; // Search result context; never an operation address.
     FileIconSource icon{};
     TrashInfo trash{};
+    std::optional<FileIdentity> identity = std::nullopt;
     std::optional<std::string> contentType = std::nullopt; // Provider's fast type; no content sniffing requested.
   };
 

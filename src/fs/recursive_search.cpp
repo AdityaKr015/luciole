@@ -210,6 +210,7 @@ struct files::RecursiveSearch::State : std::enable_shared_from_this<State> {
          .parentDisplayName = parentName.get(),
          .icon = readFileIcon(info, location),
          .trash = location.isTrash() ? readTrashInfo(info) : TrashInfo{},
+         .identity = readFileIdentity(info),
          .contentType = readFastContentType(info)}
     );
   }

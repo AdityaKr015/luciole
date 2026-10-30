@@ -349,3 +349,19 @@ void files::DirectoryModel::notify() const {
     callback();
   }
 }
+
+void files::DirectoryModel::restoreInteraction(SelectionState selection, std::optional<EntryId> scroll) {
+  if (!m_selectionAvailable)
+    return;
+  const auto visible = [this](EntryId id) { return m_positions.contains(id); };
+  std::erase_if(selection.selected, [&](EntryId id) { return !visible(id); });
+  if (selection.focused && !visible(*selection.focused))
+    selection.focused.reset();
+  if (selection.anchor && !visible(*selection.anchor))
+    selection.anchor.reset();
+  if (scroll && !visible(*scroll))
+    scroll.reset();
+  m_selection = std::move(selection);
+  m_scrollAnchor = scroll;
+  notify();
+}

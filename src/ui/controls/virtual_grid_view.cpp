@@ -233,7 +233,13 @@ void VirtualGridView::setItemCursorShape(std::uint32_t shape) {
   }
 }
 
-void VirtualGridView::scrollToIndex(std::size_t index, bool alignToTop) {
+float VirtualGridView::firstVisibleOffset() const {
+  const float stride = m_cellHeightResolved + m_rowGap;
+  return stride > 0 ? std::fmod(m_scroll->scrollOffset(), stride) : 0;
+}
+
+void VirtualGridView::scrollToIndex(std::size_t index, bool alignToTop, float withinRow) {
+  m_pendingScrollWithinRow = withinRow;
   m_pendingScrollToIndex = true;
   m_pendingScrollAlignTop = alignToTop;
   m_pendingScrollIndex = index;
@@ -387,7 +393,7 @@ void VirtualGridView::doLayout(Renderer& renderer) {
       const float visibleTop = m_scroll->scrollOffset();
       const float visibleBottom = visibleTop + viewportH;
       if (m_pendingScrollAlignTop || rowTop < visibleTop) {
-        m_scroll->requestScrollToOffset(rowTop);
+        m_scroll->requestScrollToOffset(rowTop + (m_pendingScrollAlignTop ? m_pendingScrollWithinRow : 0));
       } else if (rowBottom > visibleBottom) {
         m_scroll->requestScrollToOffset(rowBottom - viewportH);
       }

@@ -107,6 +107,8 @@ app_sources = files(
   'src/browser/file_icon.cpp',
   'src/config/view_preference_writer.cpp',
   'src/platform/file_launcher.cpp',
+  'src/platform/text_clipboard.cpp',
+  'src/platform/terminal_launcher.cpp',
   'src/browser/places_sidebar.cpp',
   'src/ui/controls/name_editor.cpp',
   'src/core/timer_manager.cpp',
@@ -192,7 +194,7 @@ filesystem_service = declare_dependency(
 )
 
 browser_model = declare_dependency(
-  sources: files('src/browser/directory_model.cpp', 'src/browser/browser_controller.cpp', 'src/browser/location_presentation.cpp', 'src/browser/action_registry.cpp', 'src/browser/selection_tools.cpp'),
+  sources: files('src/browser/directory_model.cpp', 'src/browser/browser_controller.cpp', 'src/browser/location_presentation.cpp', 'src/browser/path_completion.cpp', 'src/browser/action_registry.cpp', 'src/browser/selection_tools.cpp'),
   dependencies: filesystem_service,
 )
 
@@ -305,6 +307,13 @@ if build_tests
     dependencies: browser_model,
   )
   test('browser-controller', controller_test, timeout: 30,
+    env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],
+  )
+  navigation_test = executable('navigation-services-test',
+    'tests/navigation_services_test.cpp', 'src/platform/terminal_launcher.cpp',
+    dependencies: browser_model,
+  )
+  test('navigation-services', navigation_test, timeout: 30,
     env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],
   )
   settings_test = executable('settings-test',
