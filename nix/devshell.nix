@@ -17,6 +17,8 @@ pkgs.mkShell {
     deadnix
     gdb
     xdg-terminal-exec
+    ffmpeg
+    poppler-utils
   ];
 
   shellHook = ''

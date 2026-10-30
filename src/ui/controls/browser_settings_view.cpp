@@ -20,7 +20,8 @@ namespace {
 } // namespace
 
 BrowserSettingsView::BrowserSettingsView(
-    std::function<void(files::OverrideEdit)> change, std::function<void()> reset, std::function<void()> close
+    std::function<void(files::OverrideEdit)> change, std::function<void()> reset, std::function<void()> close,
+    std::function<void()> clearThumbnails
 )
     : m_change(std::move(change)) {
   setDirection(FlexDirection::Vertical);
@@ -124,6 +125,41 @@ BrowserSettingsView::BrowserSettingsView(
     orders.emplace_back(label, order);
   } while (std::ranges::next_permutation(order).found);
   addChoice(P::COLUMN_ORDER, "Column order", [](const auto& value) { return value.columnOrder; }, orders);
+  section("Thumbnails");
+  addChoice(
+      P::THUMBNAIL_POLICY, "Show thumbnails", [](const auto& value) { return value.thumbnails.policy; },
+      {{"Never", files::ThumbnailPolicy::NEVER},
+       {"Local files", files::ThumbnailPolicy::LOCAL},
+       {"All locations", files::ThumbnailPolicy::ALL}}
+  );
+  m_section->addChild(
+      ui::label(
+          {.text = "Remote locations use existing cached thumbnails.",
+           .fontSize = Style::fontSizeCaption,
+           .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
+           .maxLines = 2}
+      )
+  );
+  addNumber(
+      P::THUMBNAIL_MAX_FILE_MIB, "Source file limit", [](const auto& value) { return value.thumbnails.maxFileMiB; },
+      {1, 1024}, "MiB"
+  );
+  addNumber(
+      P::THUMBNAIL_MAX_MEGAPIXELS, "Image pixel limit",
+      [](const auto& value) { return value.thumbnails.maxMegapixels; }, {1, 64}, "MP"
+  );
+  addNumber(
+      P::THUMBNAIL_CACHE_MIB, "Disk cache limit", [](const auto& value) { return value.thumbnails.cacheMiB; },
+      {16, 1024}, "MiB"
+  );
+  m_section->addChild(
+      ui::button(
+          {.out = &m_clearThumbnails,
+           .text = "Clear thumbnail cache",
+           .variant = ButtonVariant::Default,
+           .onClick = std::move(clearThumbnails)}
+      )
+  );
   selectPage(0);
   addChild(
       ui::column(
@@ -148,7 +184,8 @@ void BrowserSettingsView::section(const std::string& title) {
   const std::string glyph = index == 0 ? "layout-grid"
       : index == 1                     ? "hand-click"
       : index == 2                     ? "layout-sidebar"
-                                       : "columns-3";
+      : index == 3                     ? "columns-3"
+                                       : "photo";
   Button* button = nullptr;
   m_navigation->addChild(
       ui::button(
@@ -257,14 +294,16 @@ void BrowserSettingsView::addBool(P key, const std::string& title, Read read) {
   addRow(key, title, std::move(read), std::move(row));
 }
 
-void BrowserSettingsView::addNumber(P key, const std::string& title, Read read, const std::vector<int>& values) {
+void BrowserSettingsView::addNumber(
+    P key, const std::string& title, Read read, const std::vector<int>& values, std::string suffix
+) {
   auto control = std::make_unique<Stepper>();
   auto* stepper = control.get();
   stepper->setMinWidth(180.0F);
   stepper->setMaxWidth(180.0F);
   stepper->setRange(values.front(), values.back());
   stepper->setStep(16);
-  stepper->setValueSuffix("px");
+  stepper->setValueSuffix(std::move(suffix));
   stepper->setOnValueChanged([this, key, stepper, values](int value) {
     const int previous = std::get<int>(m_values.at(key));
     if (key == P::GRID_ICON_SIZE && !std::ranges::contains(values, value)) {
@@ -298,8 +337,11 @@ void BrowserSettingsView::send(P key, Value value) {
   m_change({key, value});
 }
 void BrowserSettingsView::sync(
-    const files::BrowserSettings& settings, const files::BrowserSettings& inherited, bool busy, const std::string& error
+    const files::BrowserSettings& settings, const files::BrowserSettings& inherited, bool busy,
+    const std::string& error, bool clearingThumbnails
 ) {
+  m_clearThumbnails->setEnabled(!clearingThumbnails);
+  m_clearThumbnails->setText(clearingThumbnails ? "Clearing…" : "Clear thumbnail cache");
   m_inherited = inherited;
   for (const auto& [key, read] : m_reads) {
     m_values[key] = read(settings);
@@ -308,7 +350,7 @@ void BrowserSettingsView::sync(
     m_resets.at(key)->setVisible(overridden);
     m_resets.at(key)->setParticipatesInLayout(overridden);
   }
-  m_status->setText(!error.empty() ? error : busy ? "Saving…" : "");
+  m_status->setText(!error.empty() ? error : clearingThumbnails ? "Clearing cache…" : busy ? "Saving…" : "");
   m_status->setVisible(!error.empty() || busy);
   m_status->setParticipatesInLayout(!error.empty() || busy);
   m_status->setColor(colorSpecFromRole(error.empty() ? ColorRole::OnSurfaceVariant : ColorRole::Error));

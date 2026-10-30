@@ -43,9 +43,13 @@ endforeach
 alias_target('generated-headers', protocol_headers)
 
 gio = dependency('gio-2.0', version: '>=2.76')
+gdk_pixbuf = dependency('gdk-pixbuf-2.0')
+webp = dependency('libwebp')
 tomlplusplus = dependency('tomlplusplus', version: '>=3.4')
 ui_dependencies = [
   gio,
+  gdk_pixbuf,
+  webp,
   dependency('wayland-client'), dependency('wayland-egl'), dependency('wayland-cursor'),
   dependency('egl'), dependency('glesv2'), dependency('xkbcommon'),
   dependency('freetype2'), dependency('fontconfig'),
@@ -107,6 +111,12 @@ app_sources = files(
   'src/system/icon_theme_poll_source.cpp',
   'src/browser/file_icon_cache.cpp',
   'src/browser/file_icon.cpp',
+  'src/browser/thumbnail_codec.cpp',
+  'src/browser/thumbnail_store.cpp',
+  'src/browser/thumbnail_provider.cpp',
+  'src/browser/thumbnail_worker.cpp',
+  'src/browser/thumbnail_service.cpp',
+  'src/render/core/image_orientation.cpp',
   'src/config/view_preference_writer.cpp',
   'src/platform/file_launcher.cpp',
   'src/platform/text_clipboard.cpp',
@@ -258,6 +268,17 @@ build_tests = tests_opt.enabled() or (
   tests_opt.auto() and get_option('buildtype') == 'debug' and get_option('b_sanitize') == 'none'
 )
 if build_tests
+  thumbnail_test = executable('thumbnail-test',
+    'tests/thumbnail_test.cpp',
+    'src/browser/thumbnail_codec.cpp',
+    'src/browser/thumbnail_store.cpp',
+    'src/browser/thumbnail_provider.cpp',
+    'src/browser/thumbnail_worker.cpp',
+    'src/browser/thumbnail_service.cpp',
+    'src/render/core/image_orientation.cpp',
+    dependencies: [filesystem_service, settings_service, gdk_pixbuf, webp, dependency('libpng'), dependency('nlohmann_json'), dependency('threads')],
+  )
+  test('thumbnail', thumbnail_test, timeout: 90, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   python = import('python').find_installation('python3')
   actions_test = executable('browser-actions-test', 'tests/browser_actions_test.cpp', dependencies: browser_model)
   test('browser-actions', actions_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])

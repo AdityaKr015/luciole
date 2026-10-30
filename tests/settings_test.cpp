@@ -640,6 +640,61 @@ namespace {
     }
   }
 
+  void testThumbnailSettings() {
+    using P = files::BrowserPreference;
+    Fixture fixture;
+    fixture.write(
+        "config.toml",
+        "[browser]\nthumbnail_policy = 'all'\nthumbnail_max_file_mib = 128\nthumbnail_max_megapixels = "
+        "24\nthumbnail_cache_mib = 256\n"
+    );
+    files::ConfigService config(fixture.paths());
+    require(
+        config.reload()
+            && config.settings().browser.thumbnails
+                == files::ThumbnailOptions{files::ThumbnailPolicy::ALL, 128, 24, 256},
+        "thumbnail base settings lost typed values"
+    );
+    const std::array edits{
+        files::OverrideEdit{P::THUMBNAIL_POLICY, files::ThumbnailPolicy::NEVER},
+        files::OverrideEdit{P::THUMBNAIL_MAX_FILE_MIB, 512}, files::OverrideEdit{P::THUMBNAIL_MAX_MEGAPIXELS, 48},
+        files::OverrideEdit{P::THUMBNAIL_CACHE_MIB, 512}
+    };
+    require(config.saveOverrides(edits) == files::AtomicWriteState::DURABLE, "thumbnail overrides did not save");
+    const auto loaded = files::loadSettings(fixture.paths());
+    require(
+        loaded && loaded->browser.thumbnails == files::ThumbnailOptions{files::ThumbnailPolicy::NEVER, 512, 48, 512},
+        "thumbnail override round-trip lost values"
+    );
+    const std::array reset{
+        files::OverrideEdit{P::THUMBNAIL_POLICY, std::monostate{}},
+        files::OverrideEdit{P::THUMBNAIL_MAX_FILE_MIB, std::monostate{}},
+        files::OverrideEdit{P::THUMBNAIL_MAX_MEGAPIXELS, std::monostate{}},
+        files::OverrideEdit{P::THUMBNAIL_CACHE_MIB, std::monostate{}}
+    };
+    require(
+        config.saveOverrides(reset) == files::AtomicWriteState::DURABLE
+            && config.settings().browser.thumbnails
+                == files::ThumbnailOptions{files::ThumbnailPolicy::ALL, 128, 24, 256},
+        "thumbnail reset did not restore base inheritance"
+    );
+    for (const auto* invalid :
+         {"thumbnail_policy = true", "thumbnail_policy = 'remote'", "thumbnail_max_file_mib = 0",
+          "thumbnail_max_file_mib = 1025", "thumbnail_max_megapixels = 0", "thumbnail_max_megapixels = 65",
+          "thumbnail_cache_mib = 15", "thumbnail_cache_mib = 1025", "thumbnail_max_file_mib = 1.5"}) {
+      fixture.write("config.toml", std::string("[browser]\n") + invalid + "\n");
+      require(!files::validateConfigFile(fixture.paths().base).empty(), "invalid thumbnail setting was accepted");
+    }
+    fixture.write("config.toml", "");
+    for (const auto preference : {P::THUMBNAIL_MAX_FILE_MIB, P::THUMBNAIL_MAX_MEGAPIXELS, P::THUMBNAIL_CACHE_MIB}) {
+      const std::array invalid{files::OverrideEdit{preference, -1}};
+      require(
+          config.saveOverrides(invalid) == files::AtomicWriteState::NOT_COMMITTED,
+          "typed thumbnail edit bypassed bounds"
+      );
+    }
+  }
+
   void testOverrideSaving() {
     using Preference = files::BrowserPreference;
     using State = files::AtomicWriteState;
@@ -793,6 +848,7 @@ int main() {
     testDetailsColumnOrder();
     testDetailsColumnWidths();
     testInteractionModes();
+    testThumbnailSettings();
     testOverrideSaving();
     std::println("settings checks passed");
     return 0;

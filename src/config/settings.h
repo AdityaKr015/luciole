@@ -1,6 +1,7 @@
 #pragma once
 
 #include "browser/directory_options.h"
+#include "browser/thumbnail_options.h"
 #include "config/atomic_file.h"
 #include "config/diagnostic.h"
 
@@ -23,6 +24,7 @@ namespace files {
     DetailsColumnVisibility columns{};
     DetailsColumnOrder columnOrder = kDefaultDetailsColumnOrder;
     DetailsColumnWidths columnWidths = kDefaultDetailsColumnWidths;
+    ThumbnailOptions thumbnails;
     bool operator==(const BrowserSettings&) const = default;
   };
 
@@ -57,11 +59,17 @@ namespace files {
     NAME_COLUMN_WIDTH,
     TYPE_COLUMN_WIDTH,
     SIZE_COLUMN_WIDTH,
-    MODIFIED_COLUMN_WIDTH
+    MODIFIED_COLUMN_WIDTH,
+    THUMBNAIL_POLICY,
+    THUMBNAIL_MAX_FILE_MIB,
+    THUMBNAIL_MAX_MEGAPIXELS,
+    THUMBNAIL_CACHE_MIB,
+    COUNT
   };
   struct OverrideEdit {
     BrowserPreference preference;
-    std::variant<std::monostate, bool, SortField, ViewMode, int, DetailsColumnOrder, ActivationMode, TypingMode>
+    std::variant<
+        std::monostate, bool, SortField, ViewMode, int, DetailsColumnOrder, ActivationMode, TypingMode, ThumbnailPolicy>
         value; // monostate restores inheritance from the base/defaults.
   };
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "browser/file_icon_cache.h"
+#include "browser/thumbnail_service.h"
 #include "render/core/texture_handle.h"
 #include "render/scene/node.h"
 #include "ui/palette.h"
@@ -11,7 +12,10 @@ class TextureManager;
 namespace files {
   class FileIcon final : public Node {
   public:
-    FileIcon(FileIconCache& cache, float size);
+    FileIcon(FileIconCache& cache, float size, ThumbnailService* thumbnails = nullptr);
+    void bindFile(const DirectoryEntry& entry, ColorSpec foreground);
+    void setThumbnailVisible(bool visible);
+    void releaseFile(Renderer& renderer);
     ~FileIcon() override;
     void bind(const FileIconSource& source, ColorSpec foreground);
     void setIconSize(float size);
@@ -23,6 +27,10 @@ namespace files {
 
   private:
     FileIconCache& m_cache;
+    ThumbnailService* m_thumbnails = nullptr;
+    std::optional<DirectoryEntry> m_thumbnailSource;
+    std::shared_ptr<const FileIconImage> m_thumbnail;
+    bool m_thumbnailVisible = true;
     float m_size;
     FileIconSource m_source;
     ColorSpec m_foreground = colorSpecFromRole(ColorRole::OnSurface);

@@ -20,7 +20,29 @@
 namespace {
   constexpr std::size_t kMaxConfigBytes = 256 * 1024;
 
+  struct ThumbnailInteger {
+    files::BrowserPreference preference;
+    std::string_view key;
+    int minimum, maximum;
+    int files::ThumbnailOptions::* member;
+  };
+  constexpr auto kThumbnailIntegers = std::to_array<ThumbnailInteger>(
+      {{files::BrowserPreference::THUMBNAIL_MAX_FILE_MIB, "browser.thumbnail_max_file_mib", 1, 1024,
+        &files::ThumbnailOptions::maxFileMiB},
+       {files::BrowserPreference::THUMBNAIL_MAX_MEGAPIXELS, "browser.thumbnail_max_megapixels", 1, 64,
+        &files::ThumbnailOptions::maxMegapixels},
+       {files::BrowserPreference::THUMBNAIL_CACHE_MIB, "browser.thumbnail_cache_mib", 16, 1024,
+        &files::ThumbnailOptions::cacheMiB}}
+  );
+  std::optional<std::size_t> thumbnailIntegerIndex(files::BrowserPreference preference) {
+    for (std::size_t i = 0; i < kThumbnailIntegers.size(); ++i)
+      if (kThumbnailIntegers[i].preference == preference)
+        return i;
+    return std::nullopt;
+  }
   struct Patch {
+    std::optional<files::ThumbnailPolicy> thumbnailPolicy;
+    std::array<std::optional<int>, 3> thumbnailIntegers;
     std::optional<files::ActivationMode> activationMode;
     std::optional<files::TypingMode> typingMode;
     std::optional<bool> showHidden;
@@ -210,6 +232,31 @@ namespace {
             } else {
               issue(issues, file, value, path, "expected 'name', 'size', 'modified', or 'type'");
             }
+          } else if (name == "thumbnail_policy") {
+            const auto* text = value.as_string();
+            if (text && text->get() == "never")
+              patch.thumbnailPolicy = files::ThumbnailPolicy::NEVER;
+            else if (text && text->get() == "local")
+              patch.thumbnailPolicy = files::ThumbnailPolicy::LOCAL;
+            else if (text && text->get() == "all")
+              patch.thumbnailPolicy = files::ThumbnailPolicy::ALL;
+            else
+              issue(issues, file, value, path, "expected 'never', 'local', or 'all'");
+          } else if (
+              const auto* const spec = std::ranges::find_if(
+                  kThumbnailIntegers, [&](const auto& field) { return field.key.substr(8) == name; }
+              );
+              spec != kThumbnailIntegers.end()
+          ) {
+            const auto* number = value.as_integer();
+            if (number && number->get() >= spec->minimum && number->get() <= spec->maximum)
+              patch.thumbnailIntegers[static_cast<std::size_t>(spec - kThumbnailIntegers.begin())] =
+                  static_cast<int>(number->get());
+            else
+              issue(
+                  issues, file, value, path,
+                  std::format("expected an integer from {} to {}", spec->minimum, spec->maximum)
+              );
           } else if (name == "grid_icon_size") {
             const auto* size = value.as_integer();
             if (size != nullptr && std::ranges::contains(files::kGridIconSizes, size->get())) {
@@ -272,6 +319,11 @@ namespace {
   }
 
   void apply(files::Settings& settings, const Patch& patch) {
+    if (patch.thumbnailPolicy)
+      settings.browser.thumbnails.policy = *patch.thumbnailPolicy;
+    for (std::size_t i = 0; i < kThumbnailIntegers.size(); ++i)
+      if (patch.thumbnailIntegers[i])
+        settings.browser.thumbnails.*(kThumbnailIntegers[i].member) = *patch.thumbnailIntegers[i];
     if (patch.activationMode)
       settings.browser.activationMode = *patch.activationMode;
     if (patch.typingMode)
@@ -331,7 +383,16 @@ namespace {
 
   std::string_view preferenceKey(files::BrowserPreference preference) {
     using Preference = files::BrowserPreference;
+    if (const auto index = thumbnailIntegerIndex(preference))
+      return kThumbnailIntegers[*index].key;
     switch (preference) {
+    case Preference::THUMBNAIL_POLICY:
+      return "browser.thumbnail_policy";
+    case Preference::THUMBNAIL_MAX_FILE_MIB:
+    case Preference::THUMBNAIL_MAX_MEGAPIXELS:
+    case Preference::THUMBNAIL_CACHE_MIB:
+    case Preference::COUNT:
+      return {};
     case Preference::ACTIVATION_MODE:
       return "browser.activation_mode";
     case Preference::TYPING_MODE:
@@ -374,6 +435,17 @@ namespace {
 
   void editPatch(Patch& patch, const files::OverrideEdit& edit) {
     using Preference = files::BrowserPreference;
+    if (edit.preference == Preference::THUMBNAIL_POLICY) {
+      patch.thumbnailPolicy = std::holds_alternative<std::monostate>(edit.value)
+          ? std::nullopt
+          : std::optional(std::get<files::ThumbnailPolicy>(edit.value));
+      return;
+    }
+    if (const auto index = thumbnailIntegerIndex(edit.preference)) {
+      patch.thumbnailIntegers[*index] =
+          std::holds_alternative<std::monostate>(edit.value) ? std::nullopt : std::optional(std::get<int>(edit.value));
+      return;
+    }
     if (edit.preference == Preference::ACTIVATION_MODE) {
       patch.activationMode = std::holds_alternative<std::monostate>(edit.value)
           ? std::nullopt
@@ -458,12 +530,27 @@ namespace {
     case Preference::VIEW_MODE:
     case Preference::GRID_ICON_SIZE:
     case Preference::SIDEBAR_WIDTH:
+    case Preference::THUMBNAIL_POLICY:
+    case Preference::THUMBNAIL_MAX_FILE_MIB:
+    case Preference::THUMBNAIL_MAX_MEGAPIXELS:
+    case Preference::THUMBNAIL_CACHE_MIB:
+    case Preference::COUNT:
       break;
     }
   }
 
   std::string formatPatch(const Patch& patch) {
     toml::table browser;
+    if (patch.thumbnailPolicy)
+      browser.insert(
+          "thumbnail_policy",
+          *patch.thumbnailPolicy == files::ThumbnailPolicy::NEVER       ? "never"
+              : *patch.thumbnailPolicy == files::ThumbnailPolicy::LOCAL ? "local"
+                                                                        : "all"
+      );
+    for (std::size_t i = 0; i < kThumbnailIntegers.size(); ++i)
+      if (patch.thumbnailIntegers[i])
+        browser.insert(kThumbnailIntegers[i].key.substr(8), *patch.thumbnailIntegers[i]);
     if (patch.activationMode)
       browser.insert(
           "activation_mode",
@@ -620,7 +707,15 @@ files::AtomicWriteState files::ConfigService::saveOverrides(std::span<const Over
     const auto key = preferenceKey(edit.preference);
     bool valid = !key.empty();
     if (!std::holds_alternative<std::monostate>(edit.value)) {
-      if (edit.preference == BrowserPreference::ACTIVATION_MODE) {
+      if (edit.preference == BrowserPreference::THUMBNAIL_POLICY) {
+        const auto* mode = std::get_if<ThumbnailPolicy>(&edit.value);
+        valid = mode
+            && (*mode == ThumbnailPolicy::NEVER || *mode == ThumbnailPolicy::LOCAL || *mode == ThumbnailPolicy::ALL);
+      } else if (const auto index = thumbnailIntegerIndex(edit.preference)) {
+        const auto* number = std::get_if<int>(&edit.value);
+        valid =
+            number && *number >= kThumbnailIntegers[*index].minimum && *number <= kThumbnailIntegers[*index].maximum;
+      } else if (edit.preference == BrowserPreference::ACTIVATION_MODE) {
         const auto* mode = std::get_if<ActivationMode>(&edit.value);
         valid = mode && (*mode == ActivationMode::SINGLE_CLICK || *mode == ActivationMode::DOUBLE_CLICK);
       } else if (edit.preference == BrowserPreference::TYPING_MODE) {

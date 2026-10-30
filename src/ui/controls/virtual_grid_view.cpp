@@ -511,6 +511,7 @@ void VirtualGridView::doLayout(Renderer& renderer) {
         const float y = static_cast<float>(row) * (cellH + m_rowGap);
         tile->setPosition(x, y);
         tile->setSize(cellW, cellH);
+        m_adapter->setTileVisible(*tile, y + cellH > scrollY && y < scrollY + viewportH);
 
         InputArea* tooltipArea = m_poolTooltipAreas[slot];
         tooltipArea->setPosition(x, y);
@@ -545,6 +546,7 @@ void VirtualGridView::doLayout(Renderer& renderer) {
 
   for (std::size_t slot = 0; slot < m_pool.size(); ++slot) {
     if (!slotActive[slot] && m_pool[slot] != nullptr) {
+      m_adapter->releaseTile(*m_pool[slot], renderer);
       m_pool[slot]->setVisible(false);
       m_slotBoundIndex[slot].reset();
       if (slot < m_poolTooltipAreas.size() && m_poolTooltipAreas[slot] != nullptr) {

@@ -55,6 +55,12 @@
           doCheck = true;
           preCheck = ''
             export XDG_DATA_DIRS="${pkgs.shared-mime-info}/share"
+            export PATH="${
+              nixpkgs.lib.makeBinPath [
+                pkgs.ffmpeg
+                pkgs.poppler-utils
+              ]
+            }:$PATH"
           '';
         });
       });

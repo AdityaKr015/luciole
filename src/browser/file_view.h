@@ -3,6 +3,7 @@
 #include "browser/browser_controller.h"
 #include "browser/details_columns.h"
 #include "browser/file_icon_cache.h"
+#include "browser/thumbnail_service.h"
 #include "ui/controls/virtual_grid_view.h"
 
 #include <chrono>
@@ -11,14 +12,16 @@ namespace files {
   class FileViewAdapter final : public VirtualGridAdapter {
   public:
     FileViewAdapter(
-        BrowserController& browser, FileIconCache& icons, ViewMode mode, std::function<std::uint32_t()> modifiers,
-        std::function<bool()> focused
+        BrowserController& browser, FileIconCache& icons, ThumbnailService& thumbnails, ViewMode mode,
+        std::function<std::uint32_t()> modifiers, std::function<bool()> focused
     );
     [[nodiscard]] std::size_t itemCount() const override;
     [[nodiscard]] std::string itemTooltip(std::size_t index) const override;
     [[nodiscard]] std::unique_ptr<Node> createTile() override;
     std::unique_ptr<Node> createDecoration() override;
     void bindDecoration(Node& decoration, const VirtualGridDecorationLayout& layout) override;
+    void setTileVisible(Node& tile, bool visible) override;
+    void releaseTile(Node& tile, Renderer& renderer) override;
     void bindTile(Node& tile, std::size_t index, bool selected, bool hovered) override;
     bool onPointerPress(std::size_t index, float, float, float, float) override;
     bool onPointerDrag(std::optional<std::size_t>, float, float, float, float) override;
@@ -42,6 +45,7 @@ namespace files {
   private:
     BrowserController& m_browser;
     FileIconCache& m_icons;
+    ThumbnailService& m_thumbnails;
     const ViewMode m_mode;
     std::function<std::uint32_t()> m_modifiers;
     std::function<bool()> m_focused;

@@ -120,11 +120,13 @@ namespace {
         : m_connection(connection), m_renderer(renderer), m_textInput(textInput), m_surface(connection),
           m_browser(settings.sort, settings.showHidden),
           m_listAdapter(
-              m_browser, m_icons, files::ViewMode::LIST, [this] { return m_connection.input().keyboardModifiers(); },
+              m_browser, m_icons, m_thumbnails, files::ViewMode::LIST,
+              [this] { return m_connection.input().keyboardModifiers(); },
               [this] { return m_fileKeyboardFocus && m_list != nullptr && m_list->focusArea()->focused(); }
           ),
           m_gridAdapter(
-              m_browser, m_icons, files::ViewMode::GRID, [this] { return m_connection.input().keyboardModifiers(); },
+              m_browser, m_icons, m_thumbnails, files::ViewMode::GRID,
+              [this] { return m_connection.input().keyboardModifiers(); },
               [this] { return m_fileKeyboardFocus && m_list != nullptr && m_list->focusArea()->focused(); }
           ),
           m_preferences(std::move(paths)), m_savedSettings(settings), m_pins(files::StateStore::pathFromEnvironment()),
@@ -133,6 +135,12 @@ namespace {
           std::ranges::find(files::kGridIconSizes, settings.gridIconSize) - files::kGridIconSizes.begin()
       );
       m_browser.setViewDefaults(settings.viewMode, settings.gridIconSize);
+      m_thumbnails.setOptions(settings.thumbnails);
+      m_thumbnails.setChangedCallback([this] {
+        m_browserDirty = true;
+        m_settingsDirty = true;
+        m_surface.requestLayout();
+      });
       m_browser.setCaptureViewport([this] {
         files::BrowseViewport viewport{.mode = m_viewMode, .iconSize = static_cast<int>(gridIconSize())};
         if (m_list) {
@@ -298,6 +306,7 @@ namespace {
       m_launcher.setChangedCallback({});
       m_pins.setChangedCallback({});
       m_icons.setChangedCallback({});
+      m_thumbnails.setChangedCallback({});
       m_preferences.setChangedCallback({});
       closeMenu();
       closeSettings();
@@ -1858,6 +1867,8 @@ namespace {
         m_columnOrder = settings.columnOrder;
       if (force || before.columnWidths != settings.columnWidths)
         m_columnWidths = settings.columnWidths;
+      if (force || before.thumbnails != settings.thumbnails)
+        m_thumbnails.setOptions(settings.thumbnails);
       m_savedSettings = settings;
       m_browserDirty = true;
       m_surface.requestLayout();
@@ -1921,7 +1932,7 @@ namespace {
             m_preferences.submit({edit});
             m_surface.requestLayout();
           },
-          [this] { m_preferences.resetAll(); }, [this] { deferCloseSettings(); }
+          [this] { m_preferences.resetAll(); }, [this] { deferCloseSettings(); }, [this] { m_thumbnails.clearCache(); }
       );
       root->setParticipatesInLayout(false);
       root->setZIndex(1000);
@@ -1929,8 +1940,9 @@ namespace {
       m_settingsView = root.get();
       const auto& inherited = m_preferences.inheritedSettings();
       root->sync(
-          m_savedSettings, inherited ? inherited->browser : files::BrowserSettings{}, m_preferences.busy(),
-          m_preferenceError
+          m_savedSettings, inherited ? inherited->browser : files::BrowserSettings{},
+          m_preferences.busy() || m_thumbnails.clearing(),
+          m_preferenceError.empty() ? m_thumbnails.error() : m_preferenceError, m_thumbnails.clearing()
       );
       m_root->addChild(std::move(root));
       m_dispatcher.cancelPointerCapture();
@@ -3818,14 +3830,24 @@ namespace {
         UiPhaseScope phase(UiPhase::Layout);
         buildScene();
       }
+      const auto& thumbnailSnapshot = m_browser.model().snapshot();
+      if (m_thumbnailContext != m_browser.contextSerial()
+          || (thumbnailSnapshot.generation != m_thumbnailRevision
+              && (thumbnailSnapshot.status == files::DirectoryStatus::READY
+                  || thumbnailSnapshot.status == files::DirectoryStatus::ERROR))) {
+        m_thumbnailRevision = thumbnailSnapshot.generation;
+        m_thumbnailContext = m_browser.contextSerial();
+        m_thumbnails.invalidate();
+      }
       if (std::exchange(m_settingsDirty, false)) {
         if (m_pendingSettings)
           applySettings(m_pendingSettings->browser, !m_preferenceError.empty());
         if (m_settingsView) {
           const auto& inherited = m_preferences.inheritedSettings();
           m_settingsView->sync(
-              m_savedSettings, inherited ? inherited->browser : files::BrowserSettings{}, m_preferences.busy(),
-              m_preferenceError
+              m_savedSettings, inherited ? inherited->browser : files::BrowserSettings{},
+              m_preferences.busy() || m_thumbnails.clearing(),
+              m_preferenceError.empty() ? m_thumbnails.error() : m_preferenceError, m_thumbnails.clearing()
           );
           m_surface.requestLayout();
         }
@@ -3943,6 +3965,7 @@ namespace {
         m_sidebarResizeLine->arrange(renderer, {2.5F, 0, 1.0F, m_sidebarResize->height()});
         layoutDrag(renderer);
         layoutCompletions(renderer);
+        m_thumbnails.endFrame();
         if (placesFocus) {
           m_dispatcher.restoreTabFocus(std::move(*placesFocus));
         }
@@ -4920,6 +4943,9 @@ namespace {
     NameEditor* m_patternEditor = nullptr;
     std::string m_selectionPattern = "*";
     files::FileIconCache m_icons;
+    files::ThumbnailService m_thumbnails;
+    std::uint64_t m_thumbnailRevision = 0;
+    std::uint64_t m_thumbnailContext = 0;
     files::FileViewAdapter m_listAdapter;
     files::FileViewAdapter m_gridAdapter;
     files::ViewPreferenceWriter m_preferences;

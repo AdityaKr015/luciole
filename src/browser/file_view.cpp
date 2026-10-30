@@ -30,10 +30,10 @@ namespace {
   // Adapted from Noctalia's FileEntryRow, with URI-backed entries and model selection.
   class FileRow final : public InputArea {
   public:
-    explicit FileRow(files::FileIconCache& icons) {
+    FileRow(files::FileIconCache& icons, files::ThumbnailService& thumbnails) {
       setHitTestVisible(false);
       addChild(ui::box({.out = &m_background, .radius = SelectionSurface::cornerRadius}));
-      auto icon = std::make_unique<files::FileIcon>(icons, 24.0F);
+      auto icon = std::make_unique<files::FileIcon>(icons, 24.0F, &thumbnails);
       m_icon = icon.get();
       auto row = ui::row(
           {.out = &m_row,
@@ -92,7 +92,7 @@ namespace {
       for (auto* label : {m_name, m_parent, m_kind, m_size, m_modified})
         label->setOpacity(entry.hidden && !selected ? kHiddenTextOpacity : 1.0F);
       const bool directory = entry.type == G_FILE_TYPE_DIRECTORY;
-      m_icon->bind(entry.icon, colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurface));
+      m_icon->bindFile(entry, colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurface));
       m_name->setText(entry.displayName);
       m_parent->setText(entry.parentDisplayName);
       m_fullDate = modifiedTime(entry.modifiedSeconds, "%Y-%m-%d %H:%M");
@@ -163,6 +163,10 @@ namespace {
       m_row->arrange(renderer, {0, 0, width(), height()});
     }
 
+  public:
+    void setThumbnailVisible(bool visible) { m_icon->setThumbnailVisible(visible); }
+    void releaseFile(Renderer& renderer) { m_icon->releaseFile(renderer); }
+
   private:
     Box* m_background = nullptr;
     Flex* m_row = nullptr;
@@ -182,10 +186,10 @@ namespace {
   // Adapted from Noctalia's FileEntryTile without its picker or thumbnail service.
   class FileTile final : public InputArea {
   public:
-    explicit FileTile(files::FileIconCache& icons) {
+    FileTile(files::FileIconCache& icons, files::ThumbnailService& thumbnails) {
       setHitTestVisible(false);
       addChild(ui::box({.out = &m_background, .radius = SelectionSurface::cornerRadius}));
-      m_icon = static_cast<files::FileIcon*>(addChild(std::make_unique<files::FileIcon>(icons, 48.0F)));
+      m_icon = static_cast<files::FileIcon*>(addChild(std::make_unique<files::FileIcon>(icons, 48.0F, &thumbnails)));
       addChild(
           ui::label(
               {.out = &m_name,
@@ -213,7 +217,7 @@ namespace {
         label->setOpacity(entry.hidden && !selected ? kHiddenTextOpacity : 1.0F);
       m_iconSize = iconSize;
       m_icon->setIconSize(iconSize);
-      m_icon->bind(entry.icon, colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurface));
+      m_icon->bindFile(entry, colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurface));
       m_name->setText(entry.displayName);
       m_parent->setText(entry.parentDisplayName);
       m_parent->setMaxWidth(std::max(0.0F, width() - Style::spaceSm * 2));
@@ -251,6 +255,10 @@ namespace {
       }
     }
 
+  public:
+    void setThumbnailVisible(bool visible) { m_icon->setThumbnailVisible(visible); }
+    void releaseFile(Renderer& renderer) { m_icon->releaseFile(renderer); }
+
   private:
     Box* m_background = nullptr;
     files::FileIcon* m_icon = nullptr;
@@ -261,18 +269,18 @@ namespace {
 } // namespace
 
 files::FileViewAdapter::FileViewAdapter(
-    BrowserController& browser, FileIconCache& icons, ViewMode mode, std::function<std::uint32_t()> modifiers,
-    std::function<bool()> focused
+    BrowserController& browser, FileIconCache& icons, ThumbnailService& thumbnails, ViewMode mode,
+    std::function<std::uint32_t()> modifiers, std::function<bool()> focused
 )
-    : m_browser(browser), m_icons(icons), m_mode(mode), m_modifiers(std::move(modifiers)),
+    : m_browser(browser), m_icons(icons), m_thumbnails(thumbnails), m_mode(mode), m_modifiers(std::move(modifiers)),
       m_focused(std::move(focused)) {}
 
 std::size_t files::FileViewAdapter::itemCount() const { return m_browser.model().rows().size(); }
 std::unique_ptr<Node> files::FileViewAdapter::createTile() {
   if (m_mode == ViewMode::GRID) {
-    return std::make_unique<FileTile>(m_icons);
+    return std::make_unique<FileTile>(m_icons, m_thumbnails);
   }
-  return std::make_unique<FileRow>(m_icons);
+  return std::make_unique<FileRow>(m_icons, m_thumbnails);
 }
 
 std::unique_ptr<Node> files::FileViewAdapter::createDecoration() { return std::make_unique<SelectionSurface>(); }
@@ -300,6 +308,18 @@ std::string files::FileViewAdapter::itemTooltip(std::size_t index) const {
   return entry != nullptr ? std::format("{}\n{}", entry->displayName, model.typeLabel(id)) : std::string{};
 }
 
+void files::FileViewAdapter::setTileVisible(Node& tile, bool visible) {
+  if (m_mode == ViewMode::GRID)
+    static_cast<FileTile&>(tile).setThumbnailVisible(visible);
+  else
+    static_cast<FileRow&>(tile).setThumbnailVisible(visible);
+}
+void files::FileViewAdapter::releaseTile(Node& tile, Renderer& renderer) {
+  if (m_mode == ViewMode::GRID)
+    static_cast<FileTile&>(tile).releaseFile(renderer);
+  else
+    static_cast<FileRow&>(tile).releaseFile(renderer);
+}
 void files::FileViewAdapter::bindTile(Node& tile, std::size_t index, bool, bool hovered) {
   const auto& model = m_browser.model();
   if (index >= model.rows().size()) {

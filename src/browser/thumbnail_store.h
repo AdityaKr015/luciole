@@ -1,0 +1,29 @@
+#pragma once
+
+#include "browser/thumbnail_codec.h"
+
+#include <filesystem>
+#include <functional>
+
+namespace files {
+  // Worker-only access to the freedesktop PNG cache. Only files recorded by Files are pruned/cleared.
+  class ThumbnailStore {
+  public:
+    ThumbnailStore();
+    const std::filesystem::path& root() const { return m_root; }
+    static int sizeClass(int pixels);
+    static std::string filename(const std::string& uri);
+    std::optional<ThumbnailPng> read(
+        const std::string& uri, int side, std::uint64_t mtime, std::optional<std::uint64_t> size,
+        const std::string& stamp = {}
+    );
+    void write(ThumbnailPng thumbnail, int side, std::uint64_t budget, GCancellable* cancellable);
+    std::string prune(std::uint64_t budget);
+    std::string clear();
+
+  private:
+    std::filesystem::path m_root;
+    std::filesystem::path m_index;
+  };
+  std::optional<std::vector<std::uint8_t>> readThumbnailFile(const std::filesystem::path& path, std::size_t maximum);
+} // namespace files

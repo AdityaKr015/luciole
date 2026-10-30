@@ -271,7 +271,8 @@ void files::ViewPreferenceWriter::setChangedCallback(std::function<void(const st
 void files::ViewPreferenceWriter::submit(const std::vector<OverrideEdit>& edits) { m_state->queue(edits); }
 void files::ViewPreferenceWriter::resetAll() {
   std::vector<OverrideEdit> edits;
-  for (auto index = 0; index <= static_cast<int>(BrowserPreference::MODIFIED_COLUMN_WIDTH); ++index)
+  edits.reserve(static_cast<std::size_t>(BrowserPreference::COUNT));
+  for (auto index = 0; index < static_cast<int>(BrowserPreference::COUNT); ++index)
     edits.push_back({static_cast<BrowserPreference>(index), std::monostate{}});
   submit(edits);
 }

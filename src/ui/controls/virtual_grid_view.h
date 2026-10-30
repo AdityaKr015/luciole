@@ -47,6 +47,8 @@ public:
   // Bind item `index` into an existing pool tile. Implementations should
   // mutate controls inside `tile` only; never reparent or rebuild the subtree.
   virtual void bindTile(Node& tile, std::size_t index, bool selected, bool hovered) = 0;
+  virtual void releaseTile(Node& /*tile*/, Renderer& /*renderer*/) {}
+  virtual void setTileVisible(Node&, bool) {}
 
   // Optional: respond to an activation gesture (click). The grid still
   // updates its own selection state and fires onSelectionChanged.

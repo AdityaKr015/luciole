@@ -18,7 +18,11 @@
   pango,
   harfbuzz,
   libpng,
+  libwebp,
   librsvg,
+  gdk-pixbuf,
+  ffmpeg,
+  poppler-utils,
   nlohmann_json,
   tomlplusplus,
   autoAddDriverRunpath,
@@ -80,7 +84,9 @@ stdenv.mkDerivation (finalAttrs: {
     pango
     harfbuzz
     libpng
+    libwebp
     librsvg
+    gdk-pixbuf
     nlohmann_json
     tomlplusplus
   ];
@@ -88,7 +94,13 @@ stdenv.mkDerivation (finalAttrs: {
   mesonBuildType = "release";
   postFixup = ''
     wrapProgram "$out/bin/noctalia-files" \
-      --prefix PATH : "${lib.makeBinPath [ xdg-terminal-exec ]}" \
+      --prefix PATH : "${
+        lib.makeBinPath [
+          xdg-terminal-exec
+          ffmpeg
+          poppler-utils
+        ]
+      }" \
       --suffix GIO_EXTRA_MODULES : "${gvfs}/lib/gio/modules" \
       --suffix XDG_DATA_DIRS : "${
         lib.makeSearchPath "share" [

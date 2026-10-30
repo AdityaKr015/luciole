@@ -44,6 +44,14 @@ namespace {
     writer.save(files::ViewMode::GRID);
     writer.save(files::ViewMode::LIST);
     writer.save(files::ViewMode::GRID);
+    writer.submit(
+        {{files::BrowserPreference::THUMBNAIL_POLICY, files::ThumbnailPolicy::NEVER},
+         {files::BrowserPreference::THUMBNAIL_CACHE_MIB, 256}}
+    );
+    writer.submit(
+        {{files::BrowserPreference::THUMBNAIL_POLICY, files::ThumbnailPolicy::ALL},
+         {files::BrowserPreference::THUMBNAIL_CACHE_MIB, 64}}
+    );
     writer.saveGridIconSize(96);
     writer.saveGridIconSize(64);
     writer.saveSidebarWidth(320);
@@ -81,6 +89,8 @@ namespace {
             && loaded->browser.viewMode == files::ViewMode::GRID
             && !loaded->browser.showHidden
             && loaded->browser.gridIconSize == 64
+            && loaded->browser.thumbnails.policy == files::ThumbnailPolicy::ALL
+            && loaded->browser.thumbnails.cacheMiB == 64
             && loaded->browser.sidebarWidth == 280
             && !loaded->browser.showSidebar
             && loaded->browser.sort == finalSort
