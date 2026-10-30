@@ -50,6 +50,8 @@ namespace {
        {A::DOUBLE_CLICK, "Double click", ""},
        {A::TYPE_TO_SEARCH, "Search subfolders", ""},
        {A::TYPEAHEAD, "Select by typing", ""},
+       {A::SETTINGS, "Settings…", "Ctrl+,"},
+       {A::ABOUT, "About Noctalia Files", ""},
        {A::VIEW_MENU, "Back", ""},
        {A::SORT_MENU, "Sort…", ""},
        {A::SELECTION_MENU, "Selection…", ""},
@@ -261,6 +263,8 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
   case A::SORT_MENU:
   case A::SELECTION_MENU:
   case A::INTERACTION_MENU:
+  case A::SETTINGS:
+  case A::ABOUT:
     return {};
   }
   return unavailable("Unknown action.");

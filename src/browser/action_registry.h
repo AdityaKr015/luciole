@@ -50,6 +50,8 @@ namespace files {
     DOUBLE_CLICK,
     TYPE_TO_SEARCH,
     TYPEAHEAD,
+    SETTINGS,
+    ABOUT,
     VIEW_MENU,
     SORT_MENU,
     SELECTION_MENU,

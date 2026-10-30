@@ -369,7 +369,7 @@ void Stepper::commitValueField() {
       syncValueField();
       return;
     }
-    setValue(static_cast<int>(v));
+    setValue(static_cast<int>(std::clamp(v, static_cast<long>(m_min), static_cast<long>(m_max))));
     if (m_value != previous) {
       emitValueCommitted();
     }
@@ -379,7 +379,8 @@ void Stepper::commitValueField() {
 }
 
 bool Stepper::swallowNonNumericKey(std::uint32_t sym, std::uint32_t modifiers) {
-  (void)modifiers;
+  if ((modifiers & (KeyMod::Ctrl | KeyMod::Alt | KeyMod::Super)) != 0)
+    return false;
   if (sym >= XKB_KEY_0 && sym <= XKB_KEY_9) {
     return false;
   }

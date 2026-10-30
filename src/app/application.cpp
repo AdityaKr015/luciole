@@ -22,6 +22,7 @@
 #include "core/ui_phase.h"
 #include "cursor-shape-v1-client-protocol.h"
 #include "fs/filename.h"
+#include "noctalia_files_build_info.h"
 #include "operations/create_service.h"
 #include "operations/empty_trash_service.h"
 #include "operations/rename_service.h"
@@ -37,10 +38,12 @@
 #include "render/scene/input_dispatcher.h"
 #include "system/icon_theme_poll_source.h"
 #include "ui/builders.h"
+#include "ui/controls/browser_settings_view.h"
 #include "ui/controls/context_menu.h"
 #include "ui/controls/input.h"
 #include "ui/controls/name_editor.h"
 #include "ui/controls/scroll_view.h"
+#include "ui/controls/select_popup_context.h"
 #include "ui/palette.h"
 #include "wayland/popup_surface.h"
 #include "wayland/text_input_service.h"
@@ -108,7 +111,7 @@ namespace {
 
   using Action = files::BrowserAction;
 
-  class Window : public TextInputClient {
+  class Window : public TextInputClient, public SelectPopupContext {
   public:
     Window(
         WaylandConnection& connection, RenderContext& renderer, TextInputService& textInput,
@@ -124,7 +127,7 @@ namespace {
               m_browser, m_icons, files::ViewMode::GRID, [this] { return m_connection.input().keyboardModifiers(); },
               [this] { return m_fileKeyboardFocus && m_list != nullptr && m_list->focusArea()->focused(); }
           ),
-          m_preferences(std::move(paths)), m_pins(files::StateStore::pathFromEnvironment()),
+          m_preferences(std::move(paths)), m_savedSettings(settings), m_pins(files::StateStore::pathFromEnvironment()),
           m_viewMode(settings.viewMode), m_clipboard(clipboard) {
       m_gridZoom = static_cast<std::size_t>(
           std::ranges::find(files::kGridIconSizes, settings.gridIconSize) - files::kGridIconSizes.begin()
@@ -152,6 +155,8 @@ namespace {
       m_surface.setAnimationManager(&m_animations);
       m_surface.setConfigureCallback([this](std::uint32_t, std::uint32_t) {
         m_blankLocationClick.reset();
+        if (m_dialogHeight && m_menuSurface)
+          m_menuSurface->requestLayout();
         if (m_resizingSidebar || m_columnDrag || m_columnResize)
           m_dispatcher.cancelPointerCapture();
         m_surface.requestLayout();
@@ -163,6 +168,10 @@ namespace {
         m_connection.input().setCursorShape(serial, shape);
       });
       m_dispatcher.setFocusChangeCallback([this](InputArea*, InputArea* focused) {
+        if (m_settingsView) {
+          m_settingsView->reveal(focused);
+          m_surface.requestLayout();
+        }
         if (m_list != nullptr && focused != m_list->focusArea())
           clearTypeahead();
         if (m_nameHeader == nullptr || m_viewMode != files::ViewMode::LIST)
@@ -181,6 +190,12 @@ namespace {
       m_browser.setFileActivatedCallback([this](const files::Location& location) { m_launcher.open(location); });
       m_launcher.setChangedCallback([this](const std::string& error) {
         m_actionError = error.empty() ? "" : std::format("Could not open the file: {}", error);
+        if (m_aboutMessage) {
+          m_aboutMessage->setText(error.empty() ? "" : std::format("Could not open the link: {}", error));
+          m_aboutMessage->setVisible(!error.empty());
+          m_aboutMessage->setParticipatesInLayout(!error.empty());
+          m_menuSurface->requestLayout();
+        }
         m_browserDirty = true;
         m_surface.requestUpdate();
       });
@@ -261,10 +276,13 @@ namespace {
         }
       });
       m_preferences.setChangedCallback([this](const std::string& error) {
-        m_preferenceError = error.empty() ? "" : std::format("Could not save the view preference: {}", error);
+        m_preferenceError = error;
+        m_pendingSettings = m_preferences.settings();
+        m_settingsDirty = true;
         m_browserDirty = true;
         m_surface.requestUpdate();
       });
+      m_preferences.startWatching();
     }
 
     ~Window() override {
@@ -282,6 +300,7 @@ namespace {
       m_icons.setChangedCallback({});
       m_preferences.setChangedCallback({});
       closeMenu();
+      closeSettings();
       m_dispatcher.setSceneRoot(nullptr);
       m_surface.setSceneRoot(nullptr);
       m_root.reset();
@@ -366,6 +385,34 @@ namespace {
         return;
       }
       const auto x = static_cast<float>(event.sx), y = static_cast<float>(event.sy);
+      if (m_settingsView && dispatcher == &m_dispatcher) {
+        m_pointerX = x;
+        m_pointerY = y;
+        if (event.type == PointerEvent::Type::Button && event.pressed)
+          m_popupSerial = event.serial;
+        switch (event.type) {
+        case PointerEvent::Type::Enter:
+          dispatcher->pointerEnter(x, y, event.serial);
+          break;
+        case PointerEvent::Type::Leave:
+          dispatcher->pointerLeave();
+          break;
+        case PointerEvent::Type::Motion:
+          dispatcher->pointerMotion(x, y, event.serial);
+          break;
+        case PointerEvent::Type::Button:
+          dispatcher->pointerButton(x, y, event.button, event.pressed, event.serial, event.time, event.touch);
+          break;
+        case PointerEvent::Type::Axis:
+          dispatcher->pointerAxis(
+              x, y, event.axis, event.axisSource, event.axisValue, event.axisDiscrete, event.axisValue120,
+              event.axisLines, event.axisGestureSerial
+          );
+          break;
+        }
+        m_surface.requestUpdate();
+        return;
+      }
       m_pointerX = x;
       m_pointerY = y;
       if (dispatcher == &m_dispatcher
@@ -610,6 +657,19 @@ namespace {
         }
         return;
       }
+      if (m_settingsView) {
+        if (event.pressed
+            && (KeySymbol::isEscape(event.sym) || (event.sym == XKB_KEY_comma && event.modifiers == KeyMod::Ctrl)))
+          deferCloseSettings();
+        else if (event.pressed && event.sym == XKB_KEY_q && event.modifiers == KeyMod::Ctrl)
+          m_surface.close();
+        else if (event.pressed && KeySymbol::isTab(event.sym))
+          (void)m_dispatcher.cycleTabFocusInSubtree(m_settingsView, (event.modifiers & KeyMod::Shift) != 0);
+        else
+          m_dispatcher.keyEvent(event.sym, event.utf32, event.modifiers, event.pressed, event.preedit);
+        m_surface.requestLayout();
+        return;
+      }
       if (event.pressed && !event.preedit) {
         const bool editing = (m_location != nullptr && m_dispatcher.focusedArea() == m_location->inputArea())
             || (m_filterInput != nullptr && m_dispatcher.focusedArea() == m_filterInput->inputArea());
@@ -639,6 +699,10 @@ namespace {
         }
         if (event.sym == XKB_KEY_q && event.modifiers == KeyMod::Ctrl) {
           m_surface.close();
+          return;
+        }
+        if (event.sym == XKB_KEY_comma && event.modifiers == KeyMod::Ctrl) {
+          dispatchAction(Action::SETTINGS);
           return;
         }
         if (event.sym == XKB_KEY_l && event.modifiers == KeyMod::Ctrl && m_location != nullptr) {
@@ -1090,6 +1154,12 @@ namespace {
         }
         if (state.checked != 1)
           m_preferences.saveInteraction(m_activationMode, m_typingMode);
+        break;
+      case Action::SETTINGS:
+        openSettings();
+        break;
+      case Action::ABOUT:
+        openAbout();
         break;
       case Action::VIEW_MENU:
         openMenu();
@@ -1743,6 +1813,248 @@ namespace {
       m_browser.open(files::Location::fromUri(uri.get()));
       m_revealTarget = location;
       m_dispatcher.setFocus(m_list->focusArea());
+    }
+
+    void applySettings(const files::BrowserSettings& settings, bool force) {
+      const auto before = m_savedSettings;
+      if (!force && before == settings)
+        return;
+      captureViewAnchor();
+      m_dispatcher.cancelPointerCapture();
+      m_listAdapter.onPointerCancel();
+      m_gridAdapter.onPointerCancel();
+      if (m_menu && !m_settingsView)
+        closeMenu();
+      if (force || before.viewMode != settings.viewMode) {
+        m_viewMode = settings.viewMode;
+        m_browser.setDefaultViewMode(settings.viewMode);
+      }
+      if (force || before.gridIconSize != settings.gridIconSize) {
+        m_gridZoom = static_cast<std::size_t>(
+            std::ranges::find(files::kGridIconSizes, settings.gridIconSize) - files::kGridIconSizes.begin()
+        );
+        m_zoomScroll = 0;
+        m_browser.setDefaultIconSize(settings.gridIconSize);
+      }
+      if (force || before.sort != settings.sort)
+        m_browser.model().setSort(settings.sort);
+      if ((force || before.showHidden != settings.showHidden)
+          && m_browser.model().filter().showHidden != settings.showHidden)
+        m_browser.toggleHidden();
+      if (force || before.activationMode != settings.activationMode || before.typingMode != settings.typingMode) {
+        clearTypeahead();
+        m_activationMode = settings.activationMode;
+        m_typingMode = settings.typingMode;
+        for (auto* adapter : {&m_listAdapter, &m_gridAdapter})
+          adapter->setActivationMode(m_activationMode);
+      }
+      if (force || before.showSidebar != settings.showSidebar)
+        setSidebarVisible(settings.showSidebar, false);
+      if (force || before.sidebarWidth != settings.sidebarWidth)
+        m_sidebarWidth = settings.sidebarWidth;
+      if (force || before.columns != settings.columns)
+        m_columnVisibility = settings.columns;
+      if (force || before.columnOrder != settings.columnOrder)
+        m_columnOrder = settings.columnOrder;
+      if (force || before.columnWidths != settings.columnWidths)
+        m_columnWidths = settings.columnWidths;
+      m_savedSettings = settings;
+      m_browserDirty = true;
+      m_surface.requestLayout();
+    }
+
+    void showCenteredDialog(std::unique_ptr<Flex> root) {
+      const float width = std::min(588.0F, static_cast<float>(m_surface.width()) - 32.0F);
+      UiPhaseScope phase(UiPhase::Layout);
+      LayoutConstraints constraints;
+      constraints.setExactWidth(width);
+      const float preferredHeight = root->measure(m_surface.renderTarget().renderer(), constraints).height;
+      const float height = std::min(preferredHeight, static_cast<float>(m_surface.height()) - 64.0F);
+      showPopup(
+          std::move(root), nullptr, {(m_surface.width() - width) * 0.5F, (m_surface.height() - height) * 0.5F, 1, 1},
+          width, height
+      );
+      if (!m_menuSurface)
+        return;
+      m_dialogHeight = preferredHeight;
+      m_menuDispatcher.setFocusChangeCallback([this](InputArea*, InputArea* focused) {
+        if (m_aboutScroll)
+          m_aboutScroll->requestScrollIntoView(focused);
+        if (m_menuSurface)
+          m_menuSurface->requestLayout();
+      });
+      (void)m_menuDispatcher.cycleTabFocus(false);
+      m_menuSurface->requestLayout();
+    }
+
+    void deferCloseSettings() {
+      const std::weak_ptr<int> lifetime = m_lifetime;
+      DeferredCall::callLater([this, lifetime] {
+        if (!lifetime.expired())
+          closeSettings();
+      });
+    }
+    void closeSettings() {
+      if (!m_settingsView)
+        return;
+      closeMenu();
+      m_settingsLifetime.reset();
+      m_dispatcher.cancelPointerCapture();
+      m_dispatcher.setFocus(m_list->focusArea());
+      auto* settings = std::exchange(m_settingsView, nullptr);
+      auto removed = m_root->removeChild(settings);
+      m_surface.requestLayout();
+    }
+    void openSettings() {
+      if (m_settingsView) {
+        deferCloseSettings();
+        return;
+      }
+      closeMenu();
+      cancelDrag();
+      clearCompletions();
+      if (m_editingLocation)
+        endLocationEdit(false);
+      m_settingsLifetime = std::make_shared<int>(0);
+      auto root = std::make_unique<BrowserSettingsView>(
+          [this](files::OverrideEdit edit) {
+            m_preferences.submit({edit});
+            m_surface.requestLayout();
+          },
+          [this] { m_preferences.resetAll(); }, [this] { deferCloseSettings(); }
+      );
+      root->setParticipatesInLayout(false);
+      root->setZIndex(1000);
+      root->setPopupContext(this);
+      m_settingsView = root.get();
+      const auto& inherited = m_preferences.inheritedSettings();
+      root->sync(
+          m_savedSettings, inherited ? inherited->browser : files::BrowserSettings{}, m_preferences.busy(),
+          m_preferenceError
+      );
+      m_root->addChild(std::move(root));
+      m_dispatcher.cancelPointerCapture();
+      m_dispatcher.setFocus(m_dispatcher.firstTabFocusUnder(m_settingsView));
+      m_surface.requestLayout();
+    }
+    void openSelectDropdown(const DropdownRequest& request, DropdownCallbacks callbacks) override {
+      if (!m_settingsView)
+        return;
+      std::vector<ContextMenuControlEntry> entries;
+      entries.reserve(request.options.size());
+      for (std::size_t index = 0; index < request.options.size(); ++index)
+        entries.push_back(
+            {.id = static_cast<int>(index),
+             .label = request.options[index],
+             .checkmark = true,
+             .toggleState = index == request.selectedIndex ? 1 : 0}
+        );
+      const std::weak_ptr<int> lifetime = m_settingsLifetime;
+      showContextMenu(
+          std::move(entries),
+          [lifetime, select = callbacks.onSelect](int index) {
+            if (!lifetime.expired() && select)
+              select(static_cast<std::size_t>(index));
+          },
+          {static_cast<float>(request.anchorX), static_cast<float>(request.anchorY),
+           static_cast<float>(request.anchorWidth), static_cast<float>(request.anchorHeight)},
+          true, request.menuWidth
+      );
+      if (m_menu) {
+        m_menu->setHighlightedIndex(request.selectedIndex);
+        revealMenuHighlight();
+      }
+      m_selectDismiss = [lifetime, dismiss = callbacks.onDismiss] {
+        if (!lifetime.expired() && dismiss)
+          dismiss();
+      };
+    }
+    void closeSelectDropdown() override { dismissMenu(); }
+    bool isSelectDropdownOpen() const override { return m_menuSurface && static_cast<bool>(m_selectDismiss); }
+
+    void openAbout() {
+      ScrollView* scroll = nullptr;
+      Label* message = nullptr;
+      constexpr float width = 536.0F;
+      auto body = ui::scrollView(
+          {.out = &scroll,
+           .viewportPaddingH = 0.0F,
+           .viewportPaddingV = 0.0F,
+           .fillWidth = true,
+           .flexGrow = 1.0F,
+           .configure = [](ScrollView& view) { view.setReserveScrollbarGutter(true); }}
+      );
+      body->content()->setAlign(FlexAlign::Stretch);
+      body->content()->setGap(Style::spaceMd);
+      const auto text = [&](const std::string& value, bool caption = false) {
+        body->content()->addChild(
+            ui::label(
+                {.text = value,
+                 .fontSize = caption ? Style::fontSizeCaption : Style::fontSizeBody,
+                 .maxWidth = width,
+                 .maxLines = 1000,
+                 .configure = [](Label& label) { label.setUseMarkup(false); }}
+            )
+        );
+      };
+      text(
+          std::format(
+              "Version {} · {}\nRevision {}\nBuilt with {}", NOCTALIA_FILES_VERSION, NOCTALIA_FILES_BUILD_TYPE,
+              NOCTALIA_FILES_BUILD_REVISION, NOCTALIA_FILES_COMPILER
+          )
+      );
+      text("A standalone file manager from Noctalia.");
+      const auto link = [this](const char* address) { m_launcher.open(files::Location::fromUri(address)); };
+      body->content()->addChild(
+          ui::row(
+              {.gap = Style::spaceSm},
+              ui::button(
+                  {.text = "Project website",
+                   .variant = ButtonVariant::Default,
+                   .onClick = [link] { link("https://noctalia.dev"); }}
+              ),
+              ui::button({.text = "Source code", .variant = ButtonVariant::Default, .onClick = [link] {
+                            link("https://github.com/noctalia-dev/noctalia-files");
+                          }})
+          )
+      );
+      body->content()->addChild(
+          ui::label(
+              {.out = &message,
+               .color = colorSpecFromRole(ColorRole::Error),
+               .maxWidth = width,
+               .maxLines = 3,
+               .visible = false,
+               .participatesInLayout = false,
+               .configure = [](Label& label) { label.setUseMarkup(false); }}
+          )
+      );
+      auto root = ui::column(
+          {.align = FlexAlign::Stretch,
+           .gap = Style::spaceMd,
+           .padding = Style::spaceMd,
+           .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
+           .radius = Style::radiusLg,
+           .border = colorSpecFromRole(ColorRole::OutlineVariant)},
+          ui::row(
+              {.align = FlexAlign::Center},
+              ui::label({.text = "About Noctalia Files", .fontWeight = FontWeight::SemiBold, .flexGrow = 1.0F}),
+              ui::button(
+                  {.glyph = "x",
+                   .controlHeight = Style::controlHeightSm,
+                   .variant = ButtonVariant::Default,
+                   .minWidth = Style::controlHeightSm,
+                   .maxWidth = Style::controlHeightSm,
+                   .onClick = [this] { dismissMenu(); }}
+              )
+          ),
+          std::move(body)
+      );
+      showCenteredDialog(std::move(root));
+      if (m_menuSurface) {
+        m_aboutScroll = scroll;
+        m_aboutMessage = message;
+      }
     }
 
     void showProperties(const std::vector<files::DirectoryEntry>& targets) {
@@ -2691,7 +3003,7 @@ namespace {
 
     static constexpr float kSidebarHandleWidth = 6.0F;
 
-    void setSidebarVisible(bool visible) {
+    void setSidebarVisible(bool visible, bool persist = true) {
       if (visible == m_showSidebar)
         return;
       m_dispatcher.cancelPointerCapture();
@@ -2708,7 +3020,8 @@ namespace {
           }
         }
       }
-      m_preferences.saveShowSidebar(visible);
+      if (persist)
+        m_preferences.saveShowSidebar(visible);
       m_surface.requestLayout();
     }
 
@@ -3505,6 +3818,18 @@ namespace {
         UiPhaseScope phase(UiPhase::Layout);
         buildScene();
       }
+      if (std::exchange(m_settingsDirty, false)) {
+        if (m_pendingSettings)
+          applySettings(m_pendingSettings->browser, !m_preferenceError.empty());
+        if (m_settingsView) {
+          const auto& inherited = m_preferences.inheritedSettings();
+          m_settingsView->sync(
+              m_savedSettings, inherited ? inherited->browser : files::BrowserSettings{}, m_preferences.busy(),
+              m_preferenceError
+          );
+          m_surface.requestLayout();
+        }
+      }
       m_sidebarResizeLine->setFill(colorSpecFromRole(
           m_resizingSidebar || m_sidebarResize->focused() ? ColorRole::Primary
               : m_sidebarResize->hovered()                ? ColorRole::OnSurfaceVariant
@@ -3603,6 +3928,13 @@ namespace {
         m_root->arrange(
             renderer, LayoutRect{0, 0, static_cast<float>(m_surface.width()), static_cast<float>(m_surface.height())}
         );
+        if (m_settingsView) {
+          const float top = clientHeader ? m_titlebar->height() : 0.0F;
+          m_settingsView->setCompact(m_surface.width() < 800);
+          m_settingsView->arrange(
+              renderer, {0, top, static_cast<float>(m_surface.width()), static_cast<float>(m_surface.height()) - top}
+          );
+        }
         layoutDetails(renderer);
         const bool columnHoverDirty = std::exchange(m_columnHoverDirty, false);
         if (columnOrderChanged || columnHoverDirty)
@@ -3614,7 +3946,7 @@ namespace {
         if (placesFocus) {
           m_dispatcher.restoreTabFocus(std::move(*placesFocus));
         }
-        if (m_restorePlaceFocus && m_menuSurface == nullptr) {
+        if (m_restorePlaceFocus && m_menuSurface == nullptr && !m_settingsView) {
           const auto location = *std::exchange(m_restorePlaceFocus, std::nullopt);
           if (m_showSidebar) {
             if (auto* area = m_places->focusArea(location)) {
@@ -4267,6 +4599,13 @@ namespace {
         m_menuSurface->setSceneRoot(nullptr);
       }
       m_patternEditor = nullptr;
+      if (auto dismiss = std::exchange(m_selectDismiss, {}))
+        dismiss();
+      m_aboutScroll = nullptr;
+      m_aboutMessage = nullptr;
+      m_dialogHeight.reset();
+      m_dialogPosition.reset();
+      m_menuDispatcher.setFocusChangeCallback({});
       m_menuRoot.reset();
       m_menu = nullptr;
       m_menuScroll = nullptr;
@@ -4304,6 +4643,35 @@ namespace {
           return;
         }
         UiPhaseScope phase(UiPhase::Layout);
+        if (m_dialogHeight) {
+          const auto width =
+              static_cast<std::uint32_t>(std::min(588.0F, static_cast<float>(m_surface.width()) - 32.0F));
+          LayoutConstraints constraints;
+          constraints.setExactWidth(static_cast<float>(width));
+          m_dialogHeight = m_menuRoot->measure(m_menuSurface->renderTarget().renderer(), constraints).height;
+          const auto height = static_cast<std::uint32_t>(
+              std::ceil(std::min(*m_dialogHeight, static_cast<float>(m_surface.height()) - 64.0F))
+          );
+          if (width != m_menuSurface->width() || height != m_menuSurface->height())
+            (void)m_menuSurface->resize(width, height, false);
+          const std::pair<int, int> position{
+              static_cast<int>((m_surface.width() - width) / 2), static_cast<int>((m_surface.height() - height) / 2)
+          };
+          if (m_dialogPosition != position) {
+            m_dialogPosition = position;
+            (void)m_menuSurface->repositionAnchor(
+                {.anchorX = position.first,
+                 .anchorY = position.second,
+                 .anchorWidth = 1,
+                 .anchorHeight = 1,
+                 .anchor = XDG_POSITIONER_ANCHOR_BOTTOM_RIGHT,
+                 .gravity = XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT,
+                 .constraintAdjustment =
+                     XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X | XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y},
+                false
+            );
+          }
+        }
         if (m_emptyTrashDialog) {
           LayoutConstraints constraints;
           constraints.setExactWidth(static_cast<float>(m_menuSurface->width()));
@@ -4359,7 +4727,7 @@ namespace {
 
     void showContextMenu(
         std::vector<ContextMenuControlEntry> entries, std::function<void(int)> action, LayoutRect anchor,
-        bool alignLeft = false
+        bool alignLeft = false, float preferredWidth = 264.0F
     ) {
       if (m_columnDrag || m_columnResize)
         m_dispatcher.cancelPointerCapture();
@@ -4369,7 +4737,7 @@ namespace {
       const float contentHeight = ContextMenuControl::preferredHeight(entries, entries.size(), 1.0F);
       const float height = std::min(contentHeight, std::max(120.0F, static_cast<float>(m_surface.height()) - 32.0F));
       control->setMaxVisible(entries.size());
-      constexpr float width = 264.0F;
+      const float width = std::min(preferredWidth, static_cast<float>(m_surface.width()) - 32.0F);
       control->setEntries(std::move(entries));
       const bool overflowing = contentHeight > height + 0.5F;
       const float gutter = overflowing ? Style::scrollbarWidth + Style::scrollbarGap : 0.0F;
@@ -4533,7 +4901,7 @@ namespace {
       }
       showActionMenu(
           {Action::SORT_MENU, Action::SELECTION_MENU, Action::INTERACTION_MENU, Action::SHOW_HIDDEN,
-           Action::SHOW_SIDEBAR, Action::SEARCH}
+           Action::SHOW_SIDEBAR, Action::SEARCH, Action::SETTINGS, Action::ABOUT}
       );
     }
 
@@ -4555,6 +4923,16 @@ namespace {
     files::FileViewAdapter m_listAdapter;
     files::FileViewAdapter m_gridAdapter;
     files::ViewPreferenceWriter m_preferences;
+    files::BrowserSettings m_savedSettings;
+    std::optional<files::Settings> m_pendingSettings;
+    bool m_settingsDirty = false;
+    BrowserSettingsView* m_settingsView = nullptr;
+    std::shared_ptr<int> m_settingsLifetime;
+    std::function<void()> m_selectDismiss;
+    ScrollView* m_aboutScroll = nullptr;
+    Label* m_aboutMessage = nullptr;
+    std::optional<float> m_dialogHeight;
+    std::optional<std::pair<int, int>> m_dialogPosition;
     files::PinService m_pins;
     files::FileLauncher m_launcher;
     files::PlacesSidebar* m_places = nullptr;

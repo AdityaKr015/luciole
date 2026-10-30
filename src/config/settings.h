@@ -69,6 +69,7 @@ namespace files {
   // Validation reads exactly one required file, without adjacent override files.
   [[nodiscard]] ConfigIssues validateConfigFile(const std::filesystem::path& file);
   [[nodiscard]] SettingsResult loadSettings(const ConfigPaths& paths);
+  [[nodiscard]] SettingsResult loadInheritedSettings(const ConfigPaths& paths);
 
   class ConfigService {
   public:

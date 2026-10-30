@@ -73,6 +73,8 @@ endif
 build_config = configuration_data()
 build_config.set_quoted('NOCTALIA_FILES_VERSION', meson.project_version())
 build_config.set_quoted('NOCTALIA_FILES_BUILD_REVISION', get_option('build_revision'))
+build_config.set_quoted('NOCTALIA_FILES_BUILD_TYPE', get_option('buildtype'))
+build_config.set_quoted('NOCTALIA_FILES_COMPILER', cpp.get_id() + ' ' + cpp.version())
 build_config.set_quoted('NOCTALIA_FILES_INSTALL_ASSETSDIR', get_option('prefix') / get_option('datadir') / 'noctalia-files/assets')
 build_info = configure_file(
   input: 'src/core/build_info.h.in',
@@ -111,6 +113,8 @@ app_sources = files(
   'src/platform/terminal_launcher.cpp',
   'src/browser/places_sidebar.cpp',
   'src/ui/controls/name_editor.cpp',
+  'src/ui/controls/browser_settings_view.cpp',
+  'src/ui/controls/select.cpp',
   'src/core/timer_manager.cpp',
   'src/core/ui_phase.cpp',
   'src/ui/controls/color_swatch_preview.cpp',

@@ -23,6 +23,12 @@ namespace files {
     void saveDetailsColumns(DetailsColumnVisibility visibility);
     void saveColumnOrder(DetailsColumnOrder order);
     void saveColumnWidths(DetailsColumnWidths widths);
+    void submit(const std::vector<OverrideEdit>& edits);
+    void resetAll();
+    void reload();
+    void startWatching();
+    [[nodiscard]] const std::optional<Settings>& settings() const;
+    [[nodiscard]] const std::optional<Settings>& inheritedSettings() const;
     [[nodiscard]] bool busy() const;
     void setChangedCallback(std::function<void(const std::string&)> callback);
 

@@ -557,10 +557,12 @@ files::ConfigIssues files::validateConfigFile(const std::filesystem::path& file)
   return parsed ? ConfigIssues{} : std::move(parsed.error());
 }
 
-files::SettingsResult files::loadSettings(const ConfigPaths& paths) {
-  Settings settings;
-  ConfigIssues issues;
+static files::SettingsResult loadLayers(const files::ConfigPaths& paths, bool overrides) {
+  files::Settings settings;
+  files::ConfigIssues issues;
   for (const auto* file : {&paths.base, &paths.overrides}) {
+    if (file == &paths.overrides && !overrides)
+      continue;
     auto text = readFile(*file, true);
     if (!text) {
       issues.push_back(std::move(text.error()));
@@ -582,6 +584,9 @@ files::SettingsResult files::loadSettings(const ConfigPaths& paths) {
   }
   return settings;
 }
+
+files::SettingsResult files::loadSettings(const ConfigPaths& paths) { return loadLayers(paths, true); }
+files::SettingsResult files::loadInheritedSettings(const ConfigPaths& paths) { return loadLayers(paths, false); }
 
 files::ConfigService::ConfigService(ConfigPaths paths) : m_paths(std::move(paths)) {}
 
