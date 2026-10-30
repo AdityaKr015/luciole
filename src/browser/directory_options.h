@@ -15,6 +15,8 @@ namespace files {
   inline constexpr int kMaxSidebarWidth = 400;
   inline constexpr int kDefaultSidebarWidth = 206;
   enum class ViewMode : std::uint8_t { LIST, GRID };
+  enum class ActivationMode : std::uint8_t { SINGLE_CLICK, DOUBLE_CLICK };
+  enum class TypingMode : std::uint8_t { SEARCH, TYPEAHEAD };
   // Complete column allocations, including the gap after their contents. Zero
   // is the automatic Name width; metadata always has an explicit allocation.
   using DetailsColumnWidths = std::array<int, 4>;

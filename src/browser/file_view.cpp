@@ -373,7 +373,10 @@ VirtualGridAdapter::PointerReleaseResult files::FileViewAdapter::onPointerReleas
   const bool twice = m_lastClick == pressed && now - m_lastClickTime < std::chrono::milliseconds(400);
   m_lastClick = twice ? std::nullopt : pressed;
   m_lastClickTime = now;
-  return {.rebind = true, .activateIndex = twice ? index : std::nullopt};
+  return {
+      .rebind = true,
+      .activateIndex = (twice || m_activationMode == ActivationMode::SINGLE_CLICK) ? index : std::nullopt
+  };
 }
 
 void files::FileViewAdapter::onPointerCancel() {
@@ -476,6 +479,7 @@ bool files::FileViewAdapter::itemHitTest(std::size_t, float x, float y, float wi
 
 void files::FileViewAdapter::onActivate(std::size_t index) {
   if (index < itemCount()) {
-    m_browser.activate(m_browser.model().rows()[index]);
+    if (m_activate)
+      m_activate(m_browser.model().rows()[index]);
   }
 }

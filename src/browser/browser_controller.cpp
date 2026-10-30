@@ -6,7 +6,34 @@
 #include <stdexcept>
 #include <utility>
 
-files::BrowserController::BrowserController(SortOptions sort, bool showHidden) {
+struct files::BrowserController::ActivationState {
+  GioPtr<GCancellable> cancellable{g_cancellable_new()};
+  std::function<void(EntryId, const Location&, std::uint64_t, GFileType, const std::string&)> resolved;
+};
+
+files::BrowserController::BrowserController(SortOptions sort, bool showHidden)
+    : m_activation(std::make_shared<ActivationState>()) {
+  m_activation->resolved = [this](
+                               EntryId id, const Location& target, std::uint64_t context, GFileType type,
+                               const std::string& error
+                           ) {
+    const auto* entry = m_model.entry(id);
+    if (context != m_contextSerial || !entry || entry->location != target || !std::ranges::contains(m_model.rows(), id))
+      return;
+    if (!error.empty()) {
+      showMessage(error);
+      return;
+    }
+    if (type == G_FILE_TYPE_DIRECTORY) {
+      open(target);
+      return;
+    }
+    if (m_fileActivated) {
+      const auto callback = m_fileActivated;
+      callback(target);
+    } else
+      showMessage("Opening files is not available yet.");
+  };
   m_model.setSort(sort);
   m_model.setFilter({.showHidden = showHidden, .text = {}});
   m_model.setChangedCallback([this] { notify(); });
@@ -23,9 +50,17 @@ files::BrowserController::BrowserController(SortOptions sort, bool showHidden) {
 }
 
 files::BrowserController::~BrowserController() {
+  m_activation->resolved = {};
+  g_cancellable_cancel(m_activation->cancellable.get());
   m_session.setChangedCallback({});
   m_search.setChangedCallback({});
   m_model.setChangedCallback({});
+}
+
+void files::BrowserController::advanceContext() {
+  ++m_contextSerial;
+  g_cancellable_cancel(m_activation->cancellable.get());
+  m_activation->cancellable.reset(g_cancellable_new());
 }
 
 void files::BrowserController::setChangedCallback(std::function<void()> callback) { m_changed = std::move(callback); }
@@ -53,6 +88,7 @@ void files::BrowserController::open(const Location& location) {
   }
   m_message.clear();
   setSearchQuery({});
+  advanceContext();
   m_session.open(destination);
 }
 
@@ -106,6 +142,7 @@ bool files::BrowserController::back() {
   m_message.clear();
   setSearchQuery({});
   const auto destination = m_history[m_historyIndex];
+  advanceContext();
   m_session.open(destination);
   return true;
 }
@@ -118,6 +155,7 @@ bool files::BrowserController::forward() {
   m_message.clear();
   setSearchQuery({});
   const auto destination = m_history[m_historyIndex];
+  advanceContext();
   m_session.open(destination);
   return true;
 }
@@ -153,6 +191,7 @@ void files::BrowserController::refresh() {
 }
 
 void files::BrowserController::stop() {
+  advanceContext();
   if (m_query.empty()) {
     m_session.cancel();
   } else {
@@ -173,6 +212,7 @@ void files::BrowserController::setSearchQuery(std::string text) {
   if (m_query == text) {
     return;
   }
+  advanceContext();
   m_query = std::move(text);
   m_message.clear();
   if (m_query.empty()) {
@@ -198,7 +238,34 @@ void files::BrowserController::activate(EntryId id) {
       open(entry->location);
     else
       showMessage("Restore this item before opening it.");
-  } else if (entry->type == G_FILE_TYPE_DIRECTORY || entry->symlink) {
+  } else if (entry->symlink) {
+    struct Query {
+      std::shared_ptr<ActivationState> state;
+      EntryId id;
+      Location target;
+      std::uint64_t context;
+    };
+    const auto file = entry->location.file();
+    g_file_query_info_async(
+        file.get(), G_FILE_ATTRIBUTE_STANDARD_TYPE, G_FILE_QUERY_INFO_NONE, G_PRIORITY_DEFAULT,
+        m_activation->cancellable.get(),
+        [](GObject* source, GAsyncResult* result, gpointer raw) {
+          const std::unique_ptr<Query> query(static_cast<Query*>(raw));
+          GError* error = nullptr;
+          const GioPtr<GFileInfo> info(g_file_query_info_finish(G_FILE(source), result, &error));
+          const std::string message = error ? error->message : "";
+          const bool cancelled = error && g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+          g_clear_error(&error);
+          const auto callback = query->state->resolved;
+          if (callback && !cancelled)
+            callback(
+                query->id, query->target, query->context,
+                info ? g_file_info_get_file_type(info.get()) : G_FILE_TYPE_UNKNOWN, message
+            );
+        },
+        new Query{m_activation, id, entry->location, m_contextSerial}
+    );
+  } else if (entry->type == G_FILE_TYPE_DIRECTORY) {
     open(entry->location);
   } else if (m_fileActivated) {
     const auto callback = m_fileActivated;

@@ -21,6 +21,8 @@ namespace {
   constexpr std::size_t kMaxConfigBytes = 256 * 1024;
 
   struct Patch {
+    std::optional<files::ActivationMode> activationMode;
+    std::optional<files::TypingMode> typingMode;
     std::optional<bool> showHidden;
     std::optional<files::SortField> sortBy;
     std::optional<files::ViewMode> viewMode;
@@ -147,7 +149,20 @@ namespace {
         for (const auto& [name, value] : *browser) {
           const auto path = std::format("browser.{}", name.str());
           const auto* widthKey = std::ranges::find(files::kDetailsColumnWidthKeys, name.str());
-          if (widthKey != files::kDetailsColumnWidthKeys.end()) {
+          if (name == "activation_mode") {
+            const auto* mode = value.as_string();
+            if (mode && (mode->get() == "single_click" || mode->get() == "double_click"))
+              patch.activationMode = mode->get() == "single_click" ? files::ActivationMode::SINGLE_CLICK
+                                                                   : files::ActivationMode::DOUBLE_CLICK;
+            else
+              issue(issues, file, value, path, "expected 'single_click' or 'double_click'");
+          } else if (name == "typing_mode") {
+            const auto* mode = value.as_string();
+            if (mode && (mode->get() == "search" || mode->get() == "typeahead"))
+              patch.typingMode = mode->get() == "search" ? files::TypingMode::SEARCH : files::TypingMode::TYPEAHEAD;
+            else
+              issue(issues, file, value, path, "expected 'search' or 'typeahead'");
+          } else if (widthKey != files::kDetailsColumnWidthKeys.end()) {
             const auto index = static_cast<std::size_t>(widthKey - files::kDetailsColumnWidthKeys.begin());
             const auto* width = value.as_integer();
             if (width != nullptr
@@ -257,6 +272,10 @@ namespace {
   }
 
   void apply(files::Settings& settings, const Patch& patch) {
+    if (patch.activationMode)
+      settings.browser.activationMode = *patch.activationMode;
+    if (patch.typingMode)
+      settings.browser.typingMode = *patch.typingMode;
     for (std::size_t index = 0; index < patch.columnWidths.size(); ++index)
       if (patch.columnWidths[index])
         settings.browser.columnWidths[index] = *patch.columnWidths[index];
@@ -313,6 +332,10 @@ namespace {
   std::string_view preferenceKey(files::BrowserPreference preference) {
     using Preference = files::BrowserPreference;
     switch (preference) {
+    case Preference::ACTIVATION_MODE:
+      return "browser.activation_mode";
+    case Preference::TYPING_MODE:
+      return "browser.typing_mode";
     case Preference::NAME_COLUMN_WIDTH:
       return "browser.name_column_width";
     case Preference::TYPE_COLUMN_WIDTH:
@@ -351,6 +374,18 @@ namespace {
 
   void editPatch(Patch& patch, const files::OverrideEdit& edit) {
     using Preference = files::BrowserPreference;
+    if (edit.preference == Preference::ACTIVATION_MODE) {
+      patch.activationMode = std::holds_alternative<std::monostate>(edit.value)
+          ? std::nullopt
+          : std::optional(std::get<files::ActivationMode>(edit.value));
+      return;
+    }
+    if (edit.preference == Preference::TYPING_MODE) {
+      patch.typingMode = std::holds_alternative<std::monostate>(edit.value)
+          ? std::nullopt
+          : std::optional(std::get<files::TypingMode>(edit.value));
+      return;
+    }
     if (const auto index = columnWidthIndex(edit.preference)) {
       patch.columnWidths[*index] = std::holds_alternative<std::monostate>(edit.value)
           ? std::nullopt
@@ -412,6 +447,8 @@ namespace {
     case Preference::DIRECTORIES_FIRST:
       patch.directoriesFirst = value;
       break;
+    case Preference::ACTIVATION_MODE:
+    case Preference::TYPING_MODE:
     case Preference::NAME_COLUMN_WIDTH:
     case Preference::TYPE_COLUMN_WIDTH:
     case Preference::SIZE_COLUMN_WIDTH:
@@ -427,6 +464,13 @@ namespace {
 
   std::string formatPatch(const Patch& patch) {
     toml::table browser;
+    if (patch.activationMode)
+      browser.insert(
+          "activation_mode",
+          *patch.activationMode == files::ActivationMode::SINGLE_CLICK ? "single_click" : "double_click"
+      );
+    if (patch.typingMode)
+      browser.insert("typing_mode", *patch.typingMode == files::TypingMode::SEARCH ? "search" : "typeahead");
     for (std::size_t index = 0; index < patch.columnWidths.size(); ++index)
       if (patch.columnWidths[index])
         browser.insert(files::kDetailsColumnWidthKeys[index], *patch.columnWidths[index]);
@@ -571,7 +615,13 @@ files::AtomicWriteState files::ConfigService::saveOverrides(std::span<const Over
     const auto key = preferenceKey(edit.preference);
     bool valid = !key.empty();
     if (!std::holds_alternative<std::monostate>(edit.value)) {
-      if (const auto index = columnWidthIndex(edit.preference)) {
+      if (edit.preference == BrowserPreference::ACTIVATION_MODE) {
+        const auto* mode = std::get_if<ActivationMode>(&edit.value);
+        valid = mode && (*mode == ActivationMode::SINGLE_CLICK || *mode == ActivationMode::DOUBLE_CLICK);
+      } else if (edit.preference == BrowserPreference::TYPING_MODE) {
+        const auto* mode = std::get_if<TypingMode>(&edit.value);
+        valid = mode && (*mode == TypingMode::SEARCH || *mode == TypingMode::TYPEAHEAD);
+      } else if (const auto index = columnWidthIndex(edit.preference)) {
         const auto* width = std::get_if<int>(&edit.value);
         valid = width != nullptr && validDetailsColumnWidth(*index, *width);
       } else if (edit.preference == BrowserPreference::COLUMN_ORDER) {

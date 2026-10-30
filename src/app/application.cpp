@@ -4,11 +4,13 @@
 #include "app/glib_poll_source.h"
 #include "app/main_loop.h"
 #include "app/timer_poll_source.h"
+#include "browser/action_registry.h"
 #include "browser/browser_controller.h"
 #include "browser/details_columns.h"
 #include "browser/file_view.h"
 #include "browser/location_presentation.h"
 #include "browser/places_sidebar.h"
+#include "browser/selection_tools.h"
 #include "config/settings.h"
 #include "config/view_preference_writer.h"
 #include "core/deferred_call.h"
@@ -101,6 +103,8 @@ namespace {
     });
   }
 
+  using Action = files::BrowserAction;
+
   class Window : public TextInputClient {
   public:
     Window(
@@ -127,6 +131,8 @@ namespace {
       m_columnVisibility = settings.columns;
       m_columnOrder = settings.columnOrder;
       m_columnWidths = settings.columnWidths;
+      m_activationMode = settings.activationMode;
+      m_typingMode = settings.typingMode;
       m_surface.setRenderContext(&renderer);
       m_surface.setAnimationManager(&m_animations);
       m_surface.setConfigureCallback([this](std::uint32_t, std::uint32_t) {
@@ -141,6 +147,8 @@ namespace {
         m_connection.input().setCursorShape(serial, shape);
       });
       m_dispatcher.setFocusChangeCallback([this](InputArea*, InputArea* focused) {
+        if (m_list != nullptr && focused != m_list->focusArea())
+          clearTypeahead();
         if (m_nameHeader == nullptr || m_viewMode != files::ViewMode::LIST)
           return;
         for (std::size_t index = 0; index < 4; ++index) {
@@ -210,6 +218,13 @@ namespace {
         m_surface.requestUpdate();
       });
       for (auto* adapter : {&m_listAdapter, &m_gridAdapter}) {
+        adapter->setActivationMode(m_activationMode);
+        adapter->setActivateCallback([this](files::EntryId id) {
+          auto request = actionRequest(false);
+          if (const auto* entry = m_browser.model().entry(id))
+            request.targets.push_back({id, entry->location});
+          dispatchAction(Action::OPEN, request);
+        });
         adapter->setContextCallback([this](std::optional<files::EntryId> id, float x, float y) {
           openFileMenu(id, x, y);
         });
@@ -337,6 +352,8 @@ namespace {
       const auto x = static_cast<float>(event.sx), y = static_cast<float>(event.sy);
       m_pointerX = x;
       m_pointerY = y;
+      if (event.type == PointerEvent::Type::Button && event.pressed && dispatcher == &m_dispatcher)
+        clearTypeahead();
       if (event.type == PointerEvent::Type::Button && event.pressed) {
         m_popupSerial = event.serial;
         if (dispatcher == &m_dispatcher) {
@@ -489,6 +506,13 @@ namespace {
           return;
         }
       }
+      if (event.pressed
+          && event.modifiers == 0
+          && KeySymbol::isEscape(event.sym)
+          && (!m_typeahead.text().empty() || !m_typeaheadPreedit.empty())) {
+        clearTypeahead();
+        return;
+      }
       if (m_columnDrag || m_columnResize)
         return;
       if (m_drag) {
@@ -525,6 +549,13 @@ namespace {
         return;
       }
       if (event.pressed && !event.preedit) {
+        const bool editing = (m_location != nullptr && m_dispatcher.focusedArea() == m_location->inputArea())
+            || (m_filterInput != nullptr && m_dispatcher.focusedArea() == m_filterInput->inputArea());
+        if (!m_typeaheadPreedit.empty()) {
+          if (KeySymbol::isEscape(event.sym))
+            clearTypeahead();
+          return;
+        }
         if (KeySymbol::isTab(event.sym)) {
           (void)m_dispatcher.cycleTabFocus((event.modifiers & KeyMod::Shift) != 0);
           m_surface.requestRedraw();
@@ -539,13 +570,13 @@ namespace {
           return;
         }
         if (event.sym == XKB_KEY_l && event.modifiers == KeyMod::Ctrl && m_location != nullptr) {
-          beginLocationEdit();
+          dispatchAction(Action::EDIT_LOCATION);
           return;
         }
         if ((event.sym == XKB_KEY_k || event.sym == XKB_KEY_f)
             && event.modifiers == KeyMod::Ctrl
             && m_filterInput != nullptr) {
-          openFilter();
+          dispatchAction(Action::SEARCH);
           return;
         }
         if (m_editingLocation && event.modifiers == 0 && KeySymbol::isEscape(event.sym)) {
@@ -556,24 +587,26 @@ namespace {
           closeFilter();
           return;
         }
-        if (event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Left) {
-          (void)m_browser.back();
+        if (!editing && event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Left) {
+          dispatchAction(Action::BACK);
           return;
         }
-        if (event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Right) {
-          (void)m_browser.forward();
+        if (!editing && event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Right) {
+          dispatchAction(Action::FORWARD);
           return;
         }
-        if (event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Up) {
-          (void)m_browser.up();
+        if (!editing && event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Up) {
+          dispatchAction(Action::UP);
           return;
         }
-        if (event.sym == XKB_KEY_F5 && event.modifiers == 0) {
-          m_browser.refresh();
+        if (!editing && event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Home) {
+          dispatchAction(Action::HOME);
           return;
         }
-        const bool editing = (m_location != nullptr && m_dispatcher.focusedArea() == m_location->inputArea())
-            || (m_filterInput != nullptr && m_dispatcher.focusedArea() == m_filterInput->inputArea());
+        if (!editing && event.sym == XKB_KEY_F5 && event.modifiers == 0) {
+          dispatchAction(Action::REFRESH);
+          return;
+        }
         if (!editing
             && m_viewMode == files::ViewMode::LIST
             && event.modifiers == KeyMod::Ctrl
@@ -597,15 +630,14 @@ namespace {
         if (!editing && zoomFromKey(event))
           return;
         if (!editing && event.sym == XKB_KEY_F9 && event.modifiers == 0 && !event.repeat) {
-          setSidebarVisible(!m_showSidebar);
+          dispatchAction(Action::SHOW_SIDEBAR);
           return;
         }
         if (!editing
             && (event.sym == XKB_KEY_n || event.sym == XKB_KEY_N)
             && event.modifiers == (KeyMod::Ctrl | KeyMod::Shift)
             && !event.repeat) {
-          if (const auto parent = m_browser.model().snapshot().location)
-            openCreateItem(*parent, files::CreateKind::FOLDER);
+          dispatchAction(Action::CREATE_FOLDER);
           return;
         }
         if (!editing
@@ -649,52 +681,26 @@ namespace {
           openFileMenu(id, x, y);
           return;
         }
-        if (!editing
-            && event.sym == XKB_KEY_Delete
-            && event.modifiers == 0
-            && !event.repeat
-            && m_list != nullptr
-            && m_dispatcher.focusedArea() == m_list->focusArea()) {
-          std::vector<files::DirectoryEntry> targets;
-          for (const auto id : m_browser.model().selectedIds()) {
-            if (const auto* entry = m_browser.model().entry(id))
-              targets.push_back(*entry);
+        if (!editing && m_list != nullptr && m_dispatcher.focusedArea() == m_list->focusArea() && !event.repeat) {
+          if (event.sym == XKB_KEY_Delete && event.modifiers == 0) {
+            dispatchAction(Action::TRASH);
+            return;
           }
-          if (!targets.empty())
-            trashItems(targets);
-          return;
-        }
-        if (!editing
-            && event.sym == XKB_KEY_F2
-            && event.modifiers == 0
-            && !event.repeat
-            && m_list != nullptr
-            && m_dispatcher.focusedArea() == m_list->focusArea()) {
-          const auto ids = m_browser.model().selectedIds();
-          if (ids.size() == 1) {
-            if (const auto* entry = m_browser.model().entry(ids.front()))
-              openFileRename(*entry);
+          if (event.sym == XKB_KEY_F2 && event.modifiers == 0) {
+            dispatchAction(Action::RENAME);
+            return;
           }
-          return;
-        }
-        if (!editing && event.sym == XKB_KEY_Return && event.modifiers == KeyMod::Alt) {
-          std::vector<files::DirectoryEntry> targets;
-          for (const auto id : m_browser.model().selectedIds()) {
-            if (const auto* entry = m_browser.model().entry(id)) {
-              targets.push_back(*entry);
-            }
+          if (event.sym == XKB_KEY_Return && event.modifiers == KeyMod::Alt) {
+            dispatchAction(Action::PROPERTIES);
+            return;
           }
-          if (!targets.empty()) {
-            showProperties(targets);
-          }
-          return;
         }
         if (!editing && event.modifiers == KeyMod::Ctrl && (event.sym == XKB_KEY_1 || event.sym == XKB_KEY_2)) {
-          setViewMode(event.sym == XKB_KEY_1 ? files::ViewMode::GRID : files::ViewMode::LIST);
+          dispatchAction(event.sym == XKB_KEY_1 ? Action::GRID : Action::LIST);
           return;
         }
         if (!editing && event.sym == XKB_KEY_h && event.modifiers == KeyMod::Ctrl) {
-          toggleHidden();
+          dispatchAction(Action::SHOW_HIDDEN);
           return;
         }
         if (m_list != nullptr && m_dispatcher.focusedArea() == m_list->focusArea() && listKey(event)) {
@@ -705,6 +711,30 @@ namespace {
         }
       }
       if (event.pressed
+          && !event.preedit
+          && m_typingMode == files::TypingMode::TYPEAHEAD
+          && m_list != nullptr
+          && m_dispatcher.focusedArea() == m_list->focusArea()
+          && (event.modifiers & (KeyMod::Ctrl | KeyMod::Alt | KeyMod::Super)) == 0) {
+        if (g_unichar_isprint(event.utf32)) {
+          char text[8]{};
+          const int length = g_unichar_to_utf8(event.utf32, text);
+          applyTypeahead(std::string(text, static_cast<std::size_t>(length)));
+          return;
+        }
+        if (event.sym == XKB_KEY_BackSpace && !m_typeahead.text().empty()) {
+          const auto& text = m_typeahead.text();
+          const char* previous = g_utf8_find_prev_char(text.data(), text.data() + text.size());
+          typeaheadChanged(m_typeahead.erase(
+              m_browser.model(), static_cast<std::uint32_t>(text.data() + text.size() - previous),
+              files::TypeaheadSelection::Clock::now()
+          ));
+          return;
+        }
+      }
+      if (event.pressed
+          && !event.preedit
+          && m_typingMode == files::TypingMode::SEARCH
           && m_list != nullptr
           && m_dispatcher.focusedArea() == m_list->focusArea()
           && (event.modifiers & (KeyMod::Ctrl | KeyMod::Alt | KeyMod::Super)) == 0
@@ -730,6 +760,289 @@ namespace {
       LayoutRect rect;
       std::optional<files::EntryId> entry = std::nullopt;
     };
+
+    files::ActionContext actionContext() const {
+      return {
+          .model = m_browser.model(),
+          .context = m_browser.contextSerial(),
+          .query = m_browser.searchQuery(),
+          .canBack = m_browser.canBack(),
+          .canForward = m_browser.canForward(),
+          .canUp = m_browser.canUp(),
+          .operationsBusy = m_creator.busy()
+              || m_renamer.busy()
+              || m_transfers.busy()
+              || m_trash.busy()
+              || m_trash.canTrash()
+              || m_emptyTrash.pending(),
+          .pinsEditable = m_pins.editable(),
+          .pinsBusy = m_pins.busy(),
+          .canEmptyTrash = canEmptyTrash(),
+          .pinned = [this](const auto& location) { return m_pins.contains(location); },
+          .viewMode = m_viewMode,
+          .showSidebar = m_showSidebar,
+          .activationMode = m_activationMode,
+          .typingMode = m_typingMode
+      };
+    }
+    files::ActionRequest actionRequest(bool withTargets = true) const {
+      if (withTargets)
+        return files::ActionRegistry::capture(actionContext());
+      return {m_browser.contextSerial(), m_browser.model().snapshot().location, m_browser.searchQuery(), {}};
+    }
+    files::ActionRequest requestFor(const std::vector<files::DirectoryEntry>& entries) const {
+      auto request = actionRequest(false);
+      for (const auto& entry : entries)
+        request.targets.push_back({entry.id, entry.location});
+      return request;
+    }
+    files::ActionState actionState(Action action, const files::ActionRequest& request) const {
+      return files::ActionRegistry::state(action, actionContext(), request);
+    }
+    ContextMenuControlEntry actionEntry(Action action, const files::ActionRequest& request, bool radio = false) const {
+      const auto& definition = files::ActionRegistry::definition(action);
+      const auto state = actionState(action, request);
+      return {
+          .id = static_cast<int>(action),
+          .label = std::string(definition.label),
+          .enabled = state.enabled,
+          .destructive = definition.destructive,
+          .checkmark = !radio && state.checked != -1,
+          .radio = radio,
+          .toggleState = state.checked,
+          .shortcut = definition.shortcut.empty() ? std::nullopt : std::optional(std::string(definition.shortcut))
+      };
+    }
+    void dispatchAction(Action action) {
+      dispatchAction(
+          action, actionRequest(files::ActionRegistry::definition(action).scope == files::ActionScope::TARGETS)
+      );
+    }
+    void dispatchAction(Action action, const files::ActionRequest& request) {
+      const auto state = actionState(action, request);
+      if (!state.enabled) {
+        actionError(std::string(state.reason));
+        return;
+      }
+      m_actionError.clear();
+      clearTypeahead();
+      const bool selectionAction = files::ActionRegistry::definition(action).scope == files::ActionScope::SELECTION;
+      if (selectionAction) {
+        m_dispatcher.cancelPointerCapture();
+        m_list->cancelPointerGesture();
+      }
+      std::vector<files::DirectoryEntry> targets;
+      for (const auto& target : request.targets)
+        if (const auto* entry = m_browser.model().entry(target.id))
+          targets.push_back(*entry);
+      switch (action) {
+      case Action::BACK:
+        (void)m_browser.back();
+        break;
+      case Action::FORWARD:
+        (void)m_browser.forward();
+        break;
+      case Action::UP:
+        (void)m_browser.up();
+        break;
+      case Action::HOME:
+        m_browser.home();
+        break;
+      case Action::ROOT:
+        m_browser.open(files::Location::fromPath("/"));
+        break;
+      case Action::REFRESH:
+        m_browser.refresh();
+        break;
+      case Action::STOP:
+        m_browser.stop();
+        break;
+      case Action::EDIT_LOCATION:
+        beginLocationEdit();
+        break;
+      case Action::SEARCH:
+        openFilter();
+        break;
+      case Action::GRID:
+        setViewMode(files::ViewMode::GRID);
+        break;
+      case Action::LIST:
+        setViewMode(files::ViewMode::LIST);
+        break;
+      case Action::SHOW_HIDDEN:
+        toggleHidden();
+        break;
+      case Action::SHOW_SIDEBAR:
+        setSidebarVisible(!m_showSidebar);
+        break;
+      case Action::SORT_NAME:
+      case Action::SORT_TYPE:
+      case Action::SORT_SIZE:
+      case Action::SORT_MODIFIED:
+      case Action::ASCENDING:
+      case Action::DESCENDING:
+      case Action::FOLDERS_FIRST: {
+        auto options = m_browser.model().sort();
+        const auto field = action == Action::SORT_NAME ? files::SortField::NAME
+            : action == Action::SORT_TYPE              ? files::SortField::TYPE
+            : action == Action::SORT_SIZE              ? files::SortField::SIZE
+                                                       : files::SortField::MODIFIED;
+        if (action == Action::ASCENDING || action == Action::DESCENDING)
+          options.descending = action == Action::DESCENDING;
+        else if (action == Action::FOLDERS_FIRST)
+          options.directoriesFirst = !options.directoriesFirst;
+        else if (options.field != field) {
+          options.field = field;
+          options.descending = false;
+        }
+        changeSort(options);
+        break;
+      }
+      case Action::OPEN:
+        for (const auto& target : targets)
+          m_browser.activate(target.id);
+        break;
+      case Action::CONTAINING_FOLDER:
+        showContaining(targets.front().location);
+        break;
+      case Action::ORIGINAL_LOCATION:
+        showContaining(*targets.front().trash.original);
+        break;
+      case Action::PIN: {
+        std::vector<files::Bookmark> pins;
+        for (const auto& target : targets)
+          if (!m_pins.contains(target.location))
+            pins.push_back({target.displayName, target.location});
+        pinFolders(std::move(pins), m_pins.bookmarks().size());
+        break;
+      }
+      case Action::UNPIN: {
+        std::vector<files::Location> locations;
+        locations.reserve(targets.size());
+        for (const auto& target : targets)
+          locations.push_back(target.location);
+        m_pins.removeMany(locations);
+        break;
+      }
+      case Action::PIN_CURRENT:
+        pinFolders(
+            {{files::locationBreadcrumbs(*request.folder).back().label, *request.folder}}, m_pins.bookmarks().size()
+        );
+        break;
+      case Action::UNPIN_CURRENT:
+        m_pins.remove(*request.folder);
+        break;
+      case Action::RELOAD_PINS:
+        m_pins.reload();
+        break;
+      case Action::EMPTY_TRASH:
+        openEmptyTrash();
+        break;
+      case Action::RENAME:
+        openFileRename(targets.front());
+        break;
+      case Action::TRASH:
+        trashItems(targets);
+        break;
+      case Action::PROPERTIES:
+        showProperties(targets);
+        break;
+      case Action::CREATE_FOLDER:
+      case Action::CREATE_FILE:
+        openCreateItem(
+            *request.folder, action == Action::CREATE_FOLDER ? files::CreateKind::FOLDER : files::CreateKind::EMPTY_FILE
+        );
+        break;
+      case Action::SELECT_ALL:
+        m_browser.model().selectAll();
+        break;
+      case Action::INVERT_SELECTION:
+        (void)m_browser.model().invertSelection();
+        break;
+      case Action::CLEAR_SELECTION:
+        m_list->cancelPointerGesture();
+        m_browser.model().clearSelection();
+        break;
+      case Action::SELECT_PATTERN:
+        openPatternSelection(request);
+        break;
+      case Action::SINGLE_CLICK:
+      case Action::DOUBLE_CLICK:
+      case Action::TYPE_TO_SEARCH:
+      case Action::TYPEAHEAD:
+        if (action == Action::SINGLE_CLICK || action == Action::DOUBLE_CLICK)
+          m_activationMode = action == Action::SINGLE_CLICK ? files::ActivationMode::SINGLE_CLICK
+                                                            : files::ActivationMode::DOUBLE_CLICK;
+        else
+          m_typingMode = action == Action::TYPEAHEAD ? files::TypingMode::TYPEAHEAD : files::TypingMode::SEARCH;
+        for (auto* adapter : {&m_listAdapter, &m_gridAdapter}) {
+          adapter->onPointerCancel();
+          adapter->setActivationMode(m_activationMode);
+        }
+        if (state.checked != 1)
+          m_preferences.saveInteraction(m_activationMode, m_typingMode);
+        break;
+      case Action::VIEW_MENU:
+        openMenu();
+        break;
+      case Action::SORT_MENU:
+        openSortMenu();
+        break;
+      case Action::SELECTION_MENU:
+        openSelectionMenu();
+        break;
+      case Action::INTERACTION_MENU:
+        openInteractionMenu();
+        break;
+      }
+      if (!m_menuSurface
+          && (selectionAction
+              || action == Action::SINGLE_CLICK
+              || action == Action::DOUBLE_CLICK
+              || action == Action::TYPE_TO_SEARCH
+              || action == Action::TYPEAHEAD))
+        m_dispatcher.setFocus(m_list->focusArea());
+      m_browserDirty = true;
+      m_surface.requestUpdate();
+    }
+    void openPatternSelection(const files::ActionRequest& request) {
+      const float width = std::min(440.0F, static_cast<float>(m_surface.width()) - 32.0F);
+      auto editor = std::make_unique<NameEditor>(
+          width, "Select by pattern", m_selectionPattern,
+          "Use * for any text and ? for one character. Matches visible names, ignoring case.",
+          files::selectionPatternProblem,
+          [this, request](std::string pattern) {
+            const auto state = actionState(Action::SELECT_PATTERN, request);
+            if (!state.enabled) {
+              m_patternEditor->showError(std::string(state.reason));
+              return;
+            }
+            if (const auto error = m_browser.model().selectPattern(pattern)) {
+              m_patternEditor->showError(*error);
+              return;
+            }
+            m_selectionPattern = std::move(pattern);
+            dismissMenu();
+            m_dispatcher.setFocus(m_list->focusArea());
+          },
+          [this] { dismissMenu(); }, "Select", "Selecting…"
+      );
+      auto* control = editor.get();
+      control->input()->setPlaceholder("Pattern");
+      UiPhaseScope phase(UiPhase::Layout);
+      LayoutConstraints constraints;
+      constraints.setExactWidth(width);
+      const float height = editor->measure(m_surface.renderTarget().renderer(), constraints).height;
+      showPopup(
+          std::move(editor), nullptr, {(m_surface.width() - width) * 0.5F, (m_surface.height() - height) * 0.5F, 1, 1},
+          width, height
+      );
+      if (m_menuSurface) {
+        m_patternEditor = control;
+        m_menuDispatcher.setFocus(control->input()->inputArea());
+        control->input()->selectAll();
+      }
+    }
 
     void actionError(std::string message) {
       m_actionError = std::move(message);
@@ -760,134 +1073,57 @@ namespace {
 
     void openFileMenu(std::optional<files::EntryId> id, float x, float y) {
       m_actionError.clear();
-      if (!id) {
-        const auto location = m_browser.model().snapshot().location;
-        std::vector<ContextMenuControlEntry> entries{
-            {.id = 4, .label = "New Folder…", .enabled = canCreateItem()},
-            {.id = 5, .label = "Empty File…", .enabled = canCreateItem()},
-            {.label = "", .separator = true},
-            {.id = 1, .label = "Refresh"}
-        };
-        if (location && !location->isTrash()) {
-          entries.push_back(
-              {.id = 2,
-               .label = m_pins.contains(*location) ? "Unpin" : "Pin this folder to sidebar",
-               .enabled = m_pins.editable()}
-          );
-        }
-        entries.push_back({.label = "", .separator = true});
-        entries.push_back({.id = 3, .label = "Reload pins", .enabled = !m_pins.busy()});
-        showContextMenu(
-            std::move(entries),
-            [this, location](int action) {
-              if ((action == 4 || action == 5) && location) {
-                openCreateItem(*location, action == 4 ? files::CreateKind::FOLDER : files::CreateKind::EMPTY_FILE);
-              } else if (action == 1) {
-                m_browser.refresh();
-              } else if (action == 3) {
-                m_pins.reload();
-              } else if (action == 2 && location) {
-                if (m_pins.contains(*location)) {
-                  m_pins.remove(*location);
-                } else {
-                  pinFolders(
-                      {{.label = files::locationBreadcrumbs(*location).back().label, .location = *location}},
-                      m_pins.bookmarks().size()
-                  );
-                }
-              }
-            },
-            {x, y, 1, 1}
-        );
-        return;
-      }
-      std::vector<files::DirectoryEntry> targets;
-      for (const auto selected : m_browser.model().selectedIds()) {
-        if (const auto* entry = m_browser.model().entry(selected)) {
-          targets.push_back(*entry);
-        }
-      }
-      if (targets.empty()) {
-        return;
-      }
-      const bool folders =
-          std::ranges::all_of(targets, [](const auto& entry) { return entry.type == G_FILE_TYPE_DIRECTORY; });
-      const bool files = std::ranges::all_of(targets, [](const auto& entry) {
-        return entry.type == G_FILE_TYPE_REGULAR && !entry.symlink;
-      });
+      const auto request = actionRequest(id.has_value());
       std::vector<ContextMenuControlEntry> entries;
-      const bool trash = targets.front().location.isTrash();
-      if ((targets.size() == 1 || files)
-          && (!trash || (targets.front().type == G_FILE_TYPE_DIRECTORY && !targets.front().symlink))) {
-        entries.push_back({.id = 1, .label = "Open"});
-      }
-      if (targets.size() == 1) {
-        entries.push_back({.id = 2, .label = "Show in containing folder"});
-      }
-      if (targets.size() == 1 && targets.front().trash.original)
-        entries.push_back({.id = 8, .label = "Show original location"});
-      if (folders && !trash) {
-        const bool canPin =
-            std::ranges::any_of(targets, [this](const auto& entry) { return !m_pins.contains(entry.location); });
-        const bool canUnpin =
-            std::ranges::any_of(targets, [this](const auto& entry) { return m_pins.contains(entry.location); });
-        if (canPin || canUnpin) {
-          entries.push_back({.label = "", .separator = true});
+      const auto add = [&](Action action) { entries.push_back(actionEntry(action, request)); };
+      const auto separator = [&] { entries.push_back({.label = "", .separator = true}); };
+      if (!id) {
+        add(Action::CREATE_FOLDER);
+        add(Action::CREATE_FILE);
+        separator();
+        add(Action::SELECT_ALL);
+        add(Action::INVERT_SELECTION);
+        add(Action::SELECT_PATTERN);
+        separator();
+        add(Action::REFRESH);
+        if (request.folder && !request.folder->isTrash())
+          add(m_pins.contains(*request.folder) ? Action::UNPIN_CURRENT : Action::PIN_CURRENT);
+        add(Action::RELOAD_PINS);
+      } else {
+        if (request.targets.empty())
+          return;
+        add(Action::OPEN);
+        if (request.targets.size() == 1) {
+          add(Action::CONTAINING_FOLDER);
+          if (m_browser.model().entry(request.targets.front().id)->trash.original)
+            add(Action::ORIGINAL_LOCATION);
         }
-        if (canPin) {
-          entries.push_back({.id = 3, .label = "Pin to sidebar", .enabled = m_pins.editable()});
+        const bool folders = std::ranges::all_of(request.targets, [this](const auto& target) {
+          const auto* entry = m_browser.model().entry(target.id);
+          return entry->type == G_FILE_TYPE_DIRECTORY && !entry->location.isTrash();
+        });
+        if (folders) {
+          separator();
+          if (std::ranges::any_of(request.targets, [this](const auto& target) {
+                return !m_pins.contains(target.location);
+              }))
+            add(Action::PIN);
+          if (std::ranges::any_of(request.targets, [this](const auto& target) {
+                return m_pins.contains(target.location);
+              }))
+            add(Action::UNPIN);
         }
-        if (canUnpin) {
-          entries.push_back(
-              {.id = 4, .label = targets.size() == 1 ? "Unpin" : "Unpin folders", .enabled = m_pins.editable()}
-          );
-        }
+        separator();
+        const bool trash = request.targets.front().location.isTrash();
+        if (request.targets.size() == 1 && !trash)
+          add(Action::RENAME);
+        if (!trash)
+          add(Action::TRASH);
+        separator();
+        add(Action::PROPERTIES);
       }
-      entries.push_back({.label = "", .separator = true});
-      if (targets.size() == 1 && !trash) {
-        entries.push_back({.id = 6, .label = "Rename…", .enabled = canFileRename(targets.front())});
-      }
-      if (!trash)
-        entries.push_back({.id = 7, .label = "Move to Trash", .enabled = canTrashItems(targets)});
-      entries.push_back({.label = "", .separator = true});
-      entries.push_back({.id = 5, .label = "Properties"});
       showContextMenu(
-          std::move(entries),
-          [this, targets](int action) {
-            if (!targetsCurrent(targets)) {
-              return;
-            }
-            if (action == 1) {
-              for (const auto& target : targets) {
-                m_browser.activate(target.id);
-              }
-            } else if (action == 2) {
-              showContaining(targets.front().location);
-            } else if (action == 3) {
-              std::vector<files::Bookmark> bookmarks;
-              for (const auto& target : targets) {
-                if (!m_pins.contains(target.location)) {
-                  bookmarks.push_back({target.displayName, target.location});
-                }
-              }
-              pinFolders(std::move(bookmarks), m_pins.bookmarks().size());
-            } else if (action == 4) {
-              std::vector<files::Location> locations;
-              locations.reserve(targets.size());
-              for (const auto& target : targets) {
-                locations.push_back(target.location);
-              }
-              m_pins.removeMany(locations);
-            } else if (action == 8 && targets.front().trash.original) {
-              showContaining(*targets.front().trash.original);
-            } else if (action == 7) {
-              trashItems(targets);
-            } else if (action == 6) {
-              openFileRename(targets.front());
-            } else if (action == 5) {
-              showProperties(targets);
-            }
-          },
+          std::move(entries), [this, request](int action) { dispatchAction(static_cast<Action>(action), request); },
           {x, y, 1, 1}
       );
     }
@@ -908,7 +1144,12 @@ namespace {
       }
       entries.push_back({.label = "", .separator = true});
       if (bookmark.location == files::Location::trash()) {
-        entries.push_back({.id = 7, .label = "Empty Trash…", .enabled = canEmptyTrash(), .destructive = true});
+        entries.push_back(
+            {.id = 7,
+             .label = "Empty Trash…",
+             .enabled = actionState(Action::EMPTY_TRASH, actionRequest(false)).enabled,
+             .destructive = true}
+        );
         entries.push_back({.label = "", .separator = true});
       }
       entries.push_back({.id = 5, .label = "Properties"});
@@ -924,7 +1165,7 @@ namespace {
             } else if (action == 2) {
               m_pins.remove(bookmark.location);
             } else if (action == 7 && bookmark.location == files::Location::trash()) {
-              openEmptyTrash();
+              dispatchAction(Action::EMPTY_TRASH);
             } else if (action == 6) {
               openPlaceRename(bookmark);
             } else if (action == 3 || action == 4) {
@@ -1097,22 +1338,7 @@ namespace {
       }
     }
     bool canTrashItems(const std::vector<files::DirectoryEntry>& targets) const {
-      const auto& snapshot = m_browser.model().snapshot();
-      return !targets.empty()
-          && snapshot.location
-          && snapshot.location->nativePath().has_value()
-          && m_browser.searchQuery().empty()
-          && (snapshot.status == files::DirectoryStatus::READY || snapshot.status == files::DirectoryStatus::LOADING)
-          && snapshot.metadata.filesystem.readOnly != true
-          && !m_transfers.busy()
-          && !m_trash.busy()
-          && !m_trash.canTrash()
-          && !m_emptyTrash.pending()
-          && !m_renamer.busy()
-          && !m_creator.busy()
-          && std::ranges::all_of(targets, [](const auto& entry) {
-               return entry.location.nativePath().has_value() && entry.access.trash != false;
-             });
+      return actionState(Action::TRASH, requestFor(targets)).enabled;
     }
     void trashItems(const std::vector<files::DirectoryEntry>& targets) {
       if (!canTrashItems(targets) || !targetsCurrent(targets)) {
@@ -1159,21 +1385,7 @@ namespace {
       }
     }
 
-    bool canCreateItem() const {
-      const auto& snapshot = m_browser.model().snapshot();
-      return snapshot.location
-          && snapshot.location->nativePath().has_value()
-          && m_browser.searchQuery().empty()
-          && (snapshot.status == files::DirectoryStatus::READY || snapshot.status == files::DirectoryStatus::LOADING)
-          && snapshot.metadata.filesystem.readOnly != true
-          && snapshot.metadata.access.write != false
-          && !m_creator.busy()
-          && !m_renamer.busy()
-          && !m_transfers.busy()
-          && !m_trash.busy()
-          && !m_trash.canTrash()
-          && !m_emptyTrash.pending();
-    }
+    bool canCreateItem() const { return actionState(Action::CREATE_FOLDER, actionRequest(false)).enabled; }
     void openCreateItem(files::Location parent, files::CreateKind kind) {
       if (!canCreateItem() || m_browser.model().snapshot().location != parent) {
         actionError("Open an available writable folder to create a file or folder.");
@@ -1249,14 +1461,7 @@ namespace {
     }
 
     bool canFileRename(const files::DirectoryEntry& entry) const {
-      return entry.location.nativePath().has_value()
-          && entry.access.rename != false
-          && !m_transfers.busy()
-          && !m_trash.busy()
-          && !m_trash.canTrash()
-          && !m_emptyTrash.pending()
-          && !m_renamer.busy()
-          && !m_creator.busy();
+      return actionState(Action::RENAME, requestFor({entry})).enabled;
     }
     void openFileRename(files::DirectoryEntry target) {
       if (!canFileRename(target) || !targetsCurrent({target})) {
@@ -1942,8 +2147,83 @@ namespace {
         pinFolders(drag.bookmarks, *slot);
       }
     }
-    TextInputState textInputState() const override { return m_filterInput->textInputState(); }
+    void clearTypeahead() {
+      if (m_typeahead.text().empty() && m_typeaheadPreedit.empty())
+        return;
+      m_typeahead.clear();
+      m_typeaheadPreedit.clear();
+      m_typeaheadTimer.stop();
+      m_browserDirty = true;
+      m_surface.requestUpdate();
+      m_textInput.notifyClientStateChanged(this, TextInputChangeCause::Other);
+    }
+    void
+    typeaheadChanged(std::optional<files::EntryId> match, TextInputChangeCause cause = TextInputChangeCause::Other) {
+      if (match)
+        m_keyboardReveal = match;
+      m_typeaheadContext = m_browser.contextSerial();
+      m_fileKeyboardFocus = true;
+      m_browserDirty = true;
+      m_surface.requestUpdate();
+      m_typeaheadTimer.start(files::TypeaheadSelection::timeout, [this] {
+        if (m_typeaheadPreedit.empty())
+          clearTypeahead();
+      });
+      m_textInput.notifyClientStateChanged(this, cause);
+    }
+    void applyTypeahead(
+        const std::string& text, TextInputChangeCause cause = TextInputChangeCause::Other, bool composing = false
+    ) {
+      m_dispatcher.cancelPointerCapture();
+      m_list->cancelPointerGesture();
+      typeaheadChanged(
+          m_typeahead.append(m_browser.model(), text, files::TypeaheadSelection::Clock::now(), composing), cause
+      );
+    }
+    TextInputState textInputState() const override {
+      if (m_typingMode == files::TypingMode::SEARCH)
+        return m_filterInput->textInputState();
+      const auto bounds = m_status ? sceneRect(*m_status) : LayoutRect{};
+      return {
+          .surroundingText = m_typeahead.text(),
+          .cursor = static_cast<std::int32_t>(m_typeahead.text().size()),
+          .anchor = static_cast<std::int32_t>(m_typeahead.text().size()),
+          .cursorRectX = static_cast<int>(bounds.x),
+          .cursorRectY = static_cast<int>(bounds.y),
+          .cursorRectHeight = std::max(1, static_cast<int>(bounds.height))
+      };
+    }
     void textInputApplyEdit(const TextInputEdit& edit) override {
+      if (m_typingMode == files::TypingMode::TYPEAHEAD) {
+        const auto now = files::TypeaheadSelection::Clock::now();
+        if (edit.hasDelete
+            && edit.deleteBeforeLength != 0
+            && edit.deleteAfterLength == 0
+            && !m_typeahead.text().empty())
+          typeaheadChanged(
+              m_typeahead.erase(m_browser.model(), edit.deleteBeforeLength, now, !m_typeaheadPreedit.empty()),
+              TextInputChangeCause::InputMethod
+          );
+        if (edit.hasCommitText && !edit.commitText.empty()) {
+          const bool composing = !m_typeaheadPreedit.empty();
+          m_typeaheadPreedit.clear();
+          applyTypeahead(edit.commitText, TextInputChangeCause::InputMethod, composing);
+        }
+        if (edit.hasPreedit
+            && (!edit.preeditText.empty() || !m_typeaheadPreedit.empty())
+            && edit.preeditText.size() <= 256
+            && g_utf8_validate(edit.preeditText.data(), static_cast<gssize>(edit.preeditText.size()), nullptr)) {
+          m_typeaheadPreedit = edit.preeditText;
+          m_typeaheadContext = m_browser.contextSerial();
+          if (!m_typeaheadPreedit.empty())
+            m_typeaheadTimer.stop();
+          else
+            typeaheadChanged(std::nullopt, TextInputChangeCause::InputMethod);
+          m_browserDirty = true;
+          m_surface.requestUpdate();
+        }
+        return;
+      }
       if ((edit.hasCommitText && !edit.commitText.empty())
           || (edit.hasPreedit && !edit.preeditText.empty())
           || (edit.hasDelete && !m_browser.searchQuery().empty())) {
@@ -1951,9 +2231,15 @@ namespace {
         m_filterInput->textInputApplyEdit(edit);
       }
     }
-    void textInputResetPreedit() override {}
+    void textInputResetPreedit() override {
+      if (!m_typeaheadPreedit.empty()) {
+        m_typeaheadPreedit.clear();
+        m_browserDirty = true;
+        m_surface.requestUpdate();
+      }
+    }
     void textInputActivated(TextInputService&) override {}
-    void textInputDeactivated(TextInputService&) override {}
+    void textInputDeactivated(TextInputService&) override { clearTypeahead(); }
 
     void beginLocationEdit() {
       m_lastBreadcrumb.reset();
@@ -2044,6 +2330,7 @@ namespace {
     }
 
     void openFilter(bool selectAll = true) {
+      clearTypeahead();
       m_lastBreadcrumb.reset();
       m_breadcrumbEditTarget.reset();
       if (m_editingLocation) {
@@ -2412,7 +2699,14 @@ namespace {
       auto options = m_browser.model().sort();
       options.descending = options.field == field && !options.descending;
       options.field = field;
-      changeSort(options);
+      const auto action = field == files::SortField::NAME ? Action::SORT_NAME
+          : field == files::SortField::TYPE               ? Action::SORT_TYPE
+          : field == files::SortField::SIZE               ? Action::SORT_SIZE
+                                                          : Action::SORT_MODIFIED;
+      if (m_browser.model().sort().field == field)
+        dispatchAction(options.descending ? Action::DESCENDING : Action::ASCENDING);
+      else
+        dispatchAction(action);
     }
 
     void setViewMode(files::ViewMode mode) {
@@ -2524,19 +2818,34 @@ namespace {
     bool listKey(const KeyboardEvent& event) {
       auto& model = m_browser.model();
       if (event.sym == XKB_KEY_a && event.modifiers == KeyMod::Ctrl) {
-        model.selectAll();
+        dispatchAction(Action::SELECT_ALL);
         return true;
       }
       if (event.modifiers == 0 && KeySymbol::isEscape(event.sym)) {
-        m_list->cancelPointerGesture();
-        model.clearSelection();
+        dispatchAction(Action::CLEAR_SELECTION);
+        return true;
+      }
+      if ((event.sym == XKB_KEY_i || event.sym == XKB_KEY_I) && event.modifiers == (KeyMod::Ctrl | KeyMod::Shift)) {
+        if (!event.repeat)
+          dispatchAction(Action::INVERT_SELECTION);
+        return true;
+      }
+      if (event.sym == XKB_KEY_s && event.modifiers == KeyMod::Ctrl) {
+        if (!event.repeat)
+          dispatchAction(Action::SELECT_PATTERN);
         return true;
       }
       if (event.modifiers == 0 && KeySymbol::isEnter(event.sym)) {
         if (!event.repeat
             && model.selection().focused
             && (m_fileKeyboardFocus || model.selection().selected.contains(*model.selection().focused))) {
-          m_browser.activate(*model.selection().focused);
+          auto request = actionRequest();
+          if (request.targets.empty()) {
+            const auto* entry = model.entry(*model.selection().focused);
+            if (entry)
+              request.targets.push_back({entry->id, entry->location});
+          }
+          dispatchAction(Action::OPEN, request);
         }
         return true;
       }
@@ -2591,6 +2900,8 @@ namespace {
     }
 
     void syncBrowser() {
+      if (m_typeaheadContext != m_browser.contextSerial() || !m_browser.model().selectionAvailable())
+        clearTypeahead();
       const auto& model = m_browser.model();
       const auto& snapshot = model.snapshot();
       const auto uri = snapshot.location ? snapshot.location->uri() : std::string{};
@@ -2662,9 +2973,21 @@ namespace {
       m_viewSwitch->setSelectedIndex(grid ? 0 : 1);
       m_listHeader->setVisible(!grid);
       m_listHeader->setParticipatesInLayout(!grid);
-      m_back->setEnabled(m_browser.canBack());
-      m_forward->setEnabled(m_browser.canForward());
-      m_up->setEnabled(m_browser.canUp());
+      const auto request = actionRequest(false);
+      for (const auto& [button, action] : std::array{
+               std::pair{m_back, Action::BACK}, std::pair{m_forward, Action::FORWARD}, std::pair{m_up, Action::UP}
+           }) {
+        const auto state = actionState(action, request);
+        button->setEnabled(state.enabled);
+        const auto& definition = files::ActionRegistry::definition(action);
+        button->setTooltip(
+            std::string(definition.label)
+            + " ("
+            + std::string(definition.shortcut)
+            + ")"
+            + (state.enabled ? "" : "\n" + std::string(state.reason))
+        );
+      }
       m_places->sync(snapshot.location);
       const bool loading = snapshot.status == files::DirectoryStatus::LOADING;
       m_refresh->setGlyph(loading ? "square" : "refresh");
@@ -2747,6 +3070,8 @@ namespace {
           );
         }
       }
+      if (!m_typeahead.text().empty() || !m_typeaheadPreedit.empty())
+        status = "Select: " + m_typeahead.text() + m_typeaheadPreedit + " · " + status;
       m_status->setText(status);
       const auto freeBytes = snapshot.metadata.filesystem.freeBytes;
       const bool showFree = freeBytes
@@ -3088,71 +3413,66 @@ namespace {
                    }}
           )
       );
-      auto
-          toolbar =
-              ui::row(
-                  {.align = FlexAlign::Center, .gap = Style::spaceSm, .padding = Style::spaceSm},
-                  ui::row(
-                      {.align = FlexAlign::Center, .gap = Style::spaceXs},
-                      ui::button(
-                          {.out = &m_back,
-                           .glyph = "arrow-left",
-                           .variant = ButtonVariant::Ghost,
-                           .tooltip = "Back (Alt+Left)",
-                           .onClick = [this] { (void)m_browser.back(); }}
-                      ),
-                      ui::button(
-                          {.out = &m_forward,
-                           .glyph = "arrow-right",
-                           .variant = ButtonVariant::Ghost,
-                           .tooltip = "Forward (Alt+Right)",
-                           .onClick = [this] { (void)m_browser.forward(); }}
-                      ),
-                      ui::button(
-                          {.out = &m_up,
-                           .glyph = "arrow-up",
-                           .variant = ButtonVariant::Ghost,
-                           .tooltip = "Parent folder (Alt+Up)",
-                           .onClick = [this] { (void)m_browser.up(); }}
-                      )
-                  ),
-                  std::move(locationArea), std::move(searchArea),
-                  ui::row(
-                      {.align = FlexAlign::Center, .gap = Style::spaceXs},
-                      ui::button(
-                          {.out = &m_refresh,
-                           .glyph = "refresh",
-                           .variant = ButtonVariant::Ghost,
-                           .onClick =
-                               [this] {
-                                 if (m_browser.model().snapshot().status == files::DirectoryStatus::LOADING) {
-                                   m_browser.stop();
-                                 } else {
-                                   m_browser.refresh();
-                                 }
-                               }}
-                      ),
-                      ui::segmented(
-                          {.out = &m_viewSwitch,
-                           .options =
-                               std::vector<ui::SegmentedOption>{
-                                   {.label = "", .glyph = "layout-grid", .tooltip = "Grid view (Ctrl+1)"},
-                                   {.label = "", .glyph = "list", .tooltip = "List view (Ctrl+2)"}
-                               },
-                           .selectedIndex = m_viewMode == files::ViewMode::GRID ? 0U : 1U,
-                           .compact = true,
-                           .onChange = [this](
-                                           std::size_t index
-                                       ) { setViewMode(index == 0 ? files::ViewMode::GRID : files::ViewMode::LIST); }}
-                      ),
-                      ui::button(
-                          {.out = &m_menuButton,
-                           .glyph = "dots-vertical",
-                           .variant = ButtonVariant::Ghost,
-                           .onClick = [this] { openMenu(); }}
-                      )
-                  )
-              );
+      auto toolbar = ui::row(
+          {.align = FlexAlign::Center, .gap = Style::spaceSm, .padding = Style::spaceSm},
+          ui::row(
+              {.align = FlexAlign::Center, .gap = Style::spaceXs},
+              ui::button(
+                  {.out = &m_back,
+                   .glyph = "arrow-left",
+                   .variant = ButtonVariant::Ghost,
+                   .tooltip = "Back (Alt+Left)",
+                   .onClick = [this] { dispatchAction(Action::BACK); }}
+              ),
+              ui::button(
+                  {.out = &m_forward,
+                   .glyph = "arrow-right",
+                   .variant = ButtonVariant::Ghost,
+                   .tooltip = "Forward (Alt+Right)",
+                   .onClick = [this] { dispatchAction(Action::FORWARD); }}
+              ),
+              ui::button(
+                  {.out = &m_up,
+                   .glyph = "arrow-up",
+                   .variant = ButtonVariant::Ghost,
+                   .tooltip = "Parent folder (Alt+Up)",
+                   .onClick = [this] { dispatchAction(Action::UP); }}
+              )
+          ),
+          std::move(locationArea), std::move(searchArea),
+          ui::row(
+              {.align = FlexAlign::Center, .gap = Style::spaceXs},
+              ui::button(
+                  {.out = &m_refresh,
+                   .glyph = "refresh",
+                   .variant = ButtonVariant::Ghost,
+                   .onClick =
+                       [this] {
+                         if (m_browser.model().snapshot().status == files::DirectoryStatus::LOADING) {
+                           dispatchAction(Action::STOP);
+                         } else {
+                           dispatchAction(Action::REFRESH);
+                         }
+                       }}
+              ),
+              ui::segmented(
+                  {.out = &m_viewSwitch,
+                   .options =
+                       std::vector<ui::SegmentedOption>{
+                           {.label = "", .glyph = "layout-grid", .tooltip = "Grid view (Ctrl+1)"},
+                           {.label = "", .glyph = "list", .tooltip = "List view (Ctrl+2)"}
+                       },
+                   .selectedIndex = m_viewMode == files::ViewMode::GRID ? 0U : 1U,
+                   .compact = true,
+                   .onChange = [this](std::size_t index) { dispatchAction(index == 0 ? Action::GRID : Action::LIST); }}
+              ),
+              ui::button(
+                  {.out = &m_menuButton, .glyph = "dots-vertical", .variant = ButtonVariant::Ghost, .onClick = [this] {
+                     openMenu();
+                   }}
+              )
+          )
+      );
 
       auto places = std::make_unique<files::PlacesSidebar>(m_pins, m_icons);
       m_places = places.get();
@@ -3358,7 +3678,12 @@ namespace {
                .gap = Style::spaceMd,
                .padding = Style::spaceSm,
                .fill = colorSpecFromRole(ColorRole::SurfaceContainerLow)},
-              ui::label({.out = &m_status, .maxLines = 1, .flexGrow = 1.0F}),
+              ui::label(
+                  {.out = &m_status,
+                   .maxLines = 1,
+                   .flexGrow = 1.0F,
+                   .configure = [](Label& label) { label.setUseMarkup(false); }}
+              ),
               ui::label(
                   {.out = &m_freeSpace,
                    .fontSize = Style::fontSizeCaption,
@@ -3559,6 +3884,7 @@ namespace {
       if (m_menuSurface != nullptr) {
         m_menuSurface->setSceneRoot(nullptr);
       }
+      m_patternEditor = nullptr;
       m_menuRoot.reset();
       m_menu = nullptr;
       m_menuSurface.reset();
@@ -3575,6 +3901,7 @@ namespace {
         std::unique_ptr<Flex> root, ContextMenuControl* menu, LayoutRect anchor, float width, float height,
         bool alignLeft = false
     ) {
+      clearTypeahead();
       closeMenu();
       m_menu = menu;
       m_menuRoot = std::move(root);
@@ -3670,10 +3997,9 @@ namespace {
         });
       });
       auto root = ui::column(
-          {.padding = 8.0F, .fill = colorSpecFromRole(ColorRole::SurfaceContainerHigh), .radius = Style::radiusLg},
-          std::move(menu)
+          {.fill = colorSpecFromRole(ColorRole::SurfaceContainerHigh), .radius = Style::radiusLg}, std::move(menu)
       );
-      showPopup(std::move(root), control, anchor, width + 16.0F, height + 16.0F, alignLeft);
+      showPopup(std::move(root), control, anchor, width, height, alignLeft);
     }
 
     void openColumnsMenu(const LayoutRect& anchor, std::optional<files::DetailsColumn> column = std::nullopt) {
@@ -3756,64 +4082,62 @@ namespace {
       m_preferences.saveShowHidden(m_browser.model().filter().showHidden);
     }
 
+    void showActionMenu(std::initializer_list<Action> actions, bool radio = false, bool back = false) {
+      const auto request = actionRequest(false);
+      std::vector<ContextMenuControlEntry> entries;
+      if (back) {
+        entries.push_back(actionEntry(Action::VIEW_MENU, request));
+        entries.push_back({.label = "", .separator = true});
+      }
+      for (const auto action : actions)
+        entries.push_back(actionEntry(action, request, radio && action != Action::FOLDERS_FIRST));
+      showContextMenu(
+          std::move(entries),
+          [this, request](int id) {
+            const auto action = static_cast<Action>(id);
+            dispatchAction(action, request);
+            if (!m_menuSurface && action != Action::SEARCH && action != Action::EDIT_LOCATION)
+              m_dispatcher.setFocus(m_list->focusArea());
+          },
+          sceneRect(*m_menuButton), true
+      );
+    }
+    void openSortMenu() {
+      showActionMenu(
+          {Action::SORT_NAME, Action::SORT_TYPE, Action::SORT_SIZE, Action::SORT_MODIFIED, Action::ASCENDING,
+           Action::DESCENDING, Action::FOLDERS_FIRST},
+          true, true
+      );
+    }
+    void openSelectionMenu() {
+      showActionMenu(
+          {Action::SELECT_ALL, Action::INVERT_SELECTION, Action::SELECT_PATTERN, Action::CLEAR_SELECTION}, false, true
+      );
+    }
+    void openInteractionMenu() {
+      const auto request = actionRequest(false);
+      std::vector<ContextMenuControlEntry> entries{
+          actionEntry(Action::VIEW_MENU, request),
+          {.label = "Open items with", .header = true},
+          actionEntry(Action::SINGLE_CLICK, request, true),
+          actionEntry(Action::DOUBLE_CLICK, request, true),
+          {.label = "Typing in the file view", .header = true},
+          actionEntry(Action::TYPE_TO_SEARCH, request, true),
+          actionEntry(Action::TYPEAHEAD, request, true)
+      };
+      showContextMenu(
+          std::move(entries), [this, request](int id) { dispatchAction(static_cast<Action>(id), request); },
+          sceneRect(*m_menuButton), true
+      );
+    }
     void openMenu() {
       if (m_menuSurface != nullptr) {
         dismissMenu();
         return;
       }
-      const auto& sort = m_browser.model().sort();
-      std::vector<ContextMenuControlEntry> entries{
-          {.id = 1, .label = "Name", .radio = true, .toggleState = sort.field == files::SortField::NAME ? 1 : 0},
-          {.id = 10, .label = "Type", .radio = true, .toggleState = sort.field == files::SortField::TYPE ? 1 : 0},
-          {.id = 2, .label = "Size", .radio = true, .toggleState = sort.field == files::SortField::SIZE ? 1 : 0},
-          {.id = 3,
-           .label = "Modified",
-           .radio = true,
-           .toggleState = sort.field == files::SortField::MODIFIED ? 1 : 0},
-          {.label = "", .separator = true},
-          {.id = 4, .label = "Ascending", .radio = true, .toggleState = sort.descending ? 0 : 1},
-          {.id = 5, .label = "Descending", .radio = true, .toggleState = sort.descending ? 1 : 0},
-          {.label = "", .separator = true},
-          {.id = 6, .label = "Folders first", .checkmark = true, .toggleState = sort.directoriesFirst ? 1 : 0},
-          {.id = 7,
-           .label = "Show hidden files",
-           .checkmark = true,
-           .toggleState = m_browser.model().filter().showHidden ? 1 : 0},
-          {.label = "", .separator = true},
-          {.id = 8, .label = "Search files (Ctrl+F)"},
-          {.id = 9, .label = "Show Places sidebar (F9)", .checkmark = true, .toggleState = m_showSidebar ? 1 : 0},
-      };
-      showContextMenu(
-          std::move(entries),
-          [this](int id) {
-            if (id <= 6 || id == 10) {
-              auto options = m_browser.model().sort();
-              if ((id >= 1 && id <= 3) || id == 10) {
-                const auto field = id == 1 ? files::SortField::NAME
-                    : id == 2              ? files::SortField::SIZE
-                    : id == 10             ? files::SortField::TYPE
-                                           : files::SortField::MODIFIED;
-                if (field != options.field) {
-                  options.field = field;
-                  options.descending = false;
-                }
-              } else if (id == 4 || id == 5) {
-                options.descending = id == 5;
-              } else if (id == 6) {
-                options.directoriesFirst = !options.directoriesFirst;
-              }
-              changeSort(options);
-            } else if (id == 7) {
-              toggleHidden();
-            } else if (id == 8) {
-              openFilter();
-              return;
-            } else if (id == 9) {
-              setSidebarVisible(!m_showSidebar);
-            }
-            m_dispatcher.setFocus(m_list->focusArea());
-          },
-          sceneRect(*m_menuButton), true
+      showActionMenu(
+          {Action::SORT_MENU, Action::SELECTION_MENU, Action::INTERACTION_MENU, Action::SHOW_HIDDEN,
+           Action::SHOW_SIDEBAR, Action::SEARCH}
       );
     }
 
@@ -3823,6 +4147,14 @@ namespace {
     AnimationManager m_animations;
     ToplevelSurface m_surface;
     files::BrowserController m_browser;
+    files::ActivationMode m_activationMode = files::ActivationMode::DOUBLE_CLICK;
+    files::TypingMode m_typingMode = files::TypingMode::SEARCH;
+    files::TypeaheadSelection m_typeahead;
+    std::string m_typeaheadPreedit;
+    Timer m_typeaheadTimer;
+    std::uint64_t m_typeaheadContext = 0;
+    NameEditor* m_patternEditor = nullptr;
+    std::string m_selectionPattern = "*";
     files::FileIconCache m_icons;
     files::FileViewAdapter m_listAdapter;
     files::FileViewAdapter m_gridAdapter;

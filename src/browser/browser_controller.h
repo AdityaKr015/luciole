@@ -25,6 +25,7 @@ namespace files {
     void setSearchQuery(std::string text);
     void activate(EntryId id);
 
+    [[nodiscard]] std::uint64_t contextSerial() const { return m_contextSerial; }
     [[nodiscard]] bool canBack() const;
     [[nodiscard]] bool canForward() const;
     [[nodiscard]] bool canUp() const;
@@ -35,6 +36,9 @@ namespace files {
     [[nodiscard]] const DirectoryModel& model() const { return m_model; }
 
   private:
+    struct ActivationState;
+    std::shared_ptr<ActivationState> m_activation;
+    void advanceContext();
     void notify() const;
     void publish(DirectorySnapshot snapshot);
     void showMessage(std::string message);
@@ -43,6 +47,7 @@ namespace files {
     RecursiveSearch m_search;
     std::string m_query;
     std::uint64_t m_revision = 0;
+    std::uint64_t m_contextSerial = 0;
     std::vector<Location> m_history;
     std::size_t m_historyIndex = 0;
     std::string m_message;

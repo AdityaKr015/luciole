@@ -58,7 +58,12 @@ namespace files {
 
     // Reject invisible or unknown IDs without changing focus or selection.
     bool select(EntryId id, SelectionMode mode = SelectionMode::REPLACE);
+    [[nodiscard]] bool selectionAvailable() const { return m_selectionAvailable; }
     void selectAll();
+    bool invertSelection();
+    // Case-folded, normalized visible-name glob. Bulk selection keeps focus and range anchor.
+    std::optional<std::string> selectPattern(const std::string& pattern);
+    [[nodiscard]] std::optional<EntryId> prefixMatch(const std::string& prefix, bool cycle = false) const;
     void clearSelection();
     bool replaceSelection(std::span<const EntryId> ids);
     bool setFocus(std::optional<EntryId> id);

@@ -192,7 +192,7 @@ filesystem_service = declare_dependency(
 )
 
 browser_model = declare_dependency(
-  sources: files('src/browser/directory_model.cpp', 'src/browser/browser_controller.cpp', 'src/browser/location_presentation.cpp'),
+  sources: files('src/browser/directory_model.cpp', 'src/browser/browser_controller.cpp', 'src/browser/location_presentation.cpp', 'src/browser/action_registry.cpp', 'src/browser/selection_tools.cpp'),
   dependencies: filesystem_service,
 )
 
@@ -252,6 +252,8 @@ build_tests = tests_opt.enabled() or (
   tests_opt.auto() and get_option('buildtype') == 'debug' and get_option('b_sanitize') == 'none'
 )
 if build_tests
+  actions_test = executable('browser-actions-test', 'tests/browser_actions_test.cpp', dependencies: browser_model)
+  test('browser-actions', actions_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   empty_trash_test = executable('empty-trash-service-test', 'tests/empty_trash_service_test.cpp', dependencies: trash_service)
   test('empty-trash-service', empty_trash_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   trash_browse_test = executable('trash-browse-test', 'tests/trash_browse_test.cpp', dependencies: browser_model)

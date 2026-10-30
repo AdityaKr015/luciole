@@ -13,6 +13,8 @@
 namespace files {
   struct BrowserSettings {
     SortOptions sort;
+    ActivationMode activationMode = ActivationMode::DOUBLE_CLICK;
+    TypingMode typingMode = TypingMode::SEARCH;
     ViewMode viewMode = ViewMode::LIST;
     bool showHidden = false;
     int gridIconSize = kDefaultGridIconSize;
@@ -38,6 +40,8 @@ namespace files {
   using SettingsResult = std::expected<Settings, ConfigIssues>;
 
   enum class BrowserPreference : std::uint8_t {
+    ACTIVATION_MODE,
+    TYPING_MODE,
     SHOW_HIDDEN,
     SORT_BY,
     SORT_DESCENDING,
@@ -57,7 +61,7 @@ namespace files {
   };
   struct OverrideEdit {
     BrowserPreference preference;
-    std::variant<std::monostate, bool, SortField, ViewMode, int, DetailsColumnOrder>
+    std::variant<std::monostate, bool, SortField, ViewMode, int, DetailsColumnOrder, ActivationMode, TypingMode>
         value; // monostate restores inheritance from the base/defaults.
   };
 

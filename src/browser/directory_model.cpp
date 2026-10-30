@@ -1,5 +1,6 @@
 #include "browser/directory_model.h"
 
+#include "browser/selection_tools.h"
 #include "fs/name_matching.h"
 
 #include <algorithm>
@@ -253,6 +254,52 @@ void files::DirectoryModel::selectAll() {
   m_selection.selected.clear();
   m_selection.selected.insert(m_rows.begin(), m_rows.end());
   notify();
+}
+
+bool files::DirectoryModel::invertSelection() {
+  if (!canSelect())
+    return false;
+  std::unordered_set<EntryId> selected;
+  for (const auto id : m_rows)
+    if (!m_selection.selected.contains(id))
+      selected.insert(id);
+  m_selection.selected = std::move(selected);
+  notify();
+  return true;
+}
+std::optional<std::string> files::DirectoryModel::selectPattern(const std::string& pattern) {
+  if (const auto error = selectionPatternProblem(pattern))
+    return error;
+  if (!canSelect())
+    return "The listing is not available for selection.";
+  const auto folded = foldedDisplayText(pattern);
+  const std::unique_ptr<GPatternSpec, decltype(&g_pattern_spec_free)> spec(
+      g_pattern_spec_new(folded.c_str()), g_pattern_spec_free
+  );
+  std::unordered_set<EntryId> selected;
+  for (const auto id : m_rows)
+    if (g_pattern_spec_match_string(spec.get(), m_presentations.at(id).filterKey.c_str()))
+      selected.insert(id);
+  m_selection.selected = std::move(selected);
+  notify();
+  return std::nullopt;
+}
+std::optional<files::EntryId> files::DirectoryModel::prefixMatch(const std::string& prefix, bool cycle) const {
+  if (!canSelect() || prefix.empty() || m_rows.empty())
+    return std::nullopt;
+  const auto folded = foldedDisplayText(prefix);
+  std::size_t start = 0;
+  if (m_selection.focused) {
+    const auto found = m_positions.find(*m_selection.focused);
+    if (found != m_positions.end())
+      start = (found->second + (cycle ? 1 : 0)) % m_rows.size();
+  }
+  for (std::size_t offset = 0; offset < m_rows.size(); ++offset) {
+    const auto id = m_rows[(start + offset) % m_rows.size()];
+    if (m_presentations.at(id).filterKey.starts_with(folded))
+      return id;
+  }
+  return std::nullopt;
 }
 
 void files::DirectoryModel::clearSelection() {

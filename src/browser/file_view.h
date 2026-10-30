@@ -33,6 +33,8 @@ namespace files {
     void onBackgroundSecondaryActivate(float x, float y) override;
     void setContextCallback(std::function<void(std::optional<EntryId>, float, float)> callback);
     void setDragCallback(std::function<void(const std::vector<EntryId>&)> start, std::function<void()> cancel);
+    void setActivateCallback(std::function<void(EntryId)> callback) { m_activate = std::move(callback); }
+    void setActivationMode(ActivationMode mode) { m_activationMode = mode; }
     void setGridIconSize(float size) { m_gridIconSize = size; }
     void setDetailsColumns(DetailsColumns columns) { m_columns = columns; }
     void setDetailsColumnOrder(DetailsColumnOrder order) { m_columnOrder = order; }
@@ -46,6 +48,8 @@ namespace files {
     std::optional<EntryId> m_pressed;
     std::optional<EntryId> m_lastClick;
     std::chrono::steady_clock::time_point m_lastClickTime;
+    std::function<void(EntryId)> m_activate;
+    ActivationMode m_activationMode = ActivationMode::DOUBLE_CLICK;
     bool m_dragged = false;
     bool m_plainClick = false;
     bool m_collapseSelectionOnClick = false;

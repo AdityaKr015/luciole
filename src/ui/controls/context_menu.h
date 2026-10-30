@@ -35,6 +35,7 @@ struct ContextMenuControlEntry {
   std::optional<ColorSpec> indicatorColor = std::nullopt;
   ColorSwatchPreview swatchPreview{};
   TextEllipsize ellipsize = TextEllipsize::End;
+  std::optional<std::string> shortcut = std::nullopt;
 };
 
 class ContextMenuControl : public Node {

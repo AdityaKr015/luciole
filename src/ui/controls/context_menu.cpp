@@ -13,9 +13,9 @@
 
 namespace {
 
-  constexpr float kMenuPadding = 6.0F;
-  constexpr float kItemHeight = Style::controlHeightSm;
-  constexpr float kSeparatorHeight = 10.0F;
+  constexpr float kMenuPadding = 4.0F;
+  constexpr float kItemHeight = Style::controlHeightSm - Style::spaceXs;
+  constexpr float kSeparatorHeight = 9.0F;
   constexpr float kItemGap = 0.0F;
   constexpr float kMenuFontSize = Style::fontSizeCaption;
   constexpr float kMenuGlyphSize = Style::fontSizeCaption - 1.0F;
@@ -30,6 +30,12 @@ namespace {
 
   ColorSpec disabledItemColor(bool destructive = false) {
     return colorSpecFromRole(destructive ? ColorRole::Error : ColorRole::OnSurface, 0.55F);
+  }
+
+  ColorSpec shortcutColor(bool enabled, bool highlighted = false) {
+    return colorSpecFromRole(
+        highlighted ? ColorRole::OnHover : ColorRole::OnSurface, highlighted ? 0.65F : (enabled ? 0.5F : 0.3F)
+    );
   }
 
   bool hasToggle(const ContextMenuControlEntry& entry) { return entry.checkmark || entry.radio; }
@@ -234,10 +240,19 @@ float ContextMenuControl::preferredWidth(
     const float toggleSlot = (reserveToggleSpace || hasToggle(entry)) ? kToggleSlot * scale : 0.0F;
     const FontWeight weight = entry.header ? FontWeight::Bold : FontWeight::Normal;
     const float textWidth = std::ceil(renderer.measureText(entry.label, kMenuFontSize * scale, {weight, {}, {}}).width);
-    // Mirrors rebuildRows: 8px label inset each side, 30px right when a chevron is drawn.
+    const float shortcutWidth = entry.shortcut && !entry.shortcut->empty()
+        ? std::ceil(renderer.measureText(*entry.shortcut, kMenuFontSize * scale).width) + Style::spaceMd * scale
+        : 0.0F;
+    // Keep the accelerator and optional submenu chevron outside the label's budget.
     const float sidePadding = (entry.hasSubmenu ? 30.0F : 16.0F) * scale;
     maxRowWidth = std::max(
-        maxRowWidth, textWidth + entryIndent(entry, scale) + toggleSlot + leadingVisualSlot(entry, scale) + sidePadding
+        maxRowWidth,
+        textWidth
+            + entryIndent(entry, scale)
+            + toggleSlot
+            + leadingVisualSlot(entry, scale)
+            + sidePadding
+            + shortcutWidth
     );
   }
   return maxRowWidth + kMenuPadding * scale * 2.0F;
@@ -309,6 +324,7 @@ void ContextMenuControl::rebuildRows(Renderer& renderer) {
 
     Box* rowBgPtr = nullptr;
     Label* labelPtr = nullptr;
+    Label* shortcutPtr = nullptr;
     Glyph* togglePtr = nullptr;
     Glyph* chevronPtr = nullptr;
 
@@ -374,6 +390,13 @@ void ContextMenuControl::rebuildRows(Renderer& renderer) {
         row->addChild(std::move(dot));
       }
 
+      const float chevronSlot = entry.hasSubmenu ? 22.0F * scale : 0.0F;
+      const float available =
+          std::max(0.0F, rowWidth - 16.0F * scale - indent - toggleSlot - leadingSlot - chevronSlot);
+      const float shortcutWidth = entry.shortcut && !entry.shortcut->empty()
+          ? std::min(available * 0.45F, std::ceil(renderer.measureText(*entry.shortcut, kMenuFontSize * scale).width))
+          : 0.0F;
+      const float shortcutGap = shortcutWidth > 0.0F ? Style::spaceMd * scale : 0.0F;
       auto label = ui::label({
           .out = &labelPtr,
           .text = entry.label,
@@ -382,14 +405,38 @@ void ContextMenuControl::rebuildRows(Renderer& renderer) {
           .color = entry.header ? colorSpecFromRole(ColorRole::OnSurfaceVariant)
               : entry.enabled   ? enabledItemColor(entry.destructive)
                                 : disabledItemColor(entry.destructive),
-          .maxWidth = entry.hasSubmenu ? (rowWidth - 30.0F * scale - indent - toggleSlot - leadingSlot)
-                                       : (rowWidth - 16.0F * scale - indent - toggleSlot - leadingSlot),
+          .maxWidth = std::max(0.0F, available - shortcutWidth - shortcutGap),
           .maxLines = 1,
           .ellipsize = entry.ellipsize,
+          .configure = [](Label& label) {
+            label.setUseMarkup(false);
+            label.setBaselineMode(LabelBaselineMode::TextFixedHeight);
+          },
       });
       label->measure(renderer);
       label->setPosition(8.0F * scale + indent + toggleSlot + leadingSlot, (rowHeight - label->height()) * 0.5F);
       row->addChild(std::move(label));
+
+      if (shortcutWidth > 0.0F) {
+        auto shortcut = ui::label({
+            .out = &shortcutPtr,
+            .text = entry.shortcut,
+            .fontSize = kMenuFontSize * scale,
+            .color = shortcutColor(entry.enabled),
+            .maxWidth = shortcutWidth,
+            .maxLines = 1,
+            .textAlign = TextAlign::End,
+            .configure = [](Label& label) {
+              label.setUseMarkup(false);
+              label.setBaselineMode(LabelBaselineMode::TextFixedHeight);
+            },
+        });
+        shortcut->measure(renderer);
+        shortcut->setPosition(
+            rowWidth - 8.0F * scale - chevronSlot - shortcut->width(), (rowHeight - shortcut->height()) * 0.5F
+        );
+        row->addChild(std::move(shortcut));
+      }
 
       if (entry.hasSubmenu) {
         auto chevron = ui::glyph({
@@ -431,6 +478,8 @@ void ContextMenuControl::rebuildRows(Renderer& renderer) {
               .height = separatorThickness,
               .configure = [rowHeight, separatorThickness](Separator& sep) {
                 sep.setThickness(separatorThickness);
+                sep.setGradientEdges(false);
+                sep.setColor(colorSpecFromRole(ColorRole::OnSurface, 0.12F));
                 sep.setPosition(0.0F, (rowHeight - separatorThickness) * 0.5F);
               },
           })
@@ -443,8 +492,8 @@ void ContextMenuControl::rebuildRows(Renderer& renderer) {
         .interactive = interactive,
     };
     if (rowBgPtr != nullptr && labelPtr != nullptr) {
-      visual.apply = [rowBgPtr, labelPtr, togglePtr, chevronPtr, interactive, separator, header = entry.header,
-                      destructive = entry.destructive](bool highlighted) {
+      visual.apply = [rowBgPtr, labelPtr, shortcutPtr, togglePtr, chevronPtr, interactive, separator,
+                      header = entry.header, destructive = entry.destructive](bool highlighted) {
         rowBgPtr->setFill(
             highlighted
                 ? colorSpecFromRole(destructive ? ColorRole::Error : ColorRole::Hover, destructive ? 0.16F : 1.0F)
@@ -457,6 +506,9 @@ void ContextMenuControl::rebuildRows(Renderer& renderer) {
           labelPtr->setColor(colorSpecFromRole(ColorRole::OnSurfaceVariant));
         } else {
           labelPtr->setColor(foreground);
+        }
+        if (shortcutPtr != nullptr) {
+          shortcutPtr->setColor(shortcutColor(interactive, highlighted));
         }
         if (togglePtr != nullptr) {
           togglePtr->setColor(foreground);

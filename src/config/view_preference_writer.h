@@ -14,6 +14,7 @@ namespace files {
     ViewPreferenceWriter(const ViewPreferenceWriter&) = delete;
     ViewPreferenceWriter& operator=(const ViewPreferenceWriter&) = delete;
     void save(ViewMode mode);
+    void saveInteraction(ActivationMode activation, TypingMode typing);
     void saveGridIconSize(int size);
     void saveSidebarWidth(int width);
     void saveShowSidebar(bool visible);

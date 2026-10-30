@@ -78,6 +78,56 @@ namespace {
     throw std::runtime_error("missing browser fixture entry: " + name);
   }
 
+  void testActionContextsAndFileLinks() {
+    Fixture fixture;
+    Pump pump;
+    BrowserController browser({}, false);
+    browser.open(Location::fromPath(fixture.path.native()));
+    pump.ready(browser);
+    const auto original = browser.contextSerial();
+    browser.refresh();
+    pump.ready(browser);
+    require(browser.contextSerial() == original, "refresh invalidated the browsing action context");
+    browser.setSearchQuery("file");
+    pump.ready(browser);
+    const auto search = browser.contextSerial();
+    require(search != original, "search reused the browsing action context");
+    browser.setSearchQuery({});
+    pump.ready(browser);
+    require(
+        browser.contextSerial() != original && browser.contextSerial() != search,
+        "returning from search revived an old context"
+    );
+    const auto beforeChild = browser.contextSerial();
+    browser.activate(id(browser, "child"));
+    pump.ready(browser);
+    browser.back();
+    pump.ready(browser);
+    require(browser.contextSerial() != beforeChild, "history return revived an old menu context");
+    fs::create_symlink("file", fixture.path / "file-link");
+    browser.refresh();
+    pump.ready(browser);
+    std::optional<Location> launched;
+    browser.setFileActivatedCallback([&](const Location& file) { launched = file; });
+    browser.activate(id(browser, "file-link"));
+    pump.until([&] { return launched.has_value(); });
+    require(
+        launched == Location::fromPath((fixture.path / "file-link").native())
+            && browser.model().snapshot().location == Location::fromPath(fixture.path.native()),
+        "regular-file symlink activation tried to enumerate a directory"
+    );
+    launched.reset();
+    browser.activate(id(browser, "file-link"));
+    browser.open(Location::fromPath((fixture.path / "child").native()));
+    pump.ready(browser);
+    require(!launched, "a late link result opened after navigation");
+    auto retiring = std::make_unique<BrowserController>(files::SortOptions{}, false);
+    retiring->open(Location::fromPath(fixture.path.native()));
+    pump.ready(*retiring);
+    retiring->activate(id(*retiring, "file-link"));
+    retiring.reset();
+  }
+
   void testNavigation() {
     Fixture fixture;
     Pump pump;
@@ -123,6 +173,9 @@ namespace {
     pump.ready(browser);
     require(!browser.canForward(), "new navigation kept an abandoned forward branch");
     browser.activate(id(browser, "folder-link"));
+    pump.until([&] {
+      return browser.model().snapshot().location == Location::fromPath((fixture.path / "folder-link").native());
+    });
     pump.ready(browser);
     require(
         browser.model().snapshot().location == Location::fromPath((fixture.path / "folder-link").native()),
@@ -380,6 +433,7 @@ namespace {
 
 int main() {
   try {
+    testActionContextsAndFileLinks();
     testNavigation();
     testFailureAndLiveUpdates();
     testRecursiveSearch();

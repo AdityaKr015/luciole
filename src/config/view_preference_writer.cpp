@@ -79,6 +79,9 @@ void files::ViewPreferenceWriter::saveSidebarWidth(int width) {
 void files::ViewPreferenceWriter::saveShowSidebar(bool visible) {
   m_state->queue({{BrowserPreference::SHOW_SIDEBAR, visible}});
 }
+void files::ViewPreferenceWriter::saveInteraction(ActivationMode activation, TypingMode typing) {
+  m_state->queue({{BrowserPreference::ACTIVATION_MODE, activation}, {BrowserPreference::TYPING_MODE, typing}});
+}
 void files::ViewPreferenceWriter::saveShowHidden(bool visible) {
   m_state->queue({{BrowserPreference::SHOW_HIDDEN, visible}});
 }

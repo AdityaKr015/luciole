@@ -434,6 +434,75 @@ namespace {
     }
   }
 
+  void testInteractionModes() {
+    using A = files::ActivationMode;
+    using T = files::TypingMode;
+    using P = files::BrowserPreference;
+    using S = files::AtomicWriteState;
+    Fixture fixture;
+    files::ConfigService config(fixture.paths());
+    require(
+        config.reload()
+            && config.settings().browser.activationMode == A::DOUBLE_CLICK
+            && config.settings().browser.typingMode == T::SEARCH,
+        "default interaction policies changed"
+    );
+    const std::string base =
+        "[browser]\nactivation_mode = 'single_click'\ntyping_mode = 'typeahead'\nshow_hidden = true\n";
+    fixture.write("config.toml", base);
+    fixture.write("settings.toml", "[browser]\ngrid_icon_size = 96\n");
+    for (const auto activation : {A::SINGLE_CLICK, A::DOUBLE_CLICK})
+      for (const auto typing : {T::SEARCH, T::TYPEAHEAD}) {
+        const std::array edits{
+            files::OverrideEdit{P::ACTIVATION_MODE, activation}, files::OverrideEdit{P::TYPING_MODE, typing}
+        };
+        require(config.saveOverrides(edits) == S::DURABLE, "interaction policies did not save");
+        const auto loaded = files::loadSettings(fixture.paths());
+        require(
+            loaded
+                && loaded->browser.activationMode == activation
+                && loaded->browser.typingMode == typing
+                && loaded->browser.showHidden
+                && loaded->browser.gridIconSize == 96,
+            "interaction roundtrip lost modes or unrelated preferences"
+        );
+      }
+    const auto saved = read(fixture.paths().overrides);
+    for (const auto& bad : std::array{
+             files::OverrideEdit{P::ACTIVATION_MODE, true}, files::OverrideEdit{P::TYPING_MODE, 1},
+             files::OverrideEdit{P::ACTIVATION_MODE, static_cast<A>(99)},
+             files::OverrideEdit{P::TYPING_MODE, static_cast<T>(99)},
+             files::OverrideEdit{P::TYPING_MODE, A::SINGLE_CLICK}
+         })
+      require(
+          config.saveOverrides(std::span(&bad, 1)) == S::NOT_COMMITTED && read(fixture.paths().overrides) == saved,
+          "invalid typed interaction edit changed settings"
+      );
+    const std::array inherit{
+        files::OverrideEdit{P::ACTIVATION_MODE, std::monostate{}}, files::OverrideEdit{P::TYPING_MODE, std::monostate{}}
+    };
+    require(
+        config.saveOverrides(inherit) == S::DURABLE
+            && config.settings().browser.activationMode == A::SINGLE_CLICK
+            && config.settings().browser.typingMode == T::TYPEAHEAD
+            && read(fixture.paths().base) == base,
+        "interaction inheritance reset changed the base or lost its policy"
+    );
+    const auto lastGood = config.settings();
+    for (const auto* key : {"activation_mode", "typing_mode"})
+      for (const auto* bad : {"true", "1", "[]", "'single'", "'Search'", "'double-click'"}) {
+        fixture.write("config.toml", std::string("[browser]\n") + key + " = " + bad + "\n");
+        const auto issues = files::validateConfigFile(fixture.paths().base);
+        require(
+            issues.size() == 1
+                && issues.front().key == std::string("browser.") + key
+                && !config.reload()
+                && config.settings() == lastGood,
+            "invalid interaction policy accepted or replaced last-good settings"
+        );
+      }
+  }
+
   void testDetailsColumnWidths() {
     using P = files::BrowserPreference;
     using S = files::AtomicWriteState;
@@ -723,6 +792,7 @@ int main() {
     testDetailsColumnVisibility();
     testDetailsColumnOrder();
     testDetailsColumnWidths();
+    testInteractionModes();
     testOverrideSaving();
     std::println("settings checks passed");
     return 0;
