@@ -210,7 +210,8 @@ filesystem_service = declare_dependency(
 )
 
 browser_model = declare_dependency(
-  sources: files('src/browser/directory_model.cpp', 'src/browser/browser_controller.cpp', 'src/browser/location_presentation.cpp', 'src/browser/path_completion.cpp', 'src/browser/action_registry.cpp', 'src/browser/selection_tools.cpp'),
+  sources: files('src/browser/directory_model.cpp', 'src/browser/browser_controller.cpp',
+    'src/browser/tab_workspace.cpp', 'src/browser/location_presentation.cpp', 'src/browser/path_completion.cpp', 'src/browser/action_registry.cpp', 'src/browser/selection_tools.cpp'),
   dependencies: filesystem_service,
 )
 
@@ -275,6 +276,18 @@ build_tests = tests_opt.enabled() or (
   tests_opt.auto() and get_option('buildtype') == 'debug' and get_option('b_sanitize') == 'none'
 )
 if build_tests
+  input_objects = app.extract_objects(files(
+    'src/render/scene/input_area.cpp', 'src/render/scene/input_dispatcher.cpp', 'src/render/scene/node.cpp',
+    'src/render/animation/animation.cpp', 'src/render/animation/animation_manager.cpp', 'src/render/animation/motion_service.cpp',
+    'src/core/ui_phase.cpp', 'src/core/log.cpp', 'src/core/input/keybind_matcher.cpp', 'src/core/input/key_chord.cpp',
+    'src/wayland/text_input_service.cpp',
+  ))
+  input_test = executable('input-lifetime-test', 'tests/input_lifetime_test.cpp',
+    protocol_sources, protocol_headers, objects: input_objects,
+    include_directories: include_directories('src', '.'), dependencies: ui_dependencies)
+  test('input-lifetime', input_test)
+  tab_test = executable('tab-workspace-test', 'tests/tab_workspace_test.cpp', 'src/browser/tab_workspace.cpp', include_directories: include_directories('src'))
+  test('tab-workspace', tab_test)
   archive_test = executable('archive-service-test', 'tests/archive_service_test.cpp', dependencies: archive_service)
   test('archive-service', archive_test, timeout: 90, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   thumbnail_test = executable('thumbnail-test',

@@ -457,3 +457,16 @@ void files::BrowserController::notify() const {
     callback();
   }
 }
+
+void files::BrowserController::duplicateFrom(BrowserController& source) {
+  if (&source == this)
+    return;
+  source.saveVisit();
+  m_defaults = source.m_defaults;
+  m_history = source.m_history;
+  m_historyIndex = source.m_historyIndex;
+  m_model.setSort(source.m_model.sort());
+  m_model.setFilter({source.m_model.filter().showHidden, {}});
+  if (!m_history.empty())
+    loadVisit();
+}

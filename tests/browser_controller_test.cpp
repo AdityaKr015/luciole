@@ -132,6 +132,53 @@ namespace {
     retiring.reset();
   }
 
+  void testDuplicatedTabs() {
+    Fixture fixture;
+    Pump pump;
+    BrowserController original({}, false), duplicate({}, true);
+    const auto root = Location::fromPath(fixture.path.native());
+    original.open(root);
+    pump.ready(original);
+    original.open(Location::fromPath((fixture.path / "child").native()));
+    pump.ready(original);
+    original.model().select(id(original, "inside"));
+    original.setCaptureViewport([] {
+      return files::BrowseViewport{.mode = files::ViewMode::LIST, .iconSize = 96, .vertical = 125};
+    });
+    duplicate.open(Location::fromPath((fixture.path / "other").native()));
+    duplicate.duplicateFrom(original);
+    pump.ready(duplicate);
+    require(
+        duplicate.canBack()
+            && duplicate.model().selectedIds().size() == 1
+            && duplicate.model().entry(duplicate.model().selectedIds().front())->name == "inside",
+        "duplicate lost history or stable selection"
+    );
+    const auto viewport = duplicate.takeRestoredViewport();
+    require(
+        viewport && viewport->mode == files::ViewMode::LIST && viewport->vertical == 125, "duplicate lost viewport"
+    );
+    duplicate.back();
+    pump.ready(duplicate);
+    require(
+        original.model().snapshot().location == Location::fromPath((fixture.path / "child").native()),
+        "duplicate navigation changed source tab"
+    );
+    original.setSearchQuery("inside");
+    pump.ready(original);
+    duplicate.duplicateFrom(original);
+    pump.ready(duplicate);
+    original.open(root);
+    pump.ready(original);
+    require(
+        duplicate.searchQuery() == "inside" && duplicate.model().rows().size() == 1,
+        "source navigation leaked into duplicated search"
+    );
+    auto closing = std::make_unique<BrowserController>(files::SortOptions{}, false);
+    closing->duplicateFrom(duplicate);
+    closing.reset();
+    pump.drainFor(30ms);
+  }
   void testNavigation() {
     Fixture fixture;
     Pump pump;
@@ -665,6 +712,7 @@ namespace {
 int main() {
   try {
     testActionContextsAndFileLinks();
+    testDuplicatedTabs();
     testNavigation();
     testFailureAndLiveUpdates();
     testRecursiveSearch();

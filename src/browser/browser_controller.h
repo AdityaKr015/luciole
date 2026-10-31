@@ -39,6 +39,7 @@ namespace files {
     [[nodiscard]] const BrowseViewport& viewport() const { return m_viewport; }
     [[nodiscard]] std::uint64_t visitSerial() const { return m_visitSerial; }
     [[nodiscard]] std::optional<BrowseViewport> takeRestoredViewport();
+    void duplicateFrom(BrowserController& source);
     void home();
     bool back();
     bool forward();

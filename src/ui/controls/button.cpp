@@ -623,15 +623,11 @@ void Button::resolveVisualStateColors(Color& targetBg, Color& targetBorder, Colo
     targetBg = resolveColorSpec(m_palette.pressed.bg);
     targetBorder = resolveColorSpec(m_palette.pressed.border);
     targetLabel = resolveColorSpec(m_palette.pressed.label);
-  } else if (isHovered) {
-    targetBg = resolveColorSpec(m_palette.hover.bg);
-    targetBorder = resolveColorSpec(m_palette.hover.border);
-    targetLabel = resolveColorSpec(m_palette.hover.label);
   } else if (isSelected && m_palette.selected.has_value()) {
     targetBg = resolveColorSpec(m_palette.selected->bg);
     targetBorder = resolveColorSpec(m_palette.selected->border);
     targetLabel = resolveColorSpec(m_palette.selected->label);
-  } else if (isSelected) {
+  } else if (isHovered || isSelected) {
     targetBg = resolveColorSpec(m_palette.hover.bg);
     targetBorder = resolveColorSpec(m_palette.hover.border);
     targetLabel = resolveColorSpec(m_palette.hover.label);

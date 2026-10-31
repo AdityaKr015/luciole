@@ -550,7 +550,7 @@ void ScrollView::doLayout(Renderer& renderer) {
   applyScrollOffset();
 
   const Node* target = std::exchange(m_pendingScrollIntoView, nullptr);
-  if (target != nullptr && m_orientation == ScrollOrientation::Vertical && subtreeContains(*m_content, target)) {
+  if (target != nullptr && subtreeContains(*m_content, target)) {
     scrollNodeIntoScrollView(*this, m_boundState, *target, 0.0F);
   }
 }
