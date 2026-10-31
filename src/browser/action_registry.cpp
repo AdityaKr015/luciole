@@ -1,5 +1,7 @@
 #include "browser/action_registry.h"
 
+#include "fs/archive_type.h"
+
 #include <algorithm>
 #include <array>
 #include <stdexcept>
@@ -36,6 +38,10 @@ namespace {
        {A::RENAME, "Rename…", "F2", S::TARGETS},
        {A::TRASH, "Move to Trash", "Delete", S::TARGETS},
        {A::PROPERTIES, "Properties", "Alt+Return", S::TARGETS},
+       {A::COMPRESS, "Compress…", "", S::TARGETS},
+       {A::EXTRACT_HERE, "Extract Here", "", S::TARGETS},
+       {A::EXTRACT_TO, "Extract To…", "", S::TARGETS},
+       {A::BROWSE_ARCHIVE, "Browse Archive", "", S::TARGETS},
        {A::CREATE_FOLDER, "New Folder…", "Ctrl+Shift+N", S::LOCATION},
        {A::CREATE_FILE, "Empty File…", "", S::LOCATION},
        {A::PIN_CURRENT, "Pin this folder to sidebar", "", S::LOCATION},
@@ -181,6 +187,28 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
       return unavailable("The provider does not permit this operation on every selected item.");
     return {};
   }
+  case A::COMPRESS:
+  case A::EXTRACT_HERE:
+  case A::EXTRACT_TO:
+  case A::BROWSE_ARCHIVE:
+    if (c.operationsBusy)
+      return unavailable("Another file operation is still finishing.");
+    if (!all([](const auto& entry) {
+          return entry.location.nativePath().has_value() && entry.access.read.value_or(true);
+        }))
+      return unavailable("Archives require readable native items.");
+    if (action == A::COMPRESS) {
+      if (!all([](const auto& entry) {
+            return entry.type == G_FILE_TYPE_REGULAR || entry.type == G_FILE_TYPE_DIRECTORY || entry.symlink;
+          }))
+        return unavailable("Special files cannot be compressed.");
+    } else if (!single() || !all([](const auto& entry) {
+                 return entry.type == G_FILE_TYPE_REGULAR
+                     && !entry.symlink
+                     && isSupportedArchive(entry.location, entry.contentType);
+               }))
+      return unavailable("Select one ZIP or TAR archive.");
+    return {};
   case A::OPEN:
     if (!single() && !all([](const auto& entry) { return entry.type == G_FILE_TYPE_REGULAR; }))
       return unavailable("Open folders individually.");

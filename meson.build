@@ -124,6 +124,7 @@ app_sources = files(
   'src/browser/places_sidebar.cpp',
   'src/ui/controls/name_editor.cpp',
   'src/ui/controls/browser_settings_view.cpp',
+  'src/ui/controls/archive_view.cpp',
   'src/ui/controls/select.cpp',
   'src/core/timer_manager.cpp',
   'src/core/ui_phase.cpp',
@@ -196,6 +197,7 @@ filesystem_service = declare_dependency(
   sources: files(
     'src/fs/location.cpp',
     'src/fs/filename.cpp',
+    'src/fs/archive_type.cpp',
     'src/fs/file_metadata.cpp',
     'src/fs/trash_info.cpp',
     'src/fs/file_icon_source.cpp',
@@ -252,6 +254,11 @@ transfer_service = declare_dependency(
   dependencies: filesystem_service,
 )
 
+archive_service = declare_dependency(
+  sources: files('src/operations/archive_service.cpp', 'src/operations/archive_work.cpp'),
+  dependencies: [transfer_service, dependency('libarchive')],
+)
+
 app = executable('noctalia-files',
   app_sources,
   protocol_sources,
@@ -259,7 +266,7 @@ app = executable('noctalia-files',
   build_info,
   completions,
   include_directories: include_directories('src', '.'),
-  dependencies: ui_dependencies + [browser_model, settings_service, state_service, places_service, transfer_service, rename_service, create_service, trash_service],
+  dependencies: ui_dependencies + [browser_model, settings_service, state_service, places_service, transfer_service, rename_service, create_service, trash_service, archive_service],
   install: true,
 )
 
@@ -268,6 +275,8 @@ build_tests = tests_opt.enabled() or (
   tests_opt.auto() and get_option('buildtype') == 'debug' and get_option('b_sanitize') == 'none'
 )
 if build_tests
+  archive_test = executable('archive-service-test', 'tests/archive_service_test.cpp', dependencies: archive_service)
+  test('archive-service', archive_test, timeout: 90, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   thumbnail_test = executable('thumbnail-test',
     'tests/thumbnail_test.cpp',
     'src/browser/thumbnail_codec.cpp',

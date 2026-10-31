@@ -18,6 +18,7 @@
   pango,
   harfbuzz,
   libpng,
+  libarchive,
   libwebp,
   librsvg,
   gdk-pixbuf,
@@ -84,6 +85,7 @@ stdenv.mkDerivation (finalAttrs: {
     pango
     harfbuzz
     libpng
+    libarchive
     libwebp
     librsvg
     gdk-pixbuf

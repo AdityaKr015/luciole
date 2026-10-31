@@ -23,6 +23,7 @@
 #include "cursor-shape-v1-client-protocol.h"
 #include "fs/filename.h"
 #include "noctalia_files_build_info.h"
+#include "operations/archive_service.h"
 #include "operations/create_service.h"
 #include "operations/empty_trash_service.h"
 #include "operations/rename_service.h"
@@ -38,6 +39,7 @@
 #include "render/scene/input_dispatcher.h"
 #include "system/icon_theme_poll_source.h"
 #include "ui/builders.h"
+#include "ui/controls/archive_view.h"
 #include "ui/controls/browser_settings_view.h"
 #include "ui/controls/context_menu.h"
 #include "ui/controls/input.h"
@@ -210,9 +212,25 @@ namespace {
         m_browserDirty = true;
         m_surface.requestUpdate();
       });
+      m_archives.setChangedCallback([this] {
+        updateOperationProgress();
+        m_archiveDirty = true;
+        if (auto file = m_archives.takeOpenedFile())
+          m_launcher.open(*file);
+        if (!m_archives.busy()) {
+          m_actionError = m_archives.error();
+          if (!m_archives.results().empty()) {
+            if (m_actionError.empty())
+              m_actionError = "Archive operation complete.";
+            m_browser.refresh();
+          }
+        }
+        m_browserDirty = true;
+        m_surface.requestUpdate();
+      });
       m_transfers.setChangedCallback([this] {
         updateOperationProgress();
-        if (!m_transfers.busy()) {
+        if (!m_archives.busy() && !m_transfers.busy()) {
           const auto& results = m_transfers.results();
           const auto done = std::ranges::count_if(results, [](const auto& item) {
             return item.outcome == files::TransferOutcome::MOVED || item.outcome == files::TransferOutcome::COPIED;
@@ -298,6 +316,7 @@ namespace {
     ~Window() override {
       m_dragScroll.stop();
       m_operationProgress.stop();
+      m_archives.setChangedCallback({});
       m_transfers.setChangedCallback({});
       m_trash.setChangedCallback({});
       m_emptyTrash.setChangedCallback({});
@@ -312,6 +331,7 @@ namespace {
       m_preferences.setChangedCallback({});
       closeMenu();
       closeSettings();
+      closeArchive();
       m_dispatcher.setSceneRoot(nullptr);
       m_surface.setSceneRoot(nullptr);
       m_root.reset();
@@ -345,6 +365,10 @@ namespace {
     }
 
     [[nodiscard]] bool running() {
+      if (g_stopRequested != 0)
+        m_surface.close();
+      if (!m_surface.isRunning())
+        m_archives.shutdown();
       if (!m_surface.isRunning() && m_transfers.busy()) {
         m_transfers.cancel();
       }
@@ -360,6 +384,7 @@ namespace {
           || m_preferences.busy()
           || m_pins.busy()
           || m_launcher.busy()
+          || m_archives.busy()
           || m_transfers.busy()
           || m_trash.busy()
           || m_emptyTrash.busy()
@@ -396,7 +421,7 @@ namespace {
         return;
       }
       const auto x = static_cast<float>(event.sx), y = static_cast<float>(event.sy);
-      if (m_settingsView && dispatcher == &m_dispatcher) {
+      if ((m_settingsView || m_archiveView) && dispatcher == &m_dispatcher) {
         m_pointerX = x;
         m_pointerY = y;
         if (event.type == PointerEvent::Type::Button && event.pressed)
@@ -668,6 +693,23 @@ namespace {
         }
         return;
       }
+      if (m_archiveView) {
+        if (event.pressed && KeySymbol::isEscape(event.sym))
+          deferCloseArchive();
+        else if (event.pressed && event.sym == XKB_KEY_q && event.modifiers == KeyMod::Ctrl)
+          m_surface.close();
+        else if (event.pressed && KeySymbol::isTab(event.sym))
+          (void)m_dispatcher.cycleTabFocusInSubtree(m_archiveView, (event.modifiers & KeyMod::Shift) != 0);
+        else if (
+            !event.pressed
+            || event.preedit
+            || m_dispatcher.focusedArea() != m_archiveView->focusArea()
+            || !m_archiveView->key(event.sym, event.modifiers)
+        )
+          m_dispatcher.keyEvent(event.sym, event.utf32, event.modifiers, event.pressed, event.preedit);
+        m_surface.requestLayout();
+        return;
+      }
       if (m_settingsView) {
         if (event.pressed
             && (KeySymbol::isEscape(event.sym) || (event.sym == XKB_KEY_comma && event.modifiers == KeyMod::Ctrl)))
@@ -918,6 +960,7 @@ namespace {
           .canUp = m_browser.canUp(),
           .operationsBusy = m_creator.busy()
               || m_renamer.busy()
+              || m_archives.busy()
               || m_transfers.busy()
               || m_trash.busy()
               || m_trash.canTrash()
@@ -987,6 +1030,29 @@ namespace {
         if (const auto* entry = m_browser.model().entry(target.id))
           targets.push_back(*entry);
       switch (action) {
+      case Action::COMPRESS: {
+        std::vector<files::Location> sources;
+        sources.reserve(targets.size());
+        for (const auto& target : targets)
+          sources.push_back(target.location);
+        openArchiveDialog(std::move(sources), {}, true);
+        break;
+      }
+      case Action::EXTRACT_TO:
+        openArchiveDialog({targets.front().location}, {}, false);
+        break;
+      case Action::EXTRACT_HERE:
+        if (!m_archives.extract(targets.front().location, archiveDestination(targets.front().location)))
+          actionError("Could not start extraction.");
+        break;
+      case Action::BROWSE_ARCHIVE:
+        if (m_archives.inspect(targets.front().location)) {
+          m_archiveSource = targets.front().location;
+          m_archiveWanted = true;
+          m_archiveDirty = true;
+        } else
+          actionError("Could not read this archive.");
+        break;
       case Action::COPY_PATH:
       case Action::COPY_URI:
       case Action::COPY_TARGET_PATH:
@@ -1288,6 +1354,14 @@ namespace {
           return;
         add(Action::OPEN);
         if (request.targets.size() == 1) {
+          const auto* entry = m_browser.model().entry(request.targets.front().id);
+          if (entry && files::isSupportedArchive(entry->location, entry->contentType)) {
+            add(Action::BROWSE_ARCHIVE);
+            add(Action::EXTRACT_HERE);
+            add(Action::EXTRACT_TO);
+          }
+        }
+        if (request.targets.size() == 1) {
           add(Action::CONTAINING_FOLDER);
           if (m_browser.model().entry(request.targets.front().id)->trash.original)
             add(Action::ORIGINAL_LOCATION);
@@ -1311,8 +1385,10 @@ namespace {
         const bool trash = request.targets.front().location.isTrash();
         if (request.targets.size() == 1 && !trash)
           add(Action::RENAME);
-        if (!trash)
+        if (!trash) {
+          add(Action::COMPRESS);
           add(Action::TRASH);
+        }
         separator();
         add(Action::COPY_TARGET_PATH);
         add(Action::COPY_TARGET_URI);
@@ -1392,7 +1468,8 @@ namespace {
     }
 
     bool canEmptyTrash() const {
-      return !m_transfers.busy()
+      return !m_archives.busy()
+          && !m_transfers.busy()
           && !m_trash.busy()
           && !m_trash.canTrash()
           && !m_emptyTrash.pending()
@@ -1527,7 +1604,7 @@ namespace {
     }
 
     void updateOperationProgress() {
-      if (m_transfers.busy() || m_trash.busy() || m_emptyTrash.busy()) {
+      if (m_archives.busy() || m_transfers.busy() || m_trash.busy() || m_emptyTrash.busy()) {
         m_operationProgress.startRepeating(std::chrono::milliseconds(100), [this] {
           m_browserDirty = true;
           m_surface.requestUpdate();
@@ -1900,6 +1977,134 @@ namespace {
       m_menuSurface->requestLayout();
     }
 
+    static files::Location archiveDestination(const files::Location& source) {
+      const files::GioPtr<GFile> parent(g_file_get_parent(source.file().get()));
+      const files::GioPtr<GFile> child(g_file_get_child(parent.get(), files::archiveFolderName(source).c_str()));
+      const files::GString uri(g_file_get_uri(child.get()));
+      return files::Location::fromUri(uri.get());
+    }
+    void openArchiveDialog(std::vector<files::Location> sources, std::vector<std::string> selected, bool compress) {
+      if (sources.empty() || m_archives.busy())
+        return;
+      const auto formats = files::archiveFormats();
+      if (compress && formats.empty()) {
+        actionError("No archive writer is available.");
+        return;
+      }
+      const auto source = sources.front();
+      const files::GioPtr<GFile> parentFile(g_file_get_parent(source.file().get()));
+      if (!parentFile) {
+        actionError("The source has no destination parent.");
+        return;
+      }
+      const files::GString uri(g_file_get_uri(parentFile.get()));
+      const auto base = files::Location::fromUri(uri.get());
+      const files::GString raw(g_file_get_basename(source.file().get()));
+      const files::GString display(g_filename_display_name(raw ? raw.get() : "Archive"));
+      const std::string name = (sources.size() == 1 ? std::string(display.get()) : "Archive")
+          + (formats.empty() ? ".zip" : std::string(formats.front().suffix));
+      auto root = std::make_unique<ArchiveDialog>(
+          compress, name, files::locationEditText(compress ? base : archiveDestination(source)),
+          [this, sources = std::move(sources), selected = std::move(selected), base,
+           compress](const std::string& name, const std::string& path, files::ArchiveFormat format) -> std::string {
+            if (path.empty())
+              return "Enter a destination folder.";
+            auto destination = files::resolveLocationText(path, base);
+            if (!destination.nativePath())
+              return "Choose a native destination folder.";
+            if (compress) {
+              if (auto problem = files::filenameProblem(name))
+                return *problem;
+              const auto formats = files::archiveFormats();
+              const auto found = std::ranges::find(formats, format, &files::ArchiveFormatInfo::format);
+              if (found == formats.end() || !name.ends_with(found->suffix))
+                return "Use the filename extension for the selected format.";
+              const files::GioPtr<GFile> child(g_file_get_child(destination.file().get(), name.c_str()));
+              const files::GString uri(g_file_get_uri(child.get()));
+              destination = files::Location::fromUri(uri.get());
+            }
+            const bool started = compress ? m_archives.compress(sources, destination, format)
+                                          : m_archives.extract(sources.front(), destination, selected);
+            if (!started)
+              return "Could not start the archive operation.";
+            dismissMenu();
+            return {};
+          },
+          [this] { dismissMenu(); }
+      );
+      auto* dialog = root.get();
+      const float width = std::min(520.0F, static_cast<float>(m_surface.width()) - 32.0F);
+      UiPhaseScope phase(UiPhase::Layout);
+      LayoutConstraints constraints;
+      constraints.setExactWidth(width);
+      const float height = std::min(
+          root->measure(m_surface.renderTarget().renderer(), constraints).height,
+          static_cast<float>(m_surface.height()) - 48.0F
+      );
+      showPopup(
+          std::move(root), nullptr, {(m_surface.width() - width) * 0.5F, (m_surface.height() - height) * 0.5F, 1, 1},
+          width, height
+      );
+      if (m_menuSurface) {
+        m_dialogHeight = height;
+        m_menuDispatcher.setFocus(dialog->focusArea());
+      }
+    }
+    void deferCloseArchive() {
+      const std::weak_ptr<int> lifetime = m_lifetime;
+      DeferredCall::callLater([this, lifetime] {
+        if (!lifetime.expired())
+          closeArchive();
+      });
+    }
+    void closeArchive() {
+      m_archiveWanted = false;
+      if (!m_archiveView)
+        return;
+      closeMenu();
+      m_dispatcher.cancelPointerCapture();
+      m_dispatcher.setFocus(m_list->focusArea());
+      auto* page = std::exchange(m_archiveView, nullptr);
+      auto removed = m_root->removeChild(page);
+      m_surface.requestLayout();
+    }
+    void syncArchive() {
+      UiPhaseScope phase(UiPhase::Layout);
+      if (m_archiveWanted && !m_archiveView) {
+        closeSettings();
+        closeMenu();
+        cancelDrag();
+        clearCompletions();
+        if (m_editingLocation)
+          endLocationEdit(false);
+        auto root = std::make_unique<ArchiveView>(
+            m_icons, [this] { return m_connection.input().keyboardModifiers(); }, [this] { deferCloseArchive(); },
+            [this](std::vector<std::string> selected) {
+              if (m_archives.catalog())
+                openArchiveDialog({m_archives.catalog()->source}, std::move(selected), false);
+            },
+            [this](const std::string& path) { (void)m_archives.openMember(path); },
+            [this] {
+              if (m_archiveSource)
+                (void)m_archives.inspect(*m_archiveSource);
+            },
+            [this] { m_archives.cancel(); }
+        );
+        m_archiveView = root.get();
+        root->setParticipatesInLayout(false);
+        root->setZIndex(1000);
+        m_root->addChild(std::move(root));
+        m_dispatcher.cancelPointerCapture();
+        m_dispatcher.setFocus(m_archiveView->focusArea());
+      }
+      if (m_archiveView) {
+        m_archiveView->sync(
+            m_archives.catalog(), m_archives.phase(), m_archives.items(), m_archives.bytes(), m_archives.error()
+        );
+        m_surface.requestLayout();
+      }
+    }
+
     void deferCloseSettings() {
       const std::weak_ptr<int> lifetime = m_lifetime;
       DeferredCall::callLater([this, lifetime] {
@@ -1923,6 +2128,7 @@ namespace {
         deferCloseSettings();
         return;
       }
+      closeArchive();
       closeMenu();
       cancelDrag();
       clearCompletions();
@@ -2178,7 +2384,8 @@ namespace {
     }
 
     void syncTransferConflict() {
-      const auto conflict = m_transfers.conflict();
+      const bool archive = m_archives.conflict().has_value();
+      const auto conflict = archive ? m_archives.conflict() : m_transfers.conflict();
       if (m_activeTransferConflict && !conflict) {
         dismissMenu();
         return;
@@ -2221,8 +2428,8 @@ namespace {
             )
         );
       };
-      const auto choose = [this, id = conflict->id](files::TransferConflictChoice choice) {
-        if (m_transfers.resolve(id, choice)) {
+      const auto choose = [this, archive, id = conflict->id](files::TransferConflictChoice choice) {
+        if (archive ? m_archives.resolve(id, choice) : m_transfers.resolve(id, choice)) {
           m_activeTransferConflict.reset();
           dismissMenu();
         }
@@ -2295,9 +2502,11 @@ namespace {
       );
       if (m_menuSurface != nullptr) {
         m_activeTransferConflict = conflict->id;
+        m_transferConflictArchive = archive;
         m_menuDispatcher.setFocus(keepBoth->inputArea());
       } else {
-        (void)m_transfers.resolve(conflict->id, files::TransferConflictChoice::CANCEL);
+        (void)(archive ? m_archives.resolve(conflict->id, files::TransferConflictChoice::CANCEL)
+                       : m_transfers.resolve(conflict->id, files::TransferConflictChoice::CANCEL));
       }
     }
 
@@ -2308,7 +2517,8 @@ namespace {
       if (m_drag->sourcePin) {
         return m_pins.editable() && m_pins.contains(*m_drag->sourcePin);
       }
-      return !m_transfers.busy()
+      return !m_archives.busy()
+          && !m_transfers.busy()
           && !m_trash.busy()
           && !m_trash.canTrash()
           && !m_emptyTrash.pending()
@@ -2413,6 +2623,7 @@ namespace {
 
     void startFileDrag(const std::vector<files::EntryId>& ids) {
       if (ids.empty()
+          || m_archives.busy()
           || m_transfers.busy()
           || m_trash.busy()
           || m_trash.canTrash()
@@ -3675,6 +3886,14 @@ namespace {
         status = m_trash.snapshot().status == files::TrashStatus::PREPARING
             ? "Preparing move to Trash…"
             : std::format("Moving to Trash… · {} of {} items", m_trash.completed(), m_trash.snapshot().results.size());
+      } else if (m_archives.busy()) {
+        const files::GString size(g_format_size_full(m_archives.bytes(), G_FORMAT_SIZE_IEC_UNITS));
+        const char* phase = m_archives.phase() == files::ArchivePhase::READING ? "Reading archive"
+            : m_archives.phase() == files::ArchivePhase::COMPRESSING           ? "Compressing"
+            : m_archives.phase() == files::ArchivePhase::CLEANING              ? "Cleaning temporary files"
+            : m_archives.phase() == files::ArchivePhase::TRANSFERRING          ? "Publishing archive output"
+                                                                               : "Extracting archive";
+        status = std::format("{}… · {} entries · {}", phase, m_archives.items(), size.get());
       } else if (m_transfers.busy()) {
         const files::GString size(g_format_size(m_transfers.bytes()));
         status = std::format(
@@ -3750,7 +3969,7 @@ namespace {
       }
       m_freeSpace->setVisible(showFree);
       m_freeSpace->setParticipatesInLayout(showFree);
-      const bool cancellable = m_transfers.busy() || m_trash.busy() || m_emptyTrash.busy();
+      const bool cancellable = m_archives.busy() || m_transfers.busy() || m_trash.busy() || m_emptyTrash.busy();
       m_cancelOperation->setVisible(cancellable);
       m_cancelOperation->setParticipatesInLayout(cancellable);
       m_cancelOperation->setTooltip(
@@ -3856,6 +4075,8 @@ namespace {
               : m_sidebarResize->hovered()                ? ColorRole::OnSurfaceVariant
                                                           : ColorRole::OutlineVariant
       ));
+      if (std::exchange(m_archiveDirty, false))
+        syncArchive();
       syncTransferConflict();
       if (std::exchange(m_trashDirty, false))
         syncTrash();
@@ -3956,6 +4177,12 @@ namespace {
               renderer, {0, top, static_cast<float>(m_surface.width()), static_cast<float>(m_surface.height()) - top}
           );
         }
+        if (m_archiveView) {
+          const float top = clientHeader ? m_titlebar->height() : 0.0F;
+          m_archiveView->arrange(
+              renderer, {0, top, static_cast<float>(m_surface.width()), static_cast<float>(m_surface.height()) - top}
+          );
+        }
         layoutDetails(renderer);
         const bool columnHoverDirty = std::exchange(m_columnHoverDirty, false);
         if (columnOrderChanged || columnHoverDirty)
@@ -3968,7 +4195,7 @@ namespace {
         if (placesFocus) {
           m_dispatcher.restoreTabFocus(std::move(*placesFocus));
         }
-        if (m_restorePlaceFocus && m_menuSurface == nullptr && !m_settingsView) {
+        if (m_restorePlaceFocus && m_menuSurface == nullptr && !m_settingsView && !m_archiveView) {
           const auto location = *std::exchange(m_restorePlaceFocus, std::nullopt);
           if (m_showSidebar) {
             if (auto* area = m_places->focusArea(location)) {
@@ -4409,6 +4636,7 @@ namespace {
                    .visible = false,
                    .participatesInLayout = false,
                    .onClick = [this] {
+                     m_archives.cancel();
                      m_transfers.cancel();
                      m_trash.cancel();
                      m_emptyTrash.cancel();
@@ -4591,7 +4819,8 @@ namespace {
       m_emptyTrashSize = nullptr;
       m_emptyTrashConfirm = nullptr;
       if (const auto id = std::exchange(m_activeTransferConflict, std::nullopt)) {
-        (void)m_transfers.resolve(*id, files::TransferConflictChoice::CANCEL);
+        (void)(m_transferConflictArchive ? m_archives.resolve(*id, files::TransferConflictChoice::CANCEL)
+                                         : m_transfers.resolve(*id, files::TransferConflictChoice::CANCEL));
       }
       if (m_placeRenameTarget) {
         m_restorePlaceFocus = m_placeRenameTarget->location;
@@ -4980,6 +5209,10 @@ namespace {
     std::vector<std::pair<files::Location, Button*>> m_dropBreadcrumbs;
     std::optional<DropTarget> m_lastDropTarget;
     bool m_dragScrollInPlaces = false;
+    files::ArchiveService m_archives;
+    ArchiveView* m_archiveView = nullptr;
+    std::optional<files::Location> m_archiveSource;
+    bool m_archiveWanted = false, m_archiveDirty = false, m_transferConflictArchive = false;
     files::TransferService m_transfers;
     files::TrashService m_trash;
     files::EmptyTrashService m_emptyTrash;
@@ -5158,9 +5391,7 @@ int files::runApplication(const std::optional<std::string>& initialLocation) {
     KeyRepeatPollSource repeat(connection.input());
     IconThemePollSource icons;
     icons.setChangeCallback([&window] { window.iconThemeChanged(); });
-    MainLoop loop(connection, {&deferred, &timers, &repeat, &glib, &icons}, [&window] {
-      return g_stopRequested == 0 && window.running();
-    });
+    MainLoop loop(connection, {&deferred, &timers, &repeat, &glib, &icons}, [&window] { return window.running(); });
     loop.run();
     connection.setOutputChangedCallback({});
   } catch (const std::exception& error) {

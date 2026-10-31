@@ -39,6 +39,51 @@ namespace {
         .monitorError = {}
     };
   }
+  void testArchiveActions() {
+    files::DirectoryModel model;
+    auto data = snapshot();
+    data.entries.push_back(entry(7, "sample.TAR.GZ"));
+    model.applySnapshot(data);
+    model.select(7);
+    files::ActionContext c{.model = model, .context = 9, .query = {}, .pinned = {}};
+    const auto request = R::capture(c);
+    require(
+        R::state(A::COMPRESS, c, request).enabled
+            && R::state(A::EXTRACT_HERE, c, request).enabled
+            && R::state(A::EXTRACT_TO, c, request).enabled
+            && R::state(A::BROWSE_ARCHIVE, c, request).enabled,
+        "native archive actions unavailable"
+    );
+    c.operationsBusy = true;
+    require(
+        !R::state(A::BROWSE_ARCHIVE, c, request).enabled && !R::state(A::COMPRESS, c, request).enabled,
+        "archive jobs bypassed operation ownership"
+    );
+    c.operationsBusy = false;
+    data.entries.back().symlink = true;
+    ++data.generation;
+    model.applySnapshot(data);
+    require(!R::state(A::EXTRACT_TO, c, request).enabled, "archive symlink authorized extraction");
+    data.entries.back().symlink = false;
+    data.entries.back().access.read = false;
+    ++data.generation;
+    model.applySnapshot(data);
+    require(!R::state(A::COMPRESS, c, request).enabled, "unreadable archive authorized compression");
+    model.select(1);
+    const auto plain = R::capture(c);
+    require(
+        R::state(A::COMPRESS, c, plain).enabled && !R::state(A::BROWSE_ARCHIVE, c, plain).enabled,
+        "ordinary file archive capabilities incorrect"
+    );
+    model.select(6);
+    require(R::state(A::COMPRESS, c, R::capture(c)).enabled, "native directory could not be compressed");
+    data.entries.back().location = files::Location::fromUri("sftp://example.invalid/sample.tar.gz");
+    data.entries.back().access.read = true;
+    ++data.generation;
+    model.applySnapshot(data);
+    model.select(7);
+    require(!R::state(A::COMPRESS, c, R::capture(c)).enabled, "remote archive advertised native operations");
+  }
   void testCapabilitiesAndTargets() {
     files::DirectoryModel model;
     auto data = snapshot();
@@ -233,6 +278,7 @@ namespace {
 } // namespace
 int main() {
   try {
+    testArchiveActions();
     testCapabilitiesAndTargets();
     testBulkSelection();
     testTypeahead();
