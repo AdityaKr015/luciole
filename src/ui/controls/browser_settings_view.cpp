@@ -98,6 +98,9 @@ BrowserSettingsView::BrowserSettingsView(
       P::SIDEBAR_WIDTH, "Sidebar width", [](const auto& s) { return s.sidebarWidth; },
       widths(files::kMinSidebarWidth, files::kMaxSidebarWidth)
   );
+  section("Preview");
+  addBool(P::SHOW_PREVIEW, "Show preview", [](const auto& s) { return s.showPreview; });
+  addNumber(P::PREVIEW_WIDTH, "Preview width", [](const auto& s) { return s.previewWidth; }, widths(208, 800));
   section("List columns");
   addBool(P::SHOW_TYPE_COLUMN, "Type", [](const auto& s) { return s.columns.type; });
   addBool(P::SHOW_SIZE_COLUMN, "Size", [](const auto& s) { return s.columns.size; });

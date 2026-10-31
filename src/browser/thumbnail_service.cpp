@@ -498,6 +498,27 @@ bool files::ThumbnailService::touch(const std::shared_ptr<const FileIconImage>& 
   item.used = ++m_state->clock;
   return true;
 }
+std::shared_ptr<const files::FileIconImage> files::ThumbnailService::prepared(const DirectoryEntry& source) {
+  if (m_state->clearing || m_state->options.policy == ThumbnailPolicy::NEVER)
+    return {};
+  for (const int side : {1024, 512, 256, 128}) {
+    const auto key = std::format(
+        "{}\n{}\n{}\n{}\n{}\n{}\n{}", source.location.uri(), source.id, source.etag.value_or(""),
+        source.modifiedSeconds.value_or(0), source.size.value_or(0), source.contentRevision.value_or(""), side
+    );
+    const auto found = m_state->cache.find(key);
+    if (found != m_state->cache.end()
+        && found->second.image->pixels
+        && found->second.source.identity == source.identity
+        && found->second.source.type == source.type
+        && found->second.source.symlink == source.symlink
+        && found->second.source.contentType == source.contentType) {
+      (void)touch(found->second.image, true);
+      return found->second.image;
+    }
+  }
+  return {};
+}
 void files::ThumbnailService::synchronizeSources(const DirectorySnapshot& snapshot) {
   if (m_state->cache.empty())
     return;

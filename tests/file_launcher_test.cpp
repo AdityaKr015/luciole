@@ -17,6 +17,7 @@ int main(int argc, char** argv) {
     const bool destroy = std::string_view(argv[1]) == "destroy";
     const bool expectError = std::string_view(argv[1]) == "error";
     const bool sequential = std::string_view(argv[1]) == "sequential";
+    const bool with = std::string_view(argv[1]) == "with";
     int callbacks = 0, errors = 0;
     launcher->setChangedCallback([&](const std::string& error) {
       ++callbacks;
@@ -24,8 +25,29 @@ int main(int argc, char** argv) {
         ++errors;
     });
     const auto deadline = g_get_monotonic_time() + 5000000;
+    std::optional<files::ApplicationChoice> choice;
+    bool staleChoice = false;
+    if (with) {
+      launcher->applications("text/plain", [&](const auto&) { staleChoice = true; });
+      launcher->applications("text/plain", [&](auto apps) {
+        for (auto& app : apps)
+          if (app.id == "fixture.desktop")
+            choice = std::move(app);
+      });
+      while (launcher->busy()) {
+        (void)g_main_context_iteration(nullptr, false);
+        if (g_get_monotonic_time() >= deadline)
+          throw std::runtime_error("application lookup timed out");
+        g_usleep(1000);
+      }
+      if (staleChoice || !choice)
+        throw std::runtime_error("application choice missing or superseded query published");
+    }
     for (int index = 2; index < argc; ++index) {
-      launcher->open(files::Location::fromPath(argv[index]));
+      if (with)
+        launcher->openWith(files::Location::fromPath(argv[index]), *choice);
+      else
+        launcher->open(files::Location::fromPath(argv[index]));
       while (sequential && launcher->busy()) {
         if (g_get_monotonic_time() >= deadline)
           throw std::runtime_error("sequential launch timed out");

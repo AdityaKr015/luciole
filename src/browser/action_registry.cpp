@@ -23,6 +23,9 @@ namespace {
        {A::LIST, "List view", "Ctrl+2"},
        {A::SHOW_HIDDEN, "Show hidden files", "Ctrl+H"},
        {A::SHOW_SIDEBAR, "Show sidebar", "F9"},
+       {A::SHOW_PREVIEW, "Show preview", "F8"},
+       {A::QUICK_PREVIEW, "Preview", "Space", S::TARGETS},
+       {A::OPEN_WITH, "Open With…", "", S::TARGETS},
        {A::SORT_NAME, "Name", ""},
        {A::SORT_TYPE, "Type", ""},
        {A::SORT_SIZE, "Size", ""},
@@ -127,6 +130,16 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
     return {};
   };
   switch (action) {
+  case A::SHOW_PREVIEW:
+    return {.enabled = true, .reason = {}, .checked = c.showPreview ? 1 : 0};
+  case A::QUICK_PREVIEW:
+    return single() ? ActionState{} : unavailable("Select one item to preview.");
+  case A::OPEN_WITH:
+    return single() && all([](const DirectoryEntry& entry) {
+             return entry.type == G_FILE_TYPE_REGULAR && !entry.symlink && entry.access.read != false;
+           })
+        ? ActionState{}
+        : unavailable("Select one readable file.");
   case A::COPY_PATH:
   case A::COPY_URI:
     if (!r.folder)

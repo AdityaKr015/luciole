@@ -21,6 +21,9 @@ namespace files {
     LIST,
     SHOW_HIDDEN,
     SHOW_SIDEBAR,
+    SHOW_PREVIEW,
+    QUICK_PREVIEW,
+    OPEN_WITH,
     SORT_NAME,
     SORT_TYPE,
     SORT_SIZE,
@@ -96,6 +99,7 @@ namespace files {
     std::function<bool(const Location&)> pinned;
     ViewMode viewMode = ViewMode::LIST;
     bool showSidebar = true;
+    bool showPreview = false;
     bool clipboardAvailable = false;
     bool terminalAvailable = false;
     ActivationMode activationMode = ActivationMode::DOUBLE_CLICK;

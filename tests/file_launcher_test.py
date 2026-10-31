@@ -33,11 +33,12 @@ def run_case(binary, mode, names):
         desktop.write_text(
             "[Desktop Entry]\nType=Application\nName=Private launch fixture\n"
             f"Exec={sys.executable} {handler} %U\n"
-            "MimeType=text/plain;\nNoDisplay=true\n"
+            "MimeType=text/plain;\n" + ("NoDisplay=false\n" if mode == "with" else "NoDisplay=true\n")
         )
         (root / "config/mimeapps.list").write_text(
             "[Default Applications]\ntext/plain=fixture.desktop;\n"
         )
+        (root / "data/applications/mimeinfo.cache").write_text("[MIME Cache]\ntext/plain=fixture.desktop;\n")
         guard = root / "exec-guard.py"
         refused = root / "unexpected-exec"
         guard.write_text(
@@ -81,7 +82,7 @@ def run_case(binary, mode, names):
         )
         if result.returncode != 0:
             raise AssertionError((result.returncode, result.stdout.decode(errors="replace"), result.stderr.decode(errors="replace")))
-        if mode in ("open", "sequential"):
+        if mode in ("open", "sequential", "with"):
             deadline = time.monotonic() + 5
             expected = sorted(path.hex() for path in paths)
             while True:
@@ -116,6 +117,7 @@ def main():
     binary = sys.argv[1]
     run_case(binary, "open", [b"plain.txt", "space ' $() <literal> café\n.txt".encode(), b"raw-\xff.txt"])
     run_case(binary, "sequential", [b"first.txt", b"second.txt", b"third.txt"])
+    run_case(binary, "with", [b"explicit.txt", "space ' $() café\n.txt".encode(), b"raw-\xff.txt"])
     run_case(binary, "error", [b"missing.txt"])
     run_case(binary, "destroy", [b"cancelled.txt"])
     print("file launcher desktop integration checks passed")

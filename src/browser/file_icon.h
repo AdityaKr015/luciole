@@ -19,6 +19,8 @@ namespace files {
     ~FileIcon() override;
     void bind(const FileIconSource& source, ColorSpec foreground);
     void setIconSize(float size);
+    void setPreviewHeight(float height);
+    void setPreparedImage(std::shared_ptr<const FileIconImage> image);
 
   protected:
     void doLayout(Renderer& renderer) override;
@@ -33,11 +35,13 @@ namespace files {
     int m_thumbnailPixels = 0;
     bool m_thumbnailVisible = true;
     float m_size;
+    float m_previewHeight = 0;
     FileIconSource m_source;
     ColorSpec m_foreground = colorSpecFromRole(ColorRole::OnSurface);
     ImageNode* m_image = nullptr;
     TextureManager* m_textures = nullptr;
     TextureHandle m_texture{};
     std::shared_ptr<const FileIconImage> m_asset;
+    std::shared_ptr<const FileIconImage> m_prepared;
   };
 } // namespace files

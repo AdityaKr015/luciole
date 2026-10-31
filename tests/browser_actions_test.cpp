@@ -39,6 +39,28 @@ namespace {
         .monitorError = {}
     };
   }
+  void testPreviewActions() {
+    files::DirectoryModel model;
+    model.applySnapshot(snapshot());
+    files::ActionContext context{.model = model, .context = 1, .query = {}, .pinned = {}};
+    require(!R::state(A::QUICK_PREVIEW, context, R::capture(context)).enabled, "empty preview target accepted");
+    model.select(1);
+    const auto request = R::capture(context);
+    require(
+        R::state(A::OPEN_WITH, context, request).enabled && R::state(A::QUICK_PREVIEW, context, request).enabled,
+        "single-file preview or application choice refused"
+    );
+    model.select(6);
+    require(
+        !R::state(A::OPEN_WITH, context, R::capture(context)).enabled
+            && R::state(A::QUICK_PREVIEW, context, R::capture(context)).enabled,
+        "folder opening choices are incorrect"
+    );
+    model.selectAll();
+    require(!R::state(A::QUICK_PREVIEW, context, R::capture(context)).enabled, "multiple preview targets accepted");
+    ++context.context;
+    require(!R::state(A::OPEN_WITH, context, request).enabled, "retired application-choice target accepted");
+  }
   void testArchiveActions() {
     files::DirectoryModel model;
     auto data = snapshot();
@@ -279,6 +301,7 @@ namespace {
 int main() {
   try {
     testArchiveActions();
+    testPreviewActions();
     testCapabilitiesAndTargets();
     testBulkSelection();
     testTypeahead();

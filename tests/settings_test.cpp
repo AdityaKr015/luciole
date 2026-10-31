@@ -318,6 +318,65 @@ namespace {
     );
   }
 
+  void testPreviewVisibility() {
+    using P = files::BrowserPreference;
+    Fixture fixture;
+    files::ConfigService config(fixture.paths());
+    require(config.reload() && config.settings().browser.showPreview, "preview should be enabled by default");
+    fixture.write("config.toml", "[browser]\nshow_preview = true\nshow_hidden = true\n");
+    require(config.reload() && config.settings().browser.showPreview, "preview base setting ignored");
+    require(
+        config.saveOverrides(std::array{files::OverrideEdit{P::SHOW_PREVIEW, false}})
+            == files::AtomicWriteState::DURABLE,
+        "preview override did not save"
+    );
+    const auto loaded = files::loadSettings(fixture.paths());
+    require(
+        loaded && !loaded->browser.showPreview && loaded->browser.showHidden,
+        "preview roundtrip changed another setting"
+    );
+    const auto saved = read(fixture.paths().overrides);
+    require(
+        config.saveOverrides(std::array{files::OverrideEdit{P::SHOW_PREVIEW, 1}})
+                == files::AtomicWriteState::NOT_COMMITTED
+            && read(fixture.paths().overrides) == saved,
+        "invalid preview edit changed settings"
+    );
+    require(
+        config.saveOverrides(std::array{files::OverrideEdit{P::SHOW_PREVIEW, std::monostate{}}})
+                == files::AtomicWriteState::DURABLE
+            && config.settings().browser.showPreview,
+        "preview reset did not inherit"
+    );
+    fixture.write("config.toml", "[browser]\nshow_preview = 'true'\n");
+    require(!files::validateConfigFile(fixture.paths().base).empty(), "invalid preview type accepted");
+    fixture.write("config.toml", "[browser]\npreview_width = 444\nshow_preview = true\n");
+    require(config.reload() && config.settings().browser.previewWidth == 444, "preview width base ignored");
+    require(
+        config.saveOverrides(std::array{files::OverrideEdit{P::PREVIEW_WIDTH, 555}})
+            == files::AtomicWriteState::DURABLE,
+        "preview width did not save"
+    );
+    require(files::loadSettings(fixture.paths())->browser.previewWidth == 555, "preview width did not roundtrip");
+    const auto before = read(fixture.paths().overrides);
+    for (int width : {207, 801})
+      require(
+          config.saveOverrides(std::array{files::OverrideEdit{P::PREVIEW_WIDTH, width}})
+                  == files::AtomicWriteState::NOT_COMMITTED
+              && read(fixture.paths().overrides) == before,
+          "invalid preview width saved"
+      );
+    require(
+        config.saveOverrides(std::array{files::OverrideEdit{P::PREVIEW_WIDTH, std::monostate{}}})
+                == files::AtomicWriteState::DURABLE
+            && config.settings().browser.previewWidth == 444,
+        "preview width reset lost inheritance"
+    );
+    for (const auto* value : {"207", "801", "true", "'320'", "320.0"}) {
+      fixture.write("config.toml", std::string("[browser]\npreview_width = ") + value + "\n");
+      require(!files::validateConfigFile(fixture.paths().base).empty(), "invalid preview width type accepted");
+    }
+  }
   void testSidebarVisibility() {
     using Preference = files::BrowserPreference;
     using State = files::AtomicWriteState;
@@ -844,6 +903,7 @@ int main() {
     testGridIconSize();
     testSidebarWidth();
     testSidebarVisibility();
+    testPreviewVisibility();
     testDetailsColumnVisibility();
     testDetailsColumnOrder();
     testDetailsColumnWidths();

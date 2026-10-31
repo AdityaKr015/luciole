@@ -58,6 +58,8 @@ void files::FileIcon::setThumbnailVisible(bool visible) {
   }
 }
 void files::FileIcon::releaseFile(Renderer& renderer) {
+  const bool changed = m_prepared || m_thumbnailSource || m_thumbnail || m_asset || m_texture.valid();
+  m_prepared.reset();
   m_thumbnailSource.reset();
   m_thumbnail.reset();
   m_thumbnailPixels = 0;
@@ -66,6 +68,8 @@ void files::FileIcon::releaseFile(Renderer& renderer) {
     renderer.textureManager().unload(m_texture);
   m_texture = {};
   m_image->setTextureId({});
+  if (changed)
+    markLayoutDirty();
 }
 void files::FileIcon::setIconSize(float size) {
   if (m_size != size) {
@@ -73,7 +77,21 @@ void files::FileIcon::setIconSize(float size) {
     markLayoutDirty();
   }
 }
-LayoutSize files::FileIcon::doMeasure(Renderer&, const LayoutConstraints&) { return {m_size, m_size}; }
+void files::FileIcon::setPreparedImage(std::shared_ptr<const FileIconImage> image) {
+  if (m_prepared != image) {
+    m_prepared = std::move(image);
+    markLayoutDirty();
+  }
+}
+void files::FileIcon::setPreviewHeight(float height) {
+  if (m_previewHeight != height) {
+    m_previewHeight = height;
+    markLayoutDirty();
+  }
+}
+LayoutSize files::FileIcon::doMeasure(Renderer&, const LayoutConstraints&) {
+  return {m_size, m_previewHeight > 0 ? m_previewHeight : m_size};
+}
 void files::FileIcon::doLayout(Renderer& renderer) {
   const int pixels = static_cast<int>(std::ceil(m_size * renderer.renderScale()));
   if (m_thumbnails
@@ -86,8 +104,9 @@ void files::FileIcon::doLayout(Renderer& renderer) {
       m_thumbnailPixels = pixels;
     }
   }
-  const auto asset =
-      m_thumbnailVisible && m_thumbnail && m_thumbnail->pixels ? m_thumbnail : m_cache.request(m_source, pixels);
+  const auto asset = m_prepared && m_prepared->pixels            ? m_prepared
+      : m_thumbnailVisible && m_thumbnail && m_thumbnail->pixels ? m_thumbnail
+                                                                 : m_cache.request(m_source, pixels);
   m_textures = &renderer.textureManager();
   if (asset != m_asset) {
     if (m_texture.valid()) {

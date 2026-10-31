@@ -51,6 +51,8 @@ namespace {
     std::optional<int> gridIconSize;
     std::optional<int> sidebarWidth;
     std::optional<bool> showSidebar;
+    std::optional<bool> showPreview;
+    std::optional<int> previewWidth;
     std::optional<bool> sortDescending;
     std::optional<bool> directoriesFirst;
     std::optional<bool> showTypeColumn;
@@ -264,6 +266,12 @@ namespace {
             } else {
               issue(issues, file, value, path, "expected integer icon size 32, 48, 64, 80, 96, 128, 160, 192, or 256");
             }
+          } else if (name == "preview_width") {
+            const auto* width = value.as_integer();
+            if (width && width->get() >= 208 && width->get() <= 800)
+              patch.previewWidth = static_cast<int>(width->get());
+            else
+              issue(issues, file, value, path, "expected integer preview width from 208 to 800");
           } else if (name == "sidebar_width") {
             const auto* width = value.as_integer();
             if (width != nullptr
@@ -288,6 +296,8 @@ namespace {
               target = &patch.showHidden;
             } else if (name == "show_sidebar") {
               target = &patch.showSidebar;
+            } else if (name == "show_preview") {
+              target = &patch.showPreview;
             } else if (name == "sort_descending") {
               target = &patch.sortDescending;
             } else if (name == "directories_first") {
@@ -342,6 +352,10 @@ namespace {
     if (patch.showSidebar) {
       settings.browser.showSidebar = *patch.showSidebar;
     }
+    if (patch.showPreview)
+      settings.browser.showPreview = *patch.showPreview;
+    if (patch.previewWidth)
+      settings.browser.previewWidth = *patch.previewWidth;
     if (patch.sidebarWidth) {
       settings.browser.sidebarWidth = *patch.sidebarWidth;
     }
@@ -429,6 +443,10 @@ namespace {
       return "browser.sidebar_width";
     case Preference::SHOW_SIDEBAR:
       return "browser.show_sidebar";
+    case Preference::SHOW_PREVIEW:
+      return "browser.show_preview";
+    case Preference::PREVIEW_WIDTH:
+      return "browser.preview_width";
     }
     return {};
   }
@@ -468,6 +486,12 @@ namespace {
       patch.columnOrder = std::holds_alternative<std::monostate>(edit.value)
           ? std::nullopt
           : std::optional<files::DetailsColumnOrder>(std::get<files::DetailsColumnOrder>(edit.value));
+      return;
+    }
+    if (edit.preference == Preference::PREVIEW_WIDTH) {
+      patch.previewWidth = std::holds_alternative<std::monostate>(edit.value)
+          ? std::nullopt
+          : std::optional<int>(std::get<int>(edit.value));
       return;
     }
     if (edit.preference == Preference::SIDEBAR_WIDTH) {
@@ -510,6 +534,9 @@ namespace {
     case Preference::SHOW_SIDEBAR:
       patch.showSidebar = value;
       break;
+    case Preference::SHOW_PREVIEW:
+      patch.showPreview = value;
+      break;
     case Preference::SHOW_HIDDEN:
       patch.showHidden = value;
       break;
@@ -530,6 +557,7 @@ namespace {
     case Preference::VIEW_MODE:
     case Preference::GRID_ICON_SIZE:
     case Preference::SIDEBAR_WIDTH:
+    case Preference::PREVIEW_WIDTH:
     case Preference::THUMBNAIL_POLICY:
     case Preference::THUMBNAIL_MAX_FILE_MIB:
     case Preference::THUMBNAIL_MAX_MEGAPIXELS:
@@ -576,6 +604,10 @@ namespace {
     if (patch.showSidebar) {
       browser.insert("show_sidebar", *patch.showSidebar);
     }
+    if (patch.showPreview)
+      browser.insert("show_preview", *patch.showPreview);
+    if (patch.previewWidth)
+      browser.insert("preview_width", *patch.previewWidth);
     if (patch.sidebarWidth) {
       browser.insert("sidebar_width", *patch.sidebarWidth);
     }
@@ -737,6 +769,9 @@ files::AtomicWriteState files::ConfigService::saveOverrides(std::span<const Over
       } else if (edit.preference == BrowserPreference::GRID_ICON_SIZE) {
         const auto* size = std::get_if<int>(&edit.value);
         valid = size != nullptr && std::ranges::contains(kGridIconSizes, *size);
+      } else if (edit.preference == BrowserPreference::PREVIEW_WIDTH) {
+        const auto* width = std::get_if<int>(&edit.value);
+        valid = width && *width >= 208 && *width <= 800;
       } else if (edit.preference == BrowserPreference::SIDEBAR_WIDTH) {
         const auto* width = std::get_if<int>(&edit.value);
         valid = width != nullptr && *width >= kMinSidebarWidth && *width <= kMaxSidebarWidth;

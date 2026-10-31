@@ -11,6 +11,7 @@
 #include "browser/location_presentation.h"
 #include "browser/path_completion.h"
 #include "browser/places_sidebar.h"
+#include "browser/preview_service.h"
 #include "browser/selection_tools.h"
 #include "browser/tab_workspace.h"
 #include "config/settings.h"
@@ -43,6 +44,7 @@
 #include "ui/controls/archive_view.h"
 #include "ui/controls/browser_settings_view.h"
 #include "ui/controls/context_menu.h"
+#include "ui/controls/file_preview_view.h"
 #include "ui/controls/input.h"
 #include "ui/controls/name_editor.h"
 #include "ui/controls/scroll_view.h"
@@ -161,6 +163,11 @@ namespace {
       );
       m_browser.setViewDefaults(settings.viewMode, settings.gridIconSize);
       m_thumbnails.setOptions(settings.thumbnails);
+      m_preview.setChangedCallback([this] {
+        m_surface->requestLayout();
+        if (m_menuSurface)
+          m_menuSurface->requestLayout();
+      });
       m_thumbnails.setChangedCallback([this] {
         if (m_thumbnailClearing != m_thumbnails.clearing() || m_thumbnailError != m_thumbnails.error()) {
           m_thumbnailClearing = m_thumbnails.clearing();
@@ -317,6 +324,8 @@ namespace {
       m_browser.setFileActivatedCallback({});
       m_launcher.setChangedCallback({});
       m_thumbnails.setChangedCallback({});
+      m_preview.setChangedCallback({});
+      m_preview.clear();
       closeMenu();
       closeSettings();
       closeArchive();
@@ -342,6 +351,7 @@ namespace {
 
     bool busy() const {
       return m_thumbnails.clearing()
+          || m_preview.busy()
           || m_preferences.busy()
           || m_pins.busy()
           || m_launcher.busy()
@@ -353,6 +363,8 @@ namespace {
           || m_creator.busy();
     }
     void shutdown() {
+      m_preview.clear();
+      m_launcher.cancelApplications();
       m_archives.shutdown();
       m_transfers.cancel();
       m_emptyTrash.cancel();
@@ -475,6 +487,15 @@ namespace {
     bool popupOwns(wl_surface* surface) const { return m_menuSurface && m_menuSurface->wlSurface() == surface; }
     bool popup() const { return m_menuSurface != nullptr; }
     bool overlay() const { return m_settingsView || m_archiveView; }
+    bool previewVisible() const { return m_savedSettings.showPreview && !overlay(); }
+    int previewWidth() const { return m_savedSettings.previewWidth; }
+    float previewAreaWidth() const { return m_previewBounds ? m_previewBounds->width : 0; }
+    void savePreviewWidth(int width) {
+      m_savedSettings.previewWidth = std::clamp(width, 208, 800);
+      m_preferences.submit({{files::BrowserPreference::PREVIEW_WIDTH, m_savedSettings.previewWidth}});
+      m_surface->requestLayout();
+    }
+    void setPreviewBounds(std::optional<LayoutRect> bounds) { m_previewBounds = bounds; }
     bool dragging() const { return m_drag.has_value(); }
     bool pointerCaptured() const { return m_dispatcher.pointerCaptured(); }
     bool contains(float x, float y) const { return m_body && m_body->containsScenePoint(x, y); }
@@ -509,8 +530,34 @@ namespace {
           m_dispatcher.setFocus(m_list->focusArea());
       } else if (!active && m_active)
         deactivate();
+      syncPreview();
+      if (m_previewBounds && active && previewVisible()) {
+        if (!m_previewView) {
+          auto view = makePreviewView(false);
+          m_previewView = view.get();
+          view->setParticipatesInLayout(false);
+          view->setZIndex(20);
+          m_root->addChild(std::move(view));
+        }
+        m_previewView->setVisible(true);
+        m_previewView->sync(
+            m_preview.snapshot(), m_previewBounds->width, m_previewBounds->height,
+            m_preview.snapshot().entry ? m_browser.model().typeLabel(m_preview.snapshot().entry->id) : ""
+        );
+        if (!m_preview.snapshot().image || !m_preview.snapshot().image->pixels)
+          m_previewView->clear(m_surface->renderTarget().renderer());
+        m_previewView->arrange(m_surface->renderTarget().renderer(), *m_previewBounds);
+      } else if (m_previewView) {
+        m_previewView->setVisible(false);
+        m_previewView->clear(m_surface->renderTarget().renderer());
+      }
     }
     void deactivate() {
+      m_preview.clear();
+      if (m_previewView)
+        m_previewView->setVisible(false);
+      if (m_previewView && m_renderer.makeCurrent(m_surface->renderTarget()))
+        m_previewView->clear(m_surface->renderTarget().renderer());
       m_active = false;
       if (m_root) {
         if (owns(m_dispatcher.focusedArea()))
@@ -926,6 +973,28 @@ namespace {
         return;
       }
       if (m_menuSurface != nullptr) {
+        if (m_quickPreview && event.pressed && !event.preedit && event.modifiers == 0) {
+          if (KeySymbol::isSpace(event.sym) || KeySymbol::isEscape(event.sym)) {
+            dismissMenu();
+            return;
+          }
+          if (KeySymbol::isLeft(event.sym) || KeySymbol::isRight(event.sym)) {
+            const auto& rows = m_browser.model().rows();
+            const auto selected = m_browser.model().selectedIds();
+            if (selected.size() == 1) {
+              const auto found = std::ranges::find(rows, selected.front());
+              if (found != rows.end()) {
+                const auto index =
+                    static_cast<std::ptrdiff_t>(found - rows.begin()) + (KeySymbol::isLeft(event.sym) ? -1 : 1);
+                if (index >= 0 && static_cast<std::size_t>(index) < rows.size())
+                  m_browser.model().select(rows[static_cast<std::size_t>(index)]);
+              }
+            }
+            syncPreview();
+            m_menuSurface->requestLayout();
+            return;
+          }
+        }
         if (m_menu == nullptr) {
           if (event.pressed && KeySymbol::isEscape(event.sym)) {
             dismissMenu();
@@ -989,6 +1058,18 @@ namespace {
       if (event.pressed && !event.preedit) {
         const bool editing = (m_location != nullptr && m_dispatcher.focusedArea() == m_location->inputArea())
             || (m_filterInput != nullptr && m_dispatcher.focusedArea() == m_filterInput->inputArea());
+        if (!editing && event.modifiers == 0 && !event.repeat && event.sym == XKB_KEY_F8) {
+          dispatchAction(Action::SHOW_PREVIEW);
+          return;
+        }
+        if (!editing
+            && event.modifiers == 0
+            && !event.repeat
+            && KeySymbol::isSpace(event.sym)
+            && m_dispatcher.focusedArea() == m_list->focusArea()) {
+          dispatchAction(Action::QUICK_PREVIEW);
+          return;
+        }
         if (!m_typeaheadPreedit.empty()) {
           if (KeySymbol::isEscape(event.sym))
             clearTypeahead();
@@ -1234,6 +1315,7 @@ namespace {
           .pinned = [this](const auto& location) { return m_pins.contains(location); },
           .viewMode = m_viewMode,
           .showSidebar = m_showSidebar,
+          .showPreview = m_savedSettings.showPreview,
           .clipboardAvailable = m_clipboard.available(),
           .terminalAvailable = m_terminal.available(),
           .activationMode = m_activationMode,
@@ -1293,6 +1375,17 @@ namespace {
         if (const auto* entry = m_browser.model().entry(target.id))
           targets.push_back(*entry);
       switch (action) {
+      case Action::SHOW_PREVIEW:
+        m_savedSettings.showPreview = !m_savedSettings.showPreview;
+        m_preferences.submit({{files::BrowserPreference::SHOW_PREVIEW, m_savedSettings.showPreview}});
+        m_surface->requestLayout();
+        break;
+      case Action::QUICK_PREVIEW:
+        showQuickPreview();
+        break;
+      case Action::OPEN_WITH:
+        showApplications(targets.front());
+        break;
       case Action::COMPRESS: {
         std::vector<files::Location> sources;
         sources.reserve(targets.size());
@@ -1618,6 +1711,10 @@ namespace {
         if (request.targets.empty())
           return;
         add(Action::OPEN);
+        if (request.targets.size() == 1) {
+          add(Action::OPEN_WITH);
+          add(Action::QUICK_PREVIEW);
+        }
         if (request.targets.size() == 1) {
           const auto* entry = m_browser.model().entry(request.targets.front().id);
           if (entry && entry->type == G_FILE_TYPE_DIRECTORY) {
@@ -2589,6 +2686,146 @@ namespace {
       }
     }
 
+    void syncPreview() {
+      if ((!m_previewBounds && !m_quickPreview) || !m_active || overlay() || m_cachePaused) {
+        m_preview.clear();
+        return;
+      }
+      const auto selected = m_browser.model().selectedIds();
+      const auto* entry = selected.size() == 1 && m_browser.model().selectionAvailable()
+          ? m_browser.model().entry(selected.front())
+          : nullptr;
+      m_preview.show(
+          entry ? std::optional(*entry) : std::nullopt,
+          static_cast<int>(std::ceil(
+              (m_quickPreview && m_menuSurface ? static_cast<float>(m_menuSurface->width()) - 32
+                   : m_previewBounds           ? m_previewBounds->width - 32
+                                               : 512)
+              * m_surface->renderTarget().renderer().renderScale()
+          )),
+          m_savedSettings.thumbnails, entry ? m_thumbnails.prepared(*entry) : nullptr
+      );
+    }
+    void previewOpen(bool with) {
+      const auto entry = m_preview.snapshot().entry;
+      if (!entry)
+        return;
+      const auto request = requestFor({*entry});
+      const std::weak_ptr<int> lifetime = m_lifetime;
+      DeferredCall::callLater([this, lifetime, request, entry, with] {
+        if (lifetime.expired() || !m_active)
+          return;
+        if (!actionState(with ? Action::OPEN_WITH : Action::OPEN, request).enabled) {
+          actionError("The previewed item changed. Select it again.");
+          return;
+        }
+        if (with)
+          showApplications(*entry);
+        else {
+          dismissMenu();
+          dispatchAction(Action::OPEN, request);
+        }
+      });
+    }
+    std::unique_ptr<FilePreviewView> makePreviewView(bool quick) {
+      return std::make_unique<FilePreviewView>(
+          m_icons,
+          [this, quick] {
+            if (quick)
+              dismissMenu();
+            else
+              dispatchAction(Action::SHOW_PREVIEW);
+          },
+          [this] { previewOpen(false); }, [this] { previewOpen(true); }
+      );
+    }
+    void showQuickPreview() {
+      const float width = std::min(588.0F, static_cast<float>(m_surface->width()) - 32);
+      const float height = std::min(620.0F, static_cast<float>(m_surface->height()) - 48);
+      auto view = makePreviewView(true);
+      auto* control = view.get();
+      view->setFlexGrow(1);
+      auto root = ui::column({.align = FlexAlign::Stretch, .height = height}, std::move(view));
+      showPopup(
+          std::move(root), nullptr, {(m_surface->width() - width) * 0.5F, (m_surface->height() - height) * 0.5F, 1, 1},
+          width, height
+      );
+      if (m_menuSurface) {
+        m_quickPreview = control;
+        syncPreview();
+      }
+    }
+    void showApplications(const files::DirectoryEntry& entry) {
+      Flex* choices = nullptr;
+      auto scroll = ui::scrollView({.viewportPaddingH = 0, .viewportPaddingV = 0, .fillWidth = true, .flexGrow = 1});
+      scroll->setReserveScrollbarGutter(true);
+      scroll->content()->addChild(
+          ui::column(
+              {.out = &choices, .align = FlexAlign::Stretch, .gap = Style::spaceXs},
+              ui::label({.text = "Loading applications…", .maxLines = 2})
+          )
+      );
+      const float width = std::min(440.0F, static_cast<float>(m_surface->width()) - 32);
+      const float height = std::min(380.0F, static_cast<float>(m_surface->height()) - 48);
+      auto root = ui::column(
+          {.align = FlexAlign::Stretch,
+           .gap = Style::spaceMd,
+           .padding = Style::spaceMd,
+           .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
+           .radius = Style::radiusLg,
+           .border = colorSpecFromRole(ColorRole::OutlineVariant),
+           .height = height},
+          ui::row(
+              {.align = FlexAlign::Center},
+              ui::label({.text = "Open With", .fontWeight = FontWeight::SemiBold, .flexGrow = 1}),
+              ui::button({.glyph = "x", .variant = ButtonVariant::Ghost, .onClick = [this] { dismissMenu(); }})
+          ),
+          std::move(scroll)
+      );
+      showPopup(
+          std::move(root), nullptr, {(m_surface->width() - width) * 0.5F, (m_surface->height() - height) * 0.5F, 1, 1},
+          width, height
+      );
+      if (!m_menuSurface)
+        return;
+      m_appChoiceContainer = choices;
+      const auto generation = m_menuGeneration;
+      const auto request = requestFor({entry});
+      const std::weak_ptr<int> lifetime = m_lifetime;
+      m_launcher.applications(
+          entry.contentType.value_or("application/octet-stream"),
+          [this, lifetime, generation, request, entry](std::vector<files::ApplicationChoice> apps) {
+            if (lifetime.expired() || !m_appChoiceContainer || generation != m_menuGeneration || !m_active)
+              return;
+            while (!m_appChoiceContainer->children().empty())
+              (void)m_appChoiceContainer->removeChild(m_appChoiceContainer->children().back().get());
+            if (!actionState(Action::OPEN_WITH, request).enabled)
+              apps.clear();
+            if (apps.empty())
+              m_appChoiceContainer->addChild(
+                  ui::label({.text = "No applications available for this file type.", .maxLines = 3})
+              );
+            for (const auto& app : apps)
+              m_appChoiceContainer->addChild(
+                  ui::button(
+                      {.text = app.name,
+                       .contentAlign = ButtonContentAlign::Start,
+                       .variant = ButtonVariant::Ghost,
+                       .onClick =
+                           [this, request, entry, app] {
+                             if (actionState(Action::OPEN_WITH, request).enabled)
+                               m_launcher.openWith(entry.location, app);
+                             else
+                               actionError("The item changed. Select it again.");
+                             dismissMenu();
+                           },
+                       .configure = [](Button& button) { button.label()->setUseMarkup(false); }}
+                  )
+              );
+            m_menuSurface->requestLayout();
+          }
+      );
+    }
     void showProperties(const std::vector<files::DirectoryEntry>& targets) {
       const float width = std::min(440.0F, static_cast<float>(m_surface->width()) - 32.0F);
       auto body =
@@ -4492,17 +4729,11 @@ namespace {
         );
         m_body->arrange(renderer, m_pageBounds);
         if (m_settingsView) {
-          const float top = clientHeader ? m_titlebar->height() : 0.0F;
           m_settingsView->setCompact(m_surface->width() < 800);
-          m_settingsView->arrange(
-              renderer, {0, top, static_cast<float>(m_surface->width()), static_cast<float>(m_surface->height()) - top}
-          );
+          m_settingsView->arrange(renderer, m_pageBounds);
         }
         if (m_archiveView) {
-          const float top = clientHeader ? m_titlebar->height() : 0.0F;
-          m_archiveView->arrange(
-              renderer, {0, top, static_cast<float>(m_surface->width()), static_cast<float>(m_surface->height()) - top}
-          );
+          m_archiveView->arrange(renderer, m_pageBounds);
         }
         layoutDetails(renderer);
         const bool columnHoverDirty = std::exchange(m_columnHoverDirty, false);
@@ -5159,6 +5390,11 @@ namespace {
       });
     }
     void closeMenu() {
+      m_quickPreview = nullptr;
+      m_appChoiceContainer = nullptr;
+      m_launcher.cancelApplications();
+      if (!m_previewBounds || !previewVisible())
+        m_preview.clear();
       ++m_menuGeneration;
       if (std::exchange(m_emptyTrashDialog, false))
         m_emptyTrash.cancel();
@@ -5299,6 +5535,19 @@ namespace {
             m_menuSurface->renderTarget().renderer(),
             {0, 0, static_cast<float>(m_menuSurface->width()), static_cast<float>(m_menuSurface->height())}
         );
+        if (m_quickPreview) {
+          m_quickPreview->sync(
+              m_preview.snapshot(), static_cast<float>(m_menuSurface->width()),
+              static_cast<float>(m_menuSurface->height()),
+              m_preview.snapshot().entry ? m_browser.model().typeLabel(m_preview.snapshot().entry->id) : "", true
+          );
+          if (!m_preview.snapshot().image || !m_preview.snapshot().image->pixels)
+            m_quickPreview->clear(m_menuSurface->renderTarget().renderer());
+          m_menuRoot->arrange(
+              m_menuSurface->renderTarget().renderer(),
+              {0, 0, static_cast<float>(m_menuSurface->width()), static_cast<float>(m_menuSurface->height())}
+          );
+        }
       });
       m_menuSurface->setConfigureCallback([this](std::uint32_t, std::uint32_t) { m_menuSurface->requestLayout(); });
       PopupSurfaceConfig config{
@@ -5506,7 +5755,7 @@ namespace {
       const auto request = actionRequest();
       for (auto action :
            {Action::SORT_MENU, Action::SELECTION_MENU, Action::INTERACTION_MENU, Action::SHOW_HIDDEN,
-            Action::SHOW_SIDEBAR, Action::SEARCH, Action::SETTINGS, Action::ABOUT})
+            Action::SHOW_SIDEBAR, Action::SHOW_PREVIEW, Action::SEARCH, Action::SETTINGS, Action::ABOUT})
         entries.push_back(actionEntry(action, request));
       showContextMenu(
           std::move(entries),
@@ -5542,6 +5791,11 @@ namespace {
     std::string m_selectionPattern = "*";
     files::FileIconCache& m_icons;
     files::ThumbnailService m_thumbnails;
+    files::PreviewService m_preview;
+    FilePreviewView* m_previewView = nullptr;
+    FilePreviewView* m_quickPreview = nullptr;
+    Flex* m_appChoiceContainer = nullptr;
+    std::optional<LayoutRect> m_previewBounds;
     bool m_thumbnailClearing = false;
     std::string m_thumbnailError;
     std::uint64_t m_thumbnailRevision = 0;
@@ -5740,6 +5994,8 @@ namespace {
       Button* newTabButton = nullptr;
       Button* splitButton = nullptr;
       InputArea* divider = nullptr;
+      InputArea* previewDivider = nullptr;
+      Box* previewResizeLine = nullptr;
       InputDispatcher dispatcher;
       std::vector<std::pair<files::TabId, Button*>> buttons;
       std::map<files::TabId, std::pair<Button*, ColorRole>> closeButtons;
@@ -5753,6 +6009,7 @@ namespace {
       bool decorated = false;
       float pointerX = 0, pointerY = 0;
       float resizeStart = 0.5F;
+      std::optional<int> previewDragWidth;
       Host(files::WindowId value, WaylandConnection& connection) : id(value), surface(connection) {}
     };
 
@@ -6023,6 +6280,11 @@ namespace {
           host.surface.requestLayout();
           return;
         }
+        if (event.sym == XKB_KEY_Escape && host.previewDragWidth) {
+          host.previewDragWidth.reset();
+          host.surface.requestLayout();
+          return;
+        }
       }
       page.keyboard(event);
     }
@@ -6072,10 +6334,23 @@ namespace {
           return;
         }
       const auto x = static_cast<float>(event.sx), y = static_cast<float>(event.sy);
+      if (host->previewDragWidth) {
+        if (event.type == PointerEvent::Type::Motion) {
+          host->previewDragWidth = std::clamp(static_cast<int>(std::lround(host->surface.width() - x)), 208, 800);
+          host->surface.requestLayout();
+        } else if (event.type == PointerEvent::Type::Button && !event.pressed && event.button == BTN_LEFT) {
+          active.savePreviewWidth(*host->previewDragWidth);
+          host->previewDragWidth.reset();
+        } else if (event.type == PointerEvent::Type::Leave) {
+          host->previewDragWidth.reset();
+          host->surface.requestLayout();
+        }
+        return;
+      }
       if (host->resizing) {
         if (event.type == PointerEvent::Type::Motion) {
           const auto left = active.sidebarWidth();
-          m_model.resize(host->id, (x - left) / (host->surface.width() - left));
+          m_model.resize(host->id, (x - left) / (host->surface.width() - left - active.previewAreaWidth()));
           host->surface.requestLayout();
         }
         if (event.type == PointerEvent::Type::Button && !event.pressed)
@@ -6154,6 +6429,15 @@ namespace {
         dispatch(host->dispatcher, event);
         return;
       }
+      if (host->previewDivider
+          && host->previewDivider->visible()
+          && host->previewDivider->containsScenePoint(x, y)
+          && event.type == PointerEvent::Type::Button
+          && event.pressed
+          && event.button == BTN_LEFT) {
+        host->previewDragWidth = active.previewWidth();
+        return;
+      }
       if (host->divider
           && host->divider->visible()
           && host->divider->containsScenePoint(x, y)
@@ -6212,6 +6496,7 @@ namespace {
       host->surface.setPrepareFrameCallback([this, raw](bool, bool) { prepare(*raw); });
       host->surface.setUpdateCallback([] {});
       host->surface.setConfigureCallback([this, raw](std::uint32_t, std::uint32_t) {
+        raw->previewDragWidth.reset();
         for (auto& [tab, page] : m_pages) {
           (void)tab;
           if (page->boundSurface() == &raw->surface)
@@ -6659,6 +6944,28 @@ namespace {
         auto line = ui::box({.fill = colorSpecFromRole(ColorRole::OutlineVariant), .width = 1.0F});
         divider->addChild(std::move(line));
         host.root->addChild(std::move(divider));
+        auto preview = std::make_unique<InputArea>();
+        preview->setParticipatesInLayout(false);
+        preview->setZIndex(40);
+        preview->setCursorShape(WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COL_RESIZE);
+        preview->setFocusable(true);
+        preview->setTabFocusKey(std::format("window:{}:preview", host.id));
+        preview->setOnKeyDown([this, &host](const InputArea::KeyData& key) {
+          if (!key.pressed)
+            return;
+          auto& page = *m_pages.at(m_model.windows().at(host.id).active);
+          if (KeySymbol::isLeft(key.sym) || KeySymbol::isRight(key.sym))
+            page.savePreviewWidth(page.previewWidth() + (KeySymbol::isLeft(key.sym) ? 16 : -16));
+          else if (key.sym == XKB_KEY_Home)
+            page.savePreviewWidth(320);
+        });
+        preview->setOnEnter([&host](const auto&) { host.surface.requestLayout(); });
+        preview->setOnLeave([&host] { host.surface.requestLayout(); });
+        host.previewDivider = preview.get();
+        preview->addChild(
+            ui::box({.out = &host.previewResizeLine, .fill = colorSpecFromRole(ColorRole::OutlineVariant), .width = 1})
+        );
+        host.root->addChild(std::move(preview));
       }
       auto& active = *m_pages.at(window.active);
       active.ensureScene();
@@ -6719,11 +7026,40 @@ namespace {
       const auto width = static_cast<float>(host.surface.width()), height = static_cast<float>(host.surface.height());
       host.root->arrange(renderer, {0, 0, width, height});
       host.strip->arrange(renderer, {0, 0, width, 40});
+      host.toolbarNode->setVisible(!active.overlay());
+      active.sidebar()->setVisible(!active.overlay());
+      if (active.overlay()) {
+        host.divider->setVisible(false);
+        host.previewDivider->setVisible(false);
+        active.setPreviewBounds(std::nullopt);
+        active.prepare({0, 40, width, height - 40}, true, host.root.get());
+        return;
+      }
       host.toolbarNode->arrange(renderer, {0, 40, width, 54});
       const float top = 94;
       const float sidebar = active.sidebarWidth();
       active.sidebar()->arrange(renderer, {0, top, sidebar, height - top});
-      const float content = std::max(1.0F, width - sidebar);
+      const float previewWidth = active.previewVisible()
+          ? std::min(
+                static_cast<float>(host.previewDragWidth.value_or(active.previewWidth())),
+                std::max(120.0F, width - sidebar - 160.0F)
+            )
+          : 0;
+      host.previewDivider->setVisible(previewWidth > 0);
+      host.previewResizeLine->setFill(colorSpecFromRole(
+          host.previewDragWidth || host.previewDivider->focused() ? ColorRole::Primary
+              : host.previewDivider->hovered()                    ? ColorRole::OnSurfaceVariant
+                                                                  : ColorRole::OutlineVariant
+      ));
+      host.previewDivider->arrange(renderer, {width - previewWidth - 3, top, 6, height - top});
+      host.previewDivider->children().front()->arrange(renderer, {2.5F, 0, 1, height - top});
+      for (auto tab : visible)
+        m_pages.at(tab)->setPreviewBounds(
+            tab == window.active && previewWidth > 0
+                ? std::optional(LayoutRect{width - previewWidth, top, previewWidth, height - top})
+                : std::nullopt
+        );
+      const float content = std::max(1.0F, width - sidebar - previewWidth);
       const bool split = visible.size() == 2;
       const float first = split ? (content - 6) * window.fraction : content;
       host.divider->setVisible(split);

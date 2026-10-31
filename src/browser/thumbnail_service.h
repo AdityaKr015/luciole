@@ -14,6 +14,7 @@ namespace files {
     ThumbnailService(const ThumbnailService&) = delete;
     ThumbnailService& operator=(const ThumbnailService&) = delete;
     std::shared_ptr<const FileIconImage> request(const DirectoryEntry& source, int pixels, bool visible = true);
+    std::shared_ptr<const FileIconImage> prepared(const DirectoryEntry& source);
     bool touch(const std::shared_ptr<const FileIconImage>& image, bool visible);
     void synchronizeSources(const DirectorySnapshot& snapshot);
     void setOptions(ThumbnailOptions options);

@@ -21,6 +21,8 @@ namespace files {
     int gridIconSize = kDefaultGridIconSize;
     int sidebarWidth = kDefaultSidebarWidth;
     bool showSidebar = true;
+    bool showPreview = true;
+    int previewWidth = 320;
     DetailsColumnVisibility columns{};
     DetailsColumnOrder columnOrder = kDefaultDetailsColumnOrder;
     DetailsColumnWidths columnWidths = kDefaultDetailsColumnWidths;
@@ -52,6 +54,8 @@ namespace files {
     GRID_ICON_SIZE,
     SIDEBAR_WIDTH,
     SHOW_SIDEBAR,
+    SHOW_PREVIEW,
+    PREVIEW_WIDTH,
     SHOW_TYPE_COLUMN,
     SHOW_SIZE_COLUMN,
     SHOW_MODIFIED_COLUMN,

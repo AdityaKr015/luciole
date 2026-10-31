@@ -116,6 +116,8 @@ app_sources = files(
   'src/browser/thumbnail_provider.cpp',
   'src/browser/thumbnail_worker.cpp',
   'src/browser/thumbnail_service.cpp',
+  'src/browser/preview_service.cpp',
+  'src/ui/controls/file_preview_view.cpp',
   'src/render/core/image_orientation.cpp',
   'src/config/view_preference_writer.cpp',
   'src/platform/file_launcher.cpp',
@@ -301,6 +303,14 @@ if build_tests
     dependencies: [filesystem_service, settings_service, gdk_pixbuf, webp, dependency('libpng'), dependency('nlohmann_json'), dependency('threads')],
   )
   test('thumbnail', thumbnail_test, timeout: 90, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
+  preview_test = executable('preview-service-test', 'tests/preview_service_test.cpp',
+    'src/browser/preview_service.cpp',
+    objects: thumbnail_test.extract_objects(files(
+      'src/browser/thumbnail_codec.cpp', 'src/browser/thumbnail_store.cpp',
+      'src/browser/thumbnail_provider.cpp', 'src/browser/thumbnail_worker.cpp',
+      'src/browser/thumbnail_service.cpp', 'src/render/core/image_orientation.cpp')),
+    dependencies: [filesystem_service, settings_service, gdk_pixbuf, webp, dependency('libpng'), dependency('nlohmann_json'), dependency('threads')])
+  test('preview-service', preview_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   python = import('python').find_installation('python3')
   actions_test = executable('browser-actions-test', 'tests/browser_actions_test.cpp', dependencies: browser_model)
   test('browser-actions', actions_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
