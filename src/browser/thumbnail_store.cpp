@@ -3,10 +3,14 @@
 #include "config/atomic_file.h"
 #include "fs/gio_ptr.h"
 
+#include <algorithm>
 #include <array>
+#include <cerrno>
+#include <cmath>
 #include <cstdlib>
 #include <fcntl.h>
 #include <format>
+#include <gdk-pixbuf/gdk-pixbuf.h>
 #include <nlohmann/json.hpp>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -116,6 +120,8 @@ files::readThumbnailFile(const std::filesystem::path& path, std::size_t maximum)
   std::size_t offset = 0;
   while (offset < bytes.size()) {
     const auto n = ::read(file.value, bytes.data() + offset, bytes.size() - offset);
+    if (n < 0 && errno == EINTR)
+      continue;
     if (n <= 0)
       return std::nullopt;
     offset += static_cast<std::size_t>(n);
@@ -125,87 +131,164 @@ files::readThumbnailFile(const std::filesystem::path& path, std::size_t maximum)
 std::optional<files::ThumbnailPng> files::ThumbnailStore::read(
     const std::string& uri, int side, std::uint64_t mtime, std::optional<std::uint64_t> size, const std::string& stamp
 ) {
-  const auto bytes = readThumbnailFile(m_root / directory(side) / filename(uri), 8U * 1024U * 1024U);
-  if (!bytes)
-    return std::nullopt;
-  auto image = readThumbnailPng(*bytes, side);
-  if (!image
-      || !image->text.contains("Thumb::URI")
-      || image->text.at("Thumb::URI") != uri
-      || !image->text.contains("Thumb::MTime")
-      || image->text.at("Thumb::MTime") != std::to_string(mtime))
-    return std::nullopt;
-  if (size && image->text.contains("Thumb::Size") && image->text.at("Thumb::Size") != std::to_string(*size))
-    return std::nullopt;
-  if (!stamp.empty()
-      && image->text.contains("X-Noctalia-Files::Stamp")
-      && image->text.at("X-Noctalia-Files::Stamp") != stamp)
-    return std::nullopt;
-  return std::move(*image);
+  const auto leaf = filename(uri);
+  for (const int cachedSide : {128, 256, 512, 1024}) {
+    if (cachedSide < side)
+      continue;
+    const auto bytes = readThumbnailFile(m_root / directory(cachedSide) / leaf, 8U * 1024U * 1024U);
+    if (!bytes)
+      continue;
+    auto image = readThumbnailPng(*bytes, cachedSide);
+    if (!image
+        || !image->text.contains("Thumb::URI")
+        || image->text.at("Thumb::URI") != uri
+        || !image->text.contains("Thumb::MTime")
+        || image->text.at("Thumb::MTime") != std::to_string(mtime))
+      continue;
+    if (size && image->text.contains("Thumb::Size") && image->text.at("Thumb::Size") != std::to_string(*size))
+      continue;
+    if (!stamp.empty()
+        && image->text.contains("X-Noctalia-Files::Stamp")
+        && image->text.at("X-Noctalia-Files::Stamp") != stamp)
+      continue;
+    if (std::max(image->image.width, image->image.height) > side) {
+      if (side < 1)
+        return std::nullopt;
+      const auto& source = image->image;
+      const double ratio = static_cast<double>(side) / std::max(source.width, source.height);
+      const int width = std::max(1, static_cast<int>(std::round(source.width * ratio)));
+      const int height = std::max(1, static_cast<int>(std::round(source.height * ratio)));
+      const GioPtr<GdkPixbuf> input(gdk_pixbuf_new_from_data(
+          source.rgba.data(), GDK_COLORSPACE_RGB, true, 8, source.width, source.height, source.width * 4, nullptr,
+          nullptr
+      ));
+      const GioPtr<GdkPixbuf> scaled(
+          input ? gdk_pixbuf_scale_simple(input.get(), width, height, GDK_INTERP_BILINEAR) : nullptr
+      );
+      if (!scaled)
+        return std::nullopt;
+      LoadedImageFile resized{
+          .rgba = std::vector<std::uint8_t>(static_cast<std::size_t>(width) * height * 4),
+          .width = width,
+          .height = height,
+          .sourceWidth = source.width,
+          .sourceHeight = source.height
+      };
+      const auto* pixels = gdk_pixbuf_read_pixels(scaled.get());
+      const int stride = gdk_pixbuf_get_rowstride(scaled.get());
+      for (int y = 0; y < height; ++y)
+        std::copy_n(
+            pixels + static_cast<std::size_t>(y) * stride, width * 4,
+            resized.rgba.data() + static_cast<std::size_t>(y) * width * 4
+        );
+      image->image = std::move(resized);
+    }
+    return std::move(*image);
+  }
+  return std::nullopt;
 }
 void files::ThumbnailStore::write(ThumbnailPng thumbnail, int side, std::uint64_t budget, GCancellable* cancellable) {
-  if (g_cancellable_is_cancelled(cancellable))
-    return;
-  const auto uri = thumbnail.text.at("Thumb::URI");
-  const auto name = std::string(directory(side)) + '/' + filename(uri);
   thumbnail.text["Software"] = "Noctalia Files";
-  auto encoded = writeThumbnailPng(thumbnail);
-  if (!encoded)
+  const std::array entries{ThumbnailCacheWrite{.thumbnail = std::move(thumbnail), .side = side}};
+  writeBatch(entries, budget, cancellable);
+}
+void files::ThumbnailStore::writeBatch(
+    std::span<const ThumbnailCacheWrite> thumbnails, std::uint64_t budget, GCancellable* cancellable
+) {
+  if (thumbnails.empty() || thumbnails.size() > 8 || g_cancellable_is_cancelled(cancellable))
     return;
-  // The ledger lock serializes cache pruning/clearing across cooperating Files processes.
-  std::string writtenIdentity;
+  struct Encoded {
+    std::string name;
+    std::vector<std::uint8_t> bytes;
+    int side;
+  };
+  std::vector<Encoded> encoded;
+  encoded.reserve(thumbnails.size());
+  for (const auto& entry : thumbnails) {
+    if (g_cancellable_is_cancelled(cancellable))
+      return;
+    const auto uri = entry.thumbnail.text.find("Thumb::URI");
+    if (uri == entry.thumbnail.text.end())
+      continue;
+    auto png = writeThumbnailPng(entry.thumbnail);
+    if (!png || png->size() > budget || png->size() > 8U * 1024U * 1024U)
+      continue;
+    encoded.push_back({std::string(directory(entry.side)) + '/' + filename(uri->second), std::move(*png), entry.side});
+  }
+  if (encoded.empty())
+    return;
+  // Each visible batch pays for one ledger read, merge and durable replacement.
+  std::vector<std::pair<std::string, std::string>> written;
+  written.reserve(encoded.size());
   const auto outcome = updateTextFileAtomic(
       m_index, [&](const std::optional<std::string>& text) -> std::expected<std::optional<std::string>, std::string> {
         try {
           auto index = readIndex(text);
-          for (auto it = index.begin(); it != index.end();) {
-            if ((*it)["name"] == name)
-              it = index.erase(it);
-            else
-              ++it;
-          }
-          std::uint64_t bytes = encoded->size();
+          std::uint64_t bytes = 0;
           for (const auto& item : index)
             bytes += item["bytes"].get<std::uint64_t>();
-          while (!index.empty() && (bytes > budget || index.size() >= kMaxEntries)) {
-            bytes -= index.front()["bytes"].get<std::uint64_t>();
-            removeOwned(m_root, index.front()["name"].get<std::string>(), index.front()["identity"].get<std::string>());
-            index.erase(index.begin());
-          }
-          if (encoded->size() > budget || g_cancellable_is_cancelled(cancellable))
-            return std::nullopt;
-          if (!safeDirectory(m_root) || !safeDirectory(m_root / directory(side)))
+          if (!safeDirectory(m_root))
             return std::unexpected("thumbnail cache directory is not private and owned");
-          std::string pattern = (m_root / directory(side) / ".noctalia-XXXXXX").native();
-          const Fd file{::mkstemp(pattern.data())};
-          if (file.value < 0)
-            return std::unexpected("cannot create thumbnail cache file");
-          std::size_t offset = 0;
-          while (offset < encoded->size()) {
-            const auto count = ::write(file.value, encoded->data() + offset, encoded->size() - offset);
-            if (count <= 0) {
-              (void)::unlink(pattern.c_str());
-              return std::unexpected("cannot write thumbnail cache file");
+          std::array<bool, 4> prepared{};
+          for (const auto& entry : encoded) {
+            if (g_cancellable_is_cancelled(cancellable))
+              break;
+            for (auto it = index.begin(); it != index.end();) {
+              if ((*it)["name"] == entry.name) {
+                bytes -= (*it)["bytes"].get<std::uint64_t>();
+                it = index.erase(it);
+              } else
+                ++it;
             }
-            offset += static_cast<std::size_t>(count);
+            while (!index.empty() && (bytes + entry.bytes.size() > budget || index.size() >= kMaxEntries)) {
+              const auto& oldest = index.front();
+              bytes -= oldest["bytes"].get<std::uint64_t>();
+              removeOwned(m_root, oldest["name"].get<std::string>(), oldest["identity"].get<std::string>());
+              index.erase(index.begin());
+            }
+            const std::size_t classIndex = entry.side <= 128 ? 0 : entry.side <= 256 ? 1 : entry.side <= 512 ? 2 : 3;
+            if (!prepared[classIndex]) {
+              if (!safeDirectory(m_root / directory(entry.side)))
+                return std::unexpected("thumbnail cache directory is not private and owned");
+              prepared[classIndex] = true;
+            }
+            std::string pattern = (m_root / directory(entry.side) / ".noctalia-XXXXXX").native();
+            const Fd file{::mkstemp(pattern.data())};
+            if (file.value < 0)
+              return std::unexpected("cannot create thumbnail cache file");
+            std::size_t offset = 0;
+            while (offset < entry.bytes.size()) {
+              const auto count = ::write(file.value, entry.bytes.data() + offset, entry.bytes.size() - offset);
+              if (count < 0 && errno == EINTR)
+                continue;
+              if (count <= 0) {
+                (void)::unlink(pattern.c_str());
+                return std::unexpected("cannot write thumbnail cache file");
+              }
+              offset += static_cast<std::size_t>(count);
+            }
+            if (g_cancellable_is_cancelled(cancellable)
+                || ::rename(pattern.c_str(), (m_root / entry.name).c_str()) < 0) {
+              (void)::unlink(pattern.c_str());
+              break;
+            }
+            struct stat info{};
+            if (::fstat(file.value, &info) < 0)
+              return std::unexpected("cannot identify cached thumbnail");
+            const auto identity = cacheIdentity(info);
+            written.emplace_back(entry.name, identity);
+            index.push_back({{"name", entry.name}, {"bytes", entry.bytes.size()}, {"identity", identity}});
+            bytes += entry.bytes.size();
           }
-          if (g_cancellable_is_cancelled(cancellable) || ::rename(pattern.c_str(), (m_root / name).c_str()) < 0) {
-            (void)::unlink(pattern.c_str());
-            return std::nullopt;
-          }
-          struct stat written{};
-          if (::fstat(file.value, &written) < 0)
-            return std::unexpected("cannot identify cached thumbnail");
-          writtenIdentity = cacheIdentity(written);
-          index.push_back({{"name", name}, {"bytes", encoded->size()}, {"identity", writtenIdentity}});
-          return index.dump();
+          return written.empty() ? std::optional<std::string>{} : index.dump();
         } catch (const std::exception& error) {
           return std::unexpected(error.what());
         }
       }
   );
-  if (outcome.state == AtomicWriteState::NOT_COMMITTED && !writtenIdentity.empty())
-    removeOwned(m_root, name, writtenIdentity);
+  if (outcome.state == AtomicWriteState::NOT_COMMITTED)
+    for (const auto& [name, identity] : written)
+      removeOwned(m_root, name, identity);
 }
 std::string files::ThumbnailStore::clear() { return prune(0); }
 std::string files::ThumbnailStore::prune(std::uint64_t budget) {

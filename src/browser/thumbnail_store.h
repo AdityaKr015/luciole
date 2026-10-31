@@ -4,8 +4,13 @@
 
 #include <filesystem>
 #include <functional>
+#include <span>
 
 namespace files {
+  struct ThumbnailCacheWrite {
+    ThumbnailPng thumbnail;
+    int side;
+  };
   // Worker-only access to the freedesktop PNG cache. Only files recorded by Files are pruned/cleared.
   class ThumbnailStore {
   public:
@@ -18,6 +23,8 @@ namespace files {
         const std::string& stamp = {}
     );
     void write(ThumbnailPng thumbnail, int side, std::uint64_t budget, GCancellable* cancellable);
+    // At most eight prepared images, committed under one ownership-ledger transaction.
+    void writeBatch(std::span<const ThumbnailCacheWrite> thumbnails, std::uint64_t budget, GCancellable* cancellable);
     std::string prune(std::uint64_t budget);
     std::string clear();
 

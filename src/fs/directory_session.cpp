@@ -14,6 +14,7 @@ namespace {
       "," G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME "," G_FILE_ATTRIBUTE_STANDARD_TYPE
       "," G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN "," G_FILE_ATTRIBUTE_STANDARD_IS_SYMLINK
       "," G_FILE_ATTRIBUTE_STANDARD_ICON "," G_FILE_ATTRIBUTE_STANDARD_SIZE "," G_FILE_ATTRIBUTE_TIME_MODIFIED
+      "," G_FILE_ATTRIBUTE_TIME_CHANGED ",time::changed-nsec," G_FILE_ATTRIBUTE_TIME_CHANGED_USEC
       "," G_FILE_ATTRIBUTE_ETAG_VALUE "," G_FILE_ATTRIBUTE_ACCESS_CAN_READ "," G_FILE_ATTRIBUTE_ACCESS_CAN_WRITE
       "," G_FILE_ATTRIBUTE_ACCESS_CAN_EXECUTE "," G_FILE_ATTRIBUTE_ACCESS_CAN_RENAME
       "," G_FILE_ATTRIBUTE_ACCESS_CAN_TRASH "," G_FILE_ATTRIBUTE_ACCESS_CAN_DELETE "," G_FILE_ATTRIBUTE_TRASH_ORIG_PATH
@@ -299,6 +300,13 @@ struct files::DirectorySession::State : std::enable_shared_from_this<State> {
       if (size >= 0) {
         entry.size = static_cast<std::uint64_t>(size);
       }
+    }
+    if (g_file_info_has_attribute(info, G_FILE_ATTRIBUTE_TIME_CHANGED)) {
+      const auto seconds = g_file_info_get_attribute_uint64(info, G_FILE_ATTRIBUTE_TIME_CHANGED);
+      const auto nanos = g_file_info_has_attribute(info, "time::changed-nsec")
+          ? g_file_info_get_attribute_uint32(info, "time::changed-nsec")
+          : g_file_info_get_attribute_uint32(info, G_FILE_ATTRIBUTE_TIME_CHANGED_USEC) * 1000U;
+      entry.contentRevision = std::to_string(seconds) + ':' + std::to_string(nanos);
     }
     if (g_file_info_has_attribute(info, G_FILE_ATTRIBUTE_TIME_MODIFIED)) {
       entry.modifiedSeconds = g_file_info_get_attribute_uint64(info, G_FILE_ATTRIBUTE_TIME_MODIFIED);

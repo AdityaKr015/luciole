@@ -19,12 +19,19 @@ namespace {
         | p[3];
   }
   std::uint32_t pngCrc(std::span<const std::uint8_t> bytes) {
+    static constexpr auto table = [] {
+      std::array<std::uint32_t, 256> values{};
+      for (std::uint32_t value = 0; value < values.size(); ++value) {
+        auto crc = value;
+        for (int bit = 0; bit < 8; ++bit)
+          crc = (crc >> 1) ^ (0xedb88320U & (0U - (crc & 1U)));
+        values[value] = crc;
+      }
+      return values;
+    }();
     std::uint32_t crc = 0xffffffffU;
-    for (auto byte : bytes) {
-      crc ^= byte;
-      for (int bit = 0; bit < 8; ++bit)
-        crc = (crc >> 1) ^ (0xedb88320U & (0U - (crc & 1U)));
-    }
+    for (auto byte : bytes)
+      crc = table[(crc ^ byte) & 255U] ^ (crc >> 8);
     return crc ^ 0xffffffffU;
   }
   struct DecodeSize {
@@ -170,9 +177,18 @@ files::readThumbnailPng(std::span<const std::uint8_t> bytes, int maxSide) {
       || bytes.size() > 8U * 1024U * 1024U
       || !std::ranges::equal(bytes.first(8), signature))
     return std::unexpected("invalid thumbnail PNG");
-  std::vector<std::uint8_t> pixels(signature.begin(), signature.end());
   ThumbnailPng result;
-  bool ended = false;
+  bool ended = false, filter = false;
+  const auto pixelChunk = [](std::string_view type, std::uint32_t length) {
+    return type == "IHDR"
+        || type == "IDAT"
+        || type == "PLTE"
+        || type == "tRNS"
+        || type == "IEND"
+        || (type == "gAMA" && length == 4)
+        || (type == "sRGB" && length == 1)
+        || (type == "cHRM" && length == 32);
+  };
   for (std::size_t offset = 8; offset + 12 <= bytes.size();) {
     const auto* p = bytes.data() + offset;
     const auto length = read32(p);
@@ -191,22 +207,11 @@ files::readThumbnailPng(std::span<const std::uint8_t> bytes, int maxSide) {
         return std::unexpected("invalid PNG metadata");
       if (!result.text.emplace(std::string(begin, split), std::string(split + 1, begin + length)).second)
         return std::unexpected("duplicate PNG metadata");
-    } else if (
-        type == "IHDR"
-        || type == "IDAT"
-        || type == "PLTE"
-        || type == "tRNS"
-        || type == "IEND"
-        || (type == "gAMA" && length == 4)
-        || (type == "sRGB" && length == 1)
-        || (type == "cHRM" && length == 32)
-    ) {
-      pixels.insert(
-          pixels.end(), bytes.begin() + static_cast<std::ptrdiff_t>(offset),
-          bytes.begin() + static_cast<std::ptrdiff_t>(offset + length + 12)
-      );
-    } else if ((p[4] & 32U) == 0)
-      return std::unexpected("unsupported critical PNG chunk");
+    } else if (!pixelChunk(type, length)) {
+      if ((p[4] & 32U) == 0)
+        return std::unexpected("unsupported critical PNG chunk");
+      filter = true;
+    }
     offset += static_cast<std::size_t>(length) + 12;
     if (type == "IEND") {
       ended = length == 0 && offset == bytes.size();
@@ -215,9 +220,27 @@ files::readThumbnailPng(std::span<const std::uint8_t> bytes, int maxSide) {
   }
   if (!ended)
     return std::unexpected("missing PNG end");
+  // Ordinary shared-cache PNGs need no copy. Strip potentially compressed ancillary metadata only when present.
+  std::vector<std::uint8_t> pixels;
+  if (filter) {
+    pixels.assign(signature.begin(), signature.end());
+    pixels.reserve(bytes.size());
+    for (std::size_t offset = 8; offset + 12 <= bytes.size();) {
+      const auto length = read32(bytes.data() + offset);
+      const std::string_view type(reinterpret_cast<const char*>(bytes.data() + offset + 4), 4);
+      const auto end = offset + length + 12;
+      if (pixelChunk(type, length))
+        pixels.insert(
+            pixels.end(), bytes.begin() + static_cast<std::ptrdiff_t>(offset),
+            bytes.begin() + static_cast<std::ptrdiff_t>(end)
+        );
+      offset = end;
+    }
+    bytes = pixels;
+  }
   png_image header{};
   header.version = PNG_IMAGE_VERSION;
-  if (!png_image_begin_read_from_memory(&header, pixels.data(), pixels.size())) {
+  if (!png_image_begin_read_from_memory(&header, bytes.data(), bytes.size())) {
     png_image_free(&header);
     return std::unexpected("invalid thumbnail PNG");
   }
@@ -253,12 +276,14 @@ std::expected<std::vector<std::uint8_t>, std::string> files::writeThumbnailPng(c
   output.width = image.width;
   output.height = image.height;
   output.format = PNG_FORMAT_RGBA;
-  png_alloc_size_t size = 0;
-  if (!png_image_write_to_memory(&output, nullptr, &size, 0, image.rgba.data(), 0, nullptr))
-    return std::unexpected("cannot encode thumbnail");
+  // The documented bound avoids compressing the complete image once just to measure its size.
+  png_alloc_size_t size = PNG_IMAGE_PNG_SIZE_MAX(output);
   std::vector<std::uint8_t> encoded(size);
-  if (!png_image_write_to_memory(&output, encoded.data(), &size, 0, image.rgba.data(), 0, nullptr))
+  if (!png_image_write_to_memory(&output, encoded.data(), &size, 0, image.rgba.data(), 0, nullptr)) {
+    png_image_free(&output);
     return std::unexpected("cannot encode thumbnail");
+  }
+  png_image_free(&output);
   encoded.resize(size);
   // Insert required standard tEXt keys directly before IEND, retaining ordinary RGBA PNG output.
   std::vector<std::uint8_t> metadata;

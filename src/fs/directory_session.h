@@ -31,7 +31,8 @@ namespace files {
     FileIconSource icon{};
     TrashInfo trash{};
     std::optional<FileIdentity> identity = std::nullopt;
-    std::optional<std::string> contentType = std::nullopt; // Provider's fast type; no content sniffing requested.
+    std::optional<std::string> contentType = std::nullopt;     // Provider's fast type; no content sniffing requested.
+    std::optional<std::string> contentRevision = std::nullopt; // Provider change time, including subsecond precision.
   };
 
   struct DirectorySnapshot {

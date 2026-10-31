@@ -137,8 +137,11 @@ namespace {
       m_browser.setViewDefaults(settings.viewMode, settings.gridIconSize);
       m_thumbnails.setOptions(settings.thumbnails);
       m_thumbnails.setChangedCallback([this] {
-        m_browserDirty = true;
-        m_settingsDirty = true;
+        if (m_thumbnailClearing != m_thumbnails.clearing() || m_thumbnailError != m_thumbnails.error()) {
+          m_thumbnailClearing = m_thumbnails.clearing();
+          m_thumbnailError = m_thumbnails.error();
+          m_settingsDirty = true;
+        }
         m_surface.requestLayout();
       });
       m_browser.setCaptureViewport([this] {
@@ -277,8 +280,7 @@ namespace {
         );
       }
       m_icons.setChangedCallback([this] {
-        m_browserDirty = true;
-        m_surface.requestUpdate();
+        m_surface.requestLayout();
         if (m_menuSurface != nullptr && m_menu == nullptr) {
           m_menuSurface->requestLayout();
         }
@@ -3831,13 +3833,10 @@ namespace {
         buildScene();
       }
       const auto& thumbnailSnapshot = m_browser.model().snapshot();
-      if (m_thumbnailContext != m_browser.contextSerial()
-          || (thumbnailSnapshot.generation != m_thumbnailRevision
-              && (thumbnailSnapshot.status == files::DirectoryStatus::READY
-                  || thumbnailSnapshot.status == files::DirectoryStatus::ERROR))) {
+      if (m_thumbnailContext != m_browser.contextSerial() || thumbnailSnapshot.generation != m_thumbnailRevision) {
         m_thumbnailRevision = thumbnailSnapshot.generation;
         m_thumbnailContext = m_browser.contextSerial();
-        m_thumbnails.invalidate();
+        m_thumbnails.synchronizeSources(thumbnailSnapshot);
       }
       if (std::exchange(m_settingsDirty, false)) {
         if (m_pendingSettings)
@@ -4944,6 +4943,8 @@ namespace {
     std::string m_selectionPattern = "*";
     files::FileIconCache m_icons;
     files::ThumbnailService m_thumbnails;
+    bool m_thumbnailClearing = false;
+    std::string m_thumbnailError;
     std::uint64_t m_thumbnailRevision = 0;
     std::uint64_t m_thumbnailContext = 0;
     files::FileViewAdapter m_listAdapter;

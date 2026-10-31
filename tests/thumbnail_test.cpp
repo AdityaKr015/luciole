@@ -155,6 +155,119 @@ namespace {
     g_cancellable_cancel(cancel.get());
     require(!files::decodeThumbnail(png(original), 128, 1000000, cancel.get()), "cancelled decode completed");
   }
+  void benchmarkThumbnails(const fs::path& directory, std::size_t limit, bool videos) {
+    require(limit >= 1 && limit <= 256, "benchmark count must be between 1 and 256");
+    Pump pump;
+    files::DirectorySession session;
+    session.open(files::Location::fromPath(fs::absolute(directory).native()));
+    pump.until([&] { return session.snapshot().status != files::DirectoryStatus::LOADING; });
+    require(session.snapshot().status == files::DirectoryStatus::READY, "cannot read benchmark directory");
+    auto entries = session.snapshot().entries;
+    std::erase_if(entries, [videos](const auto& entry) {
+      return entry.type != G_FILE_TYPE_REGULAR
+          || !entry.contentType
+          || !entry.contentType->starts_with(videos ? "video/" : "image/")
+          || entry.symlink;
+    });
+    std::ranges::sort(entries, {}, &files::DirectoryEntry::name);
+    if (entries.size() > limit)
+      entries.erase(entries.begin() + static_cast<std::ptrdiff_t>(limit), entries.end());
+    require(!entries.empty(), videos ? "benchmark requires video files" : "benchmark requires image files");
+    files::ThumbnailService service;
+    const auto phase = [&](const char* name) {
+      std::vector<std::shared_ptr<const files::FileIconImage>> assets;
+      assets.reserve(entries.size());
+      std::vector<double> elapsed(entries.size(), -1);
+      const auto started = std::chrono::steady_clock::now();
+      for (const auto& entry : entries)
+        assets.push_back(service.request(entry, 128));
+      pump.until([&] {
+        bool done = true;
+        const auto now = std::chrono::steady_clock::now();
+        for (std::size_t i = 0; i < assets.size(); ++i) {
+          require(assets[i] != nullptr, "benchmark request exceeded admission limits");
+          if (!assets[i]->ready)
+            done = false;
+          else if (elapsed[i] < 0)
+            elapsed[i] = std::chrono::duration<double, std::milli>(now - started).count();
+        }
+        return done;
+      });
+      require(
+          std::ranges::all_of(assets, [](const auto& image) { return image->pixels.has_value(); }),
+          "benchmark input has unsupported, invalid or oversized media"
+      );
+      std::ranges::sort(elapsed);
+      std::println(
+          "{} count={} first={:.2f} median={:.2f} last={:.2f} ms", name, entries.size(), elapsed.front(),
+          elapsed[elapsed.size() / 2], elapsed.back()
+      );
+    };
+    phase("cold-thumbnail-cache");
+    const auto cache = files::ThumbnailStore{}.root() / "normal";
+    pump.until([&] {
+      return std::ranges::all_of(entries, [&](const auto& entry) {
+        return fs::exists(cache / files::ThumbnailStore::filename(entry.location.uri()));
+      });
+    });
+    service.invalidate();
+    phase("warm-disk");
+    phase("warm-memory");
+  }
+  void testWorkerTransport() {
+    std::vector<std::uint8_t> valid{'N', 'F', 'R', '1', 0, 0, 0, 1, 0, 0, 0, 1, 240, 20, 40, 128};
+    const auto result = files::readThumbnailWorkerResult(valid, 128);
+    require(
+        result
+            && result->width == 1
+            && result->height == 1
+            && result->rgba == std::vector<std::uint8_t>({240, 20, 40, 128}),
+        "private worker transport lost pixels or alpha"
+    );
+    auto malformed = valid;
+    malformed[0] = 'X';
+    require(!files::readThumbnailWorkerResult(malformed, 128), "worker transport accepted invalid magic");
+    malformed = valid;
+    malformed.pop_back();
+    require(!files::readThumbnailWorkerResult(malformed, 128), "worker transport accepted truncated pixels");
+    malformed = valid;
+    malformed.push_back(0);
+    require(!files::readThumbnailWorkerResult(malformed, 128), "worker transport accepted trailing bytes");
+    malformed = valid;
+    malformed[4] = 1;
+    require(!files::readThumbnailWorkerResult(malformed, 128), "worker transport accepted oversized dimensions");
+    require(!files::readThumbnailWorkerResult(valid, 0), "worker transport accepted an invalid size limit");
+  }
+  void testBatchAndLargerCache() {
+    files::ThumbnailStore store;
+    const GioPtr<GCancellable> cancel(g_cancellable_new());
+    const auto uri = files::Location::fromPath("/tmp/cache-larger-only.png").uri();
+    const auto second = files::Location::fromPath("/tmp/cache-batch-second.png").uri();
+    const auto make = [](const std::string& key) {
+      return files::ThumbnailPng{
+          .image = picture(256, 128),
+          .text = {
+              {"Thumb::URI", key}, {"Thumb::MTime", "123"}, {"Thumb::Size", "42"}, {"X-Noctalia-Files::Stamp", "same"}
+          }
+      };
+    };
+    const std::array writes{files::ThumbnailCacheWrite{make(uri), 256}, files::ThumbnailCacheWrite{make(second), 512}};
+    store.writeBatch(writes, 16U * 1024U * 1024U, cancel.get());
+    const auto cached = store.read(uri, 128, 123, 42, "same");
+    require(
+        cached
+            && cached->image.width == 128
+            && cached->image.height == 64
+            && cached->image.rgba[0] == 240
+            && cached->image.rgba[3] == 128,
+        "larger cache reuse lost bounds, aspect or alpha"
+    );
+    require(
+        store.read(second, 128, 123, 42, "same").has_value() && !store.read(uri, 128, 123, 42, "changed"),
+        "batch cache lost an item or accepted a stale larger image"
+    );
+    require(store.clear().empty(), "batch cache clearing failed");
+  }
   void testCache() {
     files::ThumbnailStore store;
     const GioPtr<GCancellable> cancel(g_cancellable_new());
@@ -252,6 +365,88 @@ namespace {
         {"ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=96x48:d=0.2", "-threads", "1", "-c:v",
          "mpeg4", video.native()}
     );
+    const auto shortVideo = fixture.root / "single-frame.mp4";
+    command(
+        {"ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=96x48:r=30", "-frames:v", "1", "-c:v",
+         "libx264", "-threads", "1", "-preset", "ultrafast", shortVideo.native()}
+    );
+    const auto longGop = fixture.root / "long-gop.mp4";
+    command(
+        {"ffmpeg",
+         "-nostdin",
+         "-v",
+         "error",
+         "-f",
+         "lavfi",
+         "-i",
+         "color=c=blue:s=192x96:r=30",
+         "-frames:v",
+         "60",
+         "-c:v",
+         "libx264",
+         "-threads",
+         "1",
+         "-preset",
+         "veryfast",
+         "-g",
+         "120",
+         "-keyint_min",
+         "120",
+         "-bf",
+         "3",
+         "-sc_threshold",
+         "0",
+         longGop.native()}
+    );
+    const auto rotatedVideo = fixture.root / "rotated.mp4";
+    command(
+        {"ffmpeg", "-nostdin", "-v", "error", "-display_rotation:v:0", "90", "-i", longGop.native(), "-c", "copy",
+         rotatedVideo.native()}
+    );
+    const auto intraVideo = fixture.root / "intra.avi";
+    command(
+        {"ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=c=blue:s=192x96:d=0.12", "-c:v", "mjpeg",
+         "-threads", "1", intraVideo.native()}
+    );
+    const auto coveredVideo = fixture.root / "covered.mp4";
+    command(
+        {"ffmpeg",
+         "-nostdin",
+         "-v",
+         "error",
+         "-i",
+         pngPath.native(),
+         "-i",
+         longGop.native(),
+         "-map",
+         "0:v",
+         "-map",
+         "1:v",
+         "-c:v:0",
+         "png",
+         "-disposition:v:0",
+         "attached_pic",
+         "-c:v:1",
+         "copy",
+         "-disposition:v:1",
+         "default",
+         "-threads",
+         "1",
+         coveredVideo.native()}
+    );
+    const auto largeVideo = fixture.root / "large.mp4";
+    command(
+        {"ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=2048x1024:d=0.1", "-threads", "1",
+         "-c:v", "mpeg4", largeVideo.native()}
+    );
+    const int largeInput = ::open(largeVideo.c_str(), O_RDONLY | O_CLOEXEC);
+    require(largeInput >= 0, "cannot open oversized media fixture");
+    const GioPtr<GCancellable> limitCancel(g_cancellable_new());
+    auto limited = files::ThumbnailOptions{};
+    limited.maxMegapixels = 1;
+    const auto tooLarge = files::renderThumbnailProvider(largeInput, "video/mp4", 128, limited, limitCancel.get());
+    ::close(largeInput);
+    require(!tooLarge, "media decoder bypassed its source-pixel limit");
     const auto audio = fixture.root / "artwork.mp3";
     command(
         {"ffmpeg",
@@ -314,6 +509,31 @@ namespace {
         still && still->width == 128 && still->height == 64 && still->rgba.front() > 220,
         "video provider did not render the expected still"
     );
+    still = render(shortVideo, "video/mp4");
+    require(
+        still && still->width == 128 && still->height == 64 && still->rgba[0] > 220,
+        "single-frame video did not produce a thumbnail"
+    );
+    still = render(longGop, "video/mp4");
+    require(
+        still && still->width == 128 && still->height == 64 && still->rgba[2] > 220,
+        "long-GOP B-frame video did not produce its actual frame"
+    );
+    still = render(rotatedVideo, "video/mp4");
+    require(
+        still && still->width == 64 && still->height == 128 && still->rgba[2] > 220,
+        "video display rotation or aspect was lost"
+    );
+    still = render(intraVideo, "video/x-msvideo");
+    require(
+        still && still->width == 128 && still->height == 64 && still->rgba[2] > 220,
+        "intra-only video did not produce its actual frame"
+    );
+    still = render(coveredVideo, "video/mp4");
+    require(
+        still && still->width == 128 && still->height == 64 && still->rgba[2] > 220 && still->rgba[0] < 30,
+        "video thumbnail selected attached artwork instead of a video frame"
+    );
     still = render(document, "application/pdf");
     require(
         still && still->width == 128 && still->height == 64 && still->rgba.front() > 220,
@@ -351,6 +571,115 @@ namespace {
     require(timeoutStarted - started < 2s, "cancelled helper remained alive");
     const auto elapsed = std::chrono::steady_clock::now() - timeoutStarted;
     require(!still && elapsed >= 7s && elapsed < 12s, "provider wall-clock deadline was not enforced");
+  }
+  void testCacheLanesAndCancellation(const Fixture& fixture) {
+    Pump pump;
+    const auto firstPath = fixture.root / "slow-one.pdf";
+    const auto secondPath = fixture.root / "slow-two.pdf";
+    fs::copy_file(fixture.root / "page.pdf", firstPath);
+    fs::copy_file(fixture.root / "page.pdf", secondPath);
+    const auto first = source(firstPath, pump), second = source(secondPath, pump);
+    const auto warm = source(fixture.root / "artwork.png", pump);
+    const GioPtr<GCancellable> cancel(g_cancellable_new());
+    files::ThumbnailStore store;
+    store.write(
+        {.image = picture(),
+         .text =
+             {{"Thumb::URI", warm.location.uri()},
+              {"Thumb::MTime", std::to_string(*warm.modifiedSeconds)},
+              {"Thumb::Size", std::to_string(*warm.size)}}},
+        128, 16U * 1024U * 1024U, cancel.get()
+    );
+    const auto bin = fixture.root / "blocked-bin";
+    fs::create_directory(bin);
+    const files::GString shell(g_find_program_in_path("sh")), sleep(g_find_program_in_path("sleep"));
+    require(shell && sleep, "missing isolated provider fixture tools");
+    std::ofstream(bin / "pdftoppm") << "#!" << shell.get() << "\nexec " << sleep.get() << " 30\n";
+    require(::chmod((bin / "pdftoppm").c_str(), 0700) == 0, "cannot enable isolated provider fixture");
+    const std::string path = std::getenv("PATH");
+    ::setenv("PATH", bin.c_str(), 1);
+    files::ThumbnailService service;
+    auto a = service.request(first, 128), b = service.request(second, 128);
+    require(a && b, "slow provider fixtures were not admitted");
+    pump.until([&] { return service.activeJobs() == 2; });
+    auto cached = service.request(warm, 128);
+    require(cached != nullptr, "warm cache fixture was not admitted");
+    pump.until([&] { return cached->ready; });
+    require(
+        cached->pixels && service.activeJobs() == 2 && !a->ready && !b->ready,
+        "warm cached image waited for occupied decoder slots"
+    );
+    a.reset();
+    b.reset();
+    service.endFrame();
+    pump.until([&] { return service.activeJobs() == 0; });
+    ::setenv("PATH", path.c_str(), 1);
+    service.clearCache();
+    pump.until([&] { return !service.clearing(); });
+  }
+  void testPublicationAndSourceChanges(const Fixture& fixture) {
+    Pump pump;
+    const auto path = fixture.root / "publication.png";
+    std::vector<std::uint8_t> original, alternate;
+    std::map<std::size_t, std::vector<std::uint8_t>> sizes;
+    int color = 0;
+    for (int value = 1; value < 240; ++value) {
+      auto changed = picture();
+      for (std::size_t offset = 0; offset < changed.rgba.size(); offset += 4)
+        changed.rgba[offset] = static_cast<std::uint8_t>(value);
+      auto candidate = png(changed);
+      const auto found = sizes.find(candidate.size());
+      if (found != sizes.end()) {
+        original = found->second;
+        alternate = std::move(candidate);
+        color = value;
+        break;
+      }
+      sizes.emplace(candidate.size(), std::move(candidate));
+    }
+    require(!alternate.empty(), "cannot create a same-size source-edit fixture");
+    write(path, original);
+    auto entry = source(path, pump);
+    files::ThumbnailService service;
+    auto asset = service.request(entry, 128);
+    require(asset != nullptr, "publication fixture denied");
+    pump.until([&] { return asset->ready; });
+    const auto cachePath =
+        files::ThumbnailStore{}.root() / "normal" / files::ThumbnailStore::filename(entry.location.uri());
+    require(asset->pixels && !fs::exists(cachePath), "decoded pixels waited for cache persistence");
+    pump.until([&] { return fs::exists(cachePath); });
+    files::DirectorySnapshot snapshot;
+    snapshot.generation = 100;
+    snapshot.location = files::Location::fromPath(fixture.root.native());
+    snapshot.status = files::DirectoryStatus::READY;
+    snapshot.entries.push_back(entry);
+    service.synchronizeSources(snapshot);
+    ++snapshot.generation;
+    service.synchronizeSources(snapshot);
+    require(
+        service.touch(asset, true) && service.request(entry, 128) == asset && asset->pixels,
+        "metadata-only publication discarded a valid thumbnail"
+    );
+    const auto oldMtime = fs::last_write_time(path);
+    write(path, alternate);
+    fs::last_write_time(path, oldMtime);
+    auto updated = source(path, pump);
+    require(
+        updated.size == entry.size
+            && updated.modifiedSeconds == entry.modifiedSeconds
+            && updated.contentRevision != entry.contentRevision,
+        "source-edit fixture did not preserve size/mtime or update change time"
+    );
+    snapshot.entries = {updated};
+    ++snapshot.generation;
+    service.synchronizeSources(snapshot);
+    require(!service.touch(asset, true) && !asset->pixels, "source revision change retained stale pixels");
+    auto replacement = service.request(updated, 128);
+    pump.until([&] { return replacement->ready; });
+    require(
+        replacement != asset && replacement->pixels && replacement->pixels->rgba[0] == color,
+        "same-size/preserved-mtime edit did not update the image"
+    );
   }
   void testService(const Fixture& fixture) {
     Pump pump;
@@ -438,7 +767,8 @@ namespace {
         .size = 42,
         .modifiedSeconds = 123,
         .etag = std::nullopt,
-        .parentDisplayName = {}
+        .parentDisplayName = {},
+        .contentType = "image/png"
     };
     require(!thumbnails.request(remoteEntry, 48), "local policy fetched a remote entry");
     options.policy = files::ThumbnailPolicy::ALL;
@@ -463,10 +793,24 @@ int main(int argc, char** argv) {
     return files::runThumbnailWorker(std::span(args).subspan(1));
   try {
     Fixture fixture;
+    if (!args.empty() && (args.front() == "--benchmark" || args.front() == "--benchmark-videos")) {
+      const bool videos = args.front() == "--benchmark-videos";
+      require(
+          args.size() == 2 || args.size() == 3,
+          videos ? "usage: thumbnail-test --benchmark-videos DIRECTORY [COUNT]"
+                 : "usage: thumbnail-test --benchmark DIRECTORY [COUNT]"
+      );
+      benchmarkThumbnails(std::string(args[1]), args.size() == 3 ? std::stoul(std::string(args[2])) : 48, videos);
+      return 0;
+    }
     testCodecs();
+    testWorkerTransport();
     testCache();
     testCacheLimits();
+    testBatchAndLargerCache();
     testProviders(fixture);
+    testCacheLanesAndCancellation(fixture);
+    testPublicationAndSourceChanges(fixture);
     testService(fixture);
     std::println("thumbnail checks passed");
     return 0;

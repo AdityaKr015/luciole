@@ -43,16 +43,23 @@ namespace {
         || g_uri_get_query(parsed.get())
         || g_uri_get_fragment(parsed.get());
   }
-  files::FileIconImage
-  load(const files::DirectoryEntry& source, int side, const files::ThumbnailOptions& options, GCancellable* cancel) {
+  struct LoadResult {
+    files::FileIconImage image{.pixels = std::nullopt, .path = {}, .symbolic = false, .ready = true};
+    std::optional<files::ThumbnailCacheWrite> write;
+    bool decodeNeeded = false;
+  };
+  LoadResult load(
+      const files::DirectoryEntry& source, int side, const files::ThumbnailOptions& options, GCancellable* cancel,
+      bool generate
+  ) {
     using namespace files;
-    FileIconImage result{.pixels = std::nullopt, .path = {}, .symbolic = false, .ready = true};
+    LoadResult result;
     ThumbnailStore store;
     const auto native = source.location.nativePath();
     if (!native) {
       if (options.policy == ThumbnailPolicy::ALL && source.modifiedSeconds)
         if (auto cached = store.read(source.location.uri(), side, *source.modifiedSeconds, source.size))
-          result.pixels = std::move(cached->image);
+          result.image.pixels = std::move(cached->image);
       return result;
     }
     if (g_cancellable_is_cancelled(cancel))
@@ -66,7 +73,7 @@ namespace {
     if (!local) {
       if (options.policy == ThumbnailPolicy::ALL && source.modifiedSeconds)
         if (auto cached = store.read(source.location.uri(), side, *source.modifiedSeconds, source.size))
-          result.pixels = std::move(cached->image);
+          result.image.pixels = std::move(cached->image);
       return result;
     }
     const Fd file{::open(native->c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)};
@@ -82,7 +89,9 @@ namespace {
       return result;
     const GioPtr<GFileInfo> current(g_file_query_info(
         source.location.file().get(),
-        G_FILE_ATTRIBUTE_ETAG_VALUE "," G_FILE_ATTRIBUTE_ID_FILE "," G_FILE_ATTRIBUTE_ID_FILESYSTEM,
+        G_FILE_ATTRIBUTE_ETAG_VALUE "," G_FILE_ATTRIBUTE_ID_FILE "," G_FILE_ATTRIBUTE_ID_FILESYSTEM
+                                    "," G_FILE_ATTRIBUTE_TIME_CHANGED
+                                    ",time::changed-nsec," G_FILE_ATTRIBUTE_TIME_CHANGED_USEC,
         G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, cancel, nullptr
     ));
     if (!current
@@ -91,19 +100,33 @@ namespace {
       return result;
     if (source.identity && readFileIdentity(current.get()) != source.identity)
       return result;
+    if (source.contentRevision) {
+      if (!g_file_info_has_attribute(current.get(), G_FILE_ATTRIBUTE_TIME_CHANGED))
+        return result;
+      const auto seconds = g_file_info_get_attribute_uint64(current.get(), G_FILE_ATTRIBUTE_TIME_CHANGED);
+      const auto nanos = g_file_info_has_attribute(current.get(), "time::changed-nsec")
+          ? g_file_info_get_attribute_uint32(current.get(), "time::changed-nsec")
+          : g_file_info_get_attribute_uint32(current.get(), G_FILE_ATTRIBUTE_TIME_CHANGED_USEC) * 1000U;
+      if (*source.contentRevision != std::to_string(seconds) + ':' + std::to_string(nanos))
+        return result;
+    }
     const auto sourceStamp = stamp(before);
     const auto relative = std::filesystem::path(*native).lexically_relative(store.root());
     const bool insideCache = !relative.empty() && *relative.begin() != "..";
-    if (!insideCache) {
+    if (!generate && !insideCache) {
       if (auto cached = store.read(
               source.location.uri(), side, static_cast<std::uint64_t>(before.st_mtim.tv_sec),
               static_cast<std::uint64_t>(before.st_size), sourceStamp
           )) {
         struct stat after{};
         if (::fstat(file.value, &after) == 0 && stamp(after) == sourceStamp && !g_cancellable_is_cancelled(cancel))
-          result.pixels = std::move(cached->image);
+          result.image.pixels = std::move(cached->image);
         return result;
       }
+    }
+    if (!generate) {
+      result.decodeNeeded = true;
+      return result;
     }
     std::expected<LoadedImageFile, std::string> decoded = std::unexpected("no thumbnail decoder");
     const auto mime = source.contentType.value_or("");
@@ -126,18 +149,19 @@ namespace {
               {"Thumb::URI", source.location.uri()},
               {"Thumb::MTime", std::to_string(before.st_mtim.tv_sec)},
               {"Thumb::Size", std::to_string(before.st_size)},
-              {"X-Noctalia-Files::Stamp", sourceStamp}
+              {"X-Noctalia-Files::Stamp", sourceStamp},
+              {"Software", "Noctalia Files"}
           }
       };
-      std::scoped_lock lock(diskMutex);
-      store.write(std::move(cached), side, static_cast<std::uint64_t>(options.cacheMiB) * 1024U * 1024U, cancel);
+      result.write.emplace(ThumbnailCacheWrite{std::move(cached), side});
     }
-    result.pixels = std::move(*decoded);
+    result.image.pixels = std::move(*decoded);
     return result;
   }
 } // namespace
 
 struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
+  enum class Stage : std::uint8_t { PROBE_QUEUED, PROBING, DECODE_QUEUED, DECODING, READY };
   struct Item {
     explicit Item(DirectoryEntry entry) : source(std::move(entry)) {}
     std::shared_ptr<FileIconImage> image;
@@ -145,7 +169,8 @@ struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
     GioPtr<GCancellable> cancel{g_cancellable_new()};
     std::uint64_t serial = 0, used = 0;
     int side = 128;
-    bool visible = false, queued = true, failed = false, loading = false;
+    bool visible = false, failed = false;
+    Stage stage = Stage::PROBE_QUEUED;
     std::chrono::steady_clock::time_point retry;
   };
   struct Request {
@@ -155,24 +180,41 @@ struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
     ThumbnailOptions options;
     std::uint64_t epoch, serial;
     int side;
+    bool generate;
   };
   struct Result {
-    FileIconImage image;
+    LoadResult loaded;
     std::string error;
   };
+  struct WriteBatch {
+    std::shared_ptr<State> owner;
+    std::vector<ThumbnailCacheWrite> writes;
+    std::uint64_t budget;
+  };
+  static constexpr std::size_t kWriteBudget = 16U * 1024U * 1024U;
   ThumbnailOptions options;
   std::unordered_map<std::string, Item> cache;
+  std::unordered_map<const FileIconImage*, Item*> leases;
   std::function<void()> changed;
   std::uint64_t epoch = 0, clock = 0, serial = 0;
-  std::size_t active = 0, reserved = 0;
-  bool alive = true, clearing = false;
+  std::size_t active = 0, probes = 0, reserved = 0, writeBytes = 0;
+  bool alive = true, clearing = false, writing = false;
   std::string error;
   GSource* idle = nullptr;
+  GSource* writeTimer = nullptr;
+  std::deque<ThumbnailCacheWrite> writes;
+  GioPtr<GCancellable> writeCancel{g_cancellable_new()};
   std::vector<GioPtr<GCancellable>> running;
   void notify() {
     const auto callback = changed;
     if (alive && callback)
       callback();
+  }
+  static void destroySource(GSource*& source) {
+    if (source) {
+      g_source_destroy(source);
+      g_source_unref(std::exchange(source, nullptr));
+    }
   }
   void retire() {
     ++epoch;
@@ -184,16 +226,20 @@ struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
       item.image->ready = false;
     }
     cache.clear();
+    leases.clear();
     reserved = 0;
-    if (idle) {
-      g_source_destroy(idle);
-      g_source_unref(std::exchange(idle, nullptr));
-    }
+    destroySource(idle);
+    destroySource(writeTimer);
+    g_cancellable_cancel(writeCancel.get());
+    writeCancel.reset(g_cancellable_new());
+    writes.clear();
+    writeBytes = 0;
   }
   void erase(std::unordered_map<std::string, Item>::iterator item) {
     g_cancellable_cancel(item->second.cancel.get());
     item->second.image->pixels.reset();
     item->second.image->ready = false;
+    leases.erase(item->second.image.get());
     reserved -= static_cast<std::size_t>(item->second.side) * item->second.side * 4;
     cache.erase(item);
   }
@@ -227,75 +273,165 @@ struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
     );
     g_source_attach(idle, g_main_context_default());
   }
-  void pump() {
-    while (alive && !clearing && active < 2) {
-      auto next = cache.end();
-      for (auto it = cache.begin(); it != cache.end();) {
-        if ((it->second.queued || it->second.loading) && it->second.image.use_count() == 1) {
-          const auto old = it++;
-          erase(old);
-          continue;
-        }
-        if (it->second.queued
-            && (next == cache.end()
-                || (it->second.visible && !next->second.visible)
-                || (it->second.visible == next->second.visible && it->second.used < next->second.used)))
-          next = it;
-        ++it;
+  void queueWrite(ThumbnailCacheWrite write) {
+    const auto bytes = write.thumbnail.image.rgba.size();
+    if (!alive || clearing || writes.size() >= 32 || bytes > kWriteBudget - writeBytes)
+      return;
+    writeBytes += bytes;
+    writes.push_back(std::move(write));
+    scheduleWrites();
+  }
+  void scheduleWrites() {
+    if (!alive || clearing || writing || writeTimer || writes.empty())
+      return;
+    // Gather nearby completions without holding up decoded-pixel publication.
+    writeTimer = g_timeout_source_new(25);
+    g_source_set_callback(
+        writeTimer,
+        [](gpointer data) -> gboolean {
+          auto* owner = static_cast<State*>(data);
+          g_source_unref(std::exchange(owner->writeTimer, nullptr));
+          owner->startWrites();
+          return G_SOURCE_REMOVE;
+        },
+        this, nullptr
+    );
+    g_source_attach(writeTimer, g_main_context_default());
+  }
+  void startWrites() {
+    if (writing || writes.empty() || !alive || clearing)
+      return;
+    auto batch = std::make_unique<WriteBatch>();
+    batch->owner = shared_from_this();
+    batch->budget = static_cast<std::uint64_t>(options.cacheMiB) * 1024U * 1024U;
+    batch->writes.reserve(8);
+    while (!writes.empty() && batch->writes.size() < 8) {
+      writeBytes -= writes.front().thumbnail.image.rgba.size();
+      batch->writes.push_back(std::move(writes.front()));
+      writes.pop_front();
+    }
+    writing = true;
+    const GioPtr<GTask> task(g_task_new(
+        nullptr, writeCancel.get(),
+        [](GObject*, GAsyncResult* result, gpointer) {
+          const auto owner = static_cast<WriteBatch*>(g_task_get_task_data(G_TASK(result)))->owner;
+          GError* error = nullptr;
+          (void)g_task_propagate_boolean(G_TASK(result), &error);
+          g_clear_error(&error);
+          owner->writing = false;
+          owner->scheduleWrites();
+        },
+        nullptr
+    ));
+    g_task_set_task_data(task.get(), batch.release(), [](gpointer data) { delete static_cast<WriteBatch*>(data); });
+    g_task_run_in_thread(task.get(), [](GTask* task, gpointer, gpointer data, GCancellable* cancel) {
+      const auto& batch = *static_cast<WriteBatch*>(data);
+      try {
+        std::scoped_lock lock(diskMutex);
+        ThumbnailStore{}.writeBatch(batch.writes, batch.budget, cancel);
+      } catch (const std::exception&) {
+        // A regenerable cache write cannot delay or undo a published thumbnail.
       }
-      if (next == cache.end())
-        return;
-      auto& item = next->second;
-      item.queued = false;
-      item.loading = true;
+      g_task_return_boolean(task, true);
+    });
+  }
+  auto next(Stage stage) {
+    auto result = cache.end();
+    for (auto it = cache.begin(); it != cache.end(); ++it)
+      if (it->second.stage == stage
+          && (result == cache.end()
+              || (it->second.visible && !result->second.visible)
+              || (it->second.visible == result->second.visible && it->second.used < result->second.used)))
+        result = it;
+    return result;
+  }
+  void start(std::unordered_map<std::string, Item>::iterator next, bool generate) {
+    auto& item = next->second;
+    item.stage = generate ? Stage::DECODING : Stage::PROBING;
+    if (generate)
       ++active;
-      running.emplace_back(static_cast<GCancellable*>(g_object_ref(item.cancel.get())));
-      GioPtr<GTask> task(g_task_new(
-          nullptr, item.cancel.get(),
-          [](GObject*, GAsyncResult* result, gpointer) {
-            auto* task = G_TASK(result);
-            const auto* request = static_cast<Request*>(g_task_get_task_data(task));
-            const auto owner = request->owner;
-            GError* error = nullptr;
-            const std::unique_ptr<Result> loaded(static_cast<Result*>(g_task_propagate_pointer(task, &error)));
-            g_clear_error(&error);
+    else
+      ++probes;
+    running.emplace_back(static_cast<GCancellable*>(g_object_ref(item.cancel.get())));
+    const GioPtr<GTask> task(g_task_new(
+        nullptr, item.cancel.get(),
+        [](GObject*, GAsyncResult* result, gpointer) {
+          auto* task = G_TASK(result);
+          const auto* request = static_cast<Request*>(g_task_get_task_data(task));
+          const auto owner = request->owner;
+          GError* error = nullptr;
+          const std::unique_ptr<Result> loaded(static_cast<Result*>(g_task_propagate_pointer(task, &error)));
+          g_clear_error(&error);
+          if (request->generate)
             --owner->active;
-            std::erase_if(owner->running, [&](const auto& cancel) {
-              return cancel.get() == g_task_get_cancellable(task);
-            });
-            auto found = owner->cache.find(request->key);
-            if (owner->alive
-                && owner->epoch == request->epoch
-                && found != owner->cache.end()
-                && found->second.serial == request->serial
-                && loaded) {
-              found->second.loading = false;
-              *found->second.image = std::move(loaded->image);
-              found->second.failed = !found->second.image->pixels;
-              found->second.retry = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+          else
+            --owner->probes;
+          std::erase_if(owner->running, [&](const auto& cancel) {
+            return cancel.get() == g_task_get_cancellable(task);
+          });
+          auto found = owner->cache.find(request->key);
+          if (owner->alive
+              && owner->epoch == request->epoch
+              && found != owner->cache.end()
+              && found->second.serial == request->serial
+              && loaded) {
+            auto& item = found->second;
+            if (loaded->loaded.decodeNeeded) {
+              item.stage = Stage::DECODE_QUEUED;
+            } else {
+              item.stage = Stage::READY;
+              *item.image = std::move(loaded->loaded.image);
+              item.failed = !item.image->pixels;
+              item.retry = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+              if (loaded->loaded.write)
+                owner->queueWrite(std::move(*loaded->loaded.write));
               if (!loaded->error.empty())
                 owner->error = loaded->error;
             }
-            owner->pump();
-            owner->notify();
-          },
-          nullptr
-      ));
-      g_task_set_task_data(
-          task.get(), new Request{shared_from_this(), next->first, item.source, options, epoch, item.serial, item.side},
-          [](gpointer data) { delete static_cast<Request*>(data); }
-      );
-      g_task_run_in_thread(task.get(), [](GTask* task, gpointer, gpointer data, GCancellable* cancel) {
-        const auto& request = *static_cast<Request*>(data);
-        auto result = std::make_unique<Result>();
-        try {
-          result->image = load(request.source, request.side, request.options, cancel);
-        } catch (const std::exception& error) {
-          result->error = error.what();
-          result->image.ready = true;
-        }
-        g_task_return_pointer(task, result.release(), [](gpointer data) { delete static_cast<Result*>(data); });
-      });
+          }
+          owner->pump();
+          owner->notify();
+        },
+        nullptr
+    ));
+    g_task_set_task_data(
+        task.get(),
+        new Request{shared_from_this(), next->first, item.source, options, epoch, item.serial, item.side, generate},
+        [](gpointer data) { delete static_cast<Request*>(data); }
+    );
+    g_task_run_in_thread(task.get(), [](GTask* task, gpointer, gpointer data, GCancellable* cancel) {
+      const auto& request = *static_cast<Request*>(data);
+      auto result = std::make_unique<Result>();
+      try {
+        result->loaded = load(request.source, request.side, request.options, cancel, request.generate);
+      } catch (const std::exception& error) {
+        result->error = error.what();
+      }
+      g_task_return_pointer(task, result.release(), [](gpointer data) { delete static_cast<Result*>(data); });
+    });
+  }
+  void pump() {
+    if (!alive || clearing)
+      return;
+    // Cancellation must run even while both decoders are occupied.
+    for (auto it = cache.begin(); it != cache.end();) {
+      if (it->second.stage != Stage::READY && it->second.image.use_count() == 1) {
+        const auto old = it++;
+        erase(old);
+      } else
+        ++it;
+    }
+    while (probes < 4) {
+      const auto item = next(Stage::PROBE_QUEUED);
+      if (item == cache.end())
+        break;
+      start(item, false);
+    }
+    while (active < 2) {
+      const auto item = next(Stage::DECODE_QUEUED);
+      if (item == cache.end())
+        break;
+      start(item, true);
     }
   }
 };
@@ -309,8 +445,16 @@ files::ThumbnailService::~ThumbnailService() {
 std::shared_ptr<const files::FileIconImage>
 files::ThumbnailService::request(const DirectoryEntry& source, int pixels, bool visible) {
   auto& state = *m_state;
+  const auto& mime = source.contentType;
   if (state.options.policy == ThumbnailPolicy::NEVER
       || state.clearing
+      || !mime
+      || !(
+          mime->starts_with("image/")
+          || mime->starts_with("video/")
+          || mime->starts_with("audio/")
+          || *mime == "application/pdf"
+      )
       || source.type != G_FILE_TYPE_REGULAR
       || source.symlink
       || !source.modifiedSeconds
@@ -319,8 +463,8 @@ files::ThumbnailService::request(const DirectoryEntry& source, int pixels, bool 
     return {};
   const int side = ThumbnailStore::sizeClass(std::clamp(pixels, 1, 1024));
   const auto key = std::format(
-      "{}\n{}\n{}\n{}\n{}\n{}", source.location.uri(), source.id, source.etag.value_or(""),
-      source.modifiedSeconds.value_or(0), source.size.value_or(0), side
+      "{}\n{}\n{}\n{}\n{}\n{}\n{}", source.location.uri(), source.id, source.etag.value_or(""),
+      source.modifiedSeconds.value_or(0), source.size.value_or(0), source.contentRevision.value_or(""), side
   );
   auto found = state.cache.find(key);
   if (found != state.cache.end() && found->second.failed && std::chrono::steady_clock::now() >= found->second.retry) {
@@ -332,16 +476,58 @@ files::ThumbnailService::request(const DirectoryEntry& source, int pixels, bool 
       return {};
     State::Item item(source);
     item.image = std::make_shared<FileIconImage>();
-    item.source = source;
     item.serial = ++state.serial;
     item.side = side;
     found = state.cache.emplace(key, std::move(item)).first;
+    state.leases.emplace(found->second.image.get(), &found->second);
   }
   found->second.visible = visible;
   found->second.used = ++state.clock;
-  if (found->second.queued)
+  if (found->second.stage == State::Stage::PROBE_QUEUED || found->second.stage == State::Stage::DECODE_QUEUED)
     state.schedule();
   return found->second.image;
+}
+bool files::ThumbnailService::touch(const std::shared_ptr<const FileIconImage>& image, bool visible) {
+  const auto found = m_state->leases.find(image.get());
+  if (found == m_state->leases.end())
+    return false;
+  auto& item = *found->second;
+  if (item.failed && std::chrono::steady_clock::now() >= item.retry)
+    return false;
+  item.visible = visible;
+  item.used = ++m_state->clock;
+  return true;
+}
+void files::ThumbnailService::synchronizeSources(const DirectorySnapshot& snapshot) {
+  if (m_state->cache.empty())
+    return;
+  std::unordered_map<std::string, const DirectoryEntry*> current;
+  current.reserve(m_state->cache.size());
+  for (const auto& [_, item] : m_state->cache)
+    current.emplace(item.source.location.uri(), nullptr);
+  for (const auto& entry : snapshot.entries) {
+    const auto found = current.find(entry.location.uri());
+    if (found != current.end())
+      found->second = &entry;
+  }
+  for (auto it = m_state->cache.begin(); it != m_state->cache.end();) {
+    const auto found = current.find(it->second.source.location.uri());
+    const auto& before = it->second.source;
+    const auto* after = found == current.end() ? nullptr : found->second;
+    if (after
+        && (before.size != after->size
+            || before.modifiedSeconds != after->modifiedSeconds
+            || before.etag != after->etag
+            || before.identity != after->identity
+            || before.contentRevision != after->contentRevision
+            || before.type != after->type
+            || before.symlink != after->symlink
+            || before.contentType != after->contentType)) {
+      const auto old = it++;
+      m_state->erase(old);
+    } else
+      ++it;
+  }
 }
 void files::ThumbnailService::setOptions(ThumbnailOptions options) {
   if (options == m_state->options)
@@ -361,7 +547,6 @@ void files::ThumbnailService::setOptions(ThumbnailOptions options) {
         std::scoped_lock lock(diskMutex);
         (void)ThumbnailStore{}.prune(*static_cast<std::uint64_t*>(data));
       } catch (const std::exception&) {
-        // Cache pruning never prevents the requested browsing policy from applying.
       }
       g_task_return_boolean(task, true);
     });
@@ -379,8 +564,7 @@ void files::ThumbnailService::clearCache() {
   m_state->retire();
   m_state->clearing = true;
   m_state->error.clear();
-  const auto owner = m_state;
-  GioPtr<GTask> task(g_task_new(
+  const GioPtr<GTask> task(g_task_new(
       nullptr, nullptr,
       [](GObject*, GAsyncResult* result, gpointer) {
         const auto owner = *static_cast<std::shared_ptr<State>*>(g_task_get_task_data(G_TASK(result)));
@@ -391,7 +575,7 @@ void files::ThumbnailService::clearCache() {
       },
       nullptr
   ));
-  g_task_set_task_data(task.get(), new std::shared_ptr<State>(owner), [](gpointer data) {
+  g_task_set_task_data(task.get(), new std::shared_ptr<State>(m_state), [](gpointer data) {
     delete static_cast<std::shared_ptr<State>*>(data);
   });
   g_task_run_in_thread(task.get(), [](GTask* task, gpointer, gpointer, GCancellable*) {
@@ -412,6 +596,6 @@ std::size_t files::ThumbnailService::reservedBytes() const { return m_state->res
 std::size_t files::ThumbnailService::activeJobs() const { return m_state->active; }
 std::size_t files::ThumbnailService::queuedJobs() const {
   return static_cast<std::size_t>(std::ranges::count_if(m_state->cache, [](const auto& item) {
-    return item.second.queued;
+    return item.second.stage != State::Stage::READY && item.second.stage != State::Stage::DECODING;
   }));
 }

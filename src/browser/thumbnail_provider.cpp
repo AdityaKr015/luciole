@@ -2,14 +2,16 @@
 
 #include "browser/thumbnail_codec.h"
 #include "browser/thumbnail_store.h"
+#include "browser/thumbnail_worker.h"
 #include "fs/gio_ptr.h"
 
 #include <cerrno>
 #include <chrono>
+#include <condition_variable>
 #include <csignal>
 #include <fcntl.h>
 #include <filesystem>
-#include <nlohmann/json.hpp>
+#include <mutex>
 #include <sys/prctl.h>
 #include <sys/resource.h>
 #include <thread>
@@ -39,6 +41,8 @@ namespace {
       ::_exit(1);
   }
   bool run(std::vector<std::string> args, int input, GCancellable* cancellable) {
+    if (g_cancellable_is_cancelled(cancellable))
+      return false;
     const files::GString executable(g_find_program_in_path(args.front().c_str()));
     if (!executable)
       return false;
@@ -61,19 +65,45 @@ namespace {
       return false;
     // Waiting occurs only on a thumbnail worker. The child is also CPU/address-space/output bounded.
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
-    bool done = false;
-    const files::GioPtr<GCancellable> waitCancel(g_cancellable_new());
-    std::thread watchdog([&] {
-      while (!g_cancellable_is_cancelled(waitCancel.get())) {
-        if (g_cancellable_is_cancelled(cancellable) || std::chrono::steady_clock::now() >= deadline) {
-          g_subprocess_force_exit(process.get());
-          break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    struct Wait {
+      std::mutex mutex;
+      std::condition_variable condition;
+      bool finished = false, cancelled = false;
+    } wait;
+    struct Disconnect {
+      GCancellable* source;
+      gulong id = 0;
+      ~Disconnect() {
+        if (source)
+          g_cancellable_disconnect(source, id);
       }
+    } cancellation{cancellable};
+    if (cancellable)
+      cancellation.id = g_cancellable_connect(
+          cancellable, G_CALLBACK(+[](GCancellable*, gpointer data) {
+            auto& wait = *static_cast<Wait*>(data);
+            {
+              std::scoped_lock lock(wait.mutex);
+              wait.cancelled = true;
+            }
+            wait.condition.notify_one();
+          }),
+          &wait, nullptr
+      );
+    std::thread watchdog([&] {
+      std::unique_lock lock(wait.mutex);
+      wait.condition.wait_until(lock, deadline, [&] { return wait.finished || wait.cancelled; });
+      if (wait.finished)
+        return;
+      lock.unlock();
+      g_subprocess_force_exit(process.get());
     });
-    done = g_subprocess_wait_check(process.get(), nullptr, nullptr);
-    g_cancellable_cancel(waitCancel.get());
+    const bool done = g_subprocess_wait_check(process.get(), nullptr, nullptr);
+    {
+      std::scoped_lock lock(wait.mutex);
+      wait.finished = true;
+    }
+    wait.condition.notify_one();
     watchdog.join();
     return done && !g_cancellable_is_cancelled(cancellable);
   }
@@ -93,7 +123,7 @@ std::expected<LoadedImageFile, std::string> files::renderThumbnailProvider(
       std::filesystem::remove_all(path, error);
     }
   } cleanup{directory};
-  const auto output = directory / "result.png";
+  const auto output = directory / (mime.starts_with("image/") ? "result.rgba" : "result.png");
   bool success = false;
   if (mime.starts_with("image/")) {
     success =
@@ -107,62 +137,45 @@ std::expected<LoadedImageFile, std::string> files::renderThumbnailProvider(
              (directory / "result").native()},
             sourceFd, cancellable);
   } else if (mime.starts_with("video/") || mime.starts_with("audio/")) {
-    const auto probe = directory / "probe.json";
-    if (!run(
-            {"ffprobe", "-v", "error", "-protocol_whitelist", "file,pipe", "-show_entries", "stream=width,height",
-             "-of", "json", "-o", probe.native(), "/proc/self/fd/3"},
-            sourceFd, cancellable
-        ))
-      return std::unexpected("media probing unavailable");
-    const auto bytes = readThumbnailFile(probe, 128U * 1024U);
-    if (!bytes)
-      return std::unexpected("invalid media metadata");
-    try {
-      const auto info = nlohmann::json::parse(bytes->begin(), bytes->end());
-      if (!info.contains("streams") || !info["streams"].is_array() || info["streams"].size() > 128)
-        return std::unexpected("invalid media streams");
-      for (const auto& stream : info["streams"]) {
-        const auto width = stream.value("width", std::uint64_t{0}), height = stream.value("height", std::uint64_t{0});
-        if (height && width > static_cast<std::uint64_t>(options.maxMegapixels) * 1'000'000U / height)
-          return std::unexpected("media dimensions exceed thumbnail limits");
-      }
-    } catch (const std::exception&) {
-      return std::unexpected("invalid media metadata");
-    }
-    success =
-        run({"ffmpeg",
-             "-nostdin",
-             "-v",
-             "error",
-             "-threads",
-             "1",
-             "-filter_threads",
-             "1",
-             "-protocol_whitelist",
-             "file,pipe",
-             "-i",
-             "/proc/self/fd/3",
-             "-map",
-             "0:v:0",
-             "-frames:v",
-             "1",
-             "-an",
-             "-sn",
-             "-vf",
-             "thumbnail=4,scale="
-                 + std::to_string(side)
-                 + ':'
-                 + std::to_string(side)
-                 + ":force_original_aspect_ratio=decrease",
-             "-y",
-             output.native()},
-            sourceFd, cancellable);
+    const bool video = mime.starts_with("video/");
+    std::vector<std::string> arguments{
+        "ffmpeg",
+        "-nostdin",
+        "-v",
+        "error",
+        "-xerror",
+        "-threads",
+        "1",
+        "-max_pixels",
+        std::to_string(static_cast<std::uint64_t>(options.maxMegapixels) * 1'000'000U),
+        "-filter_threads",
+        "1",
+        "-protocol_whitelist",
+        "file,pipe"
+    };
+    // A tiny still needs one keyframe, not a full-resolution multi-frame histogram.
+    // Starting at the beginning also works for very short and single-GOP clips.
+    if (video)
+      arguments.insert(arguments.end(), {"-skip_frame:v", "nokey"});
+    arguments.insert(
+        arguments.end(),
+        {"-i", "/proc/self/fd/3", "-map", video ? "0:V:0" : "0:v:0", "-frames:v", "1", "-an", "-sn", "-vf",
+         std::string(video ? "scale=" : "thumbnail=4,scale=")
+             + std::to_string(side)
+             + ':'
+             + std::to_string(side)
+             + ":force_original_aspect_ratio=decrease",
+         "-y", output.native()}
+    );
+    success = run(std::move(arguments), sourceFd, cancellable);
   }
   if (!success)
     return std::unexpected("no supported thumbnail provider");
-  const auto encoded = readThumbnailFile(output, 8U * 1024U * 1024U);
+  auto encoded = readThumbnailFile(output, 8U * 1024U * 1024U);
   if (!encoded)
     return std::unexpected("thumbnail provider exceeded output limits");
+  if (mime.starts_with("image/"))
+    return readThumbnailWorkerResult(std::move(*encoded), side);
   auto decoded = readThumbnailPng(*encoded, side);
   if (!decoded)
     return std::unexpected(decoded.error());

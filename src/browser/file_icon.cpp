@@ -19,21 +19,34 @@ files::FileIcon::~FileIcon() {
   }
 }
 void files::FileIcon::bind(const FileIconSource& source, ColorSpec foreground) {
+  if (!m_thumbnailSource && source == m_source && foreground == m_foreground)
+    return;
   m_thumbnailSource.reset();
   m_thumbnail.reset();
+  m_thumbnailPixels = 0;
   m_source = source;
   m_foreground = foreground;
   markLayoutDirty();
 }
 void files::FileIcon::bindFile(const DirectoryEntry& entry, ColorSpec foreground) {
-  if (!m_thumbnailSource
+  const bool changed = !m_thumbnailSource
       || entry.id != m_thumbnailSource->id
       || entry.location != m_thumbnailSource->location
       || entry.etag != m_thumbnailSource->etag
       || entry.size != m_thumbnailSource->size
-      || entry.modifiedSeconds != m_thumbnailSource->modifiedSeconds)
+      || entry.modifiedSeconds != m_thumbnailSource->modifiedSeconds
+      || entry.contentRevision != m_thumbnailSource->contentRevision
+      || entry.identity != m_thumbnailSource->identity
+      || entry.type != m_thumbnailSource->type
+      || entry.symlink != m_thumbnailSource->symlink
+      || entry.contentType != m_thumbnailSource->contentType;
+  if (!changed && entry.icon == m_source && foreground == m_foreground)
+    return;
+  if (changed) {
     m_thumbnail.reset();
-  m_thumbnailSource = entry;
+    m_thumbnailPixels = 0;
+    m_thumbnailSource = entry;
+  }
   m_source = entry.icon;
   m_foreground = foreground;
   markLayoutDirty();
@@ -47,6 +60,7 @@ void files::FileIcon::setThumbnailVisible(bool visible) {
 void files::FileIcon::releaseFile(Renderer& renderer) {
   m_thumbnailSource.reset();
   m_thumbnail.reset();
+  m_thumbnailPixels = 0;
   m_asset.reset();
   if (m_texture.valid())
     renderer.textureManager().unload(m_texture);
@@ -62,9 +76,15 @@ void files::FileIcon::setIconSize(float size) {
 LayoutSize files::FileIcon::doMeasure(Renderer&, const LayoutConstraints&) { return {m_size, m_size}; }
 void files::FileIcon::doLayout(Renderer& renderer) {
   const int pixels = static_cast<int>(std::ceil(m_size * renderer.renderScale()));
-  if (m_thumbnails && m_thumbnailSource) {
-    auto image = m_thumbnails->request(*m_thumbnailSource, pixels, m_thumbnailVisible);
-    m_thumbnail = std::move(image);
+  if (m_thumbnails
+      && m_thumbnailSource
+      && m_thumbnailSource->type == G_FILE_TYPE_REGULAR
+      && !m_thumbnailSource->symlink
+      && m_thumbnailSource->modifiedSeconds) {
+    if (pixels != m_thumbnailPixels || !m_thumbnails->touch(m_thumbnail, m_thumbnailVisible)) {
+      m_thumbnail = m_thumbnails->request(*m_thumbnailSource, pixels, m_thumbnailVisible);
+      m_thumbnailPixels = pixels;
+    }
   }
   const auto asset =
       m_thumbnailVisible && m_thumbnail && m_thumbnail->pixels ? m_thumbnail : m_cache.request(m_source, pixels);
@@ -75,7 +95,7 @@ void files::FileIcon::doLayout(Renderer& renderer) {
     }
     m_asset = asset;
   }
-  if (!m_texture.valid() && m_asset && m_asset->pixels) {
+  if (m_thumbnailVisible && !m_texture.valid() && m_asset && m_asset->pixels) {
     const auto& pixels = *m_asset->pixels;
     m_texture = m_textures->loadFromRgba(pixels.rgba.data(), pixels.width, pixels.height);
   }

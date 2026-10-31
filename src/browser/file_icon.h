@@ -30,6 +30,7 @@ namespace files {
     ThumbnailService* m_thumbnails = nullptr;
     std::optional<DirectoryEntry> m_thumbnailSource;
     std::shared_ptr<const FileIconImage> m_thumbnail;
+    int m_thumbnailPixels = 0;
     bool m_thumbnailVisible = true;
     float m_size;
     FileIconSource m_source;
