@@ -113,7 +113,7 @@ namespace {
     const auto sourceStamp = stamp(before);
     const auto relative = std::filesystem::path(*native).lexically_relative(store.root());
     const bool insideCache = !relative.empty() && *relative.begin() != "..";
-    if (!generate && !insideCache) {
+    if (!generate && !insideCache && side <= 1024) {
       if (auto cached = store.read(
               source.location.uri(), side, static_cast<std::uint64_t>(before.st_mtim.tv_sec),
               static_cast<std::uint64_t>(before.st_size), sourceStamp
@@ -142,7 +142,7 @@ namespace {
     struct stat named{};
     if (::lstat(native->c_str(), &named) < 0 || stamp(named) != sourceStamp)
       return result;
-    if (!insideCache) {
+    if (!insideCache && side <= 1024) {
       ThumbnailPng cached{
           .image = *decoded,
           .text = {
@@ -193,6 +193,7 @@ struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
   };
   static constexpr std::size_t kWriteBudget = 16U * 1024U * 1024U;
   ThumbnailOptions options;
+  ThumbnailPurpose purpose = ThumbnailPurpose::THUMBNAIL;
   std::unordered_map<std::string, Item> cache;
   std::unordered_map<const FileIconImage*, Item*> leases;
   std::function<void()> changed;
@@ -436,7 +437,13 @@ struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
   }
 };
 
-files::ThumbnailService::ThumbnailService() : m_state(std::make_shared<State>()) {}
+files::ThumbnailService::ThumbnailService(ThumbnailPurpose purpose) : m_state(std::make_shared<State>()) {
+  m_state->purpose = purpose;
+}
+int files::ThumbnailService::pixelSizeClass(int pixels, ThumbnailPurpose purpose) {
+  return purpose == ThumbnailPurpose::PREVIEW && pixels > 1024 ? kMaxPreviewImageSide
+                                                               : ThumbnailStore::sizeClass(std::clamp(pixels, 1, 1024));
+}
 files::ThumbnailService::~ThumbnailService() {
   m_state->alive = false;
   m_state->changed = {};
@@ -461,7 +468,7 @@ files::ThumbnailService::request(const DirectoryEntry& source, int pixels, bool 
       || privateUri(source.location.uri())
       || (state.options.policy == ThumbnailPolicy::LOCAL && !source.location.nativePath()))
     return {};
-  const int side = ThumbnailStore::sizeClass(std::clamp(pixels, 1, 1024));
+  const int side = pixelSizeClass(pixels, mime->starts_with("image/") ? state.purpose : ThumbnailPurpose::THUMBNAIL);
   const auto key = std::format(
       "{}\n{}\n{}\n{}\n{}\n{}\n{}", source.location.uri(), source.id, source.etag.value_or(""),
       source.modifiedSeconds.value_or(0), source.size.value_or(0), source.contentRevision.value_or(""), side

@@ -1,3 +1,4 @@
+#include "browser/preview_layout.h"
 #include "browser/preview_service.h"
 #include "browser/thumbnail_worker.h"
 
@@ -53,6 +54,14 @@ namespace {
     std::ofstream(path, std::ios::binary) << text;
   }
   void checks(const std::filesystem::path& root) {
+    const auto portraitLayout = files::previewImageLayout(1000, 3000, 320, 1300, 1);
+    require(
+        portraitLayout.pixels >= 846, "tall portrait was decoded for the pane width instead of its displayed height"
+    );
+    const auto landscapeLayout = files::previewImageLayout(3840, 2160, 320, 1300, 1);
+    require(landscapeLayout.pixels <= 320, "landscape preview unnecessarily decoded for the entire pane height");
+    const auto retinaLayout = files::previewImageLayout(3840, 2160, 800, 720, 2);
+    require(retinaLayout.pixels > 1024 && retinaLayout.pixels <= 2048, "high-DPI preview target lost pixel density");
     files::PreviewService preview;
     const auto a = root / "space ' café\n.txt", b = root / "new.txt";
     const auto finish = [&] { wait([&] { return !preview.busy(); }); };
@@ -151,6 +160,64 @@ namespace {
     auto obsolete = source;
     obsolete.contentRevision = "changed";
     require(!grid.prepared(obsolete), "stale browser thumbnail reused for a new revision");
+    preview.clear();
+    finish();
+    const auto detailed = root / "detailed.png";
+    const files::GioPtr<GdkPixbuf> detailPixels(gdk_pixbuf_new(GDK_COLORSPACE_RGB, true, 8, 2560, 1600));
+    gdk_pixbuf_fill(detailPixels.get(), 0x2233ffffU);
+    require(gdk_pixbuf_save(detailPixels.get(), detailed.c_str(), "png", nullptr, nullptr), "large PNG fixture failed");
+    const auto detailSource = entry(detailed, "image/png");
+    const auto small = grid.request(detailSource, 128);
+    wait([&] { return small && small->ready; });
+    require(small->pixels && small->pixels->width == 128, "small thumbnail fixture was not small");
+    preview.show(detailSource, 512, {}, small);
+    require(preview.snapshot().image == small, "preview lost its immediate thumbnail");
+    wait([&] {
+      return preview.snapshot().image
+          && preview.snapshot().image->pixels
+          && preview.snapshot().image->pixels->width >= 512;
+    });
+    preview.show(detailSource, 1024, {}, small);
+    finish();
+    require(
+        preview.snapshot().image && preview.snapshot().image->pixels && preview.snapshot().image->pixels->width == 1024,
+        "resized preview kept the small thumbnail"
+    );
+    require(!preview.snapshot().imageUpgradeFailed, "successful preview reported an upgrade failure");
+    preview.show(detailSource, 1536, {}, small);
+    finish();
+    require(
+        preview.snapshot().image && preview.snapshot().image->pixels && preview.snapshot().image->pixels->width == 2048,
+        "high-DPI preview was limited to a grid thumbnail"
+    );
+    const auto highResolution = preview.snapshot().image;
+    preview.show(detailSource, 1400, {}, small);
+    require(preview.snapshot().image == highResolution, "resize within one pixel class restarted the preview");
+    preview.show(detailSource, 512, {}, small);
+    require(preview.snapshot().image == highResolution, "narrowing the pane downgraded its existing image");
+    const auto ordinary = grid.request(detailSource, 1536);
+    wait([&] { return ordinary && ordinary->ready; });
+    require(ordinary->pixels && ordinary->pixels->width == 1024, "grid thumbnail bounds were enlarged");
+    preview.clear();
+    finish();
+    const auto limitedPath = root / "limited.png";
+    std::filesystem::copy_file(detailed, limitedPath);
+    const auto limitedSource = entry(limitedPath, "image/png");
+    const auto fallback = grid.request(limitedSource, 128);
+    wait([&] { return fallback && fallback->ready; });
+    files::ThumbnailOptions limited;
+    limited.maxMegapixels = 1;
+    preview.show(limitedSource, 512, limited, fallback);
+    finish();
+    require(
+        preview.snapshot().status == files::PreviewStatus::READY
+            && preview.snapshot().image == fallback
+            && preview.snapshot().image->pixels
+            && preview.snapshot().image->pixels->width == 128
+            && preview.snapshot().message == "Larger preview unavailable."
+            && preview.snapshot().imageUpgradeFailed,
+        "failed larger preview lost its usable thumbnail"
+    );
     preview.clear();
     finish();
     {

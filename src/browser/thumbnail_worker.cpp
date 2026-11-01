@@ -1,6 +1,7 @@
 #include "browser/thumbnail_worker.h"
 
 #include "browser/thumbnail_codec.h"
+#include "browser/thumbnail_options.h"
 #include "fs/gio_ptr.h"
 
 #include <array>
@@ -21,7 +22,7 @@ int files::runThumbnailWorker(std::span<const std::string_view> arguments) {
   const auto side = number(arguments[0]), pixels = number(arguments[1]), maximum = number(arguments[2]);
   if (!side
       || *side < 1
-      || *side > 1024
+      || *side > kMaxPreviewImageSide
       || !pixels
       || *pixels < 1
       || *pixels > 64'000'000
@@ -79,7 +80,7 @@ std::expected<LoadedImageFile, std::string>
 files::readThumbnailWorkerResult(std::vector<std::uint8_t> bytes, int maxSide) {
   if (bytes.size() < 12
       || maxSide < 1
-      || maxSide > 1024
+      || maxSide > kMaxPreviewImageSide
       || bytes[0] != 'N'
       || bytes[1] != 'F'
       || bytes[2] != 'R'

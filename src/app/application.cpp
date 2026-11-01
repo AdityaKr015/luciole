@@ -11,6 +11,7 @@
 #include "browser/location_presentation.h"
 #include "browser/path_completion.h"
 #include "browser/places_sidebar.h"
+#include "browser/preview_layout.h"
 #include "browser/preview_service.h"
 #include "browser/selection_tools.h"
 #include "browser/tab_workspace.h"
@@ -2701,7 +2702,8 @@ namespace {
     }
 
     void syncPreview() {
-      if ((!m_previewBounds && !m_quickPreview) || !m_active || overlay() || m_cachePaused) {
+      const bool quick = m_quickPreview && m_menuSurface;
+      if ((!m_previewBounds && !quick) || !m_active || overlay() || m_cachePaused) {
         m_preview.clear();
         return;
       }
@@ -2709,16 +2711,24 @@ namespace {
       const auto* entry = selected.size() == 1 && m_browser.model().selectionAvailable()
           ? m_browser.model().entry(selected.front())
           : nullptr;
-      m_preview.show(
-          entry ? std::optional(*entry) : std::nullopt,
-          static_cast<int>(std::ceil(
-              (m_quickPreview && m_menuSurface ? static_cast<float>(m_menuSurface->width()) - 32
-                   : m_previewBounds           ? m_previewBounds->width - 32
-                                               : 512)
-              * m_surface->renderTarget().renderer().renderScale()
-          )),
-          m_savedSettings.thumbnails, entry ? m_thumbnails.prepared(*entry) : nullptr
+      const auto prepared = entry ? m_thumbnails.prepared(*entry) : nullptr;
+      const auto& current = m_preview.snapshot();
+      const auto image = entry
+              && current.entry
+              && entry->id == current.entry->id
+              && entry->location == current.entry->location
+              && current.image
+              && current.image->pixels
+          ? current.image
+          : prepared;
+      const auto* pixels = image && image->pixels ? &*image->pixels : nullptr;
+      const float width = quick ? static_cast<float>(m_menuSurface->width()) : m_previewBounds->width;
+      const float height = quick ? static_cast<float>(m_menuSurface->height()) : m_previewBounds->height;
+      const auto& renderer = quick ? m_menuSurface->renderTarget().renderer() : m_surface->renderTarget().renderer();
+      const auto layout = files::previewImageLayout(
+          pixels ? pixels->width : 0, pixels ? pixels->height : 0, width, height, renderer.renderScale(), quick
       );
+      m_preview.show(entry ? std::optional(*entry) : std::nullopt, layout.pixels, m_savedSettings.thumbnails, prepared);
     }
     void previewOpen(bool with) {
       const auto entry = m_preview.snapshot().entry;

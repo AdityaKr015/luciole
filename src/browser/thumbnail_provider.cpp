@@ -5,6 +5,7 @@
 #include "browser/thumbnail_worker.h"
 #include "fs/gio_ptr.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <condition_variable>
@@ -18,16 +19,21 @@
 #include <unistd.h>
 
 namespace {
-  void childSetup(gpointer parent) {
+  struct ChildLimits {
+    pid_t parent;
+    rlim_t outputBytes;
+  };
+  void childSetup(gpointer data) {
+    const auto& limits = *static_cast<const ChildLimits*>(data);
     (void)::prctl(PR_SET_PDEATHSIG, SIGKILL);
-    if (::getppid() != GPOINTER_TO_INT(parent))
+    if (::getppid() != limits.parent)
       ::_exit(1);
     (void)::setsid();
     errno = 0;
     if (::nice(10) == -1 && errno != 0)
       ::_exit(1);
     const rlimit cpu{5, 5}, memory{768U * 1024U * 1024U, 768U * 1024U * 1024U},
-        file{8U * 1024U * 1024U, 8U * 1024U * 1024U};
+        file{limits.outputBytes, limits.outputBytes};
     if (::setrlimit(RLIMIT_CPU, &cpu) < 0)
       ::_exit(1);
 #ifndef __SANITIZE_ADDRESS__
@@ -40,7 +46,8 @@ namespace {
     if (::setrlimit(RLIMIT_FSIZE, &file) < 0)
       ::_exit(1);
   }
-  bool run(std::vector<std::string> args, int input, GCancellable* cancellable) {
+  bool
+  run(std::vector<std::string> args, int input, GCancellable* cancellable, rlim_t outputBytes = 8U * 1024U * 1024U) {
     if (g_cancellable_is_cancelled(cancellable))
       return false;
     const files::GString executable(g_find_program_in_path(args.front().c_str()));
@@ -50,7 +57,8 @@ namespace {
     const files::GioPtr<GSubprocessLauncher> launcher(g_subprocess_launcher_new(
         static_cast<GSubprocessFlags>(G_SUBPROCESS_FLAGS_STDOUT_SILENCE | G_SUBPROCESS_FLAGS_STDERR_SILENCE)
     ));
-    g_subprocess_launcher_set_child_setup(launcher.get(), childSetup, GINT_TO_POINTER(::getpid()), nullptr);
+    ChildLimits limits{::getpid(), outputBytes};
+    g_subprocess_launcher_set_child_setup(launcher.get(), childSetup, &limits, nullptr);
     const int source = ::fcntl(input, F_DUPFD_CLOEXEC, 4);
     if (source < 0)
       return false;
@@ -112,6 +120,12 @@ namespace {
 std::expected<LoadedImageFile, std::string> files::renderThumbnailProvider(
     int sourceFd, const std::string& mime, int side, const ThumbnailOptions& options, GCancellable* cancellable
 ) {
+  const bool image = mime.starts_with("image/");
+  if (side < 1 || side > (image ? kMaxPreviewImageSide : 1024))
+    return std::unexpected("invalid preview size");
+  const std::size_t outputLimit = image
+      ? std::max(std::size_t{8U * 1024U * 1024U}, 12 + static_cast<std::size_t>(side) * side * 4)
+      : 8U * 1024U * 1024U;
   const GString temporary(g_dir_make_tmp("noctalia-thumbnail-XXXXXX", nullptr));
   if (!temporary)
     return std::unexpected("cannot prepare thumbnail provider");
@@ -130,7 +144,7 @@ std::expected<LoadedImageFile, std::string> files::renderThumbnailProvider(
         run({"/proc/self/exe", "--thumbnail-worker", std::to_string(side),
              std::to_string(static_cast<std::uint64_t>(options.maxMegapixels) * 1'000'000U),
              std::to_string(static_cast<std::uint64_t>(options.maxFileMiB) * 1024U * 1024U), output.native()},
-            sourceFd, cancellable);
+            sourceFd, cancellable, outputLimit);
   } else if (mime == "application/pdf") {
     success =
         run({"pdftoppm", "-f", "1", "-singlefile", "-scale-to", std::to_string(side), "-png", "-q", "/proc/self/fd/3",
@@ -171,7 +185,7 @@ std::expected<LoadedImageFile, std::string> files::renderThumbnailProvider(
   }
   if (!success)
     return std::unexpected("no supported thumbnail provider");
-  auto encoded = readThumbnailFile(output, 8U * 1024U * 1024U);
+  auto encoded = readThumbnailFile(output, outputLimit);
   if (!encoded)
     return std::unexpected("thumbnail provider exceeded output limits");
   if (mime.starts_with("image/"))

@@ -9,11 +9,12 @@ namespace files {
   // Cells hold prepared images, upload during Layout and release them on rebinding.
   class ThumbnailService {
   public:
-    ThumbnailService();
+    explicit ThumbnailService(ThumbnailPurpose purpose = ThumbnailPurpose::THUMBNAIL);
     ~ThumbnailService();
     ThumbnailService(const ThumbnailService&) = delete;
     ThumbnailService& operator=(const ThumbnailService&) = delete;
     std::shared_ptr<const FileIconImage> request(const DirectoryEntry& source, int pixels, bool visible = true);
+    static int pixelSizeClass(int pixels, ThumbnailPurpose purpose);
     std::shared_ptr<const FileIconImage> prepared(const DirectoryEntry& source);
     bool touch(const std::shared_ptr<const FileIconImage>& image, bool visible);
     void synchronizeSources(const DirectorySnapshot& snapshot);

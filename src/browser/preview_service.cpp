@@ -1,7 +1,5 @@
 #include "browser/preview_service.h"
 
-#include "browser/thumbnail_store.h"
-
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -151,7 +149,7 @@ namespace {
 
 struct files::PreviewService::State : std::enable_shared_from_this<State> {
   PreviewSnapshot view;
-  ThumbnailService thumbnails;
+  ThumbnailService thumbnails{ThumbnailPurpose::PREVIEW};
   std::shared_ptr<const FileIconImage> pendingImage;
   GioPtr<GCancellable> cancel;
   std::function<void()> changed;
@@ -173,8 +171,11 @@ struct files::PreviewService::State : std::enable_shared_from_this<State> {
       return;
     if (pendingImage->pixels)
       view.image = pendingImage;
+    view.imageUpgradeFailed = !pendingImage->pixels;
     view.status = view.image && view.image->pixels ? PreviewStatus::READY : PreviewStatus::UNAVAILABLE;
-    view.message = view.status == PreviewStatus::READY ? "" : "No preview available for this file.";
+    view.message = pendingImage->pixels ? ""
+        : view.image                    ? "Larger preview unavailable."
+                                        : "No preview available for this file.";
     pendingImage.reset();
   }
   void notify() {
@@ -245,7 +246,11 @@ void files::PreviewService::show(
     std::optional<DirectoryEntry> entry, int pixels, ThumbnailOptions options,
     std::shared_ptr<const FileIconImage> prepared
 ) {
-  pixels = ThumbnailStore::sizeClass(std::clamp(pixels, 1, 1024));
+  pixels = ThumbnailService::pixelSizeClass(
+      pixels,
+      entry && entry->contentType && entry->contentType->starts_with("image/") ? ThumbnailPurpose::PREVIEW
+                                                                               : ThumbnailPurpose::THUMBNAIL
+  );
   if (!entry) {
     if (m_state->view.entry) {
       clear();
@@ -253,18 +258,21 @@ void files::PreviewService::show(
     }
     return;
   }
-  if (m_state->view.entry
-      && sameSource(*entry, *m_state->view.entry)
-      && (pixels == m_state->pixels || textType(entry->contentType.value_or("")))
-      && options == m_state->options) {
+  const bool unchanged = m_state->view.entry && sameSource(*entry, *m_state->view.entry) && options == m_state->options;
+  if (unchanged
+      && (pixels == m_state->pixels
+          || (pixels < m_state->pixels && !m_state->view.imageUpgradeFailed)
+          || textType(entry->contentType.value_or("")))) {
     if (prepared && prepared->pixels && (!m_state->view.image || !m_state->view.image->pixels)) {
       m_state->view.image = std::move(prepared);
       m_state->view.status = PreviewStatus::READY;
-      m_state->view.message.clear();
+      m_state->view.message = m_state->view.imageUpgradeFailed ? "Larger preview unavailable." : "";
       m_state->notify();
     }
     return;
   }
+  if (unchanged && m_state->view.image && m_state->view.image->pixels)
+    prepared = m_state->view.image;
   m_state->resetSelection();
   auto& state = *m_state;
   state.pixels = pixels;
@@ -300,4 +308,9 @@ void files::PreviewService::setChangedCallback(std::function<void()> callback) {
   m_state->changed = std::move(callback);
 }
 const files::PreviewSnapshot& files::PreviewService::snapshot() const { return m_state->view; }
-bool files::PreviewService::busy() const { return m_state->running || m_state->thumbnails.activeJobs() != 0; }
+bool files::PreviewService::busy() const {
+  return m_state->running
+      || m_state->pending
+      || m_state->thumbnails.activeJobs() != 0
+      || m_state->thumbnails.queuedJobs() != 0;
+}

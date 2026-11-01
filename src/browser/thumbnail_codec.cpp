@@ -1,5 +1,6 @@
 #include "browser/thumbnail_codec.h"
 
+#include "browser/thumbnail_options.h"
 #include "fs/gio_ptr.h"
 #include "render/core/image_orientation.h"
 
@@ -57,7 +58,7 @@ namespace {
 std::expected<LoadedImageFile, std::string> files::decodeThumbnail(
     std::span<const std::uint8_t> bytes, int target, std::uint64_t maxPixels, GCancellable* cancellable
 ) {
-  if (bytes.empty() || target < 1 || target > 1024)
+  if (bytes.empty() || target < 1 || target > kMaxPreviewImageSide)
     return std::unexpected("invalid thumbnail input");
   const auto starts = [&](std::string_view signature) {
     return bytes.size() >= signature.size() && std::memcmp(bytes.data(), signature.data(), signature.size()) == 0;

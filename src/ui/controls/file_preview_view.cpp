@@ -1,5 +1,6 @@
 #include "ui/controls/file_preview_view.h"
 
+#include "browser/preview_layout.h"
 #include "ui/builders.h"
 #include "ui/controls/button.h"
 #include "ui/controls/label.h"
@@ -124,16 +125,13 @@ void FilePreviewView::sync(
     }
     m_image->bind(entry->icon, colorSpecFromRole(ColorRole::OnSurface));
   }
-  m_image->setIconSize(quick ? std::min(budget, 460.0F) : budget);
-  float imageHeight = 96;
-  if (snapshot.image && snapshot.image->pixels) {
-    const auto& image = *snapshot.image->pixels;
-    imageHeight = (quick ? std::min(budget, 460.0F) : budget)
-        * static_cast<float>(image.height)
-        / static_cast<float>(image.width);
-  }
-  m_image->setPreviewHeight(std::clamp(imageHeight, 48.0F, std::max(80.0F, height - 250.0F)));
+  const auto* pixels = snapshot.image && snapshot.image->pixels ? &*snapshot.image->pixels : nullptr;
+  const auto image =
+      files::previewImageLayout(pixels ? pixels->width : 0, pixels ? pixels->height : 0, width, height, 1, quick);
+  m_image->setIconSize(image.width);
+  m_image->setPreviewHeight(image.height);
   m_image->setPreparedImage(snapshot.image);
+  m_image->setPreviewUpscale(!snapshot.imageUpgradeFailed);
   const bool showImage = entry && snapshot.image && snapshot.image->pixels;
   m_image->parent()->setVisible(showImage);
   m_image->parent()->setParticipatesInLayout(showImage);

@@ -1,6 +1,8 @@
 #pragma once
 
 namespace files {
+  inline constexpr int kMaxPreviewImageSide = 2048;
+  enum class ThumbnailPurpose { THUMBNAIL, PREVIEW };
   enum class ThumbnailPolicy { NEVER, LOCAL, ALL };
   struct ThumbnailOptions {
     ThumbnailPolicy policy = ThumbnailPolicy::LOCAL;

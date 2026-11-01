@@ -9,6 +9,7 @@ namespace files {
     PreviewStatus status = PreviewStatus::EMPTY;
     std::string text, message;
     std::shared_ptr<const FileIconImage> image;
+    bool imageUpgradeFailed = false;
   };
   // One current selection and at most one text worker. Superseded work never publishes.
   class PreviewService {
