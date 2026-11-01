@@ -14,7 +14,9 @@ files::PlacesSidebar::PlacesSidebar(PinService& pins, FileIconCache& icons) : m_
   setAlign(FlexAlign::Stretch);
   setMinWidth(static_cast<float>(kDefaultSidebarWidth));
   setMaxWidth(static_cast<float>(kDefaultSidebarWidth));
-  setFill(colorSpecFromRole(ColorRole::SurfaceContainerLow));
+  setFill(colorSpecFromRole(ColorRole::SurfaceContainer));
+  setRadius(Style::radiusXl);
+  setPadding(Style::spaceXs);
   addChild(
       ui::scrollView(
           {.out = &m_scroll, .viewportPaddingH = 8.0F, .viewportPaddingV = 12.0F, .fillWidth = true, .flexGrow = 1.0F}

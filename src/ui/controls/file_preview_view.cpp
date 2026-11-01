@@ -16,6 +16,7 @@ FilePreviewView::FilePreviewView(
   setPadding(Style::spaceMd);
   setGap(Style::spaceMd);
   setFill(colorSpecFromRole(ColorRole::SurfaceContainer));
+  setRadius(Style::radiusXl);
   setBorder(colorSpecFromRole(ColorRole::OutlineVariant), Style::borderWidth);
   addChild(
       ui::row(
@@ -24,7 +25,14 @@ FilePreviewView::FilePreviewView(
               {.out = &m_heading, .text = "Preview", .fontWeight = FontWeight::SemiBold, .maxLines = 1, .flexGrow = 1}
           ),
           ui::button(
-              {.glyph = "x", .variant = ButtonVariant::Ghost, .tooltip = "Close preview", .onClick = std::move(close)}
+              {.glyph = "x",
+               .glyphSize = Style::baseGlyphSize,
+               .controlHeight = 24.0F,
+               .variant = ButtonVariant::Ghost,
+               .tooltip = "Close preview",
+               .padding = Style::spaceXs,
+               .width = 24.0F,
+               .onClick = std::move(close)}
           )
       )
   );
@@ -80,6 +88,7 @@ FilePreviewView::FilePreviewView(
 void FilePreviewView::sync(
     const files::PreviewSnapshot& snapshot, float width, float height, std::string_view typeLabel, bool quick
 ) {
+  setRadii(quick ? Radii(Style::radiusXl) : Radii(0, Style::radiusXl, Style::radiusXl, 0));
   const float budget = std::max(40.0F, width - Style::spaceMd * 2 - Style::scrollbarWidth - Style::scrollbarGap);
   m_heading->setMaxWidth(std::max(1.0F, width - Style::spaceMd * 2 - Style::controlHeightSm - Style::spaceSm));
   m_actions->setDirection(width < 240 ? FlexDirection::Vertical : FlexDirection::Horizontal);

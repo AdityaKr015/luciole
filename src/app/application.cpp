@@ -71,6 +71,9 @@
 #include <utility>
 
 namespace {
+  constexpr float kWorkspaceInset = Style::spaceSm;
+  constexpr float kWorkspaceRadius = Style::radiusXl;
+
   volatile std::sig_atomic_t g_stopRequested = 0;
   void stopRequested(int) { g_stopRequested = 1; }
 
@@ -504,7 +507,7 @@ namespace {
       deactivate();
       m_surface = &surface;
     }
-    void prepare(LayoutRect bounds, bool active, Node* host) {
+    void prepare(LayoutRect bounds, bool active, Node* host, bool roundLeft = true, bool roundRight = true) {
       m_pageBounds = bounds;
       if (!m_visible) {
         m_visible = true;
@@ -515,11 +518,20 @@ namespace {
       m_paneHeader->setVisible(split);
       m_paneHeader->setParticipatesInLayout(split);
       m_paneTitle->setText(title());
+      m_paneTitle->setColor(colorSpecFromRole(active ? ColorRole::Primary : ColorRole::OnSurfaceVariant));
       prepareFrame(true, true);
       stampFocusKeys(*m_root);
       stampFocusKeys(*m_toolbar);
       stampFocusKeys(*m_sidebarBundle);
-      m_body->setBorder(colorSpecFromRole(active ? ColorRole::OutlineVariant : ColorRole::Surface), 1.0F);
+      m_body->setBorder(
+          colorSpecFromRole(active ? (split ? ColorRole::Primary : ColorRole::OutlineVariant) : ColorRole::Surface),
+          split && active ? 2.0F : 1.0F
+      );
+      m_body->setRadii(
+          {roundLeft ? kWorkspaceRadius : 0.0F, roundRight ? kWorkspaceRadius : 0.0F,
+           roundRight ? kWorkspaceRadius : 0.0F, roundLeft ? kWorkspaceRadius : 0.0F}
+      );
+      m_body->setPadding(Style::radiusMd);
       if (active && !m_active) {
         m_active = true;
         m_dispatcher.setSceneRoot(host);
@@ -627,7 +639,9 @@ namespace {
     }
 
     float sidebarWidth() const {
-      return m_showSidebar ? static_cast<float>(std::min(m_sidebarWidth, sidebarMaximumWidth())) + 6.0F : 0.0F;
+      return m_showSidebar
+          ? static_cast<float>(std::min(m_sidebarWidth, sidebarMaximumWidth())) + kSidebarHandleWidth + kWorkspaceInset
+          : 0.0F;
     }
     void pumpJobs() {
       if (m_root) {
@@ -3806,8 +3820,8 @@ namespace {
 
     int sidebarMaximumWidth() const {
       return std::clamp(
-          static_cast<int>(m_surface->width()) - 320 - static_cast<int>(kSidebarHandleWidth), files::kMinSidebarWidth,
-          files::kMaxSidebarWidth
+          static_cast<int>(m_surface->width()) - 320 - static_cast<int>(kSidebarHandleWidth + kWorkspaceInset * 3),
+          files::kMinSidebarWidth, files::kMaxSidebarWidth
       );
     }
 
@@ -4632,6 +4646,7 @@ namespace {
               : m_sidebarResize->hovered()                ? ColorRole::OnSurfaceVariant
                                                           : ColorRole::OutlineVariant
       ));
+      m_sidebarResizeLine->setVisible(m_resizingSidebar || m_sidebarResize->focused() || m_sidebarResize->hovered());
       if (std::exchange(m_archiveDirty, false))
         syncArchive();
       syncTransferConflict();
@@ -5167,9 +5182,12 @@ namespace {
                   ),
                   ui::button(
                       {.glyph = "x",
-                       .controlHeight = Style::controlHeightSm,
+                       .glyphSize = Style::baseGlyphSize,
+                       .controlHeight = 24.0F,
                        .variant = ButtonVariant::Ghost,
                        .tooltip = "Close pane (Ctrl+Alt+W)",
+                       .padding = Style::spaceXs,
+                       .width = 24.0F,
                        .onClick =
                            [this] {
                              if (m_workspaceRequest)
@@ -6010,6 +6028,7 @@ namespace {
       float pointerX = 0, pointerY = 0;
       float resizeStart = 0.5F;
       std::optional<int> previewDragWidth;
+      LayoutRect browsingBounds{};
       Host(files::WindowId value, WaylandConnection& connection) : id(value), surface(connection) {}
     };
 
@@ -6336,7 +6355,8 @@ namespace {
       const auto x = static_cast<float>(event.sx), y = static_cast<float>(event.sy);
       if (host->previewDragWidth) {
         if (event.type == PointerEvent::Type::Motion) {
-          host->previewDragWidth = std::clamp(static_cast<int>(std::lround(host->surface.width() - x)), 208, 800);
+          host->previewDragWidth =
+              std::clamp(static_cast<int>(std::lround(host->surface.width() - kWorkspaceInset - x)), 208, 800);
           host->surface.requestLayout();
         } else if (event.type == PointerEvent::Type::Button && !event.pressed && event.button == BTN_LEFT) {
           active.savePreviewWidth(*host->previewDragWidth);
@@ -6349,8 +6369,7 @@ namespace {
       }
       if (host->resizing) {
         if (event.type == PointerEvent::Type::Motion) {
-          const auto left = active.sidebarWidth();
-          m_model.resize(host->id, (x - left) / (host->surface.width() - left - active.previewAreaWidth()));
+          m_model.resize(host->id, (x - host->browsingBounds.x) / host->browsingBounds.width);
           host->surface.requestLayout();
         }
         if (event.type == PointerEvent::Type::Button && !event.pressed)
@@ -6921,7 +6940,8 @@ namespace {
       if (!window.active)
         return;
       if (!host.root) {
-        host.root = ui::column({.align = FlexAlign::Stretch, .fill = colorSpecFromRole(ColorRole::Surface)});
+        host.root =
+            ui::column({.align = FlexAlign::Stretch, .fill = colorSpecFromRole(ColorRole::SurfaceContainerLow)});
         host.root->setAnimationManager(&m_animations);
         host.surface.setSceneRoot(host.root.get());
         host.dispatcher.setSceneRoot(host.root.get());
@@ -7036,13 +7056,18 @@ namespace {
         return;
       }
       host.toolbarNode->arrange(renderer, {0, 40, width, 54});
-      const float top = 94;
+      const float top = 94 + kWorkspaceInset;
+      const float bodyHeight = std::max(1.0F, height - top - kWorkspaceInset);
       const float sidebar = active.sidebarWidth();
-      active.sidebar()->arrange(renderer, {0, top, sidebar, height - top});
+      active.sidebar()->arrange(
+          renderer, {kWorkspaceInset, top, std::max(0.0F, sidebar - kWorkspaceInset), bodyHeight}
+      );
+      const float left = kWorkspaceInset + sidebar;
+      const float right = width - kWorkspaceInset;
       const float previewWidth = active.previewVisible()
           ? std::min(
                 static_cast<float>(host.previewDragWidth.value_or(active.previewWidth())),
-                std::max(120.0F, width - sidebar - 160.0F)
+                std::max(120.0F, right - left - 160.0F)
             )
           : 0;
       host.previewDivider->setVisible(previewWidth > 0);
@@ -7051,25 +7076,26 @@ namespace {
               : host.previewDivider->hovered()                    ? ColorRole::OnSurfaceVariant
                                                                   : ColorRole::OutlineVariant
       ));
-      host.previewDivider->arrange(renderer, {width - previewWidth - 3, top, 6, height - top});
-      host.previewDivider->children().front()->arrange(renderer, {2.5F, 0, 1, height - top});
+      host.previewDivider->arrange(renderer, {right - previewWidth - 3, top, 6, bodyHeight});
+      host.previewDivider->children().front()->arrange(renderer, {2.5F, 0, 1, bodyHeight});
       for (auto tab : visible)
         m_pages.at(tab)->setPreviewBounds(
             tab == window.active && previewWidth > 0
-                ? std::optional(LayoutRect{width - previewWidth, top, previewWidth, height - top})
+                ? std::optional(LayoutRect{right - previewWidth, top, previewWidth, bodyHeight})
                 : std::nullopt
         );
-      const float content = std::max(1.0F, width - sidebar - previewWidth);
+      const float content = std::max(1.0F, right - left - previewWidth);
+      host.browsingBounds = {left, top, content, bodyHeight};
       const bool split = visible.size() == 2;
-      const float first = split ? (content - 6) * window.fraction : content;
+      const float first = split ? content * window.fraction : content;
       host.divider->setVisible(split);
-      host.divider->arrange(renderer, {sidebar + first, top, 6, height - top});
-      host.divider->children().front()->arrange(renderer, {2.5F, 0, 1.0F, height - top});
+      host.divider->arrange(renderer, {left + first - 3, top, 6, bodyHeight});
+      host.divider->children().front()->arrange(renderer, {2.5F, 0, 1.0F, bodyHeight});
       for (std::size_t index = 0; index < visible.size(); ++index) {
         const auto tab = visible[index];
         m_pages.at(tab)->prepare(
-            {sidebar + (index ? first + 6 : 0), top, index ? content - first - 6 : first, height - top},
-            tab == window.active, host.root.get()
+            {left + (index ? first : 0), top, index ? content - first : first, bodyHeight}, tab == window.active,
+            host.root.get(), index == 0, index == visible.size() - 1 && previewWidth == 0
         );
       }
     }
