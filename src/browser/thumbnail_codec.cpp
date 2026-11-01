@@ -3,14 +3,15 @@
 #include "browser/thumbnail_options.h"
 #include "fs/gio_ptr.h"
 #include "render/core/image_orientation.h"
+#include "render/core/image_resize.h"
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cmath>
 #include <cstring>
 #include <gdk-pixbuf/gdk-pixbuf.h>
 #include <png.h>
-#include <webp/decode.h>
 
 namespace {
   std::uint32_t read32(const std::uint8_t* p) {
@@ -56,62 +57,29 @@ namespace {
 } // namespace
 
 std::expected<LoadedImageFile, std::string> files::decodeThumbnail(
-    std::span<const std::uint8_t> bytes, int target, std::uint64_t maxPixels, GCancellable* cancellable
+    std::span<const std::uint8_t> bytes, int target, std::uint64_t maxPixels, GCancellable* cancellable,
+    std::string_view contentType
 ) {
-  if (bytes.empty() || target < 1 || target > kMaxPreviewImageSide)
+  if (bytes.empty() || target < 1 || target > kMaxPreviewImageSide || !maxPixels || maxPixels > 64'000'000)
     return std::unexpected("invalid thumbnail input");
-  const auto starts = [&](std::string_view signature) {
-    return bytes.size() >= signature.size() && std::memcmp(bytes.data(), signature.data(), signature.size()) == 0;
-  };
-  const bool isWebp = bytes.size() >= 12 && starts("RIFF") && std::memcmp(bytes.data() + 8, "WEBP", 4) == 0;
-  if (isWebp) {
-    WebPDecoderConfig config;
-    if (!WebPInitDecoderConfig(&config)
-        || WebPGetFeatures(bytes.data(), bytes.size(), &config.input) != VP8_STATUS_OK
-        || config.input.width < 1
-        || config.input.height < 1
-        || static_cast<std::uint64_t>(config.input.width) * config.input.height > maxPixels)
-      return std::unexpected("invalid or oversized WebP");
-    const double ratio = std::min(1.0, static_cast<double>(target) / std::max(config.input.width, config.input.height));
-    const int width = std::max(1, static_cast<int>(std::round(config.input.width * ratio))),
-              height = std::max(1, static_cast<int>(std::round(config.input.height * ratio)));
-    LoadedImageFile image{
-        .rgba = std::vector<std::uint8_t>(static_cast<std::size_t>(width) * height * 4),
-        .width = width,
-        .height = height,
-        .sourceWidth = config.input.width,
-        .sourceHeight = config.input.height
-    };
-    config.options.use_scaling = width != config.input.width || height != config.input.height;
-    config.options.scaled_width = width;
-    config.options.scaled_height = height;
-    config.output.colorspace = MODE_RGBA;
-    config.output.is_external_memory = 1;
-    config.output.u.RGBA.rgba = image.rgba.data();
-    config.output.u.RGBA.stride = width * 4;
-    config.output.u.RGBA.size = image.rgba.size();
-    const auto status = WebPDecode(bytes.data(), bytes.size(), &config);
-    WebPFreeDecBuffer(&config.output);
-    if (status != VP8_STATUS_OK || g_cancellable_is_cancelled(cancellable))
-      return std::unexpected("unsupported or cancelled WebP");
-    applyImageOrientation(image.rgba, image.width, image.height, exifOrientation(bytes.data(), bytes.size()));
-    return image;
-  }
-  // Only binary raster formats reach GdkPixbuf. In particular, SVG/XML never resolves resources.
-  const bool raster = starts(std::string_view("\x89PNG\r\n\x1a\n", 8))
-      || starts(std::string_view("\xff\xd8", 2))
-      || starts("GIF87a")
-      || starts("GIF89a")
-      || starts("BM")
-      || starts(std::string_view("II*\0", 4))
-      || starts(std::string_view("MM\0*", 4))
-      || starts(std::string_view("\0\0\1\0", 4))
-      || starts("8BPS")
-      || (bytes.size() >= 3 && bytes[0] == 'P' && bytes[1] >= '1' && bytes[1] <= '6' && g_ascii_isspace(bytes[2]));
-  if (!raster)
+  if (g_cancellable_is_cancelled(cancellable))
+    return std::unexpected("image decode cancelled");
+  const GString guessed(
+      contentType.empty()
+          ? g_content_type_guess(nullptr, bytes.data(), std::min<std::size_t>(bytes.size(), 4096), nullptr)
+          : nullptr
+  );
+  const std::string mime(contentType.empty() ? (guessed ? guessed.get() : "") : contentType);
+  // Select an explicit raster loader before handing it bytes. SVG resource loading stays excluded.
+  if (!mime.starts_with("image/") || mime.starts_with("image/svg"))
     return std::unexpected("no supported raster decoder");
-  // SVG external-resource resolution is left to a separately verified provider.
-  const GioPtr<GdkPixbufLoader> loader(gdk_pixbuf_loader_new());
+  GError* setupError = nullptr;
+  const GioPtr<GdkPixbufLoader> loader(gdk_pixbuf_loader_new_with_mime_type(mime.c_str(), &setupError));
+  if (!loader) {
+    const std::string message = setupError ? setupError->message : "no image loader installed";
+    g_clear_error(&setupError);
+    return std::unexpected("GdkPixbuf: " + message);
+  }
   DecodeSize state{target, maxPixels};
   g_signal_connect(loader.get(), "size-prepared", G_CALLBACK(sizePrepared), &state);
   GError* error = nullptr;
@@ -134,29 +102,82 @@ std::expected<LoadedImageFile, std::string> files::decodeThumbnail(
       }
     }
   }
-  if (error)
+  std::string failure;
+  if (error) {
+    failure = error->message;
     g_clear_error(&error);
+  }
   if (!gdk_pixbuf_loader_close(loader.get(), &error))
     ok = false;
-  if (error)
+  if (error) {
+    if (failure.empty())
+      failure = error->message;
     g_clear_error(&error);
+  }
   auto* pixbuf = gdk_pixbuf_loader_get_pixbuf(loader.get());
-  if (!ok || state.rejected || !pixbuf || g_cancellable_is_cancelled(cancellable))
-    return std::unexpected("unsupported, cancelled or oversized image");
+  if (g_cancellable_is_cancelled(cancellable))
+    return std::unexpected("image decode cancelled");
+  if (state.rejected)
+    return std::unexpected("image exceeds source pixel limit");
+  if (!ok || !pixbuf)
+    return std::unexpected(failure.empty() ? "GdkPixbuf returned no pixels" : "GdkPixbuf: " + failure);
+  if (state.width < 1 || state.height < 1)
+    return std::unexpected("image decoder supplied no source dimensions");
+  auto image = fitThumbnailPixels(pixbuf, target, maxPixels);
+  if (!image)
+    return image;
+  image->sourceWidth = state.width;
+  image->sourceHeight = state.height;
+  auto orientation = exifOrientation(bytes.data(), bytes.size());
+  if (const char* option = gdk_pixbuf_get_option(pixbuf, "orientation")) {
+    const std::string_view value(option);
+    unsigned parsed = 0;
+    const auto result = std::from_chars(value.data(), value.data() + value.size(), parsed);
+    if (result.ec == std::errc{} && result.ptr == value.data() + value.size() && parsed >= 1 && parsed <= 8)
+      orientation = static_cast<ImageOrientation>(parsed);
+  }
+  applyImageOrientation(image->rgba, image->width, image->height, orientation);
+  if (orientation == ImageOrientation::Transpose
+      || orientation == ImageOrientation::Rotate90
+      || orientation == ImageOrientation::Transverse
+      || orientation == ImageOrientation::Rotate270)
+    std::swap(image->sourceWidth, image->sourceHeight);
+  return image;
+}
+
+std::expected<LoadedImageFile, std::string>
+files::fitThumbnailPixels(GdkPixbuf* pixbuf, int target, std::uint64_t maxPixels) {
+  if (!pixbuf || target < 1 || target > kMaxPreviewImageSide)
+    return std::unexpected("invalid thumbnail pixels");
   const int width = gdk_pixbuf_get_width(pixbuf), height = gdk_pixbuf_get_height(pixbuf);
-  if (width < 1 || height < 1 || width > target || height > target || gdk_pixbuf_get_bits_per_sample(pixbuf) != 8)
-    return std::unexpected("decoder ignored thumbnail bounds");
-  LoadedImageFile image{
-      .rgba = std::vector<std::uint8_t>(static_cast<std::size_t>(width) * height * 4),
-      .width = width,
-      .height = height,
-      .sourceWidth = state.width,
-      .sourceHeight = state.height
-  };
+  if (width < 1
+      || height < 1
+      || static_cast<std::uint64_t>(width) * height > maxPixels
+      || gdk_pixbuf_get_bits_per_sample(pixbuf) != 8)
+    return std::unexpected("image exceeds decoded pixel limits");
   const int channels = gdk_pixbuf_get_n_channels(pixbuf), stride = gdk_pixbuf_get_rowstride(pixbuf);
   if (channels != 3 && channels != 4)
     return std::unexpected("unsupported image channels");
   const auto* pixels = gdk_pixbuf_read_pixels(pixbuf);
+  const auto fitted = fitImageWithin(width, height, target, target);
+  if (stride == width * channels && (fitted.width != width || fitted.height != height)) {
+    auto resized = resizeToRgba(
+        pixels, width, height, channels == 4 ? ResizeSourceLayout::Rgba : ResizeSourceLayout::Rgb, fitted.width,
+        fitted.height
+    );
+    if (resized.empty())
+      return std::unexpected("cannot scale decoded image");
+    return LoadedImageFile{
+        .rgba = std::move(resized), .width = fitted.width, .height = fitted.height, .sourceWidth = 0, .sourceHeight = 0
+    };
+  }
+  LoadedImageFile image{
+      .rgba = std::vector<std::uint8_t>(static_cast<std::size_t>(width) * height * 4),
+      .width = width,
+      .height = height,
+      .sourceWidth = 0,
+      .sourceHeight = 0
+  };
   for (int y = 0; y < height; ++y)
     for (int x = 0; x < width; ++x) {
       const auto source = static_cast<std::size_t>(y) * stride + static_cast<std::size_t>(x) * channels;
@@ -165,7 +186,15 @@ std::expected<LoadedImageFile, std::string> files::decodeThumbnail(
         image.rgba[dest + c] = pixels[source + c];
       image.rgba[dest + 3] = channels == 4 ? pixels[source + 3] : 255;
     }
-  applyImageOrientation(image.rgba, image.width, image.height, exifOrientation(bytes.data(), bytes.size()));
+  if (fitted.width != width || fitted.height != height) {
+    auto resized =
+        resizeToRgba(image.rgba.data(), width, height, ResizeSourceLayout::Rgba, fitted.width, fitted.height);
+    if (resized.empty())
+      return std::unexpected("cannot scale decoded image");
+    image.rgba = std::move(resized);
+    image.width = fitted.width;
+    image.height = fitted.height;
+  }
   return image;
 }
 

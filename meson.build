@@ -43,12 +43,17 @@ endforeach
 alias_target('generated-headers', protocol_headers)
 
 gio = dependency('gio-2.0', version: '>=2.76')
-gdk_pixbuf = dependency('gdk-pixbuf-2.0')
+gdk_pixbuf = dependency('gdk-pixbuf-2.0', version: '>=2.44')
+glycin = dependency('glycin-2', version: '>=2.0.1')
+if not cpp.has_header('stb/stb_image_resize2.h')
+  error('system stb/stb_image_resize2.h is required')
+endif
 webp = dependency('libwebp')
 tomlplusplus = dependency('tomlplusplus', version: '>=3.4')
 ui_dependencies = [
   gio,
   gdk_pixbuf,
+  glycin,
   webp,
   dependency('wayland-client'), dependency('wayland-egl'), dependency('wayland-cursor'),
   dependency('egl'), dependency('glesv2'), dependency('xkbcommon'),
@@ -142,6 +147,8 @@ app_sources = files(
   'src/render/backend/render_backend.cpp',
   'src/render/core/color.cpp',
   'src/render/core/image_decoder.cpp',
+  'src/render/core/image_resize.cpp',
+  'src/render/core/stb_image_resize_impl.cpp',
   'src/render/core/image_file_loader.cpp',
   'src/render/core/shader_program.cpp',
   'src/render/gl_shared_context.cpp',
@@ -294,21 +301,27 @@ if build_tests
   test('archive-service', archive_test, timeout: 90, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   thumbnail_test = executable('thumbnail-test',
     'tests/thumbnail_test.cpp',
+    'src/core/log.cpp',
     'src/browser/thumbnail_codec.cpp',
     'src/browser/thumbnail_store.cpp',
     'src/browser/thumbnail_provider.cpp',
     'src/browser/thumbnail_worker.cpp',
     'src/browser/thumbnail_service.cpp',
     'src/render/core/image_orientation.cpp',
+    'src/render/core/image_decoder.cpp',
+    'src/render/core/image_resize.cpp',
+    'src/render/core/stb_image_resize_impl.cpp',
     dependencies: [filesystem_service, settings_service, gdk_pixbuf, webp, dependency('libpng'), dependency('nlohmann_json'), dependency('threads')],
   )
   test('thumbnail', thumbnail_test, timeout: 90, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   preview_test = executable('preview-service-test', 'tests/preview_service_test.cpp',
     'src/browser/preview_service.cpp',
     objects: thumbnail_test.extract_objects(files(
+      'src/core/log.cpp',
       'src/browser/thumbnail_codec.cpp', 'src/browser/thumbnail_store.cpp',
       'src/browser/thumbnail_provider.cpp', 'src/browser/thumbnail_worker.cpp',
-      'src/browser/thumbnail_service.cpp', 'src/render/core/image_orientation.cpp')),
+      'src/browser/thumbnail_service.cpp', 'src/render/core/image_orientation.cpp',
+      'src/render/core/image_decoder.cpp', 'src/render/core/image_resize.cpp', 'src/render/core/stb_image_resize_impl.cpp')),
     dependencies: [filesystem_service, settings_service, gdk_pixbuf, webp, dependency('libpng'), dependency('nlohmann_json'), dependency('threads')])
   test('preview-service', preview_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   python = import('python').find_installation('python3')

@@ -4,6 +4,7 @@
 #include "browser/thumbnail_options.h"
 #include "fs/gio_ptr.h"
 
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <fcntl.h>
@@ -11,8 +12,28 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+namespace {
+  bool writeResult(std::string_view path, std::span<const std::uint8_t> header, std::span<const std::uint8_t> body) {
+    const int output = ::open(std::string(path).c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
+    if (output < 0)
+      return false;
+    for (const auto data : {header, body}) {
+      std::size_t offset = 0;
+      while (offset < data.size()) {
+        const auto count = ::write(output, data.data() + offset, data.size() - offset);
+        if (count <= 0) {
+          ::close(output);
+          return false;
+        }
+        offset += static_cast<std::size_t>(count);
+      }
+    }
+    return ::close(output) == 0;
+  }
+} // namespace
+
 int files::runThumbnailWorker(std::span<const std::string_view> arguments) {
-  if (arguments.size() != 4)
+  if (arguments.size() != 5)
     return 2;
   const auto number = [](std::string_view input) -> std::optional<std::uint64_t> {
     std::uint64_t value = 0;
@@ -45,32 +66,22 @@ int files::runThumbnailWorker(std::span<const std::string_view> arguments) {
       offset += static_cast<std::size_t>(count);
     }
     const GioPtr<GCancellable> cancel(g_cancellable_new());
-    auto image = decodeThumbnail(bytes, static_cast<int>(*side), *pixels, cancel.get());
-    if (!image)
+    auto image = decodeThumbnail(bytes, static_cast<int>(*side), *pixels, cancel.get(), arguments[3]);
+    if (!image) {
+      // Keep backend diagnostics bounded and on one line; never send the source filename.
+      auto message = image.error().substr(0, 768);
+      std::ranges::replace_if(message, [](unsigned char c) { return c < 32 || c > 126; }, '?');
+      constexpr std::array<std::uint8_t, 4> header{'N', 'F', 'E', '1'};
+      (void)writeResult(arguments[4], header, {reinterpret_cast<const std::uint8_t*>(message.data()), message.size()});
       return 1;
+    }
     // Private parent/child transport avoids PNG compression followed immediately by decoding.
     std::array<std::uint8_t, 12> header{'N', 'F', 'R', '1'};
     for (int i = 0; i < 4; ++i) {
       header[4 + i] = static_cast<std::uint8_t>(static_cast<std::uint32_t>(image->width) >> (24 - i * 8));
       header[8 + i] = static_cast<std::uint8_t>(static_cast<std::uint32_t>(image->height) >> (24 - i * 8));
     }
-    const int output =
-        ::open(std::string(arguments[3]).c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
-    if (output < 0)
-      return 1;
-    for (const std::span<const std::uint8_t> data :
-         {std::span<const std::uint8_t>(header), std::span<const std::uint8_t>(image->rgba)}) {
-      offset = 0;
-      while (offset < data.size()) {
-        const auto count = ::write(output, data.data() + offset, data.size() - offset);
-        if (count <= 0) {
-          ::close(output);
-          return 1;
-        }
-        offset += static_cast<std::size_t>(count);
-      }
-    }
-    return ::close(output) == 0 ? 0 : 1;
+    return writeResult(arguments[4], header, image->rgba) ? 0 : 1;
   } catch (const std::exception&) {
     return 1;
   }
@@ -78,6 +89,14 @@ int files::runThumbnailWorker(std::span<const std::string_view> arguments) {
 
 std::expected<LoadedImageFile, std::string>
 files::readThumbnailWorkerResult(std::vector<std::uint8_t> bytes, int maxSide) {
+  if (bytes.size() > 4
+      && bytes.size() <= 1024
+      && bytes[0] == 'N'
+      && bytes[1] == 'F'
+      && bytes[2] == 'E'
+      && bytes[3] == '1'
+      && std::all_of(bytes.begin() + 4, bytes.end(), [](auto c) { return c >= 32 && c <= 126; }))
+    return std::unexpected(std::string(bytes.begin() + 4, bytes.end()));
   if (bytes.size() < 12
       || maxSide < 1
       || maxSide > kMaxPreviewImageSide

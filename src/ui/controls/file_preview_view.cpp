@@ -131,7 +131,6 @@ void FilePreviewView::sync(
   m_image->setIconSize(image.width);
   m_image->setPreviewHeight(image.height);
   m_image->setPreparedImage(snapshot.image);
-  m_image->setPreviewUpscale(!snapshot.imageUpgradeFailed);
   const bool showImage = entry && snapshot.image && snapshot.image->pixels;
   m_image->parent()->setVisible(showImage);
   m_image->parent()->setParticipatesInLayout(showImage);

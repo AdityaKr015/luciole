@@ -3,6 +3,7 @@
 #include "browser/thumbnail_codec.h"
 #include "browser/thumbnail_provider.h"
 #include "browser/thumbnail_store.h"
+#include "core/log.h"
 #include "fs/gio_ptr.h"
 
 #include <algorithm>
@@ -132,6 +133,8 @@ namespace {
     const auto mime = source.contentType.value_or("");
     if (mime.starts_with("image/") || !insideCache)
       decoded = renderThumbnailProvider(file.value, mime, side, options, cancel);
+    if (!decoded && !g_cancellable_is_cancelled(cancel))
+      logDebug("[thumbnail] mime={} size={}: {}", mime, side, decoded.error());
     struct stat after{};
     if (!decoded
         || ::fstat(file.value, &after) < 0

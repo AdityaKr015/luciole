@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <mutex>
+#include <sched.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>
 #include <thread>
@@ -21,7 +22,8 @@
 namespace {
   struct ChildLimits {
     pid_t parent;
-    rlim_t outputBytes;
+    rlim_t fileBytes;
+    unsigned maxCpus;
   };
   void childSetup(gpointer data) {
     const auto& limits = *static_cast<const ChildLimits*>(data);
@@ -32,8 +34,23 @@ namespace {
     errno = 0;
     if (::nice(10) == -1 && errno != 0)
       ::_exit(1);
+    // Keep nested decoder thread pools within the image worker's address-space budget.
+    if (limits.maxCpus) {
+      cpu_set_t available, selected;
+      if (::sched_getaffinity(0, sizeof(available), &available) < 0)
+        ::_exit(1);
+      CPU_ZERO(&selected);
+      unsigned count = 0;
+      for (int cpu = 0; cpu < CPU_SETSIZE && count < limits.maxCpus; ++cpu)
+        if (CPU_ISSET(cpu, &available)) {
+          CPU_SET(cpu, &selected);
+          ++count;
+        }
+      if (!count || ::sched_setaffinity(0, sizeof(selected), &selected) < 0)
+        ::_exit(1);
+    }
     const rlimit cpu{5, 5}, memory{768U * 1024U * 1024U, 768U * 1024U * 1024U},
-        file{limits.outputBytes, limits.outputBytes};
+        file{limits.fileBytes, limits.fileBytes};
     if (::setrlimit(RLIMIT_CPU, &cpu) < 0)
       ::_exit(1);
 #ifndef __SANITIZE_ADDRESS__
@@ -46,22 +63,23 @@ namespace {
     if (::setrlimit(RLIMIT_FSIZE, &file) < 0)
       ::_exit(1);
   }
-  bool
-  run(std::vector<std::string> args, int input, GCancellable* cancellable, rlim_t outputBytes = 8U * 1024U * 1024U) {
+  std::expected<void, std::string>
+  run(std::vector<std::string> args, int input, GCancellable* cancellable, rlim_t fileBytes = 8U * 1024U * 1024U,
+      unsigned maxCpus = 0) {
     if (g_cancellable_is_cancelled(cancellable))
-      return false;
+      return std::unexpected("thumbnail request cancelled");
     const files::GString executable(g_find_program_in_path(args.front().c_str()));
     if (!executable)
-      return false;
+      return std::unexpected("thumbnail provider executable unavailable");
     args.front() = executable.get();
     const files::GioPtr<GSubprocessLauncher> launcher(g_subprocess_launcher_new(
         static_cast<GSubprocessFlags>(G_SUBPROCESS_FLAGS_STDOUT_SILENCE | G_SUBPROCESS_FLAGS_STDERR_SILENCE)
     ));
-    ChildLimits limits{::getpid(), outputBytes};
+    ChildLimits limits{::getpid(), fileBytes, maxCpus};
     g_subprocess_launcher_set_child_setup(launcher.get(), childSetup, &limits, nullptr);
     const int source = ::fcntl(input, F_DUPFD_CLOEXEC, 4);
     if (source < 0)
-      return false;
+      return std::unexpected("cannot pass source descriptor to thumbnail provider");
     g_subprocess_launcher_take_fd(launcher.get(), source, 3);
     std::vector<const char*> argv;
     argv.reserve(args.size() + 1);
@@ -70,7 +88,7 @@ namespace {
     argv.push_back(nullptr);
     const files::GioPtr<GSubprocess> process(g_subprocess_launcher_spawnv(launcher.get(), argv.data(), nullptr));
     if (!process)
-      return false;
+      return std::unexpected("cannot start thumbnail provider");
     // Waiting occurs only on a thumbnail worker. The child is also CPU/address-space/output bounded.
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
     struct Wait {
@@ -106,14 +124,21 @@ namespace {
       lock.unlock();
       g_subprocess_force_exit(process.get());
     });
-    const bool done = g_subprocess_wait_check(process.get(), nullptr, nullptr);
+    GError* error = nullptr;
+    const bool done = g_subprocess_wait_check(process.get(), nullptr, &error);
+    const std::string failure = error ? error->message : "thumbnail provider failed";
+    g_clear_error(&error);
     {
       std::scoped_lock lock(wait.mutex);
       wait.finished = true;
     }
     wait.condition.notify_one();
     watchdog.join();
-    return done && !g_cancellable_is_cancelled(cancellable);
+    if (g_cancellable_is_cancelled(cancellable))
+      return std::unexpected("thumbnail request cancelled");
+    if (!done)
+      return std::unexpected(failure);
+    return {};
   }
 } // namespace
 
@@ -138,13 +163,19 @@ std::expected<LoadedImageFile, std::string> files::renderThumbnailProvider(
     }
   } cleanup{directory};
   const auto output = directory / (mime.starts_with("image/") ? "result.rgba" : "result.png");
-  bool success = false;
+  std::expected<void, std::string> success = std::unexpected("no supported thumbnail provider");
   if (mime.starts_with("image/")) {
+    // Glycin transfers source pixels through a memfd before scaling. RLIMIT_FSIZE applies there too.
+    // The private result remains separately validated against outputLimit and the requested dimensions.
+    const auto fileLimit = std::max(
+        {static_cast<std::uint64_t>(outputLimit), static_cast<std::uint64_t>(options.maxFileMiB) * 1024U * 1024U,
+         static_cast<std::uint64_t>(options.maxMegapixels) * 1'000'000U * 4U}
+    );
     success =
         run({"/proc/self/exe", "--thumbnail-worker", std::to_string(side),
              std::to_string(static_cast<std::uint64_t>(options.maxMegapixels) * 1'000'000U),
-             std::to_string(static_cast<std::uint64_t>(options.maxFileMiB) * 1024U * 1024U), output.native()},
-            sourceFd, cancellable, outputLimit);
+             std::to_string(static_cast<std::uint64_t>(options.maxFileMiB) * 1024U * 1024U), mime, output.native()},
+            sourceFd, cancellable, fileLimit, 2);
   } else if (mime == "application/pdf") {
     success =
         run({"pdftoppm", "-f", "1", "-singlefile", "-scale-to", std::to_string(side), "-png", "-q", "/proc/self/fd/3",
@@ -183,8 +214,19 @@ std::expected<LoadedImageFile, std::string> files::renderThumbnailProvider(
     );
     success = run(std::move(arguments), sourceFd, cancellable);
   }
-  if (!success)
-    return std::unexpected("no supported thumbnail provider");
+  if (!success) {
+    if (image && !g_cancellable_is_cancelled(cancellable)) {
+      auto report = readThumbnailFile(output, 1024);
+      if (report
+          && report->size() > 4
+          && (*report)[0] == 'N'
+          && (*report)[1] == 'F'
+          && (*report)[2] == 'E'
+          && (*report)[3] == '1')
+        return readThumbnailWorkerResult(std::move(*report), side);
+    }
+    return std::unexpected(success.error());
+  }
   auto encoded = readThumbnailFile(output, outputLimit);
   if (!encoded)
     return std::unexpected("thumbnail provider exceeded output limits");

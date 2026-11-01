@@ -54,7 +54,7 @@
           mesonFlags = [ "-Dtests=enabled" ];
           doCheck = true;
           preCheck = ''
-            export XDG_DATA_DIRS="${pkgs.shared-mime-info}/share"
+            export XDG_DATA_DIRS="${pkgs.shared-mime-info}/share:${pkgs.glycin-loaders}/share"
             export PATH="${
               nixpkgs.lib.makeBinPath [
                 pkgs.ffmpeg

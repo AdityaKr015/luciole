@@ -1,6 +1,7 @@
 {
   lib,
   stdenv,
+  fetchurl,
   meson,
   ninja,
   pkg-config,
@@ -22,6 +23,9 @@
   libwebp,
   librsvg,
   gdk-pixbuf,
+  libglycin,
+  glycin-loaders,
+  stb,
   ffmpeg,
   poppler-utils,
   nlohmann_json,
@@ -33,6 +37,49 @@
   xdg-terminal-exec,
   buildRevision ? "unknown",
 }:
+let
+  pixbufWithGlycin = gdk-pixbuf.overrideAttrs (previous: {
+    # 2.44.8 requires Glycin 2.2; the pinned collection provides its 2.1 API.
+    version = "2.44.6";
+    src = fetchurl {
+      url = "https://download.gnome.org/sources/gdk-pixbuf/2.44/gdk-pixbuf-2.44.6.tar.xz";
+      hash = "sha256-FAwtC4mfz4U+6SsmNzydwijbzeCCCkJGaT9DKKJ0Zvo=";
+    };
+    buildInputs = (previous.buildInputs or [ ]) ++ [
+      libglycin
+      glycin-loaders
+      shared-mime-info
+    ];
+    preBuild = (previous.preBuild or "") + ''
+      export XDG_DATA_DIRS="${glycin-loaders}/share:${shared-mime-info}/share:''${XDG_DATA_DIRS:-}"
+    '';
+    mesonFlags =
+      builtins.filter (
+        flag:
+        !(lib.any (name: lib.hasPrefix "-D${name}=" flag) [
+          "glycin"
+          "builtin_loaders"
+          "png"
+          "jpeg"
+          "gif"
+          "tiff"
+          "others"
+          "legacy_xpm"
+        ])
+      ) previous.mesonFlags
+      ++ [
+        "-Dglycin=enabled"
+        "-Dbuiltin_loaders=glycin"
+        "-Dpng=disabled"
+        "-Djpeg=disabled"
+        "-Dgif=disabled"
+        "-Dtiff=disabled"
+        "-Dothers=disabled"
+        "-Dlegacy_xpm=disabled"
+      ];
+  });
+  svgWithGlycin = librsvg.override { gdk-pixbuf = pixbufWithGlycin; };
+in
 stdenv.mkDerivation (finalAttrs: {
   pname = "noctalia-files";
   version = lib.fileContents ../VERSION;
@@ -87,8 +134,11 @@ stdenv.mkDerivation (finalAttrs: {
     libpng
     libarchive
     libwebp
-    librsvg
-    gdk-pixbuf
+    pixbufWithGlycin
+    svgWithGlycin
+    libglycin
+    glycin-loaders
+    stb
     nlohmann_json
     tomlplusplus
   ];
@@ -108,6 +158,7 @@ stdenv.mkDerivation (finalAttrs: {
         lib.makeSearchPath "share" [
           adwaita-icon-theme
           shared-mime-info
+          glycin-loaders
         ]
       }"
   '';
@@ -115,6 +166,7 @@ stdenv.mkDerivation (finalAttrs: {
     "-Dtests=disabled"
     (lib.mesonOption "build_revision" buildRevision)
   ];
+  passthru.glycinLoaders = glycin-loaders;
 
   meta = {
     description = "A native Wayland file manager using Noctalia rendering and controls (in development)";

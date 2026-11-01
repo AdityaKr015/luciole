@@ -3,7 +3,10 @@
 #include "browser/thumbnail_service.h"
 #include "browser/thumbnail_store.h"
 #include "browser/thumbnail_worker.h"
+#include "core/log.h"
+#include "render/core/image_decoder.h"
 #include "render/core/image_orientation.h"
+#include "render/core/image_resize.h"
 
 #include <algorithm>
 #include <chrono>
@@ -114,8 +117,19 @@ namespace {
     require(!files::decodeThumbnail(data, 128, 100, cancel.get()), "oversized source bypassed pixel limits");
     auto small = files::decodeThumbnail(data, 8, 1000000, cancel.get());
     require(
-        small && small->width == 8 && small->height == 4 && small->rgba[3] == 128,
+        small && small->width == 8 && small->height == 4 && small->rgba[3] >= 127 && small->rgba[3] <= 129,
         "downscaling lost aspect or transparency"
+    );
+    // Exercise the full-size output allowed by system loaders, independently of their scaling support.
+    const GioPtr<GdkPixbuf> fullSize(gdk_pixbuf_new(GDK_COLORSPACE_RGB, true, 8, 1600, 900));
+    gdk_pixbuf_fill(fullSize.get(), 0x20408080U);
+    auto fitted = files::fitThumbnailPixels(fullSize.get(), 512, 2'000'000);
+    require(
+        fitted && fitted->width == 512 && fitted->height == 288 && fitted->rgba[0] == 32 && fitted->rgba[3] == 128,
+        "full-size decoder output was not bounded with alpha and aspect preserved"
+    );
+    require(
+        !files::fitThumbnailPixels(fullSize.get(), 512, 1'000'000), "post-decode scaling bypassed source pixel limits"
     );
     const std::string svg =
         "<svg xmlns='http://www.w3.org/2000/svg'><image href='https://invalid.example/a.png'/></svg>";
@@ -154,6 +168,97 @@ namespace {
     require(!files::readThumbnailPng(data, 128), "corrupt PNG CRC was ignored");
     g_cancellable_cancel(cancel.get());
     require(!files::decodeThumbnail(png(original), 128, 1000000, cancel.get()), "cancelled decode completed");
+  }
+  void testRasterFormats() {
+    const GioPtr<GCancellable> cancel(g_cancellable_new());
+    const std::vector<std::uint8_t> gif{'G', 'I',  'F', '8', '9', 'a', 1, 0, 1, 0, 0x80, 0, 0, 0,    0, 0, 255, 255,
+                                        255, 0x2c, 0,   0,   0,   0,   1, 0, 1, 0, 0,    2, 2, 0x44, 1, 0, 0x3b};
+    auto decoded = files::decodeThumbnail(gif, 128, 1000000, cancel.get());
+    require(
+        decoded && decoded->width == 1 && decoded->height == 1 && decoded->rgba[3] == 255,
+        "raster decoder did not decode the first GIF frame"
+    );
+    const std::vector<std::uint8_t> pnm{'P', '6', '\n', '2', ' ', '1', '\n', '2', '5', '5', '\n', 255, 0, 0, 0, 255, 0};
+    decoded = files::decodeThumbnail(pnm, 128, 1000000, cancel.get());
+    require(
+        decoded && decoded->width == 2 && decoded->height == 1 && decoded->rgba[0] == 255 && decoded->rgba[5] == 255,
+        "raster decoder lost PNM pixels"
+    );
+    std::vector<std::uint8_t> bmp(62);
+    const auto put32 = [](auto& data, std::size_t offset, std::uint32_t value) {
+      for (std::size_t i = 0; i < 4; ++i)
+        data[offset + i] = static_cast<std::uint8_t>(value >> (i * 8));
+    };
+    bmp[0] = 'B';
+    bmp[1] = 'M';
+    put32(bmp, 2, 62);
+    put32(bmp, 10, 54);
+    put32(bmp, 14, 40);
+    put32(bmp, 18, 2);
+    put32(bmp, 22, 1);
+    bmp[26] = 1;
+    bmp[28] = 24;
+    bmp[56] = 255;
+    bmp[58] = 255;
+    decoded = files::decodeThumbnail(bmp, 128, 1000000, cancel.get());
+    require(
+        decoded && decoded->width == 2 && decoded->rgba[0] == 255 && decoded->rgba[5] == 255,
+        "raster decoder lost BMP channel order"
+    );
+    const auto pngData = png(picture());
+    std::vector<std::uint8_t> ico(22);
+    ico[2] = 1;
+    ico[4] = 1;
+    ico[6] = 32;
+    ico[7] = 16;
+    ico[10] = 1;
+    ico[12] = 32;
+    put32(ico, 14, static_cast<std::uint32_t>(pngData.size()));
+    put32(ico, 18, 22);
+    ico.insert(ico.end(), pngData.begin(), pngData.end());
+    decoded = files::decodeThumbnail(ico, 128, 1000000, cancel.get());
+    require(decoded && decoded->rgba == picture().rgba, "ICO loader lost embedded PNG alpha");
+    // Verify both PNG-backed and 32-bit DIB icon transparency.
+    ico.resize(22);
+    ico[6] = 2;
+    ico[7] = 1;
+    put32(ico, 14, 52);
+    std::vector<std::uint8_t> dib(52);
+    put32(dib, 0, 40);
+    put32(dib, 4, 2);
+    put32(dib, 8, 2);
+    dib[12] = 1;
+    dib[14] = 32;
+    dib[42] = 255;
+    dib[43] = 128;
+    dib[45] = 255;
+    dib[47] = 255;
+    ico.insert(ico.end(), dib.begin(), dib.end());
+    decoded = files::decodeThumbnail(ico, 128, 1000000, cancel.get());
+    require(
+        decoded
+            && decoded->width == 2
+            && decoded->height == 1
+            && decoded->rgba[0] == 255
+            && decoded->rgba[3] == 128
+            && decoded->rgba[5] == 255,
+        "ICO DIB loader lost alpha or channel order"
+    );
+    require(!files::decodeThumbnail(ico, 128, 1, cancel.get()), "ICO bypassed source pixel limits");
+    put32(ico, 26, 0x80000000U);
+    require(!files::decodeThumbnail(ico, 128, 1000000, cancel.get()), "ICO accepted invalid signed dimensions");
+    const std::array<std::uint8_t, 8> transparentRedBlue{255, 0, 0, 0, 0, 0, 255, 255};
+    const auto resized = resizeToRgba(transparentRedBlue.data(), 2, 1, ResizeSourceLayout::Rgba, 1, 1);
+    require(
+        resized.size() == 4 && resized[0] < 5 && resized[2] > 250 && resized[3] >= 125 && resized[3] <= 130,
+        "Noctalia resampling introduced a transparent-edge halo"
+    );
+    auto corrupt = pngData;
+    corrupt[20] ^= 1;
+    require(!files::decodeThumbnail(corrupt, 128, 1000000, cancel.get()), "raster decoder ignored PNG header checksum");
+    require(!decodeRasterImage(pngData.data(), pngData.size(), 100), "raster decoder allocated an oversized image");
+    const auto theme = decodeRasterImage(pngData.data(), pngData.size());
+    require(theme && theme->pixels == picture().rgba, "theme PNG artwork did not decode");
   }
   void benchmarkThumbnails(const fs::path& directory, std::size_t limit, bool videos) {
     require(limit >= 1 && limit <= 256, "benchmark count must be between 1 and 256");
@@ -237,6 +342,15 @@ namespace {
     malformed[4] = 1;
     require(!files::readThumbnailWorkerResult(malformed, 128), "worker transport accepted oversized dimensions");
     require(!files::readThumbnailWorkerResult(valid, 0), "worker transport accepted an invalid size limit");
+    const std::string diagnostic = "NFE1GdkPixbuf: decoder unavailable";
+    const auto failed = files::readThumbnailWorkerResult({diagnostic.begin(), diagnostic.end()}, 128);
+    require(!failed && failed.error() == diagnostic.substr(4), "worker lost its decoder diagnostic");
+    auto oversized = std::vector<std::uint8_t>(1025, 'a');
+    std::copy_n(diagnostic.begin(), 4, oversized.begin());
+    require(
+        files::readThumbnailWorkerResult(oversized, 128).error() != std::string(1021, 'a'),
+        "worker accepted an oversized diagnostic"
+    );
   }
   void testBatchAndLargerCache() {
     files::ThumbnailStore store;
@@ -504,6 +618,88 @@ namespace {
       ::close(input);
       return result;
     };
+    const auto corrupt = fixture.root / "broken.png";
+    std::ofstream(corrupt, std::ios::binary) << "not an image";
+    const auto failedImage = render(corrupt, "image/png");
+    require(
+        !failedImage && failedImage.error().contains("GdkPixbuf") && !failedImage.error().contains(corrupt.native()),
+        "isolated decoder lost its bounded diagnostic or exposed the source path"
+    );
+    const auto rasterSource = fixture.root / "format-source.png";
+    write(rasterSource, png(picture(128, 64)));
+    const auto jxl = fixture.root / "format.jxl";
+    // Reuse Noctalia's synthetic lossless JPEG XL fixture.
+    constexpr std::array<std::uint8_t, 100> jxlBytes = {
+        0xFF, 0x0A, 0x18, 0x10, 0xB0, 0x12, 0x08, 0x10, 0x10, 0x00, 0x60, 0x01, 0x4B, 0x28, 0x24, 0xC6, 0x15,
+        0x0A, 0x0A, 0x12, 0x4E, 0x60, 0x4C, 0x19, 0x7B, 0x62, 0x72, 0x01, 0x81, 0x00, 0x24, 0xE7, 0x87, 0x96,
+        0x2F, 0xBF, 0x63, 0x00, 0xF7, 0x27, 0x80, 0xF3, 0x53, 0x3F, 0xF9, 0x23, 0x39, 0x92, 0x24, 0x39, 0xF7,
+        0x27, 0x00, 0xEA, 0x27, 0x7F, 0x40, 0x72, 0x24, 0x49, 0x3A, 0xF6, 0xFD, 0xF3, 0xAF, 0x1F, 0xF2, 0xAF,
+        0x3F, 0xFF, 0xFA, 0xF3, 0xDF, 0x9D, 0x7F, 0xFD, 0xBB, 0x77, 0x1F, 0x3C, 0x00, 0x02, 0xE0, 0xFC, 0xE4,
+        0x4F, 0xFE, 0x48, 0x1F, 0x93, 0xF1, 0xF3, 0x8C, 0xDD, 0x09, 0x13, 0x61, 0xC6, 0xF3, 0x05,
+    };
+    constexpr std::array<std::uint8_t, 64> jxlRgba = {
+        255, 0,   0,   255, 0,   255, 0,  255, 0,  0,   255, 255, 255, 255, 0,  255, 255, 0,   255, 255, 0,   255,
+        255, 255, 255, 255, 255, 255, 0,  0,   0,  255, 128, 0,   0,   128, 0,  128, 0,   128, 0,   0,   128, 128,
+        128, 128, 0,   128, 10,  20,  30, 0,   40, 50,  60,  0,   70,  80,  90, 0,   100, 110, 120, 0,
+    };
+    write(jxl, jxlBytes);
+    auto richImage = render(jxl, "image/jxl");
+    if (!richImage)
+      std::println(stderr, "JPEG XL fixture error: {}", richImage.error());
+    require(
+        richImage
+            && richImage->width == 4
+            && richImage->height == 4
+            && richImage->rgba == std::vector<std::uint8_t>(jxlRgba.begin(), jxlRgba.end()),
+        "Glycin JPEG XL decode lost size, color or alpha"
+    );
+    const auto avif = fixture.root / "format.avif";
+    command(
+        {"ffmpeg", "-nostdin", "-v", "error", "-i", rasterSource.native(), "-frames:v", "1", "-c:v", "libaom-av1",
+         "-cpu-used", "8", "-still-picture", "1", "-pix_fmt", "yuv444p", "-threads", "1", avif.native()}
+    );
+    richImage = render(avif, "image/avif");
+    require(
+        richImage && richImage->width == 128 && richImage->height == 64 && richImage->rgba[0] > 180,
+        "Glycin AVIF loader did not decode the expected image"
+    );
+    const auto animated = fixture.root / "animated.webp";
+    command(
+        {"ffmpeg",
+         "-nostdin",
+         "-v",
+         "error",
+         "-f",
+         "lavfi",
+         "-i",
+         "color=c=red:s=64x32:r=2:d=0.5",
+         "-f",
+         "lavfi",
+         "-i",
+         "color=c=blue:s=64x32:r=2:d=0.5",
+         "-filter_complex",
+         "[0:v][1:v]concat=n=2:v=1:a=0",
+         "-filter_complex_threads",
+         "1",
+         "-c:v",
+         "libwebp_anim",
+         "-lossless",
+         "1",
+         "-loop",
+         "0",
+         "-threads",
+         "1",
+         animated.native()}
+    );
+    richImage = render(animated, "image/webp");
+    require(
+        richImage
+            && richImage->width == 64
+            && richImage->height == 32
+            && richImage->rgba[0] > 220
+            && richImage->rgba[2] < 30,
+        "animated WebP did not use its first frame"
+    );
     auto still = render(video, "video/mp4");
     require(
         still && still->width == 128 && still->height == 64 && still->rgba.front() > 220,
@@ -791,6 +987,7 @@ int main(int argc, char** argv) {
     args.emplace_back(argv[i]);
   if (!args.empty() && args.front() == "--thumbnail-worker")
     return files::runThumbnailWorker(std::span(args).subspan(1));
+  initLogLevelFromEnvironment();
   try {
     Fixture fixture;
     if (!args.empty() && (args.front() == "--benchmark" || args.front() == "--benchmark-videos")) {
@@ -804,6 +1001,7 @@ int main(int argc, char** argv) {
       return 0;
     }
     testCodecs();
+    testRasterFormats();
     testWorkerTransport();
     testCache();
     testCacheLimits();

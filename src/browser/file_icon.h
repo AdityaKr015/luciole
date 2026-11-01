@@ -20,7 +20,6 @@ namespace files {
     void bind(const FileIconSource& source, ColorSpec foreground);
     void setIconSize(float size);
     void setPreviewHeight(float height);
-    void setPreviewUpscale(bool enabled);
     void setPreparedImage(std::shared_ptr<const FileIconImage> image);
 
   protected:
@@ -37,7 +36,6 @@ namespace files {
     bool m_thumbnailVisible = true;
     float m_size;
     float m_previewHeight = 0;
-    bool m_previewUpscale = true;
     FileIconSource m_source;
     ColorSpec m_foreground = colorSpecFromRole(ColorRole::OnSurface);
     ImageNode* m_image = nullptr;

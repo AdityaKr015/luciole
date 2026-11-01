@@ -1,6 +1,7 @@
 #include "browser/preview_layout.h"
 #include "browser/preview_service.h"
 #include "browser/thumbnail_worker.h"
+#include "core/log.h"
 
 #include <chrono>
 #include <filesystem>
@@ -236,6 +237,7 @@ int main(int argc, char** argv) {
     arguments.emplace_back(argv[i]);
   if (!arguments.empty() && arguments.front() == "--thumbnail-worker")
     return files::runThumbnailWorker(std::span(arguments).subspan(1));
+  initLogLevelFromEnvironment();
   const files::GString directory(g_dir_make_tmp("noctalia-preview-test-XXXXXX", nullptr));
   if (!directory)
     return 1;

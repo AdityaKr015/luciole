@@ -89,12 +89,6 @@ void files::FileIcon::setPreviewHeight(float height) {
     markLayoutDirty();
   }
 }
-void files::FileIcon::setPreviewUpscale(bool enabled) {
-  if (m_previewUpscale != enabled) {
-    m_previewUpscale = enabled;
-    markLayoutDirty();
-  }
-}
 LayoutSize files::FileIcon::doMeasure(Renderer&, const LayoutConstraints&) {
   return {m_size, m_previewHeight > 0 ? m_previewHeight : m_size};
 }
@@ -129,18 +123,8 @@ void files::FileIcon::doLayout(Renderer& renderer) {
   const bool symbolic = m_asset && m_asset->symbolic;
   m_image->setAlphaMaskTint(symbolic);
   m_image->setTint(symbolic ? resolveColorSpec(m_foreground) : Color{1, 1, 1, 1});
-  float imageWidth = width(), imageHeight = height();
-  if (m_previewHeight > 0 && !m_previewUpscale && m_prepared && m_prepared->pixels) {
-    const auto& pixels = *m_prepared->pixels;
-    const float scale = std::max(0.01F, renderer.renderScale());
-    const float nativeWidth = static_cast<float>(pixels.width) / scale;
-    const float nativeHeight = static_cast<float>(pixels.height) / scale;
-    const float fit = std::min({1.0F, imageWidth / nativeWidth, imageHeight / nativeHeight});
-    imageWidth = nativeWidth * fit;
-    imageHeight = nativeHeight * fit;
-  }
-  m_image->setPosition((width() - imageWidth) * 0.5F, (height() - imageHeight) * 0.5F);
-  m_image->setSize(imageWidth, imageHeight);
+  m_image->setPosition(0, 0);
+  m_image->setSize(width(), height());
 }
 void files::FileIcon::doInvalidateGpuResources(Renderer&) {
   m_texture = {};
