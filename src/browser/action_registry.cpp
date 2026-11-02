@@ -38,6 +38,9 @@ namespace {
        {A::ORIGINAL_LOCATION, "Show original location", "", S::TARGETS},
        {A::PIN, "Pin to sidebar", "", S::TARGETS},
        {A::UNPIN, "Unpin", "", S::TARGETS},
+       {A::CUT_FILES, "Cut", "Ctrl+X", S::TARGETS},
+       {A::COPY_FILES, "Copy", "Ctrl+C", S::TARGETS},
+       {A::PASTE_FILES, "Paste", "Ctrl+V", S::LOCATION},
        {A::RENAME, "Rename…", "F2", S::TARGETS},
        {A::TRASH, "Move to Trash", "Delete", S::TARGETS},
        {A::PROPERTIES, "Properties", "Alt+Return", S::TARGETS},
@@ -177,6 +180,22 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
     return snapshot.location ? ActionState{} : unavailable("Open a folder first.");
   case A::STOP:
     return snapshot.status == DirectoryStatus::LOADING ? ActionState{} : unavailable("Nothing is loading.");
+  case A::CUT_FILES:
+  case A::COPY_FILES:
+    if (!c.clipboardAvailable)
+      return unavailable("The application clipboard is unavailable.");
+    if (!all([&](const auto& entry) {
+          return entry.location.nativePath().has_value()
+              && entry.access.read.value_or(true)
+              && (entry.type == G_FILE_TYPE_DIRECTORY || entry.type == G_FILE_TYPE_REGULAR || entry.symlink)
+              && (action != A::CUT_FILES || entry.access.rename.value_or(true));
+        }))
+      return unavailable("Select accessible native files or folders outside Trash.");
+    return {};
+  case A::PASTE_FILES:
+    if (!c.clipboardAvailable || !c.clipboardHasFiles)
+      return unavailable("The clipboard has no available files.");
+    [[fallthrough]];
   case A::CREATE_FOLDER:
   case A::CREATE_FILE:
     if (!native || !c.query.empty() || !ready)

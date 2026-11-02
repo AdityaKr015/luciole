@@ -36,6 +36,9 @@ namespace files {
     ORIGINAL_LOCATION,
     PIN,
     UNPIN,
+    CUT_FILES,
+    COPY_FILES,
+    PASTE_FILES,
     RENAME,
     TRASH,
     PROPERTIES,
@@ -101,6 +104,7 @@ namespace files {
     bool showSidebar = true;
     bool showPreview = false;
     bool clipboardAvailable = false;
+    bool clipboardHasFiles = false;
     bool terminalAvailable = false;
     ActivationMode activationMode = ActivationMode::DOUBLE_CLICK;
     TypingMode typingMode = TypingMode::SEARCH;

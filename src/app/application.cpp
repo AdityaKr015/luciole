@@ -266,6 +266,12 @@ namespace {
             const files::GString name(g_filename_display_name(raw ? raw.get() : "Item"));
             m_actionError += std::format(" · {}: {}", name.get(), error->error);
           }
+          if (const auto selection = std::exchange(m_clipboardTransfer, std::nullopt))
+            m_clipboard.finishMove(*selection, results);
+          if (auto finish = std::exchange(m_dropCompletion, {}))
+            finish(!results.empty() && std::ranges::all_of(results, [](const auto& item) {
+              return item.outcome == files::TransferOutcome::MOVED || item.outcome == files::TransferOutcome::COPIED;
+            }));
           m_browser.refresh();
         }
         m_browserDirty = true;
@@ -294,6 +300,7 @@ namespace {
         m_surface->requestUpdate();
       });
       for (auto* adapter : {&m_listAdapter, &m_gridAdapter}) {
+        adapter->setCutPredicate([this](const files::Location& location) { return m_clipboard.isCut(location); });
         adapter->setActivationMode(m_activationMode);
         adapter->setActivateCallback([this](files::EntryId id) {
           auto request = actionRequest(false);
@@ -307,7 +314,7 @@ namespace {
         adapter->setDragCallback(
             [this](const std::vector<files::EntryId>& ids) { startFileDrag(ids); },
             [this] {
-              if (m_drag && !m_drag->sourcePin) {
+              if (m_drag && !m_drag->sourcePin && !m_systemDrag) {
                 cancelDrag();
               }
             }
@@ -317,9 +324,14 @@ namespace {
 
     ~BrowserPage() override {
       m_dragScroll.stop();
+      m_externalScroll.stop();
       m_operationProgress.stop();
       m_archives.setChangedCallback({});
       m_transfers.setChangedCallback({});
+      if (m_clipboardTransfer)
+        m_clipboard.finishMove(*m_clipboardTransfer, m_transfers.results());
+      if (m_dropCompletion)
+        m_dropCompletion(false);
       m_trash.setChangedCallback({});
       m_emptyTrash.setChangedCallback({});
       m_renamer.setChangedCallback({});
@@ -364,10 +376,12 @@ namespace {
           || m_trash.busy()
           || m_emptyTrash.busy()
           || m_renamer.busy()
-          || m_creator.busy();
+          || m_creator.busy()
+          || m_pendingFilePaste;
     }
     void shutdown() {
       m_preview.clear();
+      m_pendingFilePaste = false;
       m_launcher.cancelApplications();
       m_archives.shutdown();
       m_transfers.cancel();
@@ -407,6 +421,89 @@ namespace {
       m_placesDirty = true;
       m_browserDirty = true;
       m_surface->requestUpdate();
+    }
+    void clipboardChanged() {
+      m_browserDirty = true;
+      m_surface->requestUpdate();
+    }
+    void clearExternalDrop() {
+      m_externalDraggingHere = false;
+      m_refreshExternalDrop = false;
+      m_externalScroll.stop();
+      m_externalScrollDelta = 0;
+      if (m_externalDropTarget || m_externalPinSlot) {
+        m_externalDropTarget.reset();
+        m_externalPinSlot.reset();
+        m_surface->requestLayout();
+      }
+    }
+    const std::vector<files::Bookmark>* draggedFolders() const {
+      return m_systemDrag && m_drag && m_drag->foldersOnly ? &m_drag->bookmarks : nullptr;
+    }
+    files::FileDropTarget externalDrop(float x, float y, const std::vector<files::Bookmark>* pins) {
+      clearExternalDrop();
+      if (!m_visible || overlay() || popup() || actionContext().operationsBusy)
+        return {};
+      m_pointerX = x;
+      m_pointerY = y;
+      m_externalDraggingHere = true;
+      updateExternalScroll();
+      // External offers are decoded only after a drop. Native worker validation
+      // still checks self/descendant/alias targets before any filesystem change.
+      if (pins && m_showSidebar && m_pins.editable() && !m_places->folderAt(x, y))
+        if (const auto slot = m_places->dropSlot(x, y)) {
+          m_externalPinSlot = slot;
+          updateExternalScroll();
+          m_surface->requestLayout();
+          const std::weak_ptr<int> lifetime = m_lifetime;
+          return {
+              .receive =
+                  [this, lifetime, bookmarks = *pins,
+                   slot =
+                       *slot](const files::FilePayload&, files::TransferAction, const files::DropCompletion& finish) {
+                    if (lifetime.expired() || !m_visible || !m_pins.editable()) {
+                      finish(false);
+                      return;
+                    }
+                    finish(m_pins.add(bookmarks, slot));
+                  },
+              .preferred = files::TransferAction::COPY
+          };
+        }
+      m_externalHover = true;
+      const auto target = dropTarget();
+      m_externalHover = false;
+      if (!target)
+        return {};
+      return externalDestination(target->location, target->rect);
+    }
+    files::FileDropTarget externalDestination(const files::Location& destination, LayoutRect rect) {
+      if (!m_visible || overlay() || popup() || actionContext().operationsBusy || !destination.nativePath())
+        return {};
+      m_externalDropTarget = DropTarget{destination, rect};
+      updateExternalScroll();
+      m_surface->requestLayout();
+      const auto context = m_browser.contextSerial();
+      const std::weak_ptr<int> lifetime = m_lifetime;
+      return {
+          .receive =
+              [this, lifetime, context,
+               destination](files::FilePayload payload, files::TransferAction action, files::DropCompletion finish) {
+                if (lifetime.expired()
+                    || context != m_browser.contextSerial()
+                    || !m_visible
+                    || overlay()
+                    || actionContext().operationsBusy) {
+                  finish(false);
+                  return;
+                }
+                m_dropCompletion = std::move(finish);
+                if (!startPayloadTransfer(std::move(payload), destination, action))
+                  std::exchange(m_dropCompletion, {})(false);
+              },
+          .preferred = (m_connection.input().keyboardModifiers() & KeyMod::Ctrl) != 0 ? files::TransferAction::COPY
+                                                                                      : files::TransferAction::MOVE
+      };
     }
     void iconsReady() {
       m_surface->requestLayout();
@@ -479,6 +576,7 @@ namespace {
       m_surface->requestLayout();
     }
     void configurationChanged() {
+      clearExternalDrop();
       m_blankLocationClick.reset();
       if (m_resizingSidebar || m_columnDrag || m_columnResize)
         m_dispatcher.cancelPointerCapture();
@@ -566,6 +664,7 @@ namespace {
       }
     }
     void deactivate() {
+      clearExternalDrop();
       m_preview.clear();
       if (m_previewView)
         m_previewView->setVisible(false);
@@ -776,6 +875,9 @@ namespace {
       }
       m_pointerX = x;
       m_pointerY = y;
+      if (dispatcher == &m_dispatcher && event.type == PointerEvent::Type::Button && event.button == BTN_LEFT) {
+        m_fileDragSerial = event.pressed && !event.touch ? event.serial : 0;
+      }
       if (dispatcher == &m_dispatcher
           && m_blankLocationClick
           && (event.type == PointerEvent::Type::Leave
@@ -916,7 +1018,8 @@ namespace {
       case PointerEvent::Type::Leave:
         dispatcher->pointerLeave();
         if (dispatcher == &m_dispatcher) {
-          cancelDrag();
+          if (!m_systemDrag)
+            cancelDrag();
         }
         break;
       case PointerEvent::Type::Motion:
@@ -1073,6 +1176,17 @@ namespace {
       if (event.pressed && !event.preedit) {
         const bool editing = (m_location != nullptr && m_dispatcher.focusedArea() == m_location->inputArea())
             || (m_filterInput != nullptr && m_dispatcher.focusedArea() == m_filterInput->inputArea());
+        if (!editing
+            && !event.repeat
+            && event.modifiers == KeyMod::Ctrl
+            && (event.sym == XKB_KEY_c || event.sym == XKB_KEY_x || event.sym == XKB_KEY_v)) {
+          dispatchAction(
+              event.sym == XKB_KEY_c       ? Action::COPY_FILES
+                  : event.sym == XKB_KEY_x ? Action::CUT_FILES
+                                           : Action::PASTE_FILES
+          );
+          return;
+        }
         if (!editing && event.modifiers == 0 && !event.repeat && event.sym == XKB_KEY_F8) {
           dispatchAction(Action::SHOW_PREVIEW);
           return;
@@ -1323,7 +1437,8 @@ namespace {
               || m_transfers.busy()
               || m_trash.busy()
               || m_trash.canTrash()
-              || m_emptyTrash.pending(),
+              || m_emptyTrash.pending()
+              || m_pendingFilePaste,
           .pinsEditable = m_pins.editable(),
           .pinsBusy = m_pins.busy(),
           .canEmptyTrash = canEmptyTrash(),
@@ -1332,6 +1447,7 @@ namespace {
           .showSidebar = m_showSidebar,
           .showPreview = m_savedSettings.showPreview,
           .clipboardAvailable = m_clipboard.available(),
+          .clipboardHasFiles = m_clipboard.hasFiles(),
           .terminalAvailable = m_terminal.available(),
           .activationMode = m_activationMode,
           .typingMode = m_typingMode
@@ -1390,6 +1506,47 @@ namespace {
         if (const auto* entry = m_browser.model().entry(target.id))
           targets.push_back(*entry);
       switch (action) {
+      case Action::CUT_FILES:
+      case Action::COPY_FILES: {
+        files::FilePayload payload{.locations = {}, .cut = action == Action::CUT_FILES};
+        for (const auto& target : targets)
+          payload.locations.push_back(target.location);
+        if (!m_clipboard.setFiles(std::move(payload)))
+          actionError("The file selection could not be copied to the clipboard.");
+        break;
+      }
+      case Action::PASTE_FILES: {
+        m_pendingFilePaste = true;
+        const std::weak_ptr<int> lifetime = m_lifetime;
+        m_clipboard.requestFiles([this, lifetime, request](std::optional<files::ClipboardFiles> selection) {
+          if (lifetime.expired())
+            return;
+          const bool pending = std::exchange(m_pendingFilePaste, false);
+          if (!pending
+              || !m_visible
+              || !files::ActionRegistry::current(actionContext(), request, files::ActionScope::LOCATION))
+            return;
+          if (!selection) {
+            actionError("The clipboard changed or its file data could not be read.");
+            return;
+          }
+          if (actionContext().operationsBusy)
+            return;
+          if (selection->payload.cut) {
+            if (!m_clipboard.claimMove(selection->revision))
+              return;
+            m_clipboardTransfer = *selection;
+          }
+          if (!startPayloadTransfer(
+                  selection->payload, *request.folder,
+                  selection->payload.cut ? files::TransferAction::MOVE : files::TransferAction::COPY
+              )) {
+            if (const auto claimed = std::exchange(m_clipboardTransfer, std::nullopt))
+              m_clipboard.finishMove(*claimed, {});
+          }
+        });
+        break;
+      }
       case Action::SHOW_PREVIEW:
         m_savedSettings.showPreview = !m_savedSettings.showPreview;
         m_preferences.submit({{files::BrowserPreference::SHOW_PREVIEW, m_savedSettings.showPreview}});
@@ -1709,6 +1866,7 @@ namespace {
           entries.push_back({.id = 9005, .label = "Close Pane", .shortcut = "Ctrl+Alt+W"});
         add(Action::CREATE_FOLDER);
         add(Action::CREATE_FILE);
+        add(Action::PASTE_FILES);
         separator();
         add(Action::SELECT_ALL);
         add(Action::INVERT_SELECTION);
@@ -1738,6 +1896,9 @@ namespace {
             entries.push_back({.id = 9002, .label = "Open in New Window"});
           }
         }
+        separator();
+        add(Action::CUT_FILES);
+        add(Action::COPY_FILES);
         entries.push_back(
             {.id = 9003,
              .label = "Copy to Other Pane",
@@ -3085,6 +3246,22 @@ namespace {
       }
     }
 
+    bool
+    startPayloadTransfer(files::FilePayload payload, const files::Location& destination, files::TransferAction action) {
+      if (payload.locations.empty()
+          || !destination.nativePath()
+          || std::ranges::any_of(payload.locations, [](const auto& location) { return !location.nativePath(); })) {
+        actionError("File transfers currently support native files and folders outside Trash.");
+        return false;
+      }
+      m_actionError.clear();
+      if (!m_transfers.start({std::move(payload.locations), destination, action})) {
+        actionError("Another file transfer is still finishing.");
+        return false;
+      }
+      return true;
+    }
+
     bool dragCurrent() const {
       if (!m_drag) {
         return false;
@@ -3108,6 +3285,21 @@ namespace {
     }
 
     bool validDropFolder(const files::Location& destination) const {
+      if (m_externalHover) {
+        if (!destination.nativePath())
+          return false;
+        const auto* payload = m_clipboard.dragFiles();
+        if (!payload)
+          return true;
+        bool differentParent = false;
+        for (const auto& source : payload->locations) {
+          if (source == destination || g_file_has_prefix(destination.file().get(), source.file().get()))
+            return false;
+          const files::GioPtr<GFile> parent(g_file_get_parent(source.file().get()));
+          differentParent |= !parent || !g_file_equal(parent.get(), destination.file().get());
+        }
+        return differentParent || (m_connection.input().keyboardModifiers() & KeyMod::Ctrl) != 0;
+      }
       if (!m_drag || m_drag->sourcePin || !destination.nativePath()) {
         return false;
       }
@@ -3131,7 +3323,7 @@ namespace {
     }
 
     std::optional<DropTarget> dropTarget() const {
-      if (!m_drag || m_drag->sourcePin) {
+      if (!m_externalHover && (!m_drag || m_drag->sourcePin)) {
         return std::nullopt;
       }
       if (const auto place = m_showSidebar ? m_places->folderAt(m_pointerX, m_pointerY) : std::nullopt) {
@@ -3159,7 +3351,7 @@ namespace {
           }
         }
       }
-      if (m_foreignDrop)
+      if (!m_externalHover && m_foreignDrop)
         if (auto target = m_foreignDrop(m_pointerX, m_pointerY); target && validDropFolder(target->first))
           return DropTarget{target->first, target->second};
       if (!m_filePane->containsScenePoint(m_pointerX, m_pointerY)) {
@@ -3223,8 +3415,41 @@ namespace {
         drag.entries.push_back({id, entry->location});
         drag.bookmarks.push_back({entry->displayName, entry->location});
       }
+      const auto* entry = m_browser.model().entry(ids.front());
+      if (entry) {
+        m_dragArtwork = m_thumbnails.prepared(*entry);
+        if (!m_dragArtwork || !m_dragArtwork->pixels)
+          m_dragArtwork = m_icons.request(
+              entry->icon,
+              static_cast<int>(std::ceil(
+                  (m_viewMode == files::ViewMode::GRID ? gridIconSize() : 24) * m_surface->effectiveBufferScale()
+              ))
+          );
+      }
       m_drag = std::move(drag);
-      updateDrag();
+      files::FilePayload payload;
+      for (const auto& target : m_drag->entries)
+        payload.locations.push_back(target.location);
+      const std::weak_ptr<int> lifetime = m_lifetime;
+      m_systemDrag = m_clipboard.startDrag(
+          std::move(payload), m_surface->wlSurface(), m_fileDragSerial,
+          m_dragArtwork && m_dragArtwork->pixels ? &*m_dragArtwork->pixels : nullptr,
+          [this, lifetime] {
+            if (!lifetime.expired()) {
+              m_systemDrag = false;
+              cancelDrag();
+            }
+          },
+          (m_connection.input().keyboardModifiers() & KeyMod::Ctrl) != 0 ? std::optional(files::TransferAction::COPY)
+              : (m_connection.input().keyboardModifiers() & KeyMod::Shift) != 0
+              ? std::optional(files::TransferAction::MOVE)
+              : std::nullopt
+      );
+      if (m_systemDrag) {
+        m_dispatcher.cancelPointerCapture();
+        m_surface->requestLayout();
+      } else
+        updateDrag();
     }
     void startPlaceDrag(const files::Bookmark& bookmark) {
       if (!m_pins.editable()) {
@@ -3234,10 +3459,15 @@ namespace {
       updateDrag();
     }
     void cancelDrag() {
+      if (m_systemDrag) {
+        m_systemDrag = false;
+        m_clipboard.cancelDrag();
+      }
       if (!m_drag) {
         return;
       }
       m_drag.reset();
+      m_dragArtwork.reset();
       m_lastDropTarget.reset();
       m_dragScroll.stop();
       m_dragScrollDelta = 0;
@@ -3257,7 +3487,7 @@ namespace {
       if (places) {
         return m_places->dragScrollSpeed(m_pointerX, m_pointerY);
       }
-      if (!m_drag || m_drag->sourcePin || !m_list->visible()) {
+      if ((!m_drag && !m_externalDraggingHere) || (m_drag && m_drag->sourcePin) || !m_list->visible()) {
         return 0;
       }
       auto& scroll = m_list->scrollView();
@@ -3274,7 +3504,29 @@ namespace {
       }
       return 0;
     }
+    void updateExternalScroll() {
+      bool places = false;
+      if (!m_externalDraggingHere || dragScrollSpeed(places) == 0 || m_externalScroll.active())
+        return;
+      m_externalScroll.startRepeating(std::chrono::milliseconds(16), [this] {
+        if (!m_externalDraggingHere) {
+          m_externalScroll.stop();
+          return;
+        }
+        bool places = false;
+        const float speed = dragScrollSpeed(places);
+        if (speed == 0) {
+          m_externalScroll.stop();
+          return;
+        }
+        m_externalScrollInPlaces = places;
+        m_externalScrollDelta = std::clamp(m_externalScrollDelta + speed, -18.0F, 18.0F);
+        m_surface->requestLayout();
+      });
+    }
     void updateDrag() {
+      if (m_systemDrag)
+        return;
       if (!dragCurrent()) {
         cancelDrag();
         return;
@@ -3312,15 +3564,23 @@ namespace {
       m_surface->requestLayout();
     }
     void layoutDrag(Renderer& renderer) {
-      if (m_drag && !dragCurrent()) {
+      if (m_drag && !m_systemDrag && !dragCurrent()) {
         cancelDrag();
       }
-      const bool active = m_drag.has_value();
+      const bool active = m_drag.has_value() && !m_systemDrag;
       m_dragIcon->setVisible(active);
       m_dragCount->setVisible(active && m_drag->bookmarks.size() > 1);
       m_placeDropLine->setVisible(false);
       m_folderDropHighlight->setVisible(false);
       if (!active) {
+        if (m_externalPinSlot) {
+          m_placeDropLine->setVisible(true);
+          m_placeDropLine->arrange(renderer, m_places->dropLine(*m_externalPinSlot));
+        }
+        if (m_externalDropTarget) {
+          m_folderDropHighlight->setVisible(true);
+          m_folderDropHighlight->arrange(renderer, m_externalDropTarget->rect);
+        }
         return;
       }
       files::FileIconSource icon{.names = {"folder"}, .filePath = {}, .desktopFile = {}};
@@ -4694,6 +4954,16 @@ namespace {
           m_placesDirty = false;
           m_places->invalidate();
         }
+        if (m_externalScrollDelta != 0) {
+          const auto delta = std::exchange(m_externalScrollDelta, 0.0F);
+          if (m_externalScrollInPlaces)
+            m_places->dragScroll(delta);
+          else {
+            auto& scroll = m_list->scrollView();
+            scroll.requestScrollToOffset(scroll.scrollOffset() + delta);
+          }
+          m_refreshExternalDrop = true;
+        }
         if (m_drag && m_dragScrollDelta != 0) {
           const auto delta = std::exchange(m_dragScrollDelta, 0.0F);
           if (m_dragScrollInPlaces) {
@@ -4765,6 +5035,8 @@ namespace {
         if (columnOrderChanged || columnHoverDirty)
           m_dispatcher.syncPointerHover();
         layoutColumnDrag(renderer);
+        if (std::exchange(m_refreshExternalDrop, false))
+          m_clipboard.refreshDrag();
         m_sidebarResizeLine->arrange(renderer, {2.5F, 0, 1.0F, m_sidebarResize->height()});
         layoutDrag(renderer);
         layoutCompletions(renderer);
@@ -5848,6 +6120,20 @@ namespace {
     std::string m_actionError;
     std::optional<files::Location> m_revealTarget;
     std::optional<Drag> m_drag;
+    std::shared_ptr<const files::FileIconImage> m_dragArtwork;
+    std::uint32_t m_fileDragSerial = 0;
+    bool m_pendingFilePaste = false;
+    bool m_externalHover = false;
+    bool m_externalDraggingHere = false;
+    bool m_refreshExternalDrop = false;
+    bool m_systemDrag = false;
+    Timer m_externalScroll;
+    float m_externalScrollDelta = 0;
+    bool m_externalScrollInPlaces = false;
+    std::optional<std::size_t> m_externalPinSlot;
+    std::optional<DropTarget> m_externalDropTarget;
+    std::optional<files::ClipboardFiles> m_clipboardTransfer;
+    files::DropCompletion m_dropCompletion;
     Timer m_dragScroll;
     float m_dragScrollDelta = 0;
     float m_pointerX = 0;
@@ -6057,6 +6343,46 @@ namespace {
           page->preferencesChanged(error);
         }
       });
+      m_clipboard.setChangedCallback([this] {
+        for (auto& [id, page] : m_pages) {
+          (void)id;
+          page->clipboardChanged();
+        }
+      });
+      m_clipboard.setDropCallbacks(
+          [this](wl_surface* surface, float x, float y) {
+            clearExternalDrops();
+            const std::vector<files::Bookmark>* pins = nullptr;
+            for (const auto& [id, page] : m_pages) {
+              (void)id;
+              if (const auto* folders = page->draggedFolders())
+                pins = folders;
+            }
+            for (const auto& [windowId, host] : m_hosts) {
+              if (host->closed || host->surface.wlSurface() != surface)
+                continue;
+              const auto found = m_model.windows().find(windowId);
+              if (found == m_model.windows().end())
+                return files::FileDropTarget{};
+              for (const auto& [tab, button] : host->buttons)
+                if (host->tabScroll->containsScenePoint(x, y) && button->containsScenePoint(x, y))
+                  if (const auto layout = m_model.layout(tab))
+                    if (const auto destination = m_pages.at(layout->active)->location()) {
+                      float bx = 0, by = 0;
+                      Node::absolutePosition(button, bx, by);
+                      return m_pages.at(found->second.active)
+                          ->externalDestination(*destination, LayoutRect{bx, by, button->width(), button->height()});
+                    }
+              for (const auto pageId : host->mounted)
+                if (m_pages.at(pageId)->contains(x, y))
+                  return m_pages.at(pageId)->externalDrop(x, y, pins);
+              if (found->second.active)
+                return m_pages.at(found->second.active)->externalDrop(x, y, pins);
+            }
+            return files::FileDropTarget{};
+          },
+          [this] { clearExternalDrops(); }
+      );
       m_preferences.startWatching();
       m_pins.setChangedCallback([this] {
         for (auto& [id, page] : m_pages) {
@@ -6074,6 +6400,8 @@ namespace {
     }
     ~WorkspaceApplication() {
       m_lifetime.reset();
+      m_clipboard.setChangedCallback({});
+      m_clipboard.setDropCallbacks({}, {});
       m_preferences.setChangedCallback({});
       m_pins.setChangedCallback({});
       m_icons.setChangedCallback({});
@@ -6491,6 +6819,12 @@ namespace {
     }
 
   private:
+    void clearExternalDrops() {
+      for (auto& [id, page] : m_pages) {
+        (void)id;
+        page->clearExternalDrop();
+      }
+    }
     static void dispatch(InputDispatcher& dispatcher, const PointerEvent& event) {
       const auto x = static_cast<float>(event.sx), y = static_cast<float>(event.sy);
       switch (event.type) {
@@ -7150,9 +7484,11 @@ int files::runApplication(const std::optional<std::string>& initialLocation) {
       throw std::runtime_error(error);
     }
     connection.bindTextInput(textInput);
-    WaylandTextClipboard clipboard(connection.dataDeviceManager(), connection.seat(), [&connection] {
-      return connection.input().lastSerial();
-    });
+    WaylandTextClipboard clipboard(
+        connection.dataDeviceManager(), connection.seat(),
+        [&connection] { return connection.input().lastKeyboardSurface() ? connection.input().lastSerial() : 0; },
+        connection.compositor(), connection.shm()
+    );
     Input::setTextClipboard(&clipboard);
     struct ClipboardBinding {
       ~ClipboardBinding() { Input::setTextClipboard(nullptr); }

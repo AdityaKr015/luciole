@@ -84,11 +84,11 @@ namespace {
 
     void bind(
         const files::DirectoryEntry& entry, std::string_view typeLabel, bool selected, bool focused, bool hovered,
-        files::DetailsColumns columns, files::DetailsColumnOrder order
+        files::DetailsColumns columns, files::DetailsColumnOrder order, bool cut
     ) {
       m_columns = columns;
       m_columnOrder = order;
-      m_icon->setOpacity(entry.hidden ? kHiddenIconOpacity : 1.0F);
+      m_icon->setOpacity(cut ? 0.4F : entry.hidden ? kHiddenIconOpacity : 1.0F);
       for (auto* label : {m_name, m_parent, m_kind, m_size, m_modified})
         label->setOpacity(entry.hidden && !selected ? kHiddenTextOpacity : 1.0F);
       const bool directory = entry.type == G_FILE_TYPE_DIRECTORY;
@@ -211,8 +211,8 @@ namespace {
       );
     }
 
-    void bind(const files::DirectoryEntry& entry, bool selected, bool focused, bool hovered, float iconSize) {
-      m_icon->setOpacity(entry.hidden ? kHiddenIconOpacity : 1.0F);
+    void bind(const files::DirectoryEntry& entry, bool selected, bool focused, bool hovered, float iconSize, bool cut) {
+      m_icon->setOpacity(cut ? 0.4F : entry.hidden ? kHiddenIconOpacity : 1.0F);
       for (auto* label : {m_name, m_parent})
         label->setOpacity(entry.hidden && !selected ? kHiddenTextOpacity : 1.0F);
       m_iconSize = iconSize;
@@ -331,10 +331,13 @@ void files::FileViewAdapter::bindTile(Node& tile, std::size_t index, bool, bool 
     const bool selected = model.selection().selected.contains(id);
     const bool focused = selected || (m_focused() && model.selection().focused == id);
     if (m_mode == ViewMode::GRID) {
-      static_cast<FileTile&>(tile).bind(*entry, selected, focused, hovered, m_gridIconSize);
+      static_cast<FileTile&>(tile).bind(
+          *entry, selected, focused, hovered, m_gridIconSize, m_cut && m_cut(entry->location)
+      );
     } else {
       static_cast<FileRow&>(tile).bind(
-          *entry, model.typeLabel(id), selected, focused, hovered, m_columns, m_columnOrder
+          *entry, model.typeLabel(id), selected, focused, hovered, m_columns, m_columnOrder,
+          m_cut && m_cut(entry->location)
       );
     }
   }

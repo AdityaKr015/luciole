@@ -37,6 +37,7 @@ namespace files {
     void setContextCallback(std::function<void(std::optional<EntryId>, float, float)> callback);
     void setDragCallback(std::function<void(const std::vector<EntryId>&)> start, std::function<void()> cancel);
     void setActivateCallback(std::function<void(EntryId)> callback) { m_activate = std::move(callback); }
+    void setCutPredicate(std::function<bool(const Location&)> predicate) { m_cut = std::move(predicate); }
     void setActivationMode(ActivationMode mode) { m_activationMode = mode; }
     void setGridIconSize(float size) { m_gridIconSize = size; }
     void setDetailsColumns(DetailsColumns columns) { m_columns = columns; }
@@ -49,6 +50,7 @@ namespace files {
     const ViewMode m_mode;
     std::function<std::uint32_t()> m_modifiers;
     std::function<bool()> m_focused;
+    std::function<bool(const Location&)> m_cut;
     std::optional<EntryId> m_pressed;
     std::optional<EntryId> m_lastClick;
     std::chrono::steady_clock::time_point m_lastClickTime;

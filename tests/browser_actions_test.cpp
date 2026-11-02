@@ -39,6 +39,47 @@ namespace {
         .monitorError = {}
     };
   }
+  void testFileClipboardActions() {
+    files::DirectoryModel model;
+    auto data = snapshot();
+    model.applySnapshot(data);
+    files::ActionContext c{
+        .model = model, .context = 12, .query = {}, .pinned = {}, .clipboardAvailable = true, .clipboardHasFiles = true
+    };
+    require(!R::state(A::COPY_FILES, c, R::capture(c)).enabled, "empty selection copied files");
+    model.select(1);
+    const auto request = R::capture(c);
+    require(
+        R::state(A::CUT_FILES, c, request).enabled
+            && R::state(A::COPY_FILES, c, request).enabled
+            && R::state(A::PASTE_FILES, c, request).enabled,
+        "native clipboard actions unavailable"
+    );
+    c.clipboardHasFiles = false;
+    require(!R::state(A::PASTE_FILES, c, request).enabled, "text clipboard authorized file paste");
+    c.clipboardHasFiles = true;
+    c.operationsBusy = true;
+    require(!R::state(A::PASTE_FILES, c, request).enabled, "file paste bypassed active operation");
+    c.operationsBusy = false;
+    c.query = "search";
+    require(!R::state(A::PASTE_FILES, c, R::capture(c)).enabled, "search authorized ambiguous paste target");
+    c.query = {};
+    data.metadata.access.write = false;
+    ++data.generation;
+    model.applySnapshot(data);
+    require(!R::state(A::PASTE_FILES, c, request).enabled, "read-only destination authorized paste");
+    data.entries[0].access.rename = false;
+    ++data.generation;
+    model.applySnapshot(data);
+    require(
+        !R::state(A::CUT_FILES, c, request).enabled && R::state(A::COPY_FILES, c, request).enabled,
+        "source cut/copy capabilities conflated"
+    );
+    data.entries[0].location = files::Location::fromUri("sftp://example.invalid/source");
+    ++data.generation;
+    model.applySnapshot(data);
+    require(!R::state(A::COPY_FILES, c, R::capture(c)).enabled, "remote source advertised native file copy");
+  }
   void testPreviewActions() {
     files::DirectoryModel model;
     model.applySnapshot(snapshot());
@@ -301,6 +342,7 @@ namespace {
 int main() {
   try {
     testArchiveActions();
+    testFileClipboardActions();
     testPreviewActions();
     testCapabilitiesAndTargets();
     testBulkSelection();

@@ -38,6 +38,7 @@ public:
   [[nodiscard]] wl_display* display() const noexcept { return m_display; }
   [[nodiscard]] wl_compositor* compositor() const noexcept { return m_compositor; }
   [[nodiscard]] wl_data_device_manager* dataDeviceManager() const noexcept { return m_dataDeviceManager; }
+  [[nodiscard]] wl_shm* shm() const noexcept { return m_shm; }
   [[nodiscard]] wl_seat* seat() const noexcept { return m_seat; }
   [[nodiscard]] xdg_wm_base* xdgWmBase() const noexcept { return m_xdgWmBase; }
   [[nodiscard]] wp_viewporter* viewporter() const noexcept { return m_viewporter; }
