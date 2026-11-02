@@ -30,7 +30,7 @@ namespace {
   // Adapted from Noctalia's FileEntryRow, with URI-backed entries and model selection.
   class FileRow final : public InputArea {
   public:
-    FileRow(files::FileIconCache& icons, files::ThumbnailService& thumbnails) {
+    FileRow(files::FileIconCache& icons, files::ThumbnailService& thumbnails, bool miller = false) : m_miller(miller) {
       setHitTestVisible(false);
       addChild(ui::box({.out = &m_background, .radius = SelectionSurface::cornerRadius}));
       auto icon = std::make_unique<files::FileIcon>(icons, 24.0F, &thumbnails);
@@ -79,12 +79,13 @@ namespace {
                .maxLines = 1}
           )
       );
+      row->addChild(ui::glyph({.out = &m_arrow, .glyph = "chevron-right", .glyphSize = 14.0F}));
       addChild(std::move(row));
     }
 
     void bind(
         const files::DirectoryEntry& entry, std::string_view typeLabel, bool selected, bool focused, bool hovered,
-        files::DetailsColumns columns, files::DetailsColumnOrder order, bool cut
+        files::DetailsColumns columns, files::DetailsColumnOrder order, bool cut, bool path
     ) {
       m_columns = columns;
       m_columnOrder = order;
@@ -92,6 +93,9 @@ namespace {
       for (auto* label : {m_name, m_parent, m_kind, m_size, m_modified})
         label->setOpacity(entry.hidden && !selected ? kHiddenTextOpacity : 1.0F);
       const bool directory = entry.type == G_FILE_TYPE_DIRECTORY;
+      m_arrow->setVisible(m_miller && directory);
+      m_arrow->setParticipatesInLayout(m_miller && directory);
+      m_arrow->setColor(colorSpecFromRole(path ? ColorRole::Primary : ColorRole::OnSurfaceVariant));
       m_icon->bindFile(entry, colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurface));
       m_name->setText(entry.displayName);
       m_parent->setText(entry.parentDisplayName);
@@ -116,12 +120,12 @@ namespace {
       }
       m_size->setText(size);
       const auto text = colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurface);
-      m_name->setColor(text);
+      m_name->setColor(path ? colorSpecFromRole(ColorRole::Primary) : text);
       m_kind->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurfaceVariant));
       m_size->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurfaceVariant));
       m_modified->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurfaceVariant));
       m_background->setFill(
-          !selected && hovered ? colorSpecFromRole(ColorRole::SurfaceContainerHigh) : clearColorSpec()
+          !selected && (hovered || path) ? colorSpecFromRole(ColorRole::SurfaceContainerHigh) : clearColorSpec()
       );
       if (!selected && focused)
         m_background->setBorder(colorSpecFromRole(ColorRole::Primary), Style::focusRingWidth);
@@ -156,7 +160,9 @@ namespace {
       m_kind->setMaxWidth(columns.typeWidth);
       m_nameColumn->setMinWidth(columns.nameWidth - 40.0F);
       m_nameColumn->setMaxWidth(columns.nameWidth - 40.0F);
-      const float nameWidth = columns.nameWidth - 40.0F;
+      const float nameWidth = m_miller ? std::max(32.0F, width() - 88.0F) : columns.nameWidth - 40.0F;
+      m_nameColumn->setMinWidth(nameWidth);
+      m_nameColumn->setMaxWidth(nameWidth);
       m_name->setMaxWidth(nameWidth);
       m_parent->setMaxWidth(nameWidth);
       m_background->arrange(renderer, {0, 0, width(), height()});
@@ -177,6 +183,8 @@ namespace {
     Label* m_kind = nullptr;
     Label* m_size = nullptr;
     Label* m_modified = nullptr;
+    Glyph* m_arrow = nullptr;
+    bool m_miller;
     std::string m_fullDate;
     files::DetailsColumns m_columns;
     files::DetailsColumnOrder m_columnOrder = files::kDefaultDetailsColumnOrder;
@@ -280,7 +288,7 @@ std::unique_ptr<Node> files::FileViewAdapter::createTile() {
   if (m_mode == ViewMode::GRID) {
     return std::make_unique<FileTile>(m_icons, m_thumbnails);
   }
-  return std::make_unique<FileRow>(m_icons, m_thumbnails);
+  return std::make_unique<FileRow>(m_icons, m_thumbnails, m_mode == ViewMode::MILLER);
 }
 
 std::unique_ptr<Node> files::FileViewAdapter::createDecoration() { return std::make_unique<SelectionSurface>(); }
@@ -290,7 +298,8 @@ void files::FileViewAdapter::bindDecoration(Node& decoration, const VirtualGridD
   for (std::size_t i = 0; i < layout.itemCount && layout.firstIndex + i < model.rows().size(); ++i) {
     const auto col = i % layout.columns;
     const auto visual = (i / layout.columns) * layout.columns + (layout.rtl ? layout.columns - col - 1 : col);
-    selected[visual] = model.selection().selected.contains(model.rows()[layout.firstIndex + i]) ? 1 : 0;
+    selected[visual] =
+        m_columnActive && model.selection().selected.contains(model.rows()[layout.firstIndex + i]) ? 1 : 0;
   }
   decoration.setVisible(std::ranges::any_of(selected, [](auto value) { return value != 0; }));
   static_cast<SelectionSurface&>(decoration)
@@ -301,7 +310,7 @@ void files::FileViewAdapter::bindDecoration(Node& decoration, const VirtualGridD
 
 std::string files::FileViewAdapter::itemTooltip(std::size_t index) const {
   const auto& model = m_browser.model();
-  if (m_mode != ViewMode::LIST || index >= model.rows().size())
+  if (m_mode == ViewMode::GRID || index >= model.rows().size())
     return {};
   const auto id = model.rows()[index];
   const auto* entry = model.entry(id);
@@ -328,7 +337,7 @@ void files::FileViewAdapter::bindTile(Node& tile, std::size_t index, bool, bool 
   const auto id = model.rows()[index];
   const auto* entry = model.entry(id);
   if (entry != nullptr) {
-    const bool selected = model.selection().selected.contains(id);
+    const bool selected = m_columnActive && model.selection().selected.contains(id);
     const bool focused = selected || (m_focused() && model.selection().focused == id);
     if (m_mode == ViewMode::GRID) {
       static_cast<FileTile&>(tile).bind(
@@ -337,7 +346,7 @@ void files::FileViewAdapter::bindTile(Node& tile, std::size_t index, bool, bool 
     } else {
       static_cast<FileRow&>(tile).bind(
           *entry, model.typeLabel(id), selected, focused, hovered, m_columns, m_columnOrder,
-          m_cut && m_cut(entry->location)
+          m_cut && m_cut(entry->location), m_pathEntry == id && !m_columnActive
       );
     }
   }
@@ -397,9 +406,12 @@ VirtualGridAdapter::PointerReleaseResult files::FileViewAdapter::onPointerReleas
   const bool twice = m_lastClick == pressed && now - m_lastClickTime < std::chrono::milliseconds(400);
   m_lastClick = twice ? std::nullopt : pressed;
   m_lastClickTime = now;
+  const auto* entry = m_browser.model().entry(*pressed);
+  const bool columnFolder = m_mode == ViewMode::MILLER && entry && entry->type == G_FILE_TYPE_DIRECTORY;
   return {
       .rebind = true,
-      .activateIndex = (twice || m_activationMode == ActivationMode::SINGLE_CLICK) ? index : std::nullopt
+      .activateIndex =
+          (twice || (!columnFolder && m_activationMode == ActivationMode::SINGLE_CLICK)) ? index : std::nullopt
   };
 }
 
@@ -492,7 +504,7 @@ bool files::FileViewAdapter::areaSelectionCurrent() const {
 }
 
 bool files::FileViewAdapter::itemHitTest(std::size_t, float x, float y, float width, float height) const {
-  if (m_mode == ViewMode::LIST) {
+  if (m_mode != ViewMode::GRID) {
     return true;
   }
   const float iconLeft = (width - m_gridIconSize) * 0.5F;

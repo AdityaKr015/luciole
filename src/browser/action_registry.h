@@ -19,6 +19,7 @@ namespace files {
     SEARCH,
     GRID,
     LIST,
+    MILLER,
     SHOW_HIDDEN,
     SHOW_SIDEBAR,
     SHOW_PREVIEW,

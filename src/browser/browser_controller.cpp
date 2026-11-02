@@ -8,6 +8,10 @@
 #include <stdexcept>
 #include <utility>
 
+namespace {
+  std::uint64_t nextContext = 0;
+}
+
 struct files::BrowserController::ActivationState {
   GioPtr<GCancellable> cancellable{g_cancellable_new()};
   std::function<void(EntryId, const Location&, std::uint64_t, GFileType, const std::string&)> resolved;
@@ -68,7 +72,7 @@ files::BrowserController::~BrowserController() {
 
 void files::BrowserController::advanceContext() {
   cancelSearchTimeout();
-  ++m_contextSerial;
+  m_contextSerial = ++nextContext;
   g_cancellable_cancel(m_activation->cancellable.get());
   m_activation->cancellable.reset(g_cancellable_new());
 }

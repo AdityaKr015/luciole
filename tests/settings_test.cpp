@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdlib>
+#include <format>
 #include <fstream>
 #include <iterator>
 #include <print>
@@ -45,6 +46,80 @@ namespace {
   std::string read(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary);
     return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+  }
+
+  void testMillerSettings() {
+    Fixture fixture;
+    fixture.write("config.toml", "[browser]\nview_mode = 'miller'\nmiller_column_width = 300\n");
+    files::ConfigService settings(fixture.paths());
+    require(
+        settings.reload()
+            && settings.settings().browser.viewMode == files::ViewMode::MILLER
+            && settings.settings().browser.millerColumnWidth == 300,
+        "column defaults were rejected"
+    );
+    using P = files::BrowserPreference;
+    const std::array edits{
+        files::OverrideEdit{P::VIEW_MODE, files::ViewMode::MILLER}, files::OverrideEdit{P::MILLER_COLUMN_WIDTH, 417}
+    };
+    require(settings.saveOverrides(edits) == files::AtomicWriteState::DURABLE, "could not save column preferences");
+    files::ConfigService restored(fixture.paths());
+    require(
+        restored.reload()
+            && restored.settings().browser.millerColumnWidth == 417
+            && restored.settings().browser.viewMode == files::ViewMode::MILLER,
+        "column preferences did not round trip"
+    );
+    const auto before = read(fixture.paths().overrides);
+    for (const int width : {179, 801}) {
+      const std::array invalid{files::OverrideEdit{P::MILLER_COLUMN_WIDTH, width}};
+      require(
+          restored.saveOverrides(invalid) == files::AtomicWriteState::NOT_COMMITTED
+              && read(fixture.paths().overrides) == before,
+          "invalid column width changed preferences"
+      );
+      fixture.write("config.toml", std::format("[browser]\nmiller_column_width = {}\n", width));
+      require(!files::validateConfigFile(fixture.paths().base).empty(), "invalid base column width accepted");
+    }
+    fixture.write("config.toml", "[browser]\nview_mode = 'miller'\nmiller_column_width = 300\n");
+    const std::array reset{files::OverrideEdit{P::MILLER_COLUMN_WIDTH, std::monostate{}}};
+    require(
+        restored.saveOverrides(reset) == files::AtomicWriteState::DURABLE
+            && restored.settings().browser.millerColumnWidth == 300,
+        "column reset did not restore inheritance"
+    );
+  }
+
+  void testMillerParents() {
+    Fixture fixture;
+    files::ConfigService settings(fixture.paths());
+    require(settings.reload() && settings.settings().browser.millerShowParents, "parents should default to enabled");
+    using P = files::BrowserPreference;
+    const std::array off{files::OverrideEdit{P::MILLER_SHOW_PARENTS, false}};
+    require(settings.saveOverrides(off) == files::AtomicWriteState::DURABLE, "could not disable parent columns");
+    files::ConfigService restored(fixture.paths());
+    require(restored.reload() && !restored.settings().browser.millerShowParents, "parent preference did not persist");
+    const auto before = read(fixture.paths().overrides);
+    const std::array invalid{files::OverrideEdit{P::MILLER_SHOW_PARENTS, 1}};
+    require(
+        restored.saveOverrides(invalid) == files::AtomicWriteState::NOT_COMMITTED
+            && read(fixture.paths().overrides) == before,
+        "nonboolean parent preference changed settings"
+    );
+    fixture.write("config.toml", "[browser]\nmiller_show_parents = false\n");
+    const std::array on{files::OverrideEdit{P::MILLER_SHOW_PARENTS, true}};
+    require(
+        restored.saveOverrides(on) == files::AtomicWriteState::DURABLE && restored.settings().browser.millerShowParents,
+        "GUI preference did not override base"
+    );
+    const std::array reset{files::OverrideEdit{P::MILLER_SHOW_PARENTS, std::monostate{}}};
+    require(
+        restored.saveOverrides(reset) == files::AtomicWriteState::DURABLE
+            && !restored.settings().browser.millerShowParents,
+        "reset did not restore the base preference"
+    );
+    fixture.write("config.toml", "[browser]\nmiller_show_parents = 'true'\n");
+    require(!files::validateConfigFile(fixture.paths().base).empty(), "string parent preference was accepted");
   }
 
   void testSchemaAndDiagnostics() {
@@ -896,6 +971,8 @@ namespace {
 int main() {
   try {
     testSchemaAndDiagnostics();
+    testMillerSettings();
+    testMillerParents();
     testLayersAndReload();
     testFilesAndLimits();
     testEnvironmentPaths();

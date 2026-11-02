@@ -373,6 +373,7 @@ Input::Input() {
 
   // Optional clear button, kept above the full-field input area for hit-testing.
   auto clearButtonArea = std::make_unique<InputArea>();
+  clearButtonArea->setTooltip("Clear text");
   clearButtonArea->setOnEnter([this](const InputArea::PointerData& /*data*/) { applyVisualState(); });
   clearButtonArea->setOnLeave([this] { applyVisualState(); });
   clearButtonArea->setOnClick([this](const InputArea::PointerData& data) {

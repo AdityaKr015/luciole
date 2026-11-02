@@ -28,8 +28,11 @@ namespace files {
     void setViewDefaults(ViewMode mode, int iconSize);
     void setDefaultViewMode(ViewMode mode) {
       m_defaults.mode = mode;
-      m_restoring = false;
-      m_restoredViewport.reset();
+      m_viewport.mode = mode;
+      if (!m_history.empty())
+        m_history[m_historyIndex].viewport.mode = mode;
+      if (m_restoredViewport)
+        m_restoredViewport->mode = mode;
     }
     void setDefaultIconSize(int size) {
       m_defaults.iconSize = size;

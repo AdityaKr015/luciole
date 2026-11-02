@@ -53,6 +53,8 @@ namespace {
     std::optional<bool> showSidebar;
     std::optional<bool> showPreview;
     std::optional<int> previewWidth;
+    std::optional<int> millerColumnWidth;
+    std::optional<bool> millerShowParents;
     std::optional<bool> sortDescending;
     std::optional<bool> directoriesFirst;
     std::optional<bool> showTypeColumn;
@@ -281,14 +283,22 @@ namespace {
             } else {
               issue(issues, file, value, path, "expected integer sidebar width from 160 to 400");
             }
+          } else if (name == "miller_column_width") {
+            const auto* width = value.as_integer();
+            if (width && width->get() >= 180 && width->get() <= 800)
+              patch.millerColumnWidth = static_cast<int>(width->get());
+            else
+              issue(issues, file, value, path, "expected integer column width from 180 to 800");
           } else if (name == "view_mode") {
             const auto* mode = value.as_string();
             if (mode != nullptr && mode->get() == "list") {
               patch.viewMode = files::ViewMode::LIST;
             } else if (mode != nullptr && mode->get() == "grid") {
               patch.viewMode = files::ViewMode::GRID;
+            } else if (mode != nullptr && mode->get() == "miller") {
+              patch.viewMode = files::ViewMode::MILLER;
             } else {
-              issue(issues, file, value, path, "expected 'list' or 'grid'");
+              issue(issues, file, value, path, "expected 'list', 'grid' or 'miller'");
             }
           } else {
             std::optional<bool>* target = nullptr;
@@ -298,6 +308,8 @@ namespace {
               target = &patch.showSidebar;
             } else if (name == "show_preview") {
               target = &patch.showPreview;
+            } else if (name == "miller_show_parents") {
+              target = &patch.millerShowParents;
             } else if (name == "sort_descending") {
               target = &patch.sortDescending;
             } else if (name == "directories_first") {
@@ -356,6 +368,10 @@ namespace {
       settings.browser.showPreview = *patch.showPreview;
     if (patch.previewWidth)
       settings.browser.previewWidth = *patch.previewWidth;
+    if (patch.millerColumnWidth)
+      settings.browser.millerColumnWidth = *patch.millerColumnWidth;
+    if (patch.millerShowParents)
+      settings.browser.millerShowParents = *patch.millerShowParents;
     if (patch.sidebarWidth) {
       settings.browser.sidebarWidth = *patch.sidebarWidth;
     }
@@ -447,6 +463,10 @@ namespace {
       return "browser.show_preview";
     case Preference::PREVIEW_WIDTH:
       return "browser.preview_width";
+    case Preference::MILLER_COLUMN_WIDTH:
+      return "browser.miller_column_width";
+    case Preference::MILLER_SHOW_PARENTS:
+      return "browser.miller_show_parents";
     }
     return {};
   }
@@ -488,6 +508,12 @@ namespace {
           : std::optional<files::DetailsColumnOrder>(std::get<files::DetailsColumnOrder>(edit.value));
       return;
     }
+    if (edit.preference == Preference::MILLER_COLUMN_WIDTH) {
+      patch.millerColumnWidth = std::holds_alternative<std::monostate>(edit.value)
+          ? std::nullopt
+          : std::optional<int>(std::get<int>(edit.value));
+      return;
+    }
     if (edit.preference == Preference::PREVIEW_WIDTH) {
       patch.previewWidth = std::holds_alternative<std::monostate>(edit.value)
           ? std::nullopt
@@ -522,6 +548,9 @@ namespace {
         ? std::nullopt
         : std::optional<bool>(std::get<bool>(edit.value));
     switch (edit.preference) {
+    case Preference::MILLER_SHOW_PARENTS:
+      patch.millerShowParents = value;
+      break;
     case Preference::SHOW_TYPE_COLUMN:
       patch.showTypeColumn = value;
       break;
@@ -558,6 +587,7 @@ namespace {
     case Preference::GRID_ICON_SIZE:
     case Preference::SIDEBAR_WIDTH:
     case Preference::PREVIEW_WIDTH:
+    case Preference::MILLER_COLUMN_WIDTH:
     case Preference::THUMBNAIL_POLICY:
     case Preference::THUMBNAIL_MAX_FILE_MIB:
     case Preference::THUMBNAIL_MAX_MEGAPIXELS:
@@ -608,6 +638,10 @@ namespace {
       browser.insert("show_preview", *patch.showPreview);
     if (patch.previewWidth)
       browser.insert("preview_width", *patch.previewWidth);
+    if (patch.millerColumnWidth)
+      browser.insert("miller_column_width", *patch.millerColumnWidth);
+    if (patch.millerShowParents)
+      browser.insert("miller_show_parents", *patch.millerShowParents);
     if (patch.sidebarWidth) {
       browser.insert("sidebar_width", *patch.sidebarWidth);
     }
@@ -615,7 +649,12 @@ namespace {
       browser.insert("grid_icon_size", *patch.gridIconSize);
     }
     if (patch.viewMode) {
-      browser.insert("view_mode", *patch.viewMode == files::ViewMode::LIST ? "list" : "grid");
+      browser.insert(
+          "view_mode",
+          *patch.viewMode == files::ViewMode::LIST       ? "list"
+              : *patch.viewMode == files::ViewMode::GRID ? "grid"
+                                                         : "miller"
+      );
     }
     if (patch.showHidden) {
       browser.insert("show_hidden", *patch.showHidden);
@@ -769,6 +808,9 @@ files::AtomicWriteState files::ConfigService::saveOverrides(std::span<const Over
       } else if (edit.preference == BrowserPreference::GRID_ICON_SIZE) {
         const auto* size = std::get_if<int>(&edit.value);
         valid = size != nullptr && std::ranges::contains(kGridIconSizes, *size);
+      } else if (edit.preference == BrowserPreference::MILLER_COLUMN_WIDTH) {
+        const auto* width = std::get_if<int>(&edit.value);
+        valid = width && *width >= 180 && *width <= 800;
       } else if (edit.preference == BrowserPreference::PREVIEW_WIDTH) {
         const auto* width = std::get_if<int>(&edit.value);
         valid = width && *width >= 208 && *width <= 800;
@@ -777,7 +819,7 @@ files::AtomicWriteState files::ConfigService::saveOverrides(std::span<const Over
         valid = width != nullptr && *width >= kMinSidebarWidth && *width <= kMaxSidebarWidth;
       } else if (edit.preference == BrowserPreference::VIEW_MODE) {
         const auto* mode = std::get_if<ViewMode>(&edit.value);
-        valid = mode != nullptr && (*mode == ViewMode::LIST || *mode == ViewMode::GRID);
+        valid = mode != nullptr && (*mode == ViewMode::LIST || *mode == ViewMode::GRID || *mode == ViewMode::MILLER);
       } else {
         valid = valid && std::holds_alternative<bool>(edit.value);
       }

@@ -21,6 +21,7 @@ namespace {
        {A::SEARCH, "Search files", "Ctrl+F"},
        {A::GRID, "Grid view", "Ctrl+1"},
        {A::LIST, "List view", "Ctrl+2"},
+       {A::MILLER, "Column view", "Ctrl+3"},
        {A::SHOW_HIDDEN, "Show hidden files", "Ctrl+H"},
        {A::SHOW_SIDEBAR, "Show sidebar", "F9"},
        {A::SHOW_PREVIEW, "Show preview", "F8"},
@@ -286,6 +287,8 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
     return c.model.rows().empty() ? unavailable("There are no visible items.") : ActionState{};
   case A::GRID:
     return {.reason = {}, .checked = c.viewMode == ViewMode::GRID ? 1 : 0};
+  case A::MILLER:
+    return {.reason = {}, .checked = c.viewMode == ViewMode::MILLER ? 1 : 0};
   case A::LIST:
     return {.reason = {}, .checked = c.viewMode == ViewMode::LIST ? 1 : 0};
   case A::SHOW_HIDDEN:

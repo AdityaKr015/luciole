@@ -133,6 +133,8 @@ app_sources = files(
   'src/ui/controls/name_editor.cpp',
   'src/ui/controls/browser_settings_view.cpp',
   'src/ui/controls/archive_view.cpp',
+  'src/ui/controls/miller_view.cpp',
+  'src/ui/controls/tooltip_presenter.cpp',
   'src/ui/controls/select.cpp',
   'src/core/timer_manager.cpp',
   'src/core/ui_phase.cpp',
@@ -221,7 +223,7 @@ filesystem_service = declare_dependency(
 
 browser_model = declare_dependency(
   sources: files('src/browser/directory_model.cpp', 'src/browser/browser_controller.cpp',
-    'src/browser/tab_workspace.cpp', 'src/browser/location_presentation.cpp', 'src/browser/path_completion.cpp', 'src/browser/action_registry.cpp', 'src/browser/selection_tools.cpp'),
+    'src/browser/miller_columns.cpp', 'src/browser/tab_workspace.cpp', 'src/browser/location_presentation.cpp', 'src/browser/path_completion.cpp', 'src/browser/action_registry.cpp', 'src/browser/selection_tools.cpp'),
   dependencies: filesystem_service,
 )
 
@@ -388,6 +390,13 @@ if build_tests
   controller_test = executable('browser-controller-test',
     'tests/browser_controller_test.cpp',
     dependencies: browser_model,
+  )
+  miller_test = executable('miller-columns-test',
+    'tests/miller_columns_test.cpp',
+    dependencies: browser_model,
+  )
+  test('miller-columns', miller_test, timeout: 30,
+    env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],
   )
   test('browser-controller', controller_test, timeout: 30,
     env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],

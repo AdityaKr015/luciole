@@ -42,12 +42,16 @@ namespace files {
     void setGridIconSize(float size) { m_gridIconSize = size; }
     void setDetailsColumns(DetailsColumns columns) { m_columns = columns; }
     void setDetailsColumnOrder(DetailsColumnOrder order) { m_columnOrder = order; }
+    void setColumnActive(bool active) { m_columnActive = active; }
+    void setPathEntry(std::optional<EntryId> entry) { m_pathEntry = entry; }
 
   private:
     BrowserController& m_browser;
     FileIconCache& m_icons;
     ThumbnailService& m_thumbnails;
     const ViewMode m_mode;
+    bool m_columnActive = true;
+    std::optional<EntryId> m_pathEntry;
     std::function<std::uint32_t()> m_modifiers;
     std::function<bool()> m_focused;
     std::function<bool(const Location&)> m_cut;

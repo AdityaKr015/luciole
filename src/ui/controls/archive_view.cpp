@@ -150,6 +150,7 @@ ArchiveView::ArchiveView(
           ui::button(
               {.glyph = "x",
                .variant = ButtonVariant::Default,
+               .tooltip = "Close archive",
                .minWidth = Style::controlHeight,
                .maxWidth = Style::controlHeight,
                .onClick = std::move(close)}

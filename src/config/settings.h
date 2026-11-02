@@ -23,6 +23,8 @@ namespace files {
     bool showSidebar = true;
     bool showPreview = true;
     int previewWidth = 320;
+    int millerColumnWidth = 260;
+    bool millerShowParents = true;
     DetailsColumnVisibility columns{};
     DetailsColumnOrder columnOrder = kDefaultDetailsColumnOrder;
     DetailsColumnWidths columnWidths = kDefaultDetailsColumnWidths;
@@ -56,6 +58,8 @@ namespace files {
     SHOW_SIDEBAR,
     SHOW_PREVIEW,
     PREVIEW_WIDTH,
+    MILLER_COLUMN_WIDTH,
+    MILLER_SHOW_PARENTS,
     SHOW_TYPE_COLUMN,
     SHOW_SIZE_COLUMN,
     SHOW_MODIFIED_COLUMN,

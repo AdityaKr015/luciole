@@ -1,0 +1,65 @@
+#pragma once
+
+#include "browser/file_view.h"
+#include "browser/miller_columns.h"
+#include "ui/controls/box.h"
+#include "ui/controls/scrollbar.h"
+
+#include <map>
+
+class Label;
+class TextInputClient;
+class MillerView final : public Flex {
+public:
+  MillerView(files::MillerColumns& columns, files::FileIconCache& icons, files::ThumbnailService& thumbnails);
+  ~MillerView() override;
+  void synchronize();
+  void loadVisible();
+  void suspend();
+  void revealFocused();
+  void scrollBy(float delta) { scroll(m_offset + delta); }
+  bool resizing() const { return m_resizing.has_value(); }
+  VirtualGridView* focusedView() const;
+  std::optional<std::size_t> columnAt(float x, float y) const;
+  VirtualGridView* view(std::size_t index) const;
+  std::function<std::uint32_t()> modifiers;
+  std::function<bool()> keyboardFocus;
+  std::function<bool(const files::Location&)> cut;
+  std::function<void(std::size_t)> focus;
+  std::function<void(files::EntryId)> activate;
+  std::function<void(std::optional<files::EntryId>, float, float)> context;
+  std::function<void(const std::vector<files::EntryId>&)> drag;
+  std::function<void()> cancelDrag;
+  std::function<void(int)> resized;
+  std::function<void()> requestUpdate;
+  TextInputClient* textInputClient = nullptr;
+  files::ActivationMode activationMode = files::ActivationMode::DOUBLE_CLICK;
+
+private:
+  struct ColumnView {
+    std::unique_ptr<files::FileViewAdapter> adapter;
+    Flex* root;
+    VirtualGridView* grid;
+    Label* notice;
+    InputArea* divider;
+    Box* line;
+    std::optional<files::EntryId> path = std::nullopt;
+  };
+  void doLayout(Renderer& renderer) override;
+  LayoutSize doMeasure(Renderer& renderer, const LayoutConstraints& constraints) override;
+  void doArrange(Renderer& renderer, const LayoutRect& rect) override;
+  void scroll(float offset);
+  std::size_t indexOf(std::uint64_t id) const;
+  files::MillerColumns& m_columns;
+  files::FileIconCache& m_icons;
+  files::ThumbnailService& m_thumbnails;
+  Box* m_viewport;
+  InputArea* m_wheel;
+  Scrollbar* m_scrollbar;
+  std::map<std::uint64_t, ColumnView> m_views;
+  float m_offset = 0, m_extent = 0;
+  bool m_reveal = true;
+  std::optional<std::size_t> m_revealColumn;
+  std::optional<std::uint64_t> m_resizing;
+  float m_resizeStart = 0, m_resizeWidth = 0;
+};

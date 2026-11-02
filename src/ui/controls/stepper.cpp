@@ -69,6 +69,7 @@ Stepper::Stepper() {
     auto btn = std::make_unique<Button>();
     btn->setVariant(ButtonVariant::Tab);
     btn->setGlyph(increment ? "plus" : "minus");
+    btn->setTooltip(increment ? "Increase value" : "Decrease value");
     btn->setGlyphSize(Style::fontSizeBody);
     btn->setMinHeight(Style::controlHeight);
     btn->setPadding(Style::spaceXs, Style::spaceMd);

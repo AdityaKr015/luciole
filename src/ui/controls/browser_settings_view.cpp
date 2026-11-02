@@ -39,6 +39,7 @@ BrowserSettingsView::BrowserSettingsView(
           ui::button(
               {.glyph = "x",
                .variant = ButtonVariant::Default,
+               .tooltip = "Close settings",
                .minWidth = Style::controlHeight,
                .maxWidth = Style::controlHeight,
                .onClick = std::move(close)}
@@ -67,12 +68,17 @@ BrowserSettingsView::BrowserSettingsView(
   section("Browsing");
   addChoice(
       P::VIEW_MODE, "View", [](const auto& s) { return s.viewMode; },
-      {{"Grid", files::ViewMode::GRID}, {"List", files::ViewMode::LIST}}
+      {{"Grid", files::ViewMode::GRID}, {"List", files::ViewMode::LIST}, {"Columns", files::ViewMode::MILLER}}
   );
   addNumber(
       P::GRID_ICON_SIZE, "Icon size", [](const auto& s) { return s.gridIconSize; },
       {files::kGridIconSizes.begin(), files::kGridIconSizes.end()}
   );
+  addNumber(
+      P::MILLER_COLUMN_WIDTH, "Column width", [](const auto& s) { return s.millerColumnWidth; },
+      {180, 208, 240, 260, 300, 360, 480, 640, 800}
+  );
+  addBool(P::MILLER_SHOW_PARENTS, "Show parent folders in Columns", [](const auto& s) { return s.millerShowParents; });
   addChoice(
       P::SORT_BY, "Sort by", [](const auto& s) { return s.sort.field; },
       {{"Name", files::SortField::NAME},
