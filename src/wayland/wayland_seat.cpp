@@ -739,10 +739,11 @@ void WaylandSeat::handleKeyboardKeymap(
 }
 
 void WaylandSeat::handleKeyboardEnter(
-    void* data, wl_keyboard* /*keyboard*/, std::uint32_t /*serial*/, wl_surface* surface, wl_array* /*keys*/
+    void* data, wl_keyboard* /*keyboard*/, std::uint32_t serial, wl_surface* surface, wl_array* /*keys*/
 ) {
   auto* self = static_cast<WaylandSeat*>(data);
   self->m_repeatActive = false;
+  self->m_lastSerial = serial;
   self->m_lastKeyboardSurface = surface;
   if (self->m_keyboardFocusCallback) {
     self->m_keyboardFocusCallback(surface, true);

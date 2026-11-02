@@ -326,6 +326,8 @@ if build_tests
     dependencies: [filesystem_service, settings_service, gdk_pixbuf, webp, dependency('libpng'), dependency('nlohmann_json'), dependency('threads')])
   test('preview-service', preview_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   python = import('python').find_installation('python3')
+  clipboard_test = executable('clipboard-test', 'tests/clipboard_test.cpp', 'src/platform/text_clipboard.cpp', 'src/platform/file_payload.cpp', dependencies: [filesystem_service, dependency('wayland-client'), dependency('wayland-server')])
+  test('clipboard', clipboard_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   payload_test = executable('file-payload-test', 'tests/file_payload_test.cpp', 'src/platform/file_payload.cpp', dependencies: filesystem_service)
   test('file-payload', payload_test, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   actions_test = executable('browser-actions-test', 'tests/browser_actions_test.cpp', dependencies: browser_model)

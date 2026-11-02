@@ -7485,7 +7485,7 @@ int files::runApplication(const std::optional<std::string>& initialLocation) {
     }
     connection.bindTextInput(textInput);
     WaylandTextClipboard clipboard(
-        connection.dataDeviceManager(), connection.seat(),
+        connection.display(), connection.dataDeviceManager(), connection.seat(),
         [&connection] { return connection.input().lastKeyboardSurface() ? connection.input().lastSerial() : 0; },
         connection.compositor(), connection.shm()
     );
@@ -7505,9 +7505,12 @@ int files::runApplication(const std::optional<std::string>& initialLocation) {
     connection.input().setKeyboardEventCallback([&application](const KeyboardEvent& event) {
       application.keyboard(event);
     });
-    connection.input().setKeyboardFocusCallback([&application, &textInput](wl_surface* surface, bool entered) {
+    connection.input().setKeyboardFocusCallback([&application, &textInput,
+                                                 &clipboard](wl_surface* surface, bool entered) {
       textInput.onKeyboardFocusSurface(surface, entered);
       application.focus(surface, entered);
+      if (entered)
+        clipboard.keyboardFocusEntered();
     });
     connection.setOutputChangedCallback([&application](wl_output* output) { application.outputChanged(output); });
     DeferredCallPollSource deferred;

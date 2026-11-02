@@ -160,6 +160,12 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
     std::uint32_t actions = WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY;
     std::uint32_t action = 0;
   };
+  struct Reconciliation {
+    std::uint64_t revision;
+    wl_data_source* owner;
+    wl_data_offer* offer;
+    FilePayload remaining;
+  };
   struct Source {
     std::unordered_map<std::string, std::string> data;
     bool drag = false;
@@ -168,6 +174,8 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
     std::function<void()> finished;
     std::optional<FilePayload> files;
   };
+  wl_display* display = nullptr;
+  wl_callback* focusSync = nullptr;
   wl_data_device_manager* manager = nullptr;
   wl_compositor* compositor = nullptr;
   wl_shm* shm = nullptr;
@@ -193,6 +201,7 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
   bool active = true;
   std::uint64_t epoch = 0;
   std::optional<std::uint64_t> moving;
+  std::optional<Reconciliation> reconciliation;
   std::vector<std::function<void(std::optional<std::string>)>> callbacks;
 
   void discard(wl_data_offer* offer) {
@@ -211,6 +220,9 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
   }
   void reset() {
     ++epoch;
+    reconciliation.reset();
+    if (focusSync)
+      wl_callback_destroy(std::exchange(focusSync, nullptr));
     g_cancellable_cancel(reading.get());
     reading.reset(g_cancellable_new());
     pending = false;
@@ -354,6 +366,45 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
     notify();
     return true;
   }
+  void reconcile() {
+    if (!reconciliation)
+      return;
+    if (reconciliation->revision != epoch
+        || reconciliation->owner != owned
+        || (!owned && reconciliation->offer != selected)) {
+      reconciliation.reset();
+      return;
+    }
+    const auto inputSerial = serial();
+    if (inputSerial == 0)
+      return;
+    auto pending = std::move(*std::exchange(reconciliation, std::nullopt));
+    if (!pending.remaining.locations.empty()) {
+      if (!publish(pending.remaining))
+        reconciliation = std::move(pending);
+    } else {
+      owned = nullptr;
+      discard(std::exchange(selected, nullptr));
+      reset();
+      wl_data_device_set_selection(device, nullptr, inputSerial);
+    }
+  }
+  void focusEntered() {
+    if (!reconciliation || serial() == 0)
+      return;
+    if (focusSync)
+      wl_callback_destroy(std::exchange(focusSync, nullptr));
+    // Drain ownership notifications already in flight before a deferred write.
+    // This is an asynchronous barrier, never a nested dispatch or roundtrip.
+    focusSync = wl_display_sync(display);
+    static const wl_callback_listener listener{.done = [](void* data, wl_callback* callback, std::uint32_t) {
+      auto& state = *static_cast<State*>(data);
+      state.focusSync = nullptr;
+      wl_callback_destroy(callback);
+      state.reconcile();
+    }};
+    wl_callback_add_listener(focusSync, &listener, this);
+  }
   void updateDrag() {
     target = {};
     if (!active || !dragging || !offers.contains(dragging))
@@ -419,11 +470,12 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
 };
 
 files::WaylandTextClipboard::WaylandTextClipboard(
-    wl_data_device_manager* manager, wl_seat* seat, std::function<std::uint32_t()> serial, wl_compositor* compositor,
-    wl_shm* shm
+    wl_display* display, wl_data_device_manager* manager, wl_seat* seat, std::function<std::uint32_t()> serial,
+    wl_compositor* compositor, wl_shm* shm
 )
     : m_state(std::make_shared<State>()) {
   auto& state = *m_state;
+  state.display = display;
   state.manager = manager;
   state.compositor = compositor;
   state.shm = shm;
@@ -486,6 +538,8 @@ files::WaylandTextClipboard::WaylandTextClipboard(
 files::WaylandTextClipboard::~WaylandTextClipboard() {
   auto& state = *m_state;
   state.active = false;
+  if (state.focusSync)
+    wl_callback_destroy(std::exchange(state.focusSync, nullptr));
   state.callbacks.clear();
   state.hover = {};
   state.leave = {};
@@ -537,7 +591,7 @@ bool files::WaylandTextClipboard::hasFiles() const {
   if (state.moving == state.epoch)
     return false;
   if (state.files)
-    return true;
+    return !state.files->locations.empty();
   if (const auto found = state.offers.find(state.selected); found != state.offers.end())
     return found->second.types.contains(std::string(kGnomeFilesMime))
         || found->second.types.contains(std::string(kUriListMime));
@@ -551,7 +605,7 @@ bool files::WaylandTextClipboard::isCut(const Location& location) const {
 }
 void files::WaylandTextClipboard::requestFiles(std::function<void(std::optional<ClipboardFiles>)> callback) {
   auto self = m_state;
-  if (!hasFiles()) {
+  if (!available() || !hasFiles()) {
     callback(std::nullopt);
     return;
   }
@@ -603,7 +657,7 @@ void files::WaylandTextClipboard::requestFiles(std::function<void(std::optional<
   });
 }
 bool files::WaylandTextClipboard::claimMove(std::uint64_t revision) {
-  if (revision != m_state->epoch || m_state->moving == revision)
+  if (revision != m_state->epoch || m_state->moving == revision || m_state->reconciliation)
     return false;
   m_state->moving = revision;
   m_state->notify();
@@ -615,7 +669,7 @@ void files::WaylandTextClipboard::finishMove(
   if (m_state->moving != selection.revision)
     return;
   m_state->moving.reset();
-  if (m_state->epoch != selection.revision || !available()) {
+  if (m_state->epoch != selection.revision) {
     m_state->notify();
     return;
   }
@@ -624,15 +678,15 @@ void files::WaylandTextClipboard::finishMove(
     m_state->notify();
     return;
   }
-  if (!remaining.locations.empty())
-    (void)setFiles(std::move(remaining));
-  else {
-    m_state->owned = nullptr;
-    m_state->discard(std::exchange(m_state->selected, nullptr));
-    m_state->reset();
-    wl_data_device_set_selection(m_state->device, nullptr, m_state->serial());
-  }
+  // Keep outgoing sources immutable. Ownership cancellation or a fresh foreign
+  // offer retires this receipt before a later focus event can publish it.
+  m_state->reconciliation = State::Reconciliation{selection.revision, m_state->owned, m_state->selected, remaining};
+  if (m_state->owned)
+    m_state->files = std::move(remaining);
+  m_state->reconcile();
+  m_state->notify();
 }
+void files::WaylandTextClipboard::keyboardFocusEntered() { m_state->focusEntered(); }
 void files::WaylandTextClipboard::setChangedCallback(std::function<void()> callback) {
   m_state->changed = std::move(callback);
 }

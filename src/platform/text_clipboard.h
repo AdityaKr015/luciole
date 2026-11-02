@@ -25,7 +25,7 @@ namespace files {
   class WaylandTextClipboard final : public TextClipboard {
   public:
     WaylandTextClipboard(
-        wl_data_device_manager* manager, wl_seat* seat, std::function<std::uint32_t()> serial,
+        wl_display* display, wl_data_device_manager* manager, wl_seat* seat, std::function<std::uint32_t()> serial,
         wl_compositor* compositor, wl_shm* shm
     );
     ~WaylandTextClipboard() override;
@@ -42,6 +42,8 @@ namespace files {
     void requestFiles(std::function<void(std::optional<ClipboardFiles>)> callback);
     bool claimMove(std::uint64_t revision);
     void finishMove(const ClipboardFiles& selection, const std::vector<TransferResult>& results);
+    // Selection notifications precede keyboard enter. Resume only after both.
+    void keyboardFocusEntered();
     void setChangedCallback(std::function<void()> callback);
     bool startDrag(
         FilePayload payload, wl_surface* origin, std::uint32_t pressSerial, const LoadedImageFile* image,
