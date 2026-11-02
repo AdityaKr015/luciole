@@ -5657,6 +5657,7 @@ namespace {
       m_detailsScrollbar = horizontalBar.get();
       auto horizontalHost = ui::box(
           {.out = &m_detailsScrollHost,
+           .fill = clearColorSpec(),
            .height = Style::scrollbarWidth + Style::scrollbarGap,
            .visible = false,
            .participatesInLayout = false}
