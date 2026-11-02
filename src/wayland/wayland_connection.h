@@ -35,25 +35,23 @@ public:
   WaylandConnection& operator=(const WaylandConnection&) = delete;
 
   bool initialize(std::string& error);
-  [[nodiscard]] wl_display* display() const noexcept { return m_display; }
-  [[nodiscard]] wl_compositor* compositor() const noexcept { return m_compositor; }
-  [[nodiscard]] wl_data_device_manager* dataDeviceManager() const noexcept { return m_dataDeviceManager; }
-  [[nodiscard]] wl_shm* shm() const noexcept { return m_shm; }
-  [[nodiscard]] wl_seat* seat() const noexcept { return m_seat; }
-  [[nodiscard]] xdg_wm_base* xdgWmBase() const noexcept { return m_xdgWmBase; }
-  [[nodiscard]] wp_viewporter* viewporter() const noexcept { return m_viewporter; }
-  [[nodiscard]] wp_fractional_scale_manager_v1* fractionalScaleManager() const noexcept { return m_fractionalScale; }
-  [[nodiscard]] zxdg_decoration_manager_v1* decorationManager() const noexcept { return m_decorations; }
-  [[nodiscard]] bool hasXdgShell() const noexcept { return m_xdgWmBase != nullptr; }
-  [[nodiscard]] bool hasFractionalScale() const noexcept {
-    return m_viewporter != nullptr && m_fractionalScale != nullptr;
-  }
-  [[nodiscard]] WaylandSeat& input() noexcept { return m_input; }
+  wl_display* display() const noexcept { return m_display; }
+  wl_compositor* compositor() const noexcept { return m_compositor; }
+  wl_data_device_manager* dataDeviceManager() const noexcept { return m_dataDeviceManager; }
+  wl_shm* shm() const noexcept { return m_shm; }
+  wl_seat* seat() const noexcept { return m_seat; }
+  xdg_wm_base* xdgWmBase() const noexcept { return m_xdgWmBase; }
+  wp_viewporter* viewporter() const noexcept { return m_viewporter; }
+  wp_fractional_scale_manager_v1* fractionalScaleManager() const noexcept { return m_fractionalScale; }
+  zxdg_decoration_manager_v1* decorationManager() const noexcept { return m_decorations; }
+  bool hasXdgShell() const noexcept { return m_xdgWmBase != nullptr; }
+  bool hasFractionalScale() const noexcept { return m_viewporter != nullptr && m_fractionalScale != nullptr; }
+  WaylandSeat& input() noexcept { return m_input; }
   void bindTextInput(TextInputService& service);
 
-  [[nodiscard]] WaylandOutput* findOutputByWl(wl_output* output);
-  [[nodiscard]] const WaylandOutput* findOutputByWl(wl_output* output) const;
-  [[nodiscard]] wl_output* outputForSurface(wl_surface* surface) const;
+  WaylandOutput* findOutputByWl(wl_output* output);
+  const WaylandOutput* findOutputByWl(wl_output* output) const;
+  wl_output* outputForSurface(wl_surface* surface) const;
   void registerSurfaceOutput(wl_surface* surface, wl_output* output);
   void notifySurfaceOutputEnter(wl_surface* surface, wl_output* output);
   void notifySurfaceOutputLeave(wl_surface* surface, wl_output* output);

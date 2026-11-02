@@ -223,6 +223,9 @@ namespace {
     for (const auto& dir : plan.searchDirs) {
       appendDirectory(dir.path);
     }
+    for (const auto& dir : plan.baseDirs) {
+      appendDirectory(dir);
+    }
     for (const auto& dir : plan.pixmapDirs) {
       appendDirectory(dir);
     }
@@ -750,7 +753,16 @@ std::string IconResolver::findIcon(const std::string& name, int targetSize) cons
     }
   }
 
-  // Fallback: pixmaps
+  // Fallback: unthemed icons at the top of each base dir, then pixmaps (XDG
+  // LookupFallbackIcon order).
+  for (const auto& dir : m_baseDirs) {
+    for (const char* ext : {".svg", ".png"}) {
+      std::string path = std::format("{}/{}{}", dir, name, ext);
+      if (pathExists(path)) {
+        return path;
+      }
+    }
+  }
   for (const auto& dir : m_pixmapDirs) {
     for (const char* ext : {".svg", ".png"}) {
       std::string path = std::format("{}/{}{}", dir, name, ext);

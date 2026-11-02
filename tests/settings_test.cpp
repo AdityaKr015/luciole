@@ -37,7 +37,7 @@ namespace {
       file << text;
       require(file.good(), "cannot write settings fixture");
     }
-    [[nodiscard]] files::ConfigPaths paths() const {
+    files::ConfigPaths paths() const {
       return {.base = directory / "config.toml", .overrides = directory / "settings.toml"};
     }
   };

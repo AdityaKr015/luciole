@@ -9,23 +9,23 @@
 
 namespace StringUtils {
 
-  [[nodiscard]] inline std::string_view trimLeftView(std::string_view s) {
+  inline std::string_view trimLeftView(std::string_view s) {
     while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front())) != 0) {
       s.remove_prefix(1);
     }
     return s;
   }
 
-  [[nodiscard]] inline std::string_view trimRightView(std::string_view s) {
+  inline std::string_view trimRightView(std::string_view s) {
     while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back())) != 0) {
       s.remove_suffix(1);
     }
     return s;
   }
 
-  [[nodiscard]] inline std::string trim(std::string_view s) { return std::string(trimRightView(trimLeftView(s))); }
+  inline std::string trim(std::string_view s) { return std::string(trimRightView(trimLeftView(s))); }
 
-  [[nodiscard]] inline std::string toLower(std::string_view s) {
+  inline std::string toLower(std::string_view s) {
     std::string out(s);
     std::ranges::transform(out, out.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return out;
@@ -35,7 +35,7 @@ namespace StringUtils {
     std::ranges::transform(s, s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
   }
 
-  [[nodiscard]] inline std::string utf32ToUtf8(std::uint32_t codepoint) {
+  inline std::string utf32ToUtf8(std::uint32_t codepoint) {
     if (codepoint <= 0x7FU) {
       return std::string(1, static_cast<char>(codepoint));
     }
@@ -57,7 +57,7 @@ namespace StringUtils {
     return {};
   }
 
-  [[nodiscard]] inline bool isSinglePrivateUseGlyph(std::string_view text) {
+  inline bool isSinglePrivateUseGlyph(std::string_view text) {
     if (text.empty()) {
       return false;
     }
@@ -92,7 +92,7 @@ namespace StringUtils {
     return (cp >= 0xE000 && cp <= 0xF8FF) || (cp >= 0xF0000 && cp <= 0xFFFFD) || (cp >= 0x100000 && cp <= 0x10FFFD);
   }
 
-  [[nodiscard]] inline std::string truncateUtf8(std::string_view text, std::size_t maxBytes) {
+  inline std::string truncateUtf8(std::string_view text, std::size_t maxBytes) {
     if (text.size() <= maxBytes) {
       return std::string(text);
     }
@@ -104,7 +104,7 @@ namespace StringUtils {
     return std::string(text.substr(0, end));
   }
 
-  [[nodiscard]] inline std::string unquote(std::string_view text) {
+  inline std::string unquote(std::string_view text) {
     if (text.size() < 2) {
       return std::string(text);
     }

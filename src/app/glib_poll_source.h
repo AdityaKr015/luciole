@@ -13,7 +13,7 @@ public:
   GlibPollSource(const GlibPollSource&) = delete;
   GlibPollSource& operator=(const GlibPollSource&) = delete;
 
-  [[nodiscard]] int pollTimeoutMs() const override { return m_timeout; }
+  int pollTimeoutMs() const override { return m_timeout; }
   void dispatch(const std::vector<pollfd>& fds, std::size_t startIdx) override;
 
 protected:

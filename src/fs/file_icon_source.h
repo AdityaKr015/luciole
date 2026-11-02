@@ -13,5 +13,5 @@ namespace files {
     bool operator==(const FileIconSource&) const = default;
   };
 
-  [[nodiscard]] FileIconSource readFileIcon(GFileInfo* info, const Location& location);
+  FileIconSource readFileIcon(GFileInfo* info, const Location& location);
 } // namespace files

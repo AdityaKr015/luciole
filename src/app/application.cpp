@@ -81,7 +81,7 @@ namespace {
   class KeyRepeatPollSource final : public PollSource {
   public:
     explicit KeyRepeatPollSource(WaylandSeat& seat) : m_seat(seat) {}
-    [[nodiscard]] int pollTimeoutMs() const override { return m_seat.repeatPollTimeoutMs(); }
+    int pollTimeoutMs() const override { return m_seat.repeatPollTimeoutMs(); }
     void dispatch(const std::vector<pollfd>&, std::size_t) override { m_seat.repeatTick(); }
 
   private:

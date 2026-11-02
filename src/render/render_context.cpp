@@ -2,7 +2,6 @@
 
 #include "core/files/resource_paths.h"
 #include "core/log.h"
-#include "core/scoped_timer.h"
 #include "core/ui_phase.h"
 #include "render/backend/render_backend.h"
 #include "render/core/texture_handle.h"
@@ -387,6 +386,7 @@ void RenderContext::renderNode(
               .width = node->width(),
               .height = node->height(),
               .tint = img->tint(),
+              .saturation = img->saturation(),
               .monochromeTint = img->monochromeTint(),
               .alphaMaskTint = img->alphaMaskTint(),
               .opacity = effectiveOpacity,

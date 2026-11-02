@@ -2,7 +2,6 @@
 
 #include "render/scene/input_area.h"
 #include "ui/controls/scroll_view.h"
-#include "ui/style.h"
 
 #include <algorithm>
 #include <cmath>
@@ -44,8 +43,8 @@ public:
     }
   }
 
-  [[nodiscard]] Node* item() const noexcept { return m_item; }
-  [[nodiscard]] std::optional<std::size_t> boundIndex() const noexcept { return m_boundIndex; }
+  Node* item() const noexcept { return m_item; }
+  std::optional<std::size_t> boundIndex() const noexcept { return m_boundIndex; }
 
   void setBoundIndex(std::optional<std::size_t> index) { m_boundIndex = index; }
 

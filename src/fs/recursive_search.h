@@ -14,8 +14,8 @@ namespace files {
     void start(const Location& root, const std::string& query, bool showHidden);
     void cancel();
     void setChangedCallback(std::function<void()> callback);
-    [[nodiscard]] const DirectorySnapshot& snapshot() const;
-    [[nodiscard]] std::size_t skippedFolders() const;
+    const DirectorySnapshot& snapshot() const;
+    std::size_t skippedFolders() const;
 
   private:
     struct State;

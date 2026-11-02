@@ -43,16 +43,16 @@ namespace files {
   public:
     static constexpr std::size_t bookmarkLimit = 256;
     explicit StateStore(std::filesystem::path path);
-    [[nodiscard]] static std::filesystem::path pathFromEnvironment();
+    static std::filesystem::path pathFromEnvironment();
     bool load(); // Failure preserves the last valid snapshot and the file.
     AtomicWriteState saveBookmarks(std::vector<Bookmark> bookmarks);
     AtomicWriteState saveWindows(std::vector<SavedWindow> windows);
-    [[nodiscard]] const SessionState& state() const { return m_state; }
-    [[nodiscard]] const ConfigIssues& issues() const { return m_issues; }
+    const SessionState& state() const { return m_state; }
+    const ConfigIssues& issues() const { return m_issues; }
 
   private:
     AtomicWriteState save(SessionState proposed, bool bookmarks);
-    [[nodiscard]] bool validPath() const;
+    bool validPath() const;
 
     std::filesystem::path m_path;
     SessionState m_state;

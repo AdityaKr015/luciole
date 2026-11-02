@@ -14,10 +14,10 @@ namespace files {
     static Location fromPath(const std::string& absolutePath);
     static Location trash();
 
-    [[nodiscard]] const std::string& uri() const { return m_uri; }
-    [[nodiscard]] std::optional<std::string> nativePath() const;
-    [[nodiscard]] bool isTrash() const;
-    [[nodiscard]] GioPtr<GFile> file() const;
+    const std::string& uri() const { return m_uri; }
+    std::optional<std::string> nativePath() const;
+    bool isTrash() const;
+    GioPtr<GFile> file() const;
 
     bool operator==(const Location&) const = default;
 

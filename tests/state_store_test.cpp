@@ -35,7 +35,7 @@ namespace {
     }
     Fixture(const Fixture&) = delete;
     Fixture& operator=(const Fixture&) = delete;
-    [[nodiscard]] fs::path path() const { return directory / "state.toml"; }
+    fs::path path() const { return directory / "state.toml"; }
   };
 
   void write(const fs::path& path, const std::string& text) {

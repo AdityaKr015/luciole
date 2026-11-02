@@ -15,7 +15,7 @@ struct files::FileLauncher::State {
     std::uint64_t serial;
     gint64 started;
     ~Launch() { g_signal_handlers_disconnect_by_data(context.get(), this); }
-    [[nodiscard]] double elapsedMs() const { return static_cast<double>(g_get_monotonic_time() - started) / 1000.0; }
+    double elapsedMs() const { return static_cast<double>(g_get_monotonic_time() - started) / 1000.0; }
   };
   GioPtr<GCancellable> cancellable{g_cancellable_new()};
   std::function<void(const std::string&)> changed;

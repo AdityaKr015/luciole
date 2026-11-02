@@ -51,7 +51,7 @@ private:
 
   std::unordered_map<std::string, std::string> m_cache;
   std::unordered_set<std::string> m_missingCache;
-  std::vector<std::string> m_baseDirs;     // XDG icon theme roots
+  std::vector<std::string> m_baseDirs;     // XDG icon base dirs: theme roots and unthemed fallback
   std::vector<IconSearchDir> m_searchDirs; // Ordered list of concrete theme dirs to search
   std::vector<std::string> m_pixmapDirs;   // XDG pixmap fallback roots
   std::string m_empty;
