@@ -49,7 +49,7 @@ namespace {
       file << contents;
       require(file.good(), "cannot create test file");
     }
-    [[nodiscard]] Location location() const { return Location::fromPath(path.native()); }
+    Location location() const { return Location::fromPath(path.native()); }
   };
 
   class Pump {

@@ -40,13 +40,13 @@ public:
   void setTitle(const std::string& title);
   void showWindowMenu(std::uint32_t serial, std::int32_t x, std::int32_t y);
   void close();
-  [[nodiscard]] bool maximized() const noexcept { return m_maximized; }
-  [[nodiscard]] bool fullscreen() const noexcept { return m_fullscreen; }
-  [[nodiscard]] bool activated() const noexcept { return m_activated; }
-  [[nodiscard]] bool serverDecorated() const noexcept { return m_serverDecorated; }
+  bool maximized() const noexcept { return m_maximized; }
+  bool fullscreen() const noexcept { return m_fullscreen; }
+  bool activated() const noexcept { return m_activated; }
+  bool serverDecorated() const noexcept { return m_serverDecorated; }
   void configureDecoration(std::uint32_t mode);
 
-  [[nodiscard]] xdg_surface* xdgSurface() const noexcept { return m_xdgSurface; }
+  xdg_surface* xdgSurface() const noexcept { return m_xdgSurface; }
 
   static void handleXdgSurfaceConfigure(void* data, xdg_surface* surface, std::uint32_t serial);
   static void handleToplevelConfigure(

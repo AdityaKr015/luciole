@@ -31,8 +31,8 @@ namespace files {
     ~WaylandTextClipboard() override;
     WaylandTextClipboard(const WaylandTextClipboard&) = delete;
     WaylandTextClipboard& operator=(const WaylandTextClipboard&) = delete;
-    [[nodiscard]] bool available() const;
-    [[nodiscard]] std::optional<std::string> clipboardText() override;
+    bool available() const;
+    std::optional<std::string> clipboardText() override;
     void setClipboardText(std::string text) override;
     void requestClipboardText(std::function<void(std::optional<std::string>)> callback) override;
 

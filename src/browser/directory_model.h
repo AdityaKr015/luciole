@@ -45,25 +45,25 @@ namespace files {
     void setSort(SortOptions options);
     void setFilter(FilterOptions options);
 
-    [[nodiscard]] const DirectorySnapshot& snapshot() const { return m_snapshot; }
-    [[nodiscard]] const std::vector<EntryId>& rows() const { return m_rows; }
-    [[nodiscard]] const DirectoryEntry* entry(EntryId id) const;
-    [[nodiscard]] std::string_view typeLabel(EntryId id) const;
-    [[nodiscard]] const SortOptions& sort() const { return m_sort; }
-    [[nodiscard]] const FilterOptions& filter() const { return m_filter; }
-    [[nodiscard]] const SelectionState& selection() const { return m_selection; }
-    [[nodiscard]] std::optional<EntryId> scrollAnchor() const { return m_scrollAnchor; }
-    [[nodiscard]] std::vector<EntryId> selectedIds() const; // Visible order, for action dispatch.
-    [[nodiscard]] SelectionSummary selectionSummary() const;
+    const DirectorySnapshot& snapshot() const { return m_snapshot; }
+    const std::vector<EntryId>& rows() const { return m_rows; }
+    const DirectoryEntry* entry(EntryId id) const;
+    std::string_view typeLabel(EntryId id) const;
+    const SortOptions& sort() const { return m_sort; }
+    const FilterOptions& filter() const { return m_filter; }
+    const SelectionState& selection() const { return m_selection; }
+    std::optional<EntryId> scrollAnchor() const { return m_scrollAnchor; }
+    std::vector<EntryId> selectedIds() const; // Visible order, for action dispatch.
+    SelectionSummary selectionSummary() const;
 
     // Reject invisible or unknown IDs without changing focus or selection.
     bool select(EntryId id, SelectionMode mode = SelectionMode::REPLACE);
-    [[nodiscard]] bool selectionAvailable() const { return m_selectionAvailable; }
+    bool selectionAvailable() const { return m_selectionAvailable; }
     void selectAll();
     bool invertSelection();
     // Case-folded, normalized visible-name glob. Bulk selection keeps focus and range anchor.
     std::optional<std::string> selectPattern(const std::string& pattern);
-    [[nodiscard]] std::optional<EntryId> prefixMatch(const std::string& prefix, bool cycle = false) const;
+    std::optional<EntryId> prefixMatch(const std::string& prefix, bool cycle = false) const;
     void clearSelection();
     bool replaceSelection(std::span<const EntryId> ids);
     void restoreInteraction(SelectionState selection, std::optional<EntryId> scroll);
@@ -82,8 +82,8 @@ namespace files {
     void rebuildProjection();
     void reconcileSelection();
     void notify() const;
-    [[nodiscard]] bool canSelect() const;
-    [[nodiscard]] bool less(EntryId left, EntryId right) const;
+    bool canSelect() const;
+    bool less(EntryId left, EntryId right) const;
 
     DirectorySnapshot m_snapshot;
     SortOptions m_sort;

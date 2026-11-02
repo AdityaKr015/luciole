@@ -64,7 +64,7 @@ namespace files {
     void refresh();
     void cancel();
     void setChangedCallback(std::function<void()> callback);
-    [[nodiscard]] const DirectorySnapshot& snapshot() const;
+    const DirectorySnapshot& snapshot() const;
 
   private:
     struct State;

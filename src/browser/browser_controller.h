@@ -39,8 +39,8 @@ namespace files {
       m_restoring = false;
       m_restoredViewport.reset();
     }
-    [[nodiscard]] const BrowseViewport& viewport() const { return m_viewport; }
-    [[nodiscard]] std::uint64_t visitSerial() const { return m_visitSerial; }
+    const BrowseViewport& viewport() const { return m_viewport; }
+    std::uint64_t visitSerial() const { return m_visitSerial; }
     [[nodiscard]] std::optional<BrowseViewport> takeRestoredViewport();
     void duplicateFrom(BrowserController& source);
     void home();
@@ -55,18 +55,18 @@ namespace files {
     void editSearchQuery(std::string text);
     void submitSearchQuery();
     void setSearchComposing(bool composing);
-    [[nodiscard]] bool searchPending() const { return m_searchPending; }
+    bool searchPending() const { return m_searchPending; }
     void activate(EntryId id);
 
-    [[nodiscard]] std::uint64_t contextSerial() const { return m_contextSerial; }
-    [[nodiscard]] bool canBack() const;
-    [[nodiscard]] bool canForward() const;
-    [[nodiscard]] bool canUp() const;
-    [[nodiscard]] const std::string& message() const { return m_message; }
-    [[nodiscard]] const std::string& searchQuery() const { return m_query; }
-    [[nodiscard]] std::size_t skippedSearchFolders() const { return m_searchActive ? m_search.skippedFolders() : 0; }
-    [[nodiscard]] DirectoryModel& model() { return m_model; }
-    [[nodiscard]] const DirectoryModel& model() const { return m_model; }
+    std::uint64_t contextSerial() const { return m_contextSerial; }
+    bool canBack() const;
+    bool canForward() const;
+    bool canUp() const;
+    const std::string& message() const { return m_message; }
+    const std::string& searchQuery() const { return m_query; }
+    std::size_t skippedSearchFolders() const { return m_searchActive ? m_search.skippedFolders() : 0; }
+    DirectoryModel& model() { return m_model; }
+    const DirectoryModel& model() const { return m_model; }
 
   private:
     struct ActivationState;
@@ -104,7 +104,7 @@ namespace files {
     };
     void saveVisit();
     void loadVisit();
-    [[nodiscard]] std::optional<Reference> reference(std::optional<EntryId> id) const;
+    std::optional<Reference> reference(std::optional<EntryId> id) const;
     std::vector<Visit> m_history;
     BrowseViewport m_defaults;
     BrowseViewport m_viewport;

@@ -83,9 +83,9 @@ namespace files {
 
   // Bounded, read-only local file loading. Call outside Render and traversal jobs.
   // Validation reads exactly one required file, without adjacent override files.
-  [[nodiscard]] ConfigIssues validateConfigFile(const std::filesystem::path& file);
-  [[nodiscard]] SettingsResult loadSettings(const ConfigPaths& paths);
-  [[nodiscard]] SettingsResult loadInheritedSettings(const ConfigPaths& paths);
+  ConfigIssues validateConfigFile(const std::filesystem::path& file);
+  SettingsResult loadSettings(const ConfigPaths& paths);
+  SettingsResult loadInheritedSettings(const ConfigPaths& paths);
 
   class ConfigService {
   public:
@@ -94,8 +94,8 @@ namespace files {
     // Single-owner service: perform saves on its I/O thread and marshal results
     // to UI owners. Never call concurrently on the same service or during Render.
     AtomicWriteState saveOverrides(std::span<const OverrideEdit> edits);
-    [[nodiscard]] const Settings& settings() const { return m_settings; }
-    [[nodiscard]] const ConfigIssues& issues() const { return m_issues; }
+    const Settings& settings() const { return m_settings; }
+    const ConfigIssues& issues() const { return m_issues; }
 
   private:
     ConfigPaths m_paths;

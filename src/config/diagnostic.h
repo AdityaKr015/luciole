@@ -12,7 +12,7 @@ namespace files {
     std::uint32_t column = 0;
     std::string key;
     std::string message;
-    [[nodiscard]] std::string format() const;
+    std::string format() const;
   };
 
   using ConfigIssues = std::vector<ConfigIssue>;

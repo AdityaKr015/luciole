@@ -13,7 +13,7 @@ namespace files {
     std::string file;
     bool operator==(const FileIdentity&) const = default;
   };
-  [[nodiscard]] std::optional<FileIdentity> readFileIdentity(GFileInfo* info);
+  std::optional<FileIdentity> readFileIdentity(GFileInfo* info);
 
   struct FileAccess {
     std::optional<bool> read;
@@ -36,7 +36,7 @@ namespace files {
     FilesystemInfo filesystem;
   };
 
-  [[nodiscard]] FileAccess readFileAccess(GFileInfo* info);
-  [[nodiscard]] FilesystemInfo readFilesystemInfo(GFileInfo* info);
-  [[nodiscard]] std::optional<std::string> readFastContentType(GFileInfo* info);
+  FileAccess readFileAccess(GFileInfo* info);
+  FilesystemInfo readFilesystemInfo(GFileInfo* info);
+  std::optional<std::string> readFastContentType(GFileInfo* info);
 } // namespace files

@@ -18,7 +18,7 @@ namespace files {
     erase(DirectoryModel& model, std::uint32_t bytes, Clock::time_point now, bool composing = false);
     void clear();
     bool expire(Clock::time_point now);
-    [[nodiscard]] const std::string& text() const { return m_text; }
+    const std::string& text() const { return m_text; }
 
   private:
     std::optional<EntryId> match(DirectoryModel& model, bool cycle);

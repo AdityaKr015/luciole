@@ -30,6 +30,5 @@ namespace files {
 
   // No creation or chmod during reads; missing files/parents return nullopt.
   // Owned regular files only, without symlinks or hard links. Read-only is OK.
-  [[nodiscard]] std::expected<std::optional<std::string>, std::string>
-  readPrivateTextFile(const std::filesystem::path& path);
+  std::expected<std::optional<std::string>, std::string> readPrivateTextFile(const std::filesystem::path& path);
 } // namespace files
