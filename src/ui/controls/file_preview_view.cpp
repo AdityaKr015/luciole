@@ -21,7 +21,7 @@ FilePreviewView::FilePreviewView(
   setBorder(colorSpecFromRole(ColorRole::OutlineVariant), Style::borderWidth);
   addChild(
       ui::row(
-          {.align = FlexAlign::Center, .gap = Style::spaceSm},
+          {.align = FlexAlign::Center, .gap = Style::spaceSm, .minHeight = 24.0F},
           ui::label(
               {.out = &m_heading, .text = "Preview", .fontWeight = FontWeight::SemiBold, .maxLines = 1, .flexGrow = 1}
           ),

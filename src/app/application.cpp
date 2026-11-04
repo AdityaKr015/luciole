@@ -76,6 +76,9 @@
 namespace {
   constexpr float kWorkspaceInset = Style::spaceSm;
   constexpr float kWorkspaceRadius = Style::radiusXl;
+  constexpr float kMinimumPaneWidth = 160.0F;
+  constexpr float kMinimumPreviewWidth = 208.0F;
+  constexpr float kMinimumFreeSpacePaneWidth = 320.0F;
 
   volatile std::sig_atomic_t g_stopRequested = 0;
   void stopRequested(int) { g_stopRequested = 1; }
@@ -4943,18 +4946,16 @@ namespace {
         status = "Select: " + m_typeahead.text() + m_typeaheadPreedit + " · " + status;
       m_status->setText(status);
       const auto freeBytes = snapshot.metadata.filesystem.freeBytes;
-      const bool showFree = freeBytes
+      m_freeSpaceAvailable = freeBytes
           && !snapshot.metadataLoading
           && !snapshot.filesystemError
           && !snapshot.error
           && snapshot.location
           && !snapshot.location->isTrash();
-      if (showFree) {
+      if (m_freeSpaceAvailable) {
         const files::GString size(g_format_size_full(*freeBytes, G_FORMAT_SIZE_IEC_UNITS));
         m_freeSpace->setText(std::format("{} free", size.get()));
       }
-      m_freeSpace->setVisible(showFree);
-      m_freeSpace->setParticipatesInLayout(showFree);
       const bool cancellable = m_archives.busy() || m_transfers.busy() || m_trash.busy() || m_emptyTrash.busy();
       m_cancelOperation->setVisible(cancellable);
       m_cancelOperation->setParticipatesInLayout(cancellable);
@@ -5134,6 +5135,9 @@ namespace {
       }
       if (layout) {
         UiPhaseScope phase(UiPhase::Layout);
+        const bool showFreeSpace = m_freeSpaceAvailable && m_pageBounds.width >= kMinimumFreeSpacePaneWidth;
+        m_freeSpace->setVisible(showFreeSpace);
+        m_freeSpace->setParticipatesInLayout(showFreeSpace);
         std::optional<InputDispatcher::TabFocusSnapshot> placesFocus;
         if (m_placesDirty) {
           for (const Node* node = m_dispatcher.focusedArea(); node != nullptr; node = node->parent()) {
@@ -6478,6 +6482,7 @@ namespace {
     bool m_filterOpen = false;
     Label* m_status = nullptr;
     Label* m_freeSpace = nullptr;
+    bool m_freeSpaceAvailable = false;
     Label* m_notice = nullptr;
     Flex* m_noticeArea = nullptr;
     VirtualGridView* m_list = nullptr;
@@ -7712,11 +7717,10 @@ namespace {
       );
       const float left = kWorkspaceInset + sidebar;
       const float right = width - kWorkspaceInset;
-      const float previewWidth = active.previewVisible()
-          ? std::min(
-                static_cast<float>(host.previewDragWidth.value_or(active.previewWidth())),
-                std::max(120.0F, right - left - 160.0F)
-            )
+      const bool split = visible.size() == 2;
+      const float previewBudget = right - left - kMinimumPaneWidth * (split ? 2.0F : 1.0F);
+      const float previewWidth = active.previewVisible() && previewBudget >= kMinimumPreviewWidth
+          ? std::min(static_cast<float>(host.previewDragWidth.value_or(active.previewWidth())), previewBudget)
           : 0;
       host.previewDivider->setVisible(previewWidth > 0);
       host.previewResizeLine->setFill(colorSpecFromRole(
@@ -7734,8 +7738,8 @@ namespace {
         );
       const float content = std::max(1.0F, right - left - previewWidth);
       host.browsingBounds = {left, top, content, bodyHeight};
-      const bool split = visible.size() == 2;
-      const float first = split ? content * window.fraction : content;
+      const float minimumPane = std::min(kMinimumPaneWidth, content * 0.5F);
+      const float first = split ? std::clamp(content * window.fraction, minimumPane, content - minimumPane) : content;
       host.divider->setVisible(split);
       host.divider->arrange(renderer, {left + first - 3, top, 6, bodyHeight});
       host.divider->children().front()->arrange(renderer, {2.5F, 0, 1.0F, bodyHeight});
