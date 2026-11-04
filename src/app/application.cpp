@@ -635,6 +635,15 @@ namespace {
       m_surface->requestLayout();
     }
     void setPreviewBounds(std::optional<LayoutRect> bounds) { m_previewBounds = bounds; }
+    void layoutNavigation(Renderer& renderer) {
+      if (!m_toolbar->visible())
+        return;
+      m_toolbar->arrange(renderer, {m_toolbar->x(), m_toolbar->y(), m_toolbar->width(), m_toolbar->height()});
+      layoutBreadcrumbs(renderer);
+      layoutCompletions(renderer);
+      if (std::exchange(m_refreshExternalDrop, false))
+        m_clipboard.refreshDrag();
+    }
     bool dragging() const { return m_drag.has_value(); }
     bool pointerCaptured() const { return m_dispatcher.pointerCaptured(); }
     bool contains(float x, float y) const { return m_body && m_body->containsScenePoint(x, y); }
@@ -1038,6 +1047,9 @@ namespace {
             && location
             && m_locationArea
             && m_locationArea->containsScenePoint(x, y)
+            && !(m_breadcrumbOverflow
+                 && m_breadcrumbOverflow->visible()
+                 && m_breadcrumbOverflow->containsScenePoint(x, y))
             && std::ranges::none_of(m_dropBreadcrumbs, [x, y](const auto& crumb) {
                              return crumb.second->containsScenePoint(x, y);
                            });
@@ -1268,6 +1280,12 @@ namespace {
         }
         if ((event.sym == XKB_KEY_Menu && event.modifiers == 0)
             || (event.sym == XKB_KEY_F10 && event.modifiers == KeyMod::Shift)) {
+          if (m_breadcrumbOverflow
+              && m_breadcrumbOverflow->visible()
+              && m_dispatcher.focusedArea() == m_breadcrumbOverflow->inputArea()) {
+            openBreadcrumbOverflow();
+            return;
+          }
           for (const auto& [target, button] : m_dropBreadcrumbs)
             if (m_dispatcher.focusedArea() == button->inputArea()) {
               openBreadcrumbMenu(target, sceneRect(*button));
@@ -4084,8 +4102,102 @@ namespace {
           }
       );
     }
+    void openBreadcrumbOverflow() {
+      if (!m_breadcrumbOverflow || !m_breadcrumbOverflow->visible() || m_firstBreadcrumb == 0)
+        return;
+      m_lastBreadcrumb.reset();
+      m_blankLocationClick.reset();
+      const auto context = browser().contextSerial();
+      std::vector<files::Location> targets;
+      std::vector<ContextMenuControlEntry> entries;
+      for (std::size_t index = 0; index < m_firstBreadcrumb; ++index) {
+        const auto& part = m_breadcrumbParts[index];
+        targets.push_back(part.location);
+        entries.push_back({.id = static_cast<int>(index), .label = part.button->label()->text()});
+      }
+      showContextMenu(
+          std::move(entries),
+          [this, context, targets = std::move(targets)](int id) {
+            if (context == browser().contextSerial() && id >= 0 && static_cast<std::size_t>(id) < targets.size())
+              breadcrumbClick(targets[static_cast<std::size_t>(id)]);
+          },
+          sceneRect(*m_breadcrumbOverflow)
+      );
+    }
+    void layoutBreadcrumbs(Renderer& renderer) {
+      if (!m_breadcrumbScroll->visible() || m_breadcrumbParts.empty())
+        return;
+      const float available = m_breadcrumbScroll->contentViewportWidth();
+      if (available == m_breadcrumbLayoutWidth
+          && renderer.renderScale() == m_breadcrumbRenderScale
+          && renderer.textMetricsGeneration() == m_breadcrumbMetricsGeneration)
+        return;
+
+      std::vector<float> widths;
+      std::vector<float> separators;
+      widths.reserve(m_breadcrumbParts.size());
+      separators.reserve(m_breadcrumbParts.size());
+      float total = 0;
+      for (const auto& part : m_breadcrumbParts) {
+        part.button->setMaxWidth(160.0F);
+        const float width = part.button->measure(renderer, {}).width;
+        const float separator = part.separator ? part.separator->measure(renderer, {}).width : 0.0F;
+        widths.push_back(width);
+        separators.push_back(separator);
+        total += width + separator;
+      }
+      const bool overflow = total > available && m_breadcrumbParts.size() > 1;
+      std::size_t first = 0;
+      float leafBudget = std::max(1.0F, available);
+      if (overflow) {
+        const float overflowWidth = m_breadcrumbOverflow->measure(renderer, {}).width;
+        first = m_breadcrumbParts.size() - 1;
+        leafBudget = std::max(1.0F, available - overflowWidth - separators.back());
+        float used = overflowWidth + separators.back() + std::min(widths.back(), leafBudget);
+        while (first > 1 && used + widths[first - 1] + separators[first - 1] <= available) {
+          --first;
+          used += widths[first] + separators[first];
+        }
+      }
+      auto* focus = m_dispatcher.focusedArea();
+      m_breadcrumbOverflow->setVisible(overflow);
+      m_breadcrumbOverflow->setParticipatesInLayout(overflow);
+      if (!overflow && focus == m_breadcrumbOverflow->inputArea())
+        m_dispatcher.setFocus(m_breadcrumbParts.back().button->inputArea());
+      m_dropBreadcrumbs.clear();
+      for (std::size_t index = 0; index < m_breadcrumbParts.size(); ++index) {
+        const auto& part = m_breadcrumbParts[index];
+        const bool visible = index >= first;
+        part.button->setVisible(visible);
+        part.button->setParticipatesInLayout(visible);
+        if (part.separator) {
+          const bool separatorVisible = visible && (index > first || overflow);
+          part.separator->setVisible(separatorVisible);
+          part.separator->setParticipatesInLayout(separatorVisible);
+        }
+        if (visible)
+          m_dropBreadcrumbs.emplace_back(part.location, part.button);
+        else if (focus == part.button->inputArea())
+          m_dispatcher.setFocus(m_breadcrumbOverflow->inputArea());
+      }
+      m_firstBreadcrumb = first;
+      m_breadcrumbParts.back().button->setMaxWidth(std::min(160.0F, leafBudget));
+      m_breadcrumbScroll->requestScrollToOffset(0);
+      m_breadcrumbScroll->arrange(
+          renderer,
+          {m_breadcrumbScroll->x(), m_breadcrumbScroll->y(), m_breadcrumbScroll->width(), m_breadcrumbScroll->height()}
+      );
+      m_breadcrumbLayoutWidth = available;
+      m_breadcrumbRenderScale = renderer.renderScale();
+      m_breadcrumbMetricsGeneration = renderer.textMetricsGeneration();
+      m_dispatcher.syncPointerHover();
+      m_refreshExternalDrop = true;
+    }
     void rebuildBreadcrumbs() {
       m_dropBreadcrumbs.clear();
+      m_breadcrumbParts.clear();
+      m_breadcrumbOverflow = nullptr;
+      m_breadcrumbLayoutWidth = -1;
       while (!m_breadcrumbs->children().empty()) {
         m_breadcrumbs->removeChild(m_breadcrumbs->children().back().get());
       }
@@ -4094,9 +4206,21 @@ namespace {
         return;
       }
       const auto crumbs = files::locationBreadcrumbs(*location);
+      m_breadcrumbs->addChild(
+          ui::button(
+              {.out = &m_breadcrumbOverflow,
+               .glyph = "dots",
+               .controlHeight = Style::controlHeightSm,
+               .variant = ButtonVariant::Ghost,
+               .tooltip = "Parent folders",
+               .paddingH = Style::spaceSm,
+               .onClick = [this] { openBreadcrumbOverflow(); }}
+          )
+      );
       for (std::size_t i = 0; i < crumbs.size(); ++i) {
+        Node* separator = nullptr;
         if (i != 0) {
-          m_breadcrumbs->addChild(
+          separator = m_breadcrumbs->addChild(
               ui::glyph(
                   {.glyph = "chevron-right",
                    .glyphSize = 12.0F,
@@ -4105,19 +4229,19 @@ namespace {
           );
         }
         const auto target = crumbs[i].location;
-        m_breadcrumbs->addChild(
+        auto* partButton = static_cast<Button*>(m_breadcrumbs->addChild(
             ui::button(
                 {.text = crumbs[i].label,
                  .fontSize = Style::fontSizeCaption,
                  .controlHeight = Style::controlHeightSm,
                  .contentAlign = ButtonContentAlign::Start,
                  .variant = ButtonVariant::Ghost,
+                 .tooltip = crumbs[i].label,
                  .maxWidth = 160.0F,
                  .paddingH = Style::spaceSm,
                  .onClick = [this, target] { breadcrumbClick(target); },
                  .configure =
                      [this, target](Button& button) {
-                       m_dropBreadcrumbs.emplace_back(target, &button);
                        button.label()->setUseMarkup(false);
                        button.inputArea()->setAcceptedButtons(
                            InputArea::buttonMask(BTN_LEFT) | InputArea::buttonMask(BTN_RIGHT)
@@ -4130,9 +4254,9 @@ namespace {
                        });
                      }}
             )
-        );
+        ));
+        m_breadcrumbParts.push_back({target, partButton, separator});
       }
-      m_breadcrumbScroll->requestScrollToBottom();
     }
 
     void openFilter(bool selectAll = true, bool preserveTextInput = false) {
@@ -5303,7 +5427,6 @@ namespace {
            .fillHeight = true,
            .flexGrow = 1.0F}
       );
-      breadcrumbScroll->setStickToBottom(true);
       breadcrumbScroll->content()->setDirection(FlexDirection::Horizontal);
       breadcrumbScroll->content()->addChild(
           ui::row({.out = &m_breadcrumbs, .align = FlexAlign::Center, .gap = 0.0F, .height = Style::controlHeight})
@@ -6465,6 +6588,17 @@ namespace {
     Flex* m_locationArea = nullptr;
     ScrollView* m_breadcrumbScroll = nullptr;
     Flex* m_breadcrumbs = nullptr;
+    struct BreadcrumbPart {
+      files::Location location;
+      Button* button;
+      Node* separator;
+    };
+    std::vector<BreadcrumbPart> m_breadcrumbParts;
+    Button* m_breadcrumbOverflow = nullptr;
+    std::size_t m_firstBreadcrumb = 0;
+    float m_breadcrumbLayoutWidth = -1;
+    float m_breadcrumbRenderScale = 0;
+    std::uint64_t m_breadcrumbMetricsGeneration = 0;
     struct LocationBlankClick {
       files::Location location;
       std::uint64_t context;
@@ -7750,6 +7884,7 @@ namespace {
             host.root.get(), index == 0, index == visible.size() - 1 && previewWidth == 0
         );
       }
+      active.layoutNavigation(renderer);
       syncTooltip(host);
     }
     WaylandConnection& m_connection;
