@@ -5296,7 +5296,7 @@ namespace {
             m_list->scrollDuringDrag(delta);
           }
         }
-        const float searchWidth = m_surface->width() < 800 ? 148.0F : 220.0F;
+        const float searchWidth = std::clamp(static_cast<float>(m_surface->width()) * 0.22F, 148.0F, 220.0F);
         m_places->setVisible(m_showSidebar);
         m_places->setParticipatesInLayout(m_showSidebar);
         m_sidebarResize->setVisible(m_showSidebar);
