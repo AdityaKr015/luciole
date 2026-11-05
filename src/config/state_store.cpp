@@ -396,11 +396,11 @@ files::AtomicWriteState files::StateStore::save(SessionState proposed, bool book
   m_issues.clear();
   if (!m_loaded || !validPath()) {
     m_issues.push_back(problem(m_path, {}, "load a valid state snapshot before saving"));
-    return AtomicWriteState::NOT_COMMITTED;
+    return AtomicWriteState::NotCommitted;
   }
   m_issues = validate(proposed, m_path);
   if (!m_issues.empty()) {
-    return AtomicWriteState::NOT_COMMITTED;
+    return AtomicWriteState::NotCommitted;
   }
   SessionState candidate;
   const auto result = updateTextFileAtomic(
@@ -432,7 +432,7 @@ files::AtomicWriteState files::StateStore::save(SessionState proposed, bool book
         return formatState(candidate);
       }
   );
-  if (result.state != AtomicWriteState::NOT_COMMITTED) {
+  if (result.state != AtomicWriteState::NotCommitted) {
     m_state = std::move(candidate);
   }
   if (!result.error.empty() && m_issues.empty()) {

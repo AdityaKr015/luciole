@@ -206,11 +206,11 @@ namespace {
   void createsEmptyFiles(Pump& pump) {
     Fixture fixture;
     files::CreateService service;
-    pump.prepare(service, fixture.root, files::CreateKind::EMPTY_FILE);
+    pump.prepare(service, fixture.root, files::CreateKind::EmptyFile);
     pump.create(service, "Document 文.txt");
     require(
         service.snapshot().status == files::CreateStatus::SUCCEEDED
-            && service.snapshot().kind == files::CreateKind::EMPTY_FILE
+            && service.snapshot().kind == files::CreateKind::EmptyFile
             && service.snapshot().destination == location(fixture.root / "Document 文.txt")
             && fs::is_regular_file(fixture.root / "Document 文.txt")
             && fs::file_size(fixture.root / "Document 文.txt") == 0,
@@ -222,7 +222,7 @@ namespace {
     fs::create_symlink("missing-target", fixture.root / "broken-link");
     fs::create_symlink("protected.txt", fixture.root / "link");
     require(::mkfifo((fixture.root / "pipe").c_str(), 0600) == 0, "FIFO fixture failed");
-    pump.prepare(service, fixture.root, files::CreateKind::EMPTY_FILE);
+    pump.prepare(service, fixture.root, files::CreateKind::EmptyFile);
     for (const auto* name : {"protected.txt", "directory", "broken-link", "link", "pipe"}) {
       pump.create(service, name);
       require(
@@ -247,8 +247,8 @@ namespace {
         "file collision retry failed"
     );
     files::CreateService other;
-    pump.prepare(service, fixture.root, files::CreateKind::EMPTY_FILE);
-    pump.prepare(other, fixture.root, files::CreateKind::EMPTY_FILE);
+    pump.prepare(service, fixture.root, files::CreateKind::EmptyFile);
+    pump.prepare(other, fixture.root, files::CreateKind::EmptyFile);
     require(service.create("racing.txt") && other.create("racing.txt"), "racing file requests refused");
     pump.until([&] { return !service.busy() && !other.busy(); });
     require(
@@ -257,7 +257,7 @@ namespace {
             && fs::file_size(fixture.root / "racing.txt") == 0,
         "file creation race had multiple winners"
     );
-    pump.prepare(service, fixture.root, files::CreateKind::EMPTY_FILE);
+    pump.prepare(service, fixture.root, files::CreateKind::EmptyFile);
     require(service.create("cancelled.txt"), "file request refused");
     service.cancel();
     pump.until([&] { return !service.busy(); });
@@ -269,14 +269,14 @@ namespace {
     );
     const auto raw = std::string("raw-") + static_cast<char>(0xff);
     fs::create_directory(fixture.root / raw);
-    pump.prepare(service, fixture.root / raw, files::CreateKind::EMPTY_FILE);
+    pump.prepare(service, fixture.root / raw, files::CreateKind::EmptyFile);
     pump.create(service, "child.txt");
     require(fs::is_regular_file(fixture.root / raw / "child.txt"), "raw destination bytes were lost");
     struct MaskGuard {
       mode_t previous = ::umask(0027);
       ~MaskGuard() { ::umask(previous); }
     } guard;
-    pump.prepare(service, fixture.root, files::CreateKind::EMPTY_FILE);
+    pump.prepare(service, fixture.root, files::CreateKind::EmptyFile);
     pump.create(service, "mode.txt");
     struct stat info{};
     require(
@@ -284,7 +284,7 @@ namespace {
         "new file did not honor umask or gained executable bits"
     );
     if (::geteuid() != 0) {
-      pump.prepare(service, fixture.root, files::CreateKind::EMPTY_FILE);
+      pump.prepare(service, fixture.root, files::CreateKind::EmptyFile);
       fs::permissions(fixture.root, fs::perms::owner_read | fs::perms::owner_exec);
       pump.create(service, "denied.txt");
       fs::permissions(fixture.root, fs::perms::owner_all);
@@ -312,7 +312,7 @@ namespace {
             && model.select(id),
         "created folder was not actionable in the live model"
     );
-    pump.prepare(service, fixture.root, files::CreateKind::EMPTY_FILE);
+    pump.prepare(service, fixture.root, files::CreateKind::EmptyFile);
     pump.create(service, "created.txt");
     pump.until([&] { return model.rows().size() == 2; });
     const auto file = std::ranges::find_if(model.rows(), [&](auto id) {
@@ -334,7 +334,7 @@ int main() {
     createsEmptyFiles(pump);
     collisionsAndRetry(pump);
     staleDestinations(pump, files::CreateKind::FOLDER);
-    staleDestinations(pump, files::CreateKind::EMPTY_FILE);
+    staleDestinations(pump, files::CreateKind::EmptyFile);
     validationCancellationAndPermissions(pump);
     monitoredCreation(pump);
     std::println("create-service tests passed");

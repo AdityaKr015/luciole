@@ -121,7 +121,7 @@ struct files::PinService::State : std::enable_shared_from_this<State> {
           if (!store.issues().empty()) {
             result->error = store.issues().front().format();
           }
-          result->ready = outcome != AtomicWriteState::NOT_COMMITTED;
+          result->ready = outcome != AtomicWriteState::NotCommitted;
           if (!result->ready) {
             result->ready = store.load();
           }

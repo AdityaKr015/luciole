@@ -27,11 +27,11 @@ namespace {
     int files::ThumbnailOptions::* member;
   };
   constexpr auto kThumbnailIntegers = std::to_array<ThumbnailInteger>(
-      {{files::BrowserPreference::THUMBNAIL_MAX_FILE_MIB, "browser.thumbnail_max_file_mib", 1, 1024,
+      {{files::BrowserPreference::ThumbnailMaxFileMib, "browser.thumbnail_max_file_mib", 1, 1024,
         &files::ThumbnailOptions::maxFileMiB},
-       {files::BrowserPreference::THUMBNAIL_MAX_MEGAPIXELS, "browser.thumbnail_max_megapixels", 1, 64,
+       {files::BrowserPreference::ThumbnailMaxMegapixels, "browser.thumbnail_max_megapixels", 1, 64,
         &files::ThumbnailOptions::maxMegapixels},
-       {files::BrowserPreference::THUMBNAIL_CACHE_MIB, "browser.thumbnail_cache_mib", 16, 1024,
+       {files::BrowserPreference::ThumbnailCacheMib, "browser.thumbnail_cache_mib", 16, 1024,
         &files::ThumbnailOptions::cacheMiB}}
   );
   std::optional<std::size_t> thumbnailIntegerIndex(files::BrowserPreference preference) {
@@ -178,8 +178,8 @@ namespace {
           if (name == "activation_mode") {
             const auto* mode = value.as_string();
             if (mode && (mode->get() == "single_click" || mode->get() == "double_click"))
-              patch.activationMode = mode->get() == "single_click" ? files::ActivationMode::SINGLE_CLICK
-                                                                   : files::ActivationMode::DOUBLE_CLICK;
+              patch.activationMode = mode->get() == "single_click" ? files::ActivationMode::SingleClick
+                                                                   : files::ActivationMode::DoubleClick;
             else
               issue(issues, file, value, path, "expected 'single_click' or 'double_click'");
           } else if (name == "typing_mode") {
@@ -398,13 +398,13 @@ namespace {
   std::optional<std::size_t> columnWidthIndex(files::BrowserPreference preference) {
     using P = files::BrowserPreference;
     switch (preference) {
-    case P::NAME_COLUMN_WIDTH:
+    case P::NameColumnWidth:
       return 0;
-    case P::TYPE_COLUMN_WIDTH:
+    case P::TypeColumnWidth:
       return 1;
-    case P::SIZE_COLUMN_WIDTH:
+    case P::SizeColumnWidth:
       return 2;
-    case P::MODIFIED_COLUMN_WIDTH:
+    case P::ModifiedColumnWidth:
       return 3;
     default:
       return std::nullopt;
@@ -416,56 +416,56 @@ namespace {
     if (const auto index = thumbnailIntegerIndex(preference))
       return kThumbnailIntegers[*index].key;
     switch (preference) {
-    case Preference::THUMBNAIL_POLICY:
+    case Preference::ThumbnailPolicy:
       return "browser.thumbnail_policy";
-    case Preference::THUMBNAIL_MAX_FILE_MIB:
-    case Preference::THUMBNAIL_MAX_MEGAPIXELS:
-    case Preference::THUMBNAIL_CACHE_MIB:
+    case Preference::ThumbnailMaxFileMib:
+    case Preference::ThumbnailMaxMegapixels:
+    case Preference::ThumbnailCacheMib:
     case Preference::COUNT:
       return {};
-    case Preference::ACTIVATION_MODE:
+    case Preference::ActivationMode:
       return "browser.activation_mode";
-    case Preference::TYPING_MODE:
+    case Preference::TypingMode:
       return "browser.typing_mode";
-    case Preference::NAME_COLUMN_WIDTH:
+    case Preference::NameColumnWidth:
       return "browser.name_column_width";
-    case Preference::TYPE_COLUMN_WIDTH:
+    case Preference::TypeColumnWidth:
       return "browser.type_column_width";
-    case Preference::SIZE_COLUMN_WIDTH:
+    case Preference::SizeColumnWidth:
       return "browser.size_column_width";
-    case Preference::MODIFIED_COLUMN_WIDTH:
+    case Preference::ModifiedColumnWidth:
       return "browser.modified_column_width";
-    case Preference::COLUMN_ORDER:
+    case Preference::ColumnOrder:
       return "browser.column_order";
-    case Preference::SHOW_TYPE_COLUMN:
+    case Preference::ShowTypeColumn:
       return "browser.show_type_column";
-    case Preference::SHOW_SIZE_COLUMN:
+    case Preference::ShowSizeColumn:
       return "browser.show_size_column";
-    case Preference::SHOW_MODIFIED_COLUMN:
+    case Preference::ShowModifiedColumn:
       return "browser.show_modified_column";
-    case Preference::SHOW_HIDDEN:
+    case Preference::ShowHidden:
       return "browser.show_hidden";
-    case Preference::SORT_BY:
+    case Preference::SortBy:
       return "browser.sort_by";
-    case Preference::SORT_DESCENDING:
+    case Preference::SortDescending:
       return "browser.sort_descending";
-    case Preference::DIRECTORIES_FIRST:
+    case Preference::DirectoriesFirst:
       return "browser.directories_first";
-    case Preference::VIEW_MODE:
+    case Preference::ViewMode:
       return "browser.view_mode";
-    case Preference::GRID_ICON_SIZE:
+    case Preference::GridIconSize:
       return "browser.grid_icon_size";
-    case Preference::SIDEBAR_WIDTH:
+    case Preference::SidebarWidth:
       return "browser.sidebar_width";
-    case Preference::SHOW_SIDEBAR:
+    case Preference::ShowSidebar:
       return "browser.show_sidebar";
-    case Preference::SHOW_PREVIEW:
+    case Preference::ShowPreview:
       return "browser.show_preview";
-    case Preference::PREVIEW_WIDTH:
+    case Preference::PreviewWidth:
       return "browser.preview_width";
-    case Preference::MILLER_COLUMN_WIDTH:
+    case Preference::MillerColumnWidth:
       return "browser.miller_column_width";
-    case Preference::MILLER_SHOW_PARENTS:
+    case Preference::MillerShowParents:
       return "browser.miller_show_parents";
     }
     return {};
@@ -473,7 +473,7 @@ namespace {
 
   void editPatch(Patch& patch, const files::OverrideEdit& edit) {
     using Preference = files::BrowserPreference;
-    if (edit.preference == Preference::THUMBNAIL_POLICY) {
+    if (edit.preference == Preference::ThumbnailPolicy) {
       patch.thumbnailPolicy = std::holds_alternative<std::monostate>(edit.value)
           ? std::nullopt
           : std::optional(std::get<files::ThumbnailPolicy>(edit.value));
@@ -484,13 +484,13 @@ namespace {
           std::holds_alternative<std::monostate>(edit.value) ? std::nullopt : std::optional(std::get<int>(edit.value));
       return;
     }
-    if (edit.preference == Preference::ACTIVATION_MODE) {
+    if (edit.preference == Preference::ActivationMode) {
       patch.activationMode = std::holds_alternative<std::monostate>(edit.value)
           ? std::nullopt
           : std::optional(std::get<files::ActivationMode>(edit.value));
       return;
     }
-    if (edit.preference == Preference::TYPING_MODE) {
+    if (edit.preference == Preference::TypingMode) {
       patch.typingMode = std::holds_alternative<std::monostate>(edit.value)
           ? std::nullopt
           : std::optional(std::get<files::TypingMode>(edit.value));
@@ -502,43 +502,43 @@ namespace {
           : std::optional<int>(std::get<int>(edit.value));
       return;
     }
-    if (edit.preference == Preference::COLUMN_ORDER) {
+    if (edit.preference == Preference::ColumnOrder) {
       patch.columnOrder = std::holds_alternative<std::monostate>(edit.value)
           ? std::nullopt
           : std::optional<files::DetailsColumnOrder>(std::get<files::DetailsColumnOrder>(edit.value));
       return;
     }
-    if (edit.preference == Preference::MILLER_COLUMN_WIDTH) {
+    if (edit.preference == Preference::MillerColumnWidth) {
       patch.millerColumnWidth = std::holds_alternative<std::monostate>(edit.value)
           ? std::nullopt
           : std::optional<int>(std::get<int>(edit.value));
       return;
     }
-    if (edit.preference == Preference::PREVIEW_WIDTH) {
+    if (edit.preference == Preference::PreviewWidth) {
       patch.previewWidth = std::holds_alternative<std::monostate>(edit.value)
           ? std::nullopt
           : std::optional<int>(std::get<int>(edit.value));
       return;
     }
-    if (edit.preference == Preference::SIDEBAR_WIDTH) {
+    if (edit.preference == Preference::SidebarWidth) {
       patch.sidebarWidth = std::holds_alternative<std::monostate>(edit.value)
           ? std::nullopt
           : std::optional<int>(std::get<int>(edit.value));
       return;
     }
-    if (edit.preference == Preference::GRID_ICON_SIZE) {
+    if (edit.preference == Preference::GridIconSize) {
       patch.gridIconSize = std::holds_alternative<std::monostate>(edit.value)
           ? std::nullopt
           : std::optional<int>(std::get<int>(edit.value));
       return;
     }
-    if (edit.preference == Preference::VIEW_MODE) {
+    if (edit.preference == Preference::ViewMode) {
       patch.viewMode = std::holds_alternative<std::monostate>(edit.value)
           ? std::nullopt
           : std::optional<files::ViewMode>(std::get<files::ViewMode>(edit.value));
       return;
     }
-    if (edit.preference == Preference::SORT_BY) {
+    if (edit.preference == Preference::SortBy) {
       patch.sortBy = std::holds_alternative<std::monostate>(edit.value)
           ? std::nullopt
           : std::optional<files::SortField>(std::get<files::SortField>(edit.value));
@@ -548,50 +548,50 @@ namespace {
         ? std::nullopt
         : std::optional<bool>(std::get<bool>(edit.value));
     switch (edit.preference) {
-    case Preference::MILLER_SHOW_PARENTS:
+    case Preference::MillerShowParents:
       patch.millerShowParents = value;
       break;
-    case Preference::SHOW_TYPE_COLUMN:
+    case Preference::ShowTypeColumn:
       patch.showTypeColumn = value;
       break;
-    case Preference::SHOW_SIZE_COLUMN:
+    case Preference::ShowSizeColumn:
       patch.showSizeColumn = value;
       break;
-    case Preference::SHOW_MODIFIED_COLUMN:
+    case Preference::ShowModifiedColumn:
       patch.showModifiedColumn = value;
       break;
-    case Preference::SHOW_SIDEBAR:
+    case Preference::ShowSidebar:
       patch.showSidebar = value;
       break;
-    case Preference::SHOW_PREVIEW:
+    case Preference::ShowPreview:
       patch.showPreview = value;
       break;
-    case Preference::SHOW_HIDDEN:
+    case Preference::ShowHidden:
       patch.showHidden = value;
       break;
-    case Preference::SORT_DESCENDING:
+    case Preference::SortDescending:
       patch.sortDescending = value;
       break;
-    case Preference::DIRECTORIES_FIRST:
+    case Preference::DirectoriesFirst:
       patch.directoriesFirst = value;
       break;
-    case Preference::ACTIVATION_MODE:
-    case Preference::TYPING_MODE:
-    case Preference::NAME_COLUMN_WIDTH:
-    case Preference::TYPE_COLUMN_WIDTH:
-    case Preference::SIZE_COLUMN_WIDTH:
-    case Preference::MODIFIED_COLUMN_WIDTH:
-    case Preference::SORT_BY:
-    case Preference::COLUMN_ORDER:
-    case Preference::VIEW_MODE:
-    case Preference::GRID_ICON_SIZE:
-    case Preference::SIDEBAR_WIDTH:
-    case Preference::PREVIEW_WIDTH:
-    case Preference::MILLER_COLUMN_WIDTH:
-    case Preference::THUMBNAIL_POLICY:
-    case Preference::THUMBNAIL_MAX_FILE_MIB:
-    case Preference::THUMBNAIL_MAX_MEGAPIXELS:
-    case Preference::THUMBNAIL_CACHE_MIB:
+    case Preference::ActivationMode:
+    case Preference::TypingMode:
+    case Preference::NameColumnWidth:
+    case Preference::TypeColumnWidth:
+    case Preference::SizeColumnWidth:
+    case Preference::ModifiedColumnWidth:
+    case Preference::SortBy:
+    case Preference::ColumnOrder:
+    case Preference::ViewMode:
+    case Preference::GridIconSize:
+    case Preference::SidebarWidth:
+    case Preference::PreviewWidth:
+    case Preference::MillerColumnWidth:
+    case Preference::ThumbnailPolicy:
+    case Preference::ThumbnailMaxFileMib:
+    case Preference::ThumbnailMaxMegapixels:
+    case Preference::ThumbnailCacheMib:
     case Preference::COUNT:
       break;
     }
@@ -612,7 +612,7 @@ namespace {
     if (patch.activationMode)
       browser.insert(
           "activation_mode",
-          *patch.activationMode == files::ActivationMode::SINGLE_CLICK ? "single_click" : "double_click"
+          *patch.activationMode == files::ActivationMode::SingleClick ? "single_click" : "double_click"
       );
     if (patch.typingMode)
       browser.insert("typing_mode", *patch.typingMode == files::TypingMode::SEARCH ? "search" : "typeahead");
@@ -772,13 +772,13 @@ files::AtomicWriteState files::ConfigService::saveOverrides(std::span<const Over
     m_issues.push_back(
         ioIssue(m_paths.overrides, "saves require distinct config.toml and settings.toml in one absolute directory")
     );
-    return AtomicWriteState::NOT_COMMITTED;
+    return AtomicWriteState::NotCommitted;
   }
   for (const auto& edit : edits) {
     const auto key = preferenceKey(edit.preference);
     bool valid = !key.empty();
     if (!std::holds_alternative<std::monostate>(edit.value)) {
-      if (edit.preference == BrowserPreference::THUMBNAIL_POLICY) {
+      if (edit.preference == BrowserPreference::ThumbnailPolicy) {
         const auto* mode = std::get_if<ThumbnailPolicy>(&edit.value);
         valid = mode
             && (*mode == ThumbnailPolicy::NEVER || *mode == ThumbnailPolicy::LOCAL || *mode == ThumbnailPolicy::ALL);
@@ -786,38 +786,38 @@ files::AtomicWriteState files::ConfigService::saveOverrides(std::span<const Over
         const auto* number = std::get_if<int>(&edit.value);
         valid =
             number && *number >= kThumbnailIntegers[*index].minimum && *number <= kThumbnailIntegers[*index].maximum;
-      } else if (edit.preference == BrowserPreference::ACTIVATION_MODE) {
+      } else if (edit.preference == BrowserPreference::ActivationMode) {
         const auto* mode = std::get_if<ActivationMode>(&edit.value);
-        valid = mode && (*mode == ActivationMode::SINGLE_CLICK || *mode == ActivationMode::DOUBLE_CLICK);
-      } else if (edit.preference == BrowserPreference::TYPING_MODE) {
+        valid = mode && (*mode == ActivationMode::SingleClick || *mode == ActivationMode::DoubleClick);
+      } else if (edit.preference == BrowserPreference::TypingMode) {
         const auto* mode = std::get_if<TypingMode>(&edit.value);
         valid = mode && (*mode == TypingMode::SEARCH || *mode == TypingMode::TYPEAHEAD);
       } else if (const auto index = columnWidthIndex(edit.preference)) {
         const auto* width = std::get_if<int>(&edit.value);
         valid = width != nullptr && validDetailsColumnWidth(*index, *width);
-      } else if (edit.preference == BrowserPreference::COLUMN_ORDER) {
+      } else if (edit.preference == BrowserPreference::ColumnOrder) {
         const auto* order = std::get_if<DetailsColumnOrder>(&edit.value);
         valid = order != nullptr && validDetailsColumnOrder(*order);
-      } else if (edit.preference == BrowserPreference::SORT_BY) {
+      } else if (edit.preference == BrowserPreference::SortBy) {
         const auto* sort = std::get_if<SortField>(&edit.value);
         valid = sort != nullptr
             && (*sort == SortField::NAME
                 || *sort == SortField::SIZE
                 || *sort == SortField::MODIFIED
                 || *sort == SortField::TYPE);
-      } else if (edit.preference == BrowserPreference::GRID_ICON_SIZE) {
+      } else if (edit.preference == BrowserPreference::GridIconSize) {
         const auto* size = std::get_if<int>(&edit.value);
         valid = size != nullptr && std::ranges::contains(kGridIconSizes, *size);
-      } else if (edit.preference == BrowserPreference::MILLER_COLUMN_WIDTH) {
+      } else if (edit.preference == BrowserPreference::MillerColumnWidth) {
         const auto* width = std::get_if<int>(&edit.value);
         valid = width && *width >= 180 && *width <= 800;
-      } else if (edit.preference == BrowserPreference::PREVIEW_WIDTH) {
+      } else if (edit.preference == BrowserPreference::PreviewWidth) {
         const auto* width = std::get_if<int>(&edit.value);
         valid = width && *width >= 208 && *width <= 800;
-      } else if (edit.preference == BrowserPreference::SIDEBAR_WIDTH) {
+      } else if (edit.preference == BrowserPreference::SidebarWidth) {
         const auto* width = std::get_if<int>(&edit.value);
         valid = width != nullptr && *width >= kMinSidebarWidth && *width <= kMaxSidebarWidth;
-      } else if (edit.preference == BrowserPreference::VIEW_MODE) {
+      } else if (edit.preference == BrowserPreference::ViewMode) {
         const auto* mode = std::get_if<ViewMode>(&edit.value);
         valid = mode != nullptr && (*mode == ViewMode::LIST || *mode == ViewMode::GRID || *mode == ViewMode::MILLER);
       } else {
@@ -831,7 +831,7 @@ files::AtomicWriteState files::ConfigService::saveOverrides(std::span<const Over
     }
   }
   if (!m_issues.empty()) {
-    return AtomicWriteState::NOT_COMMITTED;
+    return AtomicWriteState::NotCommitted;
   }
   Settings candidate;
   const auto result = updateTextFileAtomic(
@@ -873,7 +873,7 @@ files::AtomicWriteState files::ConfigService::saveOverrides(std::span<const Over
         return formatPatch(*patch);
       }
   );
-  if (result.state != AtomicWriteState::NOT_COMMITTED) {
+  if (result.state != AtomicWriteState::NotCommitted) {
     m_settings = candidate;
   }
   if (!result.error.empty() && m_issues.empty()) {

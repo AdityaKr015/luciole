@@ -67,7 +67,7 @@ namespace {
     Fixture fixture;
     const auto invalid = fs::path((fixture.directory / "settings.toml").native() + std::string("\0suffix", 7));
     require(
-        save(invalid, "invalid").state == AtomicWriteState::NOT_COMMITTED
+        save(invalid, "invalid").state == AtomicWriteState::NotCommitted
             && !fs::exists(fixture.directory / "settings.toml"),
         "NUL path was truncated to another target"
     );
@@ -95,7 +95,7 @@ namespace {
         "no-op save replaced the file"
     );
     require(
-        save(path, std::string(256 * 1024 + 1, 'x')).state == AtomicWriteState::NOT_COMMITTED && read(path) == "second",
+        save(path, std::string(256 * 1024 + 1, 'x')).state == AtomicWriteState::NotCommitted && read(path) == "second",
         "oversized replacement changed settings"
     );
     noTemporaryFiles(parent);
@@ -108,7 +108,7 @@ namespace {
     plainWrite(outside, "base");
     fs::create_symlink(outside, path);
     require(
-        save(path, "candidate").state == AtomicWriteState::NOT_COMMITTED
+        save(path, "candidate").state == AtomicWriteState::NotCommitted
             && read(outside) == "base"
             && fs::is_symlink(path),
         "writer followed a symlink"
@@ -116,20 +116,19 @@ namespace {
     fs::remove(path);
     fs::create_hard_link(outside, path);
     require(
-        save(path, "candidate").state == AtomicWriteState::NOT_COMMITTED && read(outside) == "base",
-        "hard link accepted"
+        save(path, "candidate").state == AtomicWriteState::NotCommitted && read(outside) == "base", "hard link accepted"
     );
     fs::remove(path);
     fs::create_directory(path);
-    require(save(path, "candidate").state == AtomicWriteState::NOT_COMMITTED, "directory accepted");
+    require(save(path, "candidate").state == AtomicWriteState::NotCommitted, "directory accepted");
     fs::remove(path);
     require(::mkfifo(path.c_str(), 0600) == 0, "cannot create FIFO");
-    require(save(path, "candidate").state == AtomicWriteState::NOT_COMMITTED, "FIFO accepted");
+    require(save(path, "candidate").state == AtomicWriteState::NotCommitted, "FIFO accepted");
     fs::remove(path);
     plainWrite(path, "old");
     require(::chmod(path.c_str(), 0444) == 0, "cannot protect settings fixture");
     require(
-        save(path, "candidate").state == AtomicWriteState::NOT_COMMITTED && read(path) == "old",
+        save(path, "candidate").state == AtomicWriteState::NotCommitted && read(path) == "old",
         "read-only target replaced"
     );
     ::chmod(path.c_str(), 0600);
@@ -141,7 +140,7 @@ namespace {
         }
     );
     require(
-        conflict.state == AtomicWriteState::NOT_COMMITTED && read(path) == "external edit",
+        conflict.state == AtomicWriteState::NotCommitted && read(path) == "external edit",
         "detected external edit overwritten"
     );
     fs::remove(path);
@@ -153,7 +152,7 @@ namespace {
         }
     );
     require(
-        appeared.state == AtomicWriteState::NOT_COMMITTED && read(path) == "external new file",
+        appeared.state == AtomicWriteState::NotCommitted && read(path) == "external new file",
         "new external target replaced"
     );
     noTemporaryFiles(fixture.directory);
@@ -167,14 +166,14 @@ namespace {
     require(lock >= 0 && ::flock(lock, LOCK_EX | LOCK_NB) == 0, "cannot hold settings lock");
     const auto busy = save(path, "blocked");
     require(
-        busy.state == AtomicWriteState::NOT_COMMITTED && read(path) == "old" && !busy.error.empty(),
+        busy.state == AtomicWriteState::NotCommitted && read(path) == "old" && !busy.error.empty(),
         "busy writer changed settings"
     );
     const auto contender = ::fork();
     require(contender >= 0, "cannot fork lock contender");
     if (contender == 0) {
       const auto result = save(path, "blocked child");
-      ::_exit(result.state == AtomicWriteState::NOT_COMMITTED ? 0 : 1);
+      ::_exit(result.state == AtomicWriteState::NotCommitted ? 0 : 1);
     }
     int contenderStatus = 0;
     require(
@@ -197,7 +196,7 @@ namespace {
         ::_exit(2);
       }
       const auto result = save(path, "must fail while writing");
-      ::_exit(result.state == AtomicWriteState::NOT_COMMITTED ? 0 : 1);
+      ::_exit(result.state == AtomicWriteState::NotCommitted ? 0 : 1);
     }
     int status = 0;
     require(
@@ -211,7 +210,7 @@ namespace {
     plainWrite(untouched, "leave me alone");
     fs::create_symlink(untouched, fixture.directory / ".settings.toml.lock");
     require(
-        save(path, "candidate").state == AtomicWriteState::NOT_COMMITTED && read(untouched) == "leave me alone",
+        save(path, "candidate").state == AtomicWriteState::NotCommitted && read(untouched) == "leave me alone",
         "writer followed a lock symlink"
     );
   }

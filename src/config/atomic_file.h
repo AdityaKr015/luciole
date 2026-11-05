@@ -9,13 +9,13 @@
 namespace files {
   enum class AtomicWriteState : unsigned char {
     UNCHANGED,
-    NOT_COMMITTED,
+    NotCommitted,
     COMMITTED, // Visible replacement, but directory sync failed. Do not report rollback.
     DURABLE,
   };
 
   struct AtomicWriteResult {
-    AtomicWriteState state = AtomicWriteState::NOT_COMMITTED;
+    AtomicWriteState state = AtomicWriteState::NotCommitted;
     std::string error;
   };
 

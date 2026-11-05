@@ -164,7 +164,7 @@ namespace {
     const auto original = read(archive);
     write(source, "second content");
     for (const auto choice :
-         {files::TransferConflictChoice::SKIP, files::TransferConflictChoice::KEEP_BOTH,
+         {files::TransferConflictChoice::SKIP, files::TransferConflictChoice::KeepBoth,
           files::TransferConflictChoice::REPLACE}) {
       require(
           service.compress({location(source)}, location(archive), files::ArchiveFormat::ZIP),

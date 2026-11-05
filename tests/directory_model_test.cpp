@@ -334,7 +334,7 @@ namespace {
     model.select(1, SelectionMode::TOGGLE);
     selected(model, {3, 2});
     require(model.selection().anchor == 1 && model.selection().focused == 1, "toggle coupled focus to selection");
-    model.select(4, SelectionMode::ADD_RANGE);
+    model.select(4, SelectionMode::AddRange);
     selected(model, {4, 3, 2, 1});
     model.clearSelection();
     require(model.selection().focused == 4 && !model.selection().anchor, "clear selection changed focus");

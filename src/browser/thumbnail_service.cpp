@@ -164,7 +164,7 @@ namespace {
 } // namespace
 
 struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
-  enum class Stage : std::uint8_t { PROBE_QUEUED, PROBING, DECODE_QUEUED, DECODING, READY };
+  enum class Stage : std::uint8_t { ProbeQueued, PROBING, DecodeQueued, DECODING, READY };
   struct Item {
     explicit Item(DirectoryEntry entry) : source(std::move(entry)) {}
     std::shared_ptr<FileIconImage> image;
@@ -173,7 +173,7 @@ struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
     std::uint64_t serial = 0, used = 0;
     int side = 128;
     bool visible = false, failed = false;
-    Stage stage = Stage::PROBE_QUEUED;
+    Stage stage = Stage::ProbeQueued;
     std::chrono::steady_clock::time_point retry;
   };
   struct Request {
@@ -381,7 +381,7 @@ struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
               && loaded) {
             auto& item = found->second;
             if (loaded->loaded.decodeNeeded) {
-              item.stage = Stage::DECODE_QUEUED;
+              item.stage = Stage::DecodeQueued;
             } else {
               item.stage = Stage::READY;
               *item.image = std::move(loaded->loaded.image);
@@ -426,13 +426,13 @@ struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
         ++it;
     }
     while (probes < 4) {
-      const auto item = next(Stage::PROBE_QUEUED);
+      const auto item = next(Stage::ProbeQueued);
       if (item == cache.end())
         break;
       start(item, false);
     }
     while (active < 2) {
-      const auto item = next(Stage::DECODE_QUEUED);
+      const auto item = next(Stage::DecodeQueued);
       if (item == cache.end())
         break;
       start(item, true);
@@ -493,7 +493,7 @@ files::ThumbnailService::request(const DirectoryEntry& source, int pixels, bool 
   }
   found->second.visible = visible;
   found->second.used = ++state.clock;
-  if (found->second.stage == State::Stage::PROBE_QUEUED || found->second.stage == State::Stage::DECODE_QUEUED)
+  if (found->second.stage == State::Stage::ProbeQueued || found->second.stage == State::Stage::DecodeQueued)
     state.schedule();
   return found->second.image;
 }

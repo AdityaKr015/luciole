@@ -67,58 +67,58 @@ BrowserSettingsView::BrowserSettingsView(
   addChild(ui::row({.align = FlexAlign::Stretch, .flexGrow = 1.0F}, std::move(navigation), std::move(body)));
   section("Browsing");
   addChoice(
-      P::VIEW_MODE, "View", [](const auto& s) { return s.viewMode; },
+      P::ViewMode, "View", [](const auto& s) { return s.viewMode; },
       {{"Grid", files::ViewMode::GRID}, {"List", files::ViewMode::LIST}, {"Columns", files::ViewMode::MILLER}}
   );
   addNumber(
-      P::GRID_ICON_SIZE, "Icon size", [](const auto& s) { return s.gridIconSize; },
+      P::GridIconSize, "Icon size", [](const auto& s) { return s.gridIconSize; },
       {files::kGridIconSizes.begin(), files::kGridIconSizes.end()}
   );
   addNumber(
-      P::MILLER_COLUMN_WIDTH, "Column width", [](const auto& s) { return s.millerColumnWidth; },
+      P::MillerColumnWidth, "Column width", [](const auto& s) { return s.millerColumnWidth; },
       {180, 208, 240, 260, 300, 360, 480, 640, 800}
   );
-  addBool(P::MILLER_SHOW_PARENTS, "Show parent folders in Columns", [](const auto& s) { return s.millerShowParents; });
+  addBool(P::MillerShowParents, "Show parent folders in Columns", [](const auto& s) { return s.millerShowParents; });
   addChoice(
-      P::SORT_BY, "Sort by", [](const auto& s) { return s.sort.field; },
+      P::SortBy, "Sort by", [](const auto& s) { return s.sort.field; },
       {{"Name", files::SortField::NAME},
        {"Type", files::SortField::TYPE},
        {"Size", files::SortField::SIZE},
        {"Modified", files::SortField::MODIFIED}}
   );
-  addBool(P::SORT_DESCENDING, "Reverse order", [](const auto& s) { return s.sort.descending; });
-  addBool(P::DIRECTORIES_FIRST, "Folders first", [](const auto& s) { return s.sort.directoriesFirst; });
-  addBool(P::SHOW_HIDDEN, "Show hidden files", [](const auto& s) { return s.showHidden; });
+  addBool(P::SortDescending, "Reverse order", [](const auto& s) { return s.sort.descending; });
+  addBool(P::DirectoriesFirst, "Folders first", [](const auto& s) { return s.sort.directoriesFirst; });
+  addBool(P::ShowHidden, "Show hidden files", [](const auto& s) { return s.showHidden; });
   section("Behavior");
   addChoice(
-      P::ACTIVATION_MODE, "Open items", [](const auto& s) { return s.activationMode; },
-      {{"Single click", files::ActivationMode::SINGLE_CLICK}, {"Double click", files::ActivationMode::DOUBLE_CLICK}}
+      P::ActivationMode, "Open items", [](const auto& s) { return s.activationMode; },
+      {{"Single click", files::ActivationMode::SingleClick}, {"Double click", files::ActivationMode::DoubleClick}}
   );
   addChoice(
-      P::TYPING_MODE, "When typing", [](const auto& s) { return s.typingMode; },
+      P::TypingMode, "When typing", [](const auto& s) { return s.typingMode; },
       {{"Search subfolders", files::TypingMode::SEARCH}, {"Select names", files::TypingMode::TYPEAHEAD}}
   );
   section("Sidebar");
-  addBool(P::SHOW_SIDEBAR, "Show sidebar", [](const auto& s) { return s.showSidebar; });
+  addBool(P::ShowSidebar, "Show sidebar", [](const auto& s) { return s.showSidebar; });
   addNumber(
-      P::SIDEBAR_WIDTH, "Sidebar width", [](const auto& s) { return s.sidebarWidth; },
+      P::SidebarWidth, "Sidebar width", [](const auto& s) { return s.sidebarWidth; },
       widths(files::kMinSidebarWidth, files::kMaxSidebarWidth)
   );
   section("Preview");
-  addBool(P::SHOW_PREVIEW, "Show preview", [](const auto& s) { return s.showPreview; });
-  addNumber(P::PREVIEW_WIDTH, "Preview width", [](const auto& s) { return s.previewWidth; }, widths(208, 800));
+  addBool(P::ShowPreview, "Show preview", [](const auto& s) { return s.showPreview; });
+  addNumber(P::PreviewWidth, "Preview width", [](const auto& s) { return s.previewWidth; }, widths(208, 800));
   section("List columns");
-  addBool(P::SHOW_TYPE_COLUMN, "Type", [](const auto& s) { return s.columns.type; });
-  addBool(P::SHOW_SIZE_COLUMN, "Size", [](const auto& s) { return s.columns.size; });
-  addBool(P::SHOW_MODIFIED_COLUMN, "Modified", [](const auto& s) { return s.columns.modified; });
+  addBool(P::ShowTypeColumn, "Type", [](const auto& s) { return s.columns.type; });
+  addBool(P::ShowSizeColumn, "Size", [](const auto& s) { return s.columns.size; });
+  addBool(P::ShowModifiedColumn, "Modified", [](const auto& s) { return s.columns.modified; });
   addNumber(
-      P::NAME_COLUMN_WIDTH, "Name width (0 = auto)", [](const auto& s) { return s.columnWidths[0]; },
+      P::NameColumnWidth, "Name width (0 = auto)", [](const auto& s) { return s.columnWidths[0]; },
       widths(160, 16384, true)
   );
-  addNumber(P::TYPE_COLUMN_WIDTH, "Type width", [](const auto& s) { return s.columnWidths[1]; }, widths(64, 2048));
-  addNumber(P::SIZE_COLUMN_WIDTH, "Size width", [](const auto& s) { return s.columnWidths[2]; }, widths(64, 2048));
+  addNumber(P::TypeColumnWidth, "Type width", [](const auto& s) { return s.columnWidths[1]; }, widths(64, 2048));
+  addNumber(P::SizeColumnWidth, "Size width", [](const auto& s) { return s.columnWidths[2]; }, widths(64, 2048));
   addNumber(
-      P::MODIFIED_COLUMN_WIDTH, "Modified width", [](const auto& s) { return s.columnWidths[3]; }, widths(64, 2048)
+      P::ModifiedColumnWidth, "Modified width", [](const auto& s) { return s.columnWidths[3]; }, widths(64, 2048)
   );
   std::vector<Choice> orders;
   auto order = files::kDefaultDetailsColumnOrder;
@@ -133,10 +133,10 @@ BrowserSettingsView::BrowserSettingsView(
     }
     orders.emplace_back(label, order);
   } while (std::ranges::next_permutation(order).found);
-  addChoice(P::COLUMN_ORDER, "Column order", [](const auto& value) { return value.columnOrder; }, orders);
+  addChoice(P::ColumnOrder, "Column order", [](const auto& value) { return value.columnOrder; }, orders);
   section("Thumbnails");
   addChoice(
-      P::THUMBNAIL_POLICY, "Show thumbnails", [](const auto& value) { return value.thumbnails.policy; },
+      P::ThumbnailPolicy, "Show thumbnails", [](const auto& value) { return value.thumbnails.policy; },
       {{"Never", files::ThumbnailPolicy::NEVER},
        {"Local files", files::ThumbnailPolicy::LOCAL},
        {"All locations", files::ThumbnailPolicy::ALL}}
@@ -150,16 +150,16 @@ BrowserSettingsView::BrowserSettingsView(
       )
   );
   addNumber(
-      P::THUMBNAIL_MAX_FILE_MIB, "Source file limit", [](const auto& value) { return value.thumbnails.maxFileMiB; },
+      P::ThumbnailMaxFileMib, "Source file limit", [](const auto& value) { return value.thumbnails.maxFileMiB; },
       {1, 1024}, "MiB"
   );
   addNumber(
-      P::THUMBNAIL_MAX_MEGAPIXELS, "Image pixel limit",
-      [](const auto& value) { return value.thumbnails.maxMegapixels; }, {1, 64}, "MP"
+      P::ThumbnailMaxMegapixels, "Image pixel limit", [](const auto& value) { return value.thumbnails.maxMegapixels; },
+      {1, 64}, "MP"
   );
   addNumber(
-      P::THUMBNAIL_CACHE_MIB, "Disk cache limit", [](const auto& value) { return value.thumbnails.cacheMiB; },
-      {16, 1024}, "MiB"
+      P::ThumbnailCacheMib, "Disk cache limit", [](const auto& value) { return value.thumbnails.cacheMiB; }, {16, 1024},
+      "MiB"
   );
   m_section->addChild(
       ui::button(
@@ -315,14 +315,14 @@ void BrowserSettingsView::addNumber(
   stepper->setValueSuffix(std::move(suffix));
   stepper->setOnValueChanged([this, key, stepper, values](int value) {
     const int previous = std::get<int>(m_values.at(key));
-    if (key == P::GRID_ICON_SIZE && !std::ranges::contains(values, value)) {
+    if (key == P::GridIconSize && !std::ranges::contains(values, value)) {
       const auto next =
           value > previous ? std::ranges::upper_bound(values, value) : std::ranges::lower_bound(values, value);
       stepper->setValue(
           value > previous ? (next == values.end() ? values.back() : *next)
                            : (next == values.begin() ? values.front() : *std::prev(next))
       );
-    } else if (key == P::NAME_COLUMN_WIDTH && value > 0 && value < 160)
+    } else if (key == P::NameColumnWidth && value > 0 && value < 160)
       stepper->setValue(value > previous ? 160 : 0);
   });
   stepper->setOnValueCommitted([this, key](int value) { send(key, value); });

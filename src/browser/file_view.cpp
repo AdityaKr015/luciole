@@ -363,7 +363,7 @@ bool files::FileViewAdapter::onPointerPress(std::size_t index, float, float, flo
   m_collapseSelectionOnClick = m_plainClick && m_browser.model().selection().selected.contains(*m_pressed);
   m_toggleSelectionOnClick = modifiers == KeyMod::Ctrl && m_browser.model().selection().selected.contains(*m_pressed);
   const auto mode = (modifiers & KeyMod::Shift) != 0
-      ? ((modifiers & KeyMod::Ctrl) != 0 ? SelectionMode::ADD_RANGE : SelectionMode::RANGE)
+      ? ((modifiers & KeyMod::Ctrl) != 0 ? SelectionMode::AddRange : SelectionMode::RANGE)
       : ((modifiers & KeyMod::Ctrl) != 0 ? SelectionMode::TOGGLE : SelectionMode::REPLACE);
   if (!m_collapseSelectionOnClick && !m_toggleSelectionOnClick) {
     (void)m_browser.model().select(*m_pressed, mode);
@@ -411,7 +411,7 @@ VirtualGridAdapter::PointerReleaseResult files::FileViewAdapter::onPointerReleas
   return {
       .rebind = true,
       .activateIndex =
-          (twice || (!columnFolder && m_activationMode == ActivationMode::SINGLE_CLICK)) ? index : std::nullopt
+          (twice || (!columnFolder && m_activationMode == ActivationMode::SingleClick)) ? index : std::nullopt
   };
 }
 

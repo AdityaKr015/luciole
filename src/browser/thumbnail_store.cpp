@@ -286,7 +286,7 @@ void files::ThumbnailStore::writeBatch(
         }
       }
   );
-  if (outcome.state == AtomicWriteState::NOT_COMMITTED)
+  if (outcome.state == AtomicWriteState::NotCommitted)
     for (const auto& [name, identity] : written)
       removeOwned(m_root, name, identity);
 }

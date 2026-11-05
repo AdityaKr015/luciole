@@ -486,7 +486,7 @@ namespace {
       case files::TransferConflictChoice::CANCEL:
         work.cancelled.store(true);
         throw Cancelled();
-      case files::TransferConflictChoice::KEEP_BOTH:
+      case files::TransferConflictChoice::KeepBoth:
         keepBoth = true;
         break;
       case files::TransferConflictChoice::REPLACE:

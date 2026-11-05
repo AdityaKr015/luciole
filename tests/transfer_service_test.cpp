@@ -161,7 +161,7 @@ namespace {
     write(fixture.destination("image (1).png"), "occupied");
     pump.run(
         service, {location(fixture.source("image.png"))}, fixture.destination(""), TransferAction::COPY,
-        [](const auto&) { return TransferConflictChoice::KEEP_BOTH; }
+        [](const auto&) { return TransferConflictChoice::KeepBoth; }
     );
     require(
         service.results()[0].outcome == TransferOutcome::COPIED
@@ -255,7 +255,7 @@ namespace {
         [&](const auto&) {
           write(fixture.root / "new source", "replaced source");
           fs::rename(fixture.root / "new source", fixture.source("race.txt"));
-          return TransferConflictChoice::KEEP_BOTH;
+          return TransferConflictChoice::KeepBoth;
         }
     );
     require(

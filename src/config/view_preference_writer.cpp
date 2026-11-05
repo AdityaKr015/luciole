@@ -184,7 +184,7 @@ struct files::ViewPreferenceWriter::State : std::enable_shared_from_this<State> 
         ConfigService service(request.owner->paths);
         if (!request.edits.empty()) {
           const auto result = service.saveOverrides(request.edits);
-          if (result == AtomicWriteState::NOT_COMMITTED || !service.issues().empty())
+          if (result == AtomicWriteState::NotCommitted || !service.issues().empty())
             outcome->error =
                 service.issues().empty() ? "Cannot save settings." : issueMessage(service.issues().front());
         }
@@ -219,49 +219,49 @@ files::ViewPreferenceWriter::~ViewPreferenceWriter() {
   m_state->changed = {};
   m_state->stopWatching();
 }
-void files::ViewPreferenceWriter::save(ViewMode mode) { m_state->queue({{BrowserPreference::VIEW_MODE, mode}}); }
+void files::ViewPreferenceWriter::save(ViewMode mode) { m_state->queue({{BrowserPreference::ViewMode, mode}}); }
 void files::ViewPreferenceWriter::saveGridIconSize(int size) {
-  m_state->queue({{BrowserPreference::GRID_ICON_SIZE, size}});
+  m_state->queue({{BrowserPreference::GridIconSize, size}});
 }
 void files::ViewPreferenceWriter::saveSidebarWidth(int width) {
-  m_state->queue({{BrowserPreference::SIDEBAR_WIDTH, width}});
+  m_state->queue({{BrowserPreference::SidebarWidth, width}});
 }
 void files::ViewPreferenceWriter::saveShowSidebar(bool visible) {
-  m_state->queue({{BrowserPreference::SHOW_SIDEBAR, visible}});
+  m_state->queue({{BrowserPreference::ShowSidebar, visible}});
 }
 void files::ViewPreferenceWriter::saveInteraction(ActivationMode activation, TypingMode typing) {
-  m_state->queue({{BrowserPreference::ACTIVATION_MODE, activation}, {BrowserPreference::TYPING_MODE, typing}});
+  m_state->queue({{BrowserPreference::ActivationMode, activation}, {BrowserPreference::TypingMode, typing}});
 }
 void files::ViewPreferenceWriter::saveShowHidden(bool visible) {
-  m_state->queue({{BrowserPreference::SHOW_HIDDEN, visible}});
+  m_state->queue({{BrowserPreference::ShowHidden, visible}});
 }
 void files::ViewPreferenceWriter::saveSort(SortOptions options) {
   m_state->queue({
-      {BrowserPreference::SORT_BY, options.field},
-      {BrowserPreference::SORT_DESCENDING, options.descending},
-      {BrowserPreference::DIRECTORIES_FIRST, options.directoriesFirst},
+      {BrowserPreference::SortBy, options.field},
+      {BrowserPreference::SortDescending, options.descending},
+      {BrowserPreference::DirectoriesFirst, options.directoriesFirst},
   });
 }
 bool files::ViewPreferenceWriter::busy() const {
   return m_state->active || !m_state->pending.empty() || m_state->reloadPending;
 }
 void files::ViewPreferenceWriter::saveColumnOrder(DetailsColumnOrder order) {
-  m_state->queue({{BrowserPreference::COLUMN_ORDER, order}});
+  m_state->queue({{BrowserPreference::ColumnOrder, order}});
 }
 
 void files::ViewPreferenceWriter::saveColumnWidths(DetailsColumnWidths widths) {
   m_state->queue(
-      {{BrowserPreference::NAME_COLUMN_WIDTH, widths[0]},
-       {BrowserPreference::TYPE_COLUMN_WIDTH, widths[1]},
-       {BrowserPreference::SIZE_COLUMN_WIDTH, widths[2]},
-       {BrowserPreference::MODIFIED_COLUMN_WIDTH, widths[3]}}
+      {{BrowserPreference::NameColumnWidth, widths[0]},
+       {BrowserPreference::TypeColumnWidth, widths[1]},
+       {BrowserPreference::SizeColumnWidth, widths[2]},
+       {BrowserPreference::ModifiedColumnWidth, widths[3]}}
   );
 }
 void files::ViewPreferenceWriter::saveDetailsColumns(DetailsColumnVisibility visibility) {
   m_state->queue({
-      {BrowserPreference::SHOW_TYPE_COLUMN, visibility.type},
-      {BrowserPreference::SHOW_SIZE_COLUMN, visibility.size},
-      {BrowserPreference::SHOW_MODIFIED_COLUMN, visibility.modified},
+      {BrowserPreference::ShowTypeColumn, visibility.type},
+      {BrowserPreference::ShowSizeColumn, visibility.size},
+      {BrowserPreference::ShowModifiedColumn, visibility.modified},
   });
 }
 void files::ViewPreferenceWriter::setChangedCallback(std::function<void(const std::string&)> callback) {

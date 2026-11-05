@@ -60,7 +60,7 @@ namespace {
     Fixture fixture;
     const auto path = fixture.directory / "not-created" / "state.toml";
     StateStore store(path);
-    require(store.saveBookmarks({}) == AtomicWriteState::NOT_COMMITTED, "save was allowed before loading");
+    require(store.saveBookmarks({}) == AtomicWriteState::NotCommitted, "save was allowed before loading");
     require(store.load() && !fs::exists(path.parent_path()), "missing state was created during load");
     const std::string native =
         (fixture.directory / "space #percent%\n").native() + std::string(1, static_cast<char>(0xFF));
@@ -124,7 +124,7 @@ namespace {
     const auto before = read(fixture.path());
     const auto lastGood = second.state();
     require(
-        second.saveBookmarks(c) == AtomicWriteState::NOT_COMMITTED
+        second.saveBookmarks(c) == AtomicWriteState::NotCommitted
             && read(fixture.path()) == before
             && second.state() == lastGood
             && !second.issues().empty(),
@@ -137,7 +137,7 @@ namespace {
     );
     const auto currentBytes = read(fixture.path());
     require(
-        second.saveWindows({window("/tmp/stale-session")}) == AtomicWriteState::NOT_COMMITTED
+        second.saveWindows({window("/tmp/stale-session")}) == AtomicWriteState::NotCommitted
             && read(fixture.path()) == currentBytes,
         "conflicting session snapshot was overwritten"
     );
@@ -157,7 +157,7 @@ namespace {
     require(first.saveBookmarks({}) == AtomicWriteState::DURABLE, "empty Places was treated as an unsaved no-op");
     require(
         stale.saveBookmarks({{.label = "Stale", .location = Location::fromPath("/tmp/stale")}})
-            == AtomicWriteState::NOT_COMMITTED,
+            == AtomicWriteState::NotCommitted,
         "stale defaults overwrote an explicitly empty Places list"
     );
     require(
@@ -210,7 +210,7 @@ namespace {
           "invalid state replaced last-good snapshot"
       );
       require(
-          store.saveWindows({window("/tmp/replacement")}) == AtomicWriteState::NOT_COMMITTED
+          store.saveWindows({window("/tmp/replacement")}) == AtomicWriteState::NotCommitted
               && read(fixture.path()) == invalid,
           "save silently overwrote corrupt/future state"
       );
@@ -237,7 +237,7 @@ namespace {
           "https://example.test/path?token=super-secret", "https://example.test/path#super-secret"}) {
       const std::vector<Bookmark> bookmarks{{.label = "Remote", .location = Location::fromUri(uri)}};
       require(
-          store.saveBookmarks(bookmarks) == AtomicWriteState::NOT_COMMITTED && read(fixture.path()) == original,
+          store.saveBookmarks(bookmarks) == AtomicWriteState::NotCommitted && read(fixture.path()) == original,
           "sensitive URI was persisted"
       );
       for (const auto& issue : store.issues()) {
@@ -250,23 +250,23 @@ namespace {
     const auto local = Location::fromPath("/tmp/repeated");
     require(
         store.saveBookmarks({{.label = "one", .location = local}, {.label = "two", .location = local}})
-            == AtomicWriteState::NOT_COMMITTED,
+            == AtomicWriteState::NotCommitted,
         "duplicate bookmark locations accepted"
     );
     for (const auto& label :
          {std::string(257, 'x'), std::string("line\nbreak"), std::string(1, static_cast<char>(0xFF))}) {
       require(
-          store.saveBookmarks({{.label = label, .location = local}}) == AtomicWriteState::NOT_COMMITTED,
+          store.saveBookmarks({{.label = label, .location = local}}) == AtomicWriteState::NotCommitted,
           "invalid bookmark label accepted"
       );
     }
     require(
-        store.saveWindows(std::vector<SavedWindow>(17, window("/tmp/window"))) == AtomicWriteState::NOT_COMMITTED,
+        store.saveWindows(std::vector<SavedWindow>(17, window("/tmp/window"))) == AtomicWriteState::NotCommitted,
         "window count limit ignored"
     );
     auto manyTabs = window("/tmp/tabs");
     manyTabs.tabs.resize(65, manyTabs.tabs.front());
-    require(store.saveWindows({manyTabs}) == AtomicWriteState::NOT_COMMITTED, "tab count limit ignored");
+    require(store.saveWindows({manyTabs}) == AtomicWriteState::NotCommitted, "tab count limit ignored");
     require(read(fixture.path()) == original, "rejected typed state modified the file");
   }
 
@@ -281,7 +281,7 @@ namespace {
     require(::chmod(fixture.path().c_str(), 0444) == 0 && store.load(), "read-only private state could not load");
     require(
         store.saveBookmarks({{.label = "x", .location = Location::fromPath("/tmp/x")}})
-            == AtomicWriteState::NOT_COMMITTED,
+            == AtomicWriteState::NotCommitted,
         "save replaced read-only state"
     );
     struct stat info{};

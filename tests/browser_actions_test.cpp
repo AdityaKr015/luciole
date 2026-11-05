@@ -46,61 +46,61 @@ namespace {
     files::ActionContext c{
         .model = model, .context = 12, .query = {}, .pinned = {}, .clipboardAvailable = true, .clipboardHasFiles = true
     };
-    require(!R::state(A::COPY_FILES, c, R::capture(c)).enabled, "empty selection copied files");
+    require(!R::state(A::CopyFiles, c, R::capture(c)).enabled, "empty selection copied files");
     model.select(1);
     const auto request = R::capture(c);
     require(
-        R::state(A::CUT_FILES, c, request).enabled
-            && R::state(A::COPY_FILES, c, request).enabled
-            && R::state(A::PASTE_FILES, c, request).enabled,
+        R::state(A::CutFiles, c, request).enabled
+            && R::state(A::CopyFiles, c, request).enabled
+            && R::state(A::PasteFiles, c, request).enabled,
         "native clipboard actions unavailable"
     );
     c.clipboardHasFiles = false;
-    require(!R::state(A::PASTE_FILES, c, request).enabled, "text clipboard authorized file paste");
+    require(!R::state(A::PasteFiles, c, request).enabled, "text clipboard authorized file paste");
     c.clipboardHasFiles = true;
     c.operationsBusy = true;
-    require(!R::state(A::PASTE_FILES, c, request).enabled, "file paste bypassed active operation");
+    require(!R::state(A::PasteFiles, c, request).enabled, "file paste bypassed active operation");
     c.operationsBusy = false;
     c.query = "search";
-    require(!R::state(A::PASTE_FILES, c, R::capture(c)).enabled, "search authorized ambiguous paste target");
+    require(!R::state(A::PasteFiles, c, R::capture(c)).enabled, "search authorized ambiguous paste target");
     c.query = {};
     data.metadata.access.write = false;
     ++data.generation;
     model.applySnapshot(data);
-    require(!R::state(A::PASTE_FILES, c, request).enabled, "read-only destination authorized paste");
+    require(!R::state(A::PasteFiles, c, request).enabled, "read-only destination authorized paste");
     data.entries[0].access.rename = false;
     ++data.generation;
     model.applySnapshot(data);
     require(
-        !R::state(A::CUT_FILES, c, request).enabled && R::state(A::COPY_FILES, c, request).enabled,
+        !R::state(A::CutFiles, c, request).enabled && R::state(A::CopyFiles, c, request).enabled,
         "source cut/copy capabilities conflated"
     );
     data.entries[0].location = files::Location::fromUri("sftp://example.invalid/source");
     ++data.generation;
     model.applySnapshot(data);
-    require(!R::state(A::COPY_FILES, c, R::capture(c)).enabled, "remote source advertised native file copy");
+    require(!R::state(A::CopyFiles, c, R::capture(c)).enabled, "remote source advertised native file copy");
   }
   void testPreviewActions() {
     files::DirectoryModel model;
     model.applySnapshot(snapshot());
     files::ActionContext context{.model = model, .context = 1, .query = {}, .pinned = {}};
-    require(!R::state(A::QUICK_PREVIEW, context, R::capture(context)).enabled, "empty preview target accepted");
+    require(!R::state(A::QuickPreview, context, R::capture(context)).enabled, "empty preview target accepted");
     model.select(1);
     const auto request = R::capture(context);
     require(
-        R::state(A::OPEN_WITH, context, request).enabled && R::state(A::QUICK_PREVIEW, context, request).enabled,
+        R::state(A::OpenWith, context, request).enabled && R::state(A::QuickPreview, context, request).enabled,
         "single-file preview or application choice refused"
     );
     model.select(6);
     require(
-        !R::state(A::OPEN_WITH, context, R::capture(context)).enabled
-            && R::state(A::QUICK_PREVIEW, context, R::capture(context)).enabled,
+        !R::state(A::OpenWith, context, R::capture(context)).enabled
+            && R::state(A::QuickPreview, context, R::capture(context)).enabled,
         "folder opening choices are incorrect"
     );
     model.selectAll();
-    require(!R::state(A::QUICK_PREVIEW, context, R::capture(context)).enabled, "multiple preview targets accepted");
+    require(!R::state(A::QuickPreview, context, R::capture(context)).enabled, "multiple preview targets accepted");
     ++context.context;
-    require(!R::state(A::OPEN_WITH, context, request).enabled, "retired application-choice target accepted");
+    require(!R::state(A::OpenWith, context, request).enabled, "retired application-choice target accepted");
   }
   void testArchiveActions() {
     files::DirectoryModel model;
@@ -112,21 +112,21 @@ namespace {
     const auto request = R::capture(c);
     require(
         R::state(A::COMPRESS, c, request).enabled
-            && R::state(A::EXTRACT_HERE, c, request).enabled
-            && R::state(A::EXTRACT_TO, c, request).enabled
-            && R::state(A::BROWSE_ARCHIVE, c, request).enabled,
+            && R::state(A::ExtractHere, c, request).enabled
+            && R::state(A::ExtractTo, c, request).enabled
+            && R::state(A::BrowseArchive, c, request).enabled,
         "native archive actions unavailable"
     );
     c.operationsBusy = true;
     require(
-        !R::state(A::BROWSE_ARCHIVE, c, request).enabled && !R::state(A::COMPRESS, c, request).enabled,
+        !R::state(A::BrowseArchive, c, request).enabled && !R::state(A::COMPRESS, c, request).enabled,
         "archive jobs bypassed operation ownership"
     );
     c.operationsBusy = false;
     data.entries.back().symlink = true;
     ++data.generation;
     model.applySnapshot(data);
-    require(!R::state(A::EXTRACT_TO, c, request).enabled, "archive symlink authorized extraction");
+    require(!R::state(A::ExtractTo, c, request).enabled, "archive symlink authorized extraction");
     data.entries.back().symlink = false;
     data.entries.back().access.read = false;
     ++data.generation;
@@ -135,7 +135,7 @@ namespace {
     model.select(1);
     const auto plain = R::capture(c);
     require(
-        R::state(A::COMPRESS, c, plain).enabled && !R::state(A::BROWSE_ARCHIVE, c, plain).enabled,
+        R::state(A::COMPRESS, c, plain).enabled && !R::state(A::BrowseArchive, c, plain).enabled,
         "ordinary file archive capabilities incorrect"
     );
     model.select(6);
@@ -182,7 +182,7 @@ namespace {
     ++data.generation;
     model.applySnapshot(data);
     require(
-        !R::state(A::RENAME, c, request).enabled && !R::state(A::CREATE_FILE, c, request).enabled,
+        !R::state(A::RENAME, c, request).enabled && !R::state(A::CreateFile, c, request).enabled,
         "reported read-only filesystem permitted mutation"
     );
     data.metadata.filesystem.readOnly = false;
@@ -201,7 +201,7 @@ namespace {
     data.metadata.access.write = false;
     ++data.generation;
     model.applySnapshot(data);
-    require(!R::state(A::CREATE_FOLDER, c, request).enabled, "folder write denial was ignored");
+    require(!R::state(A::CreateFolder, c, request).enabled, "folder write denial was ignored");
     c.query = "txt";
     require(!R::state(A::OPEN, c, request).enabled, "query change did not retire a menu");
     auto search = R::capture(c);
@@ -247,7 +247,7 @@ namespace {
     data.status = files::DirectoryStatus::CANCELLED;
     ++data.generation;
     model.applySnapshot(data);
-    require(!R::state(A::SELECT_ALL, c, R::capture(c)).enabled, "cancelled listings still allowed selection actions");
+    require(!R::state(A::SelectAll, c, R::capture(c)).enabled, "cancelled listings still allowed selection actions");
     auto remote = snapshot();
     remote.location = files::Location::fromUri("sftp://example.test/files");
     remote.entries = {entry(90, "remote")};

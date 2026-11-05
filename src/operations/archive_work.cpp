@@ -576,8 +576,8 @@ namespace {
       else
         requireArchive(archive_write_set_format_pax_restricted(value.get()), value.get(), work);
       requireArchive(
-          format == ArchiveFormat::TAR_GZIP ? archive_write_add_filter_gzip(value.get())
-                                            : archive_write_add_filter_none(value.get()),
+          format == ArchiveFormat::TarGzip ? archive_write_add_filter_gzip(value.get())
+                                           : archive_write_add_filter_none(value.get()),
           value.get(), work
       );
       requireArchive(archive_write_set_bytes_per_block(value.get(), 0), value.get(), work);
@@ -708,15 +708,15 @@ std::span<const files::ArchiveFormatInfo> files::archiveFormats() {
     std::vector<ArchiveFormatInfo> result;
     for (const auto& item : std::array{
              ArchiveFormatInfo{ArchiveFormat::ZIP, "ZIP", ".zip"}, ArchiveFormatInfo{ArchiveFormat::TAR, "TAR", ".tar"},
-             ArchiveFormatInfo{ArchiveFormat::TAR_GZIP, "TAR gzip", ".tar.gz"}
+             ArchiveFormatInfo{ArchiveFormat::TarGzip, "TAR gzip", ".tar.gz"}
          }) {
       const std::unique_ptr<struct archive, decltype(&archive_write_free)> writer(
           archive_write_new(), &archive_write_free
       );
       const auto format = item.format == ArchiveFormat::ZIP ? archive_write_set_format_zip(writer.get())
                                                             : archive_write_set_format_pax_restricted(writer.get());
-      const auto filter = item.format == ArchiveFormat::TAR_GZIP ? archive_write_add_filter_gzip(writer.get())
-                                                                 : archive_write_add_filter_none(writer.get());
+      const auto filter = item.format == ArchiveFormat::TarGzip ? archive_write_add_filter_gzip(writer.get())
+                                                                : archive_write_add_filter_none(writer.get());
       if (format == ARCHIVE_OK && filter == ARCHIVE_OK)
         result.push_back(item);
     }

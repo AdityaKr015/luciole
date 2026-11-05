@@ -8,7 +8,7 @@
 #include <string>
 
 namespace files {
-  enum class CreateKind { FOLDER, EMPTY_FILE };
+  enum class CreateKind { FOLDER, EmptyFile };
   enum class CreateStatus { IDLE, PREPARING, READY, CREATING, SUCCEEDED, PARTIAL, ERROR, CANCELLED };
   struct CreateSnapshot {
     CreateStatus status = CreateStatus::IDLE;

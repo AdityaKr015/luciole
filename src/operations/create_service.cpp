@@ -149,7 +149,7 @@ void files::CreateService::cancel() {
     m_state->snapshot.status = CreateStatus::CANCELLED;
 }
 bool files::CreateService::prepare(const Location& parent, CreateKind kind) {
-  if (busy() || (kind != CreateKind::FOLDER && kind != CreateKind::EMPTY_FILE))
+  if (busy() || (kind != CreateKind::FOLDER && kind != CreateKind::EmptyFile))
     return false;
   m_state->target.reset();
   m_state->snapshot = {

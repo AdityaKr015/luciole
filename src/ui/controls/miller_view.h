@@ -33,7 +33,7 @@ public:
   std::function<void(int)> resized;
   std::function<void()> requestUpdate;
   TextInputClient* textInputClient = nullptr;
-  files::ActivationMode activationMode = files::ActivationMode::DOUBLE_CLICK;
+  files::ActivationMode activationMode = files::ActivationMode::DoubleClick;
 
 private:
   struct ColumnView {

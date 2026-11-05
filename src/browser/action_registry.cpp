@@ -17,64 +17,64 @@ namespace {
        {A::ROOT, "File System", ""},
        {A::REFRESH, "Refresh", "F5"},
        {A::STOP, "Stop loading", ""},
-       {A::EDIT_LOCATION, "Edit location", "Ctrl+L"},
+       {A::EditLocation, "Edit location", "Ctrl+L"},
        {A::SEARCH, "Search files", "Ctrl+F"},
        {A::GRID, "Grid view", "Ctrl+1"},
        {A::LIST, "List view", "Ctrl+2"},
        {A::MILLER, "Column view", "Ctrl+3"},
-       {A::SHOW_HIDDEN, "Show hidden files", "Ctrl+H"},
-       {A::SHOW_SIDEBAR, "Show sidebar", "F9"},
-       {A::SHOW_PREVIEW, "Show preview", "F8"},
-       {A::QUICK_PREVIEW, "Preview", "Space", S::TARGETS},
-       {A::OPEN_WITH, "Open With…", "", S::TARGETS},
-       {A::SORT_NAME, "Name", ""},
-       {A::SORT_TYPE, "Type", ""},
-       {A::SORT_SIZE, "Size", ""},
-       {A::SORT_MODIFIED, "Modified", ""},
+       {A::ShowHidden, "Show hidden files", "Ctrl+H"},
+       {A::ShowSidebar, "Show sidebar", "F9"},
+       {A::ShowPreview, "Show preview", "F8"},
+       {A::QuickPreview, "Preview", "Space", S::TARGETS},
+       {A::OpenWith, "Open With…", "", S::TARGETS},
+       {A::SortName, "Name", ""},
+       {A::SortType, "Type", ""},
+       {A::SortSize, "Size", ""},
+       {A::SortModified, "Modified", ""},
        {A::ASCENDING, "Ascending", ""},
        {A::DESCENDING, "Descending", ""},
-       {A::FOLDERS_FIRST, "Folders first", ""},
+       {A::FoldersFirst, "Folders first", ""},
        {A::OPEN, "Open", "Enter", S::TARGETS},
-       {A::CONTAINING_FOLDER, "Show in containing folder", "", S::TARGETS},
-       {A::ORIGINAL_LOCATION, "Show original location", "", S::TARGETS},
+       {A::ContainingFolder, "Show in containing folder", "", S::TARGETS},
+       {A::OriginalLocation, "Show original location", "", S::TARGETS},
        {A::PIN, "Pin to sidebar", "", S::TARGETS},
        {A::UNPIN, "Unpin", "", S::TARGETS},
-       {A::CUT_FILES, "Cut", "Ctrl+X", S::TARGETS},
-       {A::COPY_FILES, "Copy", "Ctrl+C", S::TARGETS},
-       {A::PASTE_FILES, "Paste", "Ctrl+V", S::LOCATION},
+       {A::CutFiles, "Cut", "Ctrl+X", S::TARGETS},
+       {A::CopyFiles, "Copy", "Ctrl+C", S::TARGETS},
+       {A::PasteFiles, "Paste", "Ctrl+V", S::LOCATION},
        {A::RENAME, "Rename…", "F2", S::TARGETS},
        {A::TRASH, "Move to Trash", "Delete", S::TARGETS},
        {A::PROPERTIES, "Properties", "Alt+Return", S::TARGETS},
        {A::COMPRESS, "Compress…", "", S::TARGETS},
-       {A::EXTRACT_HERE, "Extract Here", "", S::TARGETS},
-       {A::EXTRACT_TO, "Extract To…", "", S::TARGETS},
-       {A::BROWSE_ARCHIVE, "Browse Archive", "", S::TARGETS},
-       {A::CREATE_FOLDER, "New Folder…", "Ctrl+Shift+N", S::LOCATION},
-       {A::CREATE_FILE, "Empty File…", "", S::LOCATION},
-       {A::PIN_CURRENT, "Pin this folder to sidebar", "", S::LOCATION},
-       {A::UNPIN_CURRENT, "Unpin this folder", "", S::LOCATION},
-       {A::RELOAD_PINS, "Reload pins", ""},
-       {A::EMPTY_TRASH, "Empty Trash…", "", S::GLOBAL, true},
-       {A::SELECT_ALL, "Select all", "Ctrl+A", S::SELECTION},
-       {A::INVERT_SELECTION, "Invert selection", "Ctrl+Shift+I", S::SELECTION},
-       {A::SELECT_PATTERN, "Select by pattern…", "Ctrl+S", S::SELECTION},
-       {A::CLEAR_SELECTION, "Clear selection", "Escape", S::SELECTION},
-       {A::SINGLE_CLICK, "Single click", ""},
-       {A::DOUBLE_CLICK, "Double click", ""},
-       {A::TYPE_TO_SEARCH, "Search subfolders", ""},
+       {A::ExtractHere, "Extract Here", "", S::TARGETS},
+       {A::ExtractTo, "Extract To…", "", S::TARGETS},
+       {A::BrowseArchive, "Browse Archive", "", S::TARGETS},
+       {A::CreateFolder, "New Folder…", "Ctrl+Shift+N", S::LOCATION},
+       {A::CreateFile, "Empty File…", "", S::LOCATION},
+       {A::PinCurrent, "Pin this folder to sidebar", "", S::LOCATION},
+       {A::UnpinCurrent, "Unpin this folder", "", S::LOCATION},
+       {A::ReloadPins, "Reload pins", ""},
+       {A::EmptyTrash, "Empty Trash…", "", S::GLOBAL, true},
+       {A::SelectAll, "Select all", "Ctrl+A", S::SELECTION},
+       {A::InvertSelection, "Invert selection", "Ctrl+Shift+I", S::SELECTION},
+       {A::SelectPattern, "Select by pattern…", "Ctrl+S", S::SELECTION},
+       {A::ClearSelection, "Clear selection", "Escape", S::SELECTION},
+       {A::SingleClick, "Single click", ""},
+       {A::DoubleClick, "Double click", ""},
+       {A::TypeToSearch, "Search subfolders", ""},
        {A::TYPEAHEAD, "Select by typing", ""},
        {A::SETTINGS, "Settings…", "Ctrl+,"},
        {A::ABOUT, "About Noctalia Files", ""},
-       {A::VIEW_MENU, "Back", ""},
-       {A::SORT_MENU, "Sort…", ""},
-       {A::SELECTION_MENU, "Selection…", ""},
-       {A::INTERACTION_MENU, "Interaction…", ""},
-       {A::COPY_PATH, "Copy folder path", "", S::LOCATION},
-       {A::COPY_URI, "Copy folder URI", "", S::LOCATION},
+       {A::ViewMenu, "Back", ""},
+       {A::SortMenu, "Sort…", ""},
+       {A::SelectionMenu, "Selection…", ""},
+       {A::InteractionMenu, "Interaction…", ""},
+       {A::CopyPath, "Copy folder path", "", S::LOCATION},
+       {A::CopyUri, "Copy folder URI", "", S::LOCATION},
        {A::TERMINAL, "Open Terminal Here", "", S::LOCATION},
-       {A::COPY_TARGET_PATH, "Copy path", "", S::TARGETS},
-       {A::COPY_TARGET_URI, "Copy URI", "", S::TARGETS},
-       {A::TARGET_TERMINAL, "Open in Terminal", "", S::TARGETS}}
+       {A::CopyTargetPath, "Copy path", "", S::TARGETS},
+       {A::CopyTargetUri, "Copy URI", "", S::TARGETS},
+       {A::TargetTerminal, "Open in Terminal", "", S::TARGETS}}
   );
   files::ActionState unavailable(std::string_view reason) { return {.enabled = false, .reason = reason}; }
 } // namespace
@@ -134,26 +134,26 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
     return {};
   };
   switch (action) {
-  case A::SHOW_PREVIEW:
+  case A::ShowPreview:
     return {.enabled = true, .reason = {}, .checked = c.showPreview ? 1 : 0};
-  case A::QUICK_PREVIEW:
+  case A::QuickPreview:
     return single() ? ActionState{} : unavailable("Select one item to preview.");
-  case A::OPEN_WITH:
+  case A::OpenWith:
     return single() && all([](const DirectoryEntry& entry) {
              return entry.type == G_FILE_TYPE_REGULAR && !entry.symlink && entry.access.read != false;
            })
         ? ActionState{}
         : unavailable("Select one readable file.");
-  case A::COPY_PATH:
-  case A::COPY_URI:
+  case A::CopyPath:
+  case A::CopyUri:
     if (!r.folder)
       return unavailable("Open a folder first.");
     [[fallthrough]];
-  case A::COPY_TARGET_PATH:
-  case A::COPY_TARGET_URI:
+  case A::CopyTargetPath:
+  case A::CopyTargetUri:
     return c.clipboardAvailable ? ActionState{} : unavailable("The application clipboard is unavailable.");
   case A::TERMINAL:
-  case A::TARGET_TERMINAL:
+  case A::TargetTerminal:
     if (!c.terminalAvailable)
       return unavailable("Install xdg-terminal-exec to open a terminal.");
     if (action == A::TERMINAL) {
@@ -181,24 +181,24 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
     return snapshot.location ? ActionState{} : unavailable("Open a folder first.");
   case A::STOP:
     return snapshot.status == DirectoryStatus::LOADING ? ActionState{} : unavailable("Nothing is loading.");
-  case A::CUT_FILES:
-  case A::COPY_FILES:
+  case A::CutFiles:
+  case A::CopyFiles:
     if (!c.clipboardAvailable)
       return unavailable("The application clipboard is unavailable.");
     if (!all([&](const auto& entry) {
           return entry.location.nativePath().has_value()
               && entry.access.read.value_or(true)
               && (entry.type == G_FILE_TYPE_DIRECTORY || entry.type == G_FILE_TYPE_REGULAR || entry.symlink)
-              && (action != A::CUT_FILES || entry.access.rename.value_or(true));
+              && (action != A::CutFiles || entry.access.rename.value_or(true));
         }))
       return unavailable("Select accessible native files or folders outside Trash.");
     return {};
-  case A::PASTE_FILES:
+  case A::PasteFiles:
     if (!c.clipboardAvailable || !c.clipboardHasFiles)
       return unavailable("The clipboard has no available files.");
     [[fallthrough]];
-  case A::CREATE_FOLDER:
-  case A::CREATE_FILE:
+  case A::CreateFolder:
+  case A::CreateFile:
     if (!native || !c.query.empty() || !ready)
       return unavailable("Open an available native folder first.");
     if (snapshot.metadata.access.write == false)
@@ -221,9 +221,9 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
     return {};
   }
   case A::COMPRESS:
-  case A::EXTRACT_HERE:
-  case A::EXTRACT_TO:
-  case A::BROWSE_ARCHIVE:
+  case A::ExtractHere:
+  case A::ExtractTo:
+  case A::BrowseArchive:
     if (c.operationsBusy)
       return unavailable("Another file operation is still finishing.");
     if (!all([](const auto& entry) {
@@ -252,11 +252,11 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
     if (!all([](const auto& entry) { return entry.access.read.value_or(true); }))
       return unavailable("Reading this item is not permitted.");
     return {};
-  case A::CONTAINING_FOLDER:
-  case A::ORIGINAL_LOCATION:
+  case A::ContainingFolder:
+  case A::OriginalLocation:
     if (!single())
       return unavailable("Select exactly one item.");
-    if (action == A::ORIGINAL_LOCATION && !c.model.entry(r.targets.front().id)->trash.original)
+    if (action == A::OriginalLocation && !c.model.entry(r.targets.front().id)->trash.original)
       return unavailable("The original location is unavailable.");
     return {};
   case A::PIN:
@@ -268,22 +268,22 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
     return anyPinned(action == A::UNPIN)
         ? ActionState{}
         : unavailable(action == A::UNPIN ? "These folders are not pinned." : "These folders are already pinned.");
-  case A::PIN_CURRENT:
-  case A::UNPIN_CURRENT:
+  case A::PinCurrent:
+  case A::UnpinCurrent:
     if (!r.folder || r.folder->isTrash())
       return unavailable("This location cannot be pinned.");
     if (!c.pinsEditable)
       return unavailable("Reload valid pins before editing them, or wait for the save to finish.");
     return c.pinned && c.pinned(*r.folder) == (action == A::UNPIN) ? ActionState{}
                                                                    : unavailable("The pin state changed.");
-  case A::RELOAD_PINS:
+  case A::ReloadPins:
     return c.pinsBusy ? unavailable("Pins are being saved.") : ActionState{};
-  case A::EMPTY_TRASH:
+  case A::EmptyTrash:
     return c.canEmptyTrash ? ActionState{}
                            : unavailable("Trash is unavailable or another operation is still finishing.");
-  case A::SELECT_ALL:
-  case A::INVERT_SELECTION:
-  case A::SELECT_PATTERN:
+  case A::SelectAll:
+  case A::InvertSelection:
+  case A::SelectPattern:
     return c.model.rows().empty() ? unavailable("There are no visible items.") : ActionState{};
   case A::GRID:
     return {.reason = {}, .checked = c.viewMode == ViewMode::GRID ? 1 : 0};
@@ -291,41 +291,41 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
     return {.reason = {}, .checked = c.viewMode == ViewMode::MILLER ? 1 : 0};
   case A::LIST:
     return {.reason = {}, .checked = c.viewMode == ViewMode::LIST ? 1 : 0};
-  case A::SHOW_HIDDEN:
+  case A::ShowHidden:
     return {.reason = {}, .checked = c.model.filter().showHidden ? 1 : 0};
-  case A::SHOW_SIDEBAR:
+  case A::ShowSidebar:
     return {.reason = {}, .checked = c.showSidebar ? 1 : 0};
-  case A::SORT_NAME:
+  case A::SortName:
     return {.reason = {}, .checked = c.model.sort().field == SortField::NAME ? 1 : 0};
-  case A::SORT_TYPE:
+  case A::SortType:
     return {.reason = {}, .checked = c.model.sort().field == SortField::TYPE ? 1 : 0};
-  case A::SORT_SIZE:
+  case A::SortSize:
     return {.reason = {}, .checked = c.model.sort().field == SortField::SIZE ? 1 : 0};
-  case A::SORT_MODIFIED:
+  case A::SortModified:
     return {.reason = {}, .checked = c.model.sort().field == SortField::MODIFIED ? 1 : 0};
   case A::ASCENDING:
     return {.reason = {}, .checked = c.model.sort().descending ? 0 : 1};
   case A::DESCENDING:
     return {.reason = {}, .checked = c.model.sort().descending ? 1 : 0};
-  case A::FOLDERS_FIRST:
+  case A::FoldersFirst:
     return {.reason = {}, .checked = c.model.sort().directoriesFirst ? 1 : 0};
-  case A::SINGLE_CLICK:
-    return {.reason = {}, .checked = c.activationMode == ActivationMode::SINGLE_CLICK ? 1 : 0};
-  case A::DOUBLE_CLICK:
-    return {.reason = {}, .checked = c.activationMode == ActivationMode::DOUBLE_CLICK ? 1 : 0};
-  case A::TYPE_TO_SEARCH:
+  case A::SingleClick:
+    return {.reason = {}, .checked = c.activationMode == ActivationMode::SingleClick ? 1 : 0};
+  case A::DoubleClick:
+    return {.reason = {}, .checked = c.activationMode == ActivationMode::DoubleClick ? 1 : 0};
+  case A::TypeToSearch:
     return {.reason = {}, .checked = c.typingMode == TypingMode::SEARCH ? 1 : 0};
   case A::TYPEAHEAD:
     return {.reason = {}, .checked = c.typingMode == TypingMode::TYPEAHEAD ? 1 : 0};
   case A::HOME:
   case A::ROOT:
-  case A::EDIT_LOCATION:
+  case A::EditLocation:
   case A::PROPERTIES:
-  case A::CLEAR_SELECTION:
-  case A::VIEW_MENU:
-  case A::SORT_MENU:
-  case A::SELECTION_MENU:
-  case A::INTERACTION_MENU:
+  case A::ClearSelection:
+  case A::ViewMenu:
+  case A::SortMenu:
+  case A::SelectionMenu:
+  case A::InteractionMenu:
   case A::SETTINGS:
   case A::ABOUT:
     return {};

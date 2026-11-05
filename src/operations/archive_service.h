@@ -10,7 +10,7 @@
 #include <string_view>
 
 namespace files {
-  enum class ArchiveFormat { ZIP, TAR, TAR_GZIP };
+  enum class ArchiveFormat { ZIP, TAR, TarGzip };
   enum class ArchiveEntryKind { FILE, DIRECTORY, SYMLINK, HARDLINK };
   enum class ArchivePhase { IDLE, READING, COMPRESSING, EXTRACTING, TRANSFERRING, CLEANING };
   struct ArchiveFormatInfo {

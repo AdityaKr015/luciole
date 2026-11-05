@@ -60,7 +60,7 @@ namespace {
     );
     using P = files::BrowserPreference;
     const std::array edits{
-        files::OverrideEdit{P::VIEW_MODE, files::ViewMode::MILLER}, files::OverrideEdit{P::MILLER_COLUMN_WIDTH, 417}
+        files::OverrideEdit{P::ViewMode, files::ViewMode::MILLER}, files::OverrideEdit{P::MillerColumnWidth, 417}
     };
     require(settings.saveOverrides(edits) == files::AtomicWriteState::DURABLE, "could not save column preferences");
     files::ConfigService restored(fixture.paths());
@@ -72,9 +72,9 @@ namespace {
     );
     const auto before = read(fixture.paths().overrides);
     for (const int width : {179, 801}) {
-      const std::array invalid{files::OverrideEdit{P::MILLER_COLUMN_WIDTH, width}};
+      const std::array invalid{files::OverrideEdit{P::MillerColumnWidth, width}};
       require(
-          restored.saveOverrides(invalid) == files::AtomicWriteState::NOT_COMMITTED
+          restored.saveOverrides(invalid) == files::AtomicWriteState::NotCommitted
               && read(fixture.paths().overrides) == before,
           "invalid column width changed preferences"
       );
@@ -82,7 +82,7 @@ namespace {
       require(!files::validateConfigFile(fixture.paths().base).empty(), "invalid base column width accepted");
     }
     fixture.write("config.toml", "[browser]\nview_mode = 'miller'\nmiller_column_width = 300\n");
-    const std::array reset{files::OverrideEdit{P::MILLER_COLUMN_WIDTH, std::monostate{}}};
+    const std::array reset{files::OverrideEdit{P::MillerColumnWidth, std::monostate{}}};
     require(
         restored.saveOverrides(reset) == files::AtomicWriteState::DURABLE
             && restored.settings().browser.millerColumnWidth == 300,
@@ -95,24 +95,24 @@ namespace {
     files::ConfigService settings(fixture.paths());
     require(settings.reload() && settings.settings().browser.millerShowParents, "parents should default to enabled");
     using P = files::BrowserPreference;
-    const std::array off{files::OverrideEdit{P::MILLER_SHOW_PARENTS, false}};
+    const std::array off{files::OverrideEdit{P::MillerShowParents, false}};
     require(settings.saveOverrides(off) == files::AtomicWriteState::DURABLE, "could not disable parent columns");
     files::ConfigService restored(fixture.paths());
     require(restored.reload() && !restored.settings().browser.millerShowParents, "parent preference did not persist");
     const auto before = read(fixture.paths().overrides);
-    const std::array invalid{files::OverrideEdit{P::MILLER_SHOW_PARENTS, 1}};
+    const std::array invalid{files::OverrideEdit{P::MillerShowParents, 1}};
     require(
-        restored.saveOverrides(invalid) == files::AtomicWriteState::NOT_COMMITTED
+        restored.saveOverrides(invalid) == files::AtomicWriteState::NotCommitted
             && read(fixture.paths().overrides) == before,
         "nonboolean parent preference changed settings"
     );
     fixture.write("config.toml", "[browser]\nmiller_show_parents = false\n");
-    const std::array on{files::OverrideEdit{P::MILLER_SHOW_PARENTS, true}};
+    const std::array on{files::OverrideEdit{P::MillerShowParents, true}};
     require(
         restored.saveOverrides(on) == files::AtomicWriteState::DURABLE && restored.settings().browser.millerShowParents,
         "GUI preference did not override base"
     );
-    const std::array reset{files::OverrideEdit{P::MILLER_SHOW_PARENTS, std::monostate{}}};
+    const std::array reset{files::OverrideEdit{P::MillerShowParents, std::monostate{}}};
     require(
         restored.saveOverrides(reset) == files::AtomicWriteState::DURABLE
             && !restored.settings().browser.millerShowParents,
@@ -318,7 +318,7 @@ namespace {
     files::ConfigService config(fixture.paths());
     require(config.reload() && config.settings().browser.gridIconSize == 96, "zoom layering ignored the override");
     for (const int size : {32, 256}) {
-      const std::array zoom{files::OverrideEdit{Preference::GRID_ICON_SIZE, size}};
+      const std::array zoom{files::OverrideEdit{Preference::GridIconSize, size}};
       require(config.saveOverrides(zoom) == State::DURABLE, "zoom preference did not persist");
       const auto loaded = files::loadSettings(fixture.paths());
       require(
@@ -327,14 +327,14 @@ namespace {
     }
     const auto previous = read(fixture.paths().overrides);
     for (const auto& value :
-         {files::OverrideEdit{Preference::GRID_ICON_SIZE, true}, files::OverrideEdit{Preference::GRID_ICON_SIZE, 33}}) {
+         {files::OverrideEdit{Preference::GridIconSize, true}, files::OverrideEdit{Preference::GridIconSize, 33}}) {
       const std::array edit{value};
       require(
-          config.saveOverrides(edit) == State::NOT_COMMITTED && read(fixture.paths().overrides) == previous,
+          config.saveOverrides(edit) == State::NotCommitted && read(fixture.paths().overrides) == previous,
           "invalid zoom edit changed settings"
       );
     }
-    const std::array reset{files::OverrideEdit{Preference::GRID_ICON_SIZE, std::monostate{}}};
+    const std::array reset{files::OverrideEdit{Preference::GridIconSize, std::monostate{}}};
     require(
         config.saveOverrides(reset) == State::DURABLE
             && config.settings().browser.gridIconSize == 64
@@ -360,7 +360,7 @@ namespace {
       require(config.issues().front().key == "browser.sidebar_width", "width diagnostic lost its key");
     }
     fixture.write("settings.toml", "[browser]\nview_mode = 'grid'\n");
-    const std::array width{files::OverrideEdit{Preference::SIDEBAR_WIDTH, 400}};
+    const std::array width{files::OverrideEdit{Preference::SidebarWidth, 400}};
     require(config.saveOverrides(width) == State::DURABLE, "sidebar override save failed");
     files::ConfigService reloaded(fixture.paths());
     require(
@@ -372,15 +372,15 @@ namespace {
     );
     const auto before = read(fixture.paths().overrides);
     for (const auto& value :
-         {files::OverrideEdit{Preference::SIDEBAR_WIDTH, 159}, files::OverrideEdit{Preference::SIDEBAR_WIDTH, 401},
-          files::OverrideEdit{Preference::SIDEBAR_WIDTH, true}}) {
+         {files::OverrideEdit{Preference::SidebarWidth, 159}, files::OverrideEdit{Preference::SidebarWidth, 401},
+          files::OverrideEdit{Preference::SidebarWidth, true}}) {
       const std::array invalid{value};
       require(
-          config.saveOverrides(invalid) == State::NOT_COMMITTED && read(fixture.paths().overrides) == before,
+          config.saveOverrides(invalid) == State::NotCommitted && read(fixture.paths().overrides) == before,
           "invalid width edit changed overrides"
       );
     }
-    const std::array inherit{files::OverrideEdit{Preference::SIDEBAR_WIDTH, std::monostate{}}};
+    const std::array inherit{files::OverrideEdit{Preference::SidebarWidth, std::monostate{}}};
     require(
         config.saveOverrides(inherit) == State::DURABLE
             && config.settings().browser.sidebarWidth == 280
@@ -401,7 +401,7 @@ namespace {
     fixture.write("config.toml", "[browser]\nshow_preview = true\nshow_hidden = true\n");
     require(config.reload() && config.settings().browser.showPreview, "preview base setting ignored");
     require(
-        config.saveOverrides(std::array{files::OverrideEdit{P::SHOW_PREVIEW, false}})
+        config.saveOverrides(std::array{files::OverrideEdit{P::ShowPreview, false}})
             == files::AtomicWriteState::DURABLE,
         "preview override did not save"
     );
@@ -412,13 +412,13 @@ namespace {
     );
     const auto saved = read(fixture.paths().overrides);
     require(
-        config.saveOverrides(std::array{files::OverrideEdit{P::SHOW_PREVIEW, 1}})
-                == files::AtomicWriteState::NOT_COMMITTED
+        config.saveOverrides(std::array{files::OverrideEdit{P::ShowPreview, 1}})
+                == files::AtomicWriteState::NotCommitted
             && read(fixture.paths().overrides) == saved,
         "invalid preview edit changed settings"
     );
     require(
-        config.saveOverrides(std::array{files::OverrideEdit{P::SHOW_PREVIEW, std::monostate{}}})
+        config.saveOverrides(std::array{files::OverrideEdit{P::ShowPreview, std::monostate{}}})
                 == files::AtomicWriteState::DURABLE
             && config.settings().browser.showPreview,
         "preview reset did not inherit"
@@ -428,21 +428,20 @@ namespace {
     fixture.write("config.toml", "[browser]\npreview_width = 444\nshow_preview = true\n");
     require(config.reload() && config.settings().browser.previewWidth == 444, "preview width base ignored");
     require(
-        config.saveOverrides(std::array{files::OverrideEdit{P::PREVIEW_WIDTH, 555}})
-            == files::AtomicWriteState::DURABLE,
+        config.saveOverrides(std::array{files::OverrideEdit{P::PreviewWidth, 555}}) == files::AtomicWriteState::DURABLE,
         "preview width did not save"
     );
     require(files::loadSettings(fixture.paths())->browser.previewWidth == 555, "preview width did not roundtrip");
     const auto before = read(fixture.paths().overrides);
     for (int width : {207, 801})
       require(
-          config.saveOverrides(std::array{files::OverrideEdit{P::PREVIEW_WIDTH, width}})
-                  == files::AtomicWriteState::NOT_COMMITTED
+          config.saveOverrides(std::array{files::OverrideEdit{P::PreviewWidth, width}})
+                  == files::AtomicWriteState::NotCommitted
               && read(fixture.paths().overrides) == before,
           "invalid preview width saved"
       );
     require(
-        config.saveOverrides(std::array{files::OverrideEdit{P::PREVIEW_WIDTH, std::monostate{}}})
+        config.saveOverrides(std::array{files::OverrideEdit{P::PreviewWidth, std::monostate{}}})
                 == files::AtomicWriteState::DURABLE
             && config.settings().browser.previewWidth == 444,
         "preview width reset lost inheritance"
@@ -462,7 +461,7 @@ namespace {
     fixture.write("config.toml", base);
     fixture.write("settings.toml", "[browser]\nshow_sidebar = true\ngrid_icon_size = 64\n");
     require(config.reload() && config.settings().browser.showSidebar, "sidebar visibility layering failed");
-    const std::array hide{files::OverrideEdit{Preference::SHOW_SIDEBAR, false}};
+    const std::array hide{files::OverrideEdit{Preference::ShowSidebar, false}};
     require(config.saveOverrides(hide) == State::DURABLE, "hidden sidebar preference did not save");
     const auto loaded = files::loadSettings(fixture.paths());
     require(
@@ -473,17 +472,17 @@ namespace {
         "visibility roundtrip lost false or changed unrelated preferences"
     );
     const auto saved = read(fixture.paths().overrides);
-    const std::array invalid{files::OverrideEdit{Preference::SHOW_SIDEBAR, 0}};
+    const std::array invalid{files::OverrideEdit{Preference::ShowSidebar, 0}};
     require(
-        config.saveOverrides(invalid) == State::NOT_COMMITTED && read(fixture.paths().overrides) == saved,
+        config.saveOverrides(invalid) == State::NotCommitted && read(fixture.paths().overrides) == saved,
         "mistyped visibility edit changed settings"
     );
-    const std::array show{files::OverrideEdit{Preference::SHOW_SIDEBAR, true}};
+    const std::array show{files::OverrideEdit{Preference::ShowSidebar, true}};
     require(
         config.saveOverrides(show) == State::DURABLE && config.settings().browser.showSidebar,
         "sidebar show did not save"
     );
-    const std::array inherit{files::OverrideEdit{Preference::SHOW_SIDEBAR, std::monostate{}}};
+    const std::array inherit{files::OverrideEdit{Preference::ShowSidebar, std::monostate{}}};
     require(
         config.saveOverrides(inherit) == State::DURABLE
             && !config.settings().browser.showSidebar
@@ -510,9 +509,9 @@ namespace {
       bool files::DetailsColumnVisibility::* member;
     };
     const std::array columns{
-        Column{"show_type_column", Preference::SHOW_TYPE_COLUMN, &files::DetailsColumnVisibility::type},
-        Column{"show_size_column", Preference::SHOW_SIZE_COLUMN, &files::DetailsColumnVisibility::size},
-        Column{"show_modified_column", Preference::SHOW_MODIFIED_COLUMN, &files::DetailsColumnVisibility::modified},
+        Column{"show_type_column", Preference::ShowTypeColumn, &files::DetailsColumnVisibility::type},
+        Column{"show_size_column", Preference::ShowSizeColumn, &files::DetailsColumnVisibility::size},
+        Column{"show_modified_column", Preference::ShowModifiedColumn, &files::DetailsColumnVisibility::modified},
     };
     for (const auto& column : columns) {
       Fixture fixture;
@@ -541,7 +540,7 @@ namespace {
       const auto saved = read(fixture.paths().overrides);
       const std::array invalid{files::OverrideEdit{column.preference, 0}};
       require(
-          config.saveOverrides(invalid) == State::NOT_COMMITTED && read(fixture.paths().overrides) == saved,
+          config.saveOverrides(invalid) == State::NotCommitted && read(fixture.paths().overrides) == saved,
           "mistyped column edit changed overrides"
       );
       const std::array inherit{files::OverrideEdit{column.preference, std::monostate{}}};
@@ -577,7 +576,7 @@ namespace {
     files::ConfigService config(fixture.paths());
     require(
         config.reload()
-            && config.settings().browser.activationMode == A::DOUBLE_CLICK
+            && config.settings().browser.activationMode == A::DoubleClick
             && config.settings().browser.typingMode == T::SEARCH,
         "default interaction policies changed"
     );
@@ -585,10 +584,10 @@ namespace {
         "[browser]\nactivation_mode = 'single_click'\ntyping_mode = 'typeahead'\nshow_hidden = true\n";
     fixture.write("config.toml", base);
     fixture.write("settings.toml", "[browser]\ngrid_icon_size = 96\n");
-    for (const auto activation : {A::SINGLE_CLICK, A::DOUBLE_CLICK})
+    for (const auto activation : {A::SingleClick, A::DoubleClick})
       for (const auto typing : {T::SEARCH, T::TYPEAHEAD}) {
         const std::array edits{
-            files::OverrideEdit{P::ACTIVATION_MODE, activation}, files::OverrideEdit{P::TYPING_MODE, typing}
+            files::OverrideEdit{P::ActivationMode, activation}, files::OverrideEdit{P::TypingMode, typing}
         };
         require(config.saveOverrides(edits) == S::DURABLE, "interaction policies did not save");
         const auto loaded = files::loadSettings(fixture.paths());
@@ -603,21 +602,20 @@ namespace {
       }
     const auto saved = read(fixture.paths().overrides);
     for (const auto& bad : std::array{
-             files::OverrideEdit{P::ACTIVATION_MODE, true}, files::OverrideEdit{P::TYPING_MODE, 1},
-             files::OverrideEdit{P::ACTIVATION_MODE, static_cast<A>(99)},
-             files::OverrideEdit{P::TYPING_MODE, static_cast<T>(99)},
-             files::OverrideEdit{P::TYPING_MODE, A::SINGLE_CLICK}
+             files::OverrideEdit{P::ActivationMode, true}, files::OverrideEdit{P::TypingMode, 1},
+             files::OverrideEdit{P::ActivationMode, static_cast<A>(99)},
+             files::OverrideEdit{P::TypingMode, static_cast<T>(99)}, files::OverrideEdit{P::TypingMode, A::SingleClick}
          })
       require(
-          config.saveOverrides(std::span(&bad, 1)) == S::NOT_COMMITTED && read(fixture.paths().overrides) == saved,
+          config.saveOverrides(std::span(&bad, 1)) == S::NotCommitted && read(fixture.paths().overrides) == saved,
           "invalid typed interaction edit changed settings"
       );
     const std::array inherit{
-        files::OverrideEdit{P::ACTIVATION_MODE, std::monostate{}}, files::OverrideEdit{P::TYPING_MODE, std::monostate{}}
+        files::OverrideEdit{P::ActivationMode, std::monostate{}}, files::OverrideEdit{P::TypingMode, std::monostate{}}
     };
     require(
         config.saveOverrides(inherit) == S::DURABLE
-            && config.settings().browser.activationMode == A::SINGLE_CLICK
+            && config.settings().browser.activationMode == A::SingleClick
             && config.settings().browser.typingMode == T::TYPEAHEAD
             && read(fixture.paths().base) == base,
         "interaction inheritance reset changed the base or lost its policy"
@@ -641,7 +639,7 @@ namespace {
     using P = files::BrowserPreference;
     using S = files::AtomicWriteState;
     constexpr std::array preferences{
-        P::NAME_COLUMN_WIDTH, P::TYPE_COLUMN_WIDTH, P::SIZE_COLUMN_WIDTH, P::MODIFIED_COLUMN_WIDTH
+        P::NameColumnWidth, P::TypeColumnWidth, P::SizeColumnWidth, P::ModifiedColumnWidth
     };
     Fixture fixture;
     files::ConfigService config(fixture.paths());
@@ -676,7 +674,7 @@ namespace {
                files::OverrideEdit{preferences[index], true}
            })
         require(
-            config.saveOverrides(std::span(&bad, 1)) == S::NOT_COMMITTED && read(fixture.paths().overrides) == saved,
+            config.saveOverrides(std::span(&bad, 1)) == S::NotCommitted && read(fixture.paths().overrides) == saved,
             "invalid typed width mutated settings"
         );
       const std::array inherit{files::OverrideEdit{preferences[index], std::monostate{}}};
@@ -723,7 +721,7 @@ namespace {
     require(config.reload() && config.settings().browser.columnOrder == baseOrder, "base column order did not load");
     auto order = files::kDefaultDetailsColumnOrder;
     do {
-      const std::array edit{files::OverrideEdit{Preference::COLUMN_ORDER, order}};
+      const std::array edit{files::OverrideEdit{Preference::ColumnOrder, order}};
       require(config.saveOverrides(edit) == State::DURABLE, "column permutation did not save");
       const auto loaded = files::loadSettings(fixture.paths());
       require(
@@ -736,21 +734,20 @@ namespace {
     } while (std::ranges::next_permutation(order).found);
     const auto saved = read(fixture.paths().overrides);
     for (const auto& edit : std::array{
-             files::OverrideEdit{Preference::COLUMN_ORDER, true},
+             files::OverrideEdit{Preference::ColumnOrder, true},
              files::OverrideEdit{
-                 Preference::COLUMN_ORDER, files::DetailsColumnOrder{Column::TYPE, Column::TYPE, Column::SIZE}
+                 Preference::ColumnOrder, files::DetailsColumnOrder{Column::TYPE, Column::TYPE, Column::SIZE}
              },
              files::OverrideEdit{
-                 Preference::COLUMN_ORDER,
-                 files::DetailsColumnOrder{Column::TYPE, Column::SIZE, static_cast<Column>(99)}
+                 Preference::ColumnOrder, files::DetailsColumnOrder{Column::TYPE, Column::SIZE, static_cast<Column>(99)}
              }
          }) {
       require(
-          config.saveOverrides(std::span(&edit, 1)) == State::NOT_COMMITTED && read(fixture.paths().overrides) == saved,
+          config.saveOverrides(std::span(&edit, 1)) == State::NotCommitted && read(fixture.paths().overrides) == saved,
           "invalid typed column order changed overrides"
       );
     }
-    const std::array inherit{files::OverrideEdit{Preference::COLUMN_ORDER, std::monostate{}}};
+    const std::array inherit{files::OverrideEdit{Preference::ColumnOrder, std::monostate{}}};
     require(
         config.saveOverrides(inherit) == State::DURABLE
             && config.settings().browser.columnOrder == baseOrder
@@ -790,9 +787,9 @@ namespace {
         "thumbnail base settings lost typed values"
     );
     const std::array edits{
-        files::OverrideEdit{P::THUMBNAIL_POLICY, files::ThumbnailPolicy::NEVER},
-        files::OverrideEdit{P::THUMBNAIL_MAX_FILE_MIB, 512}, files::OverrideEdit{P::THUMBNAIL_MAX_MEGAPIXELS, 48},
-        files::OverrideEdit{P::THUMBNAIL_CACHE_MIB, 512}
+        files::OverrideEdit{P::ThumbnailPolicy, files::ThumbnailPolicy::NEVER},
+        files::OverrideEdit{P::ThumbnailMaxFileMib, 512}, files::OverrideEdit{P::ThumbnailMaxMegapixels, 48},
+        files::OverrideEdit{P::ThumbnailCacheMib, 512}
     };
     require(config.saveOverrides(edits) == files::AtomicWriteState::DURABLE, "thumbnail overrides did not save");
     const auto loaded = files::loadSettings(fixture.paths());
@@ -801,10 +798,10 @@ namespace {
         "thumbnail override round-trip lost values"
     );
     const std::array reset{
-        files::OverrideEdit{P::THUMBNAIL_POLICY, std::monostate{}},
-        files::OverrideEdit{P::THUMBNAIL_MAX_FILE_MIB, std::monostate{}},
-        files::OverrideEdit{P::THUMBNAIL_MAX_MEGAPIXELS, std::monostate{}},
-        files::OverrideEdit{P::THUMBNAIL_CACHE_MIB, std::monostate{}}
+        files::OverrideEdit{P::ThumbnailPolicy, std::monostate{}},
+        files::OverrideEdit{P::ThumbnailMaxFileMib, std::monostate{}},
+        files::OverrideEdit{P::ThumbnailMaxMegapixels, std::monostate{}},
+        files::OverrideEdit{P::ThumbnailCacheMib, std::monostate{}}
     };
     require(
         config.saveOverrides(reset) == files::AtomicWriteState::DURABLE
@@ -820,11 +817,10 @@ namespace {
       require(!files::validateConfigFile(fixture.paths().base).empty(), "invalid thumbnail setting was accepted");
     }
     fixture.write("config.toml", "");
-    for (const auto preference : {P::THUMBNAIL_MAX_FILE_MIB, P::THUMBNAIL_MAX_MEGAPIXELS, P::THUMBNAIL_CACHE_MIB}) {
+    for (const auto preference : {P::ThumbnailMaxFileMib, P::ThumbnailMaxMegapixels, P::ThumbnailCacheMib}) {
       const std::array invalid{files::OverrideEdit{preference, -1}};
       require(
-          config.saveOverrides(invalid) == files::AtomicWriteState::NOT_COMMITTED,
-          "typed thumbnail edit bypassed bounds"
+          config.saveOverrides(invalid) == files::AtomicWriteState::NotCommitted, "typed thumbnail edit bypassed bounds"
       );
     }
   }
@@ -841,8 +837,8 @@ namespace {
     files::ConfigService first(fixture.paths());
     files::ConfigService second(fixture.paths());
     require(first.reload() && second.reload(), "cannot load save fixtures");
-    const std::array show{files::OverrideEdit{Preference::SHOW_HIDDEN, true}};
-    const std::array descending{files::OverrideEdit{Preference::SORT_DESCENDING, true}};
+    const std::array show{files::OverrideEdit{Preference::ShowHidden, true}};
+    const std::array descending{files::OverrideEdit{Preference::SortDescending, true}};
     require(
         first.saveOverrides(show) == State::DURABLE && first.settings().browser.showHidden,
         "override did not persist or update effective settings"
@@ -863,8 +859,8 @@ namespace {
         "unchanged preference was rewritten"
     );
     const std::array disable{
-        files::OverrideEdit{Preference::DIRECTORIES_FIRST, false},
-        files::OverrideEdit{Preference::SORT_DESCENDING, false},
+        files::OverrideEdit{Preference::DirectoriesFirst, false},
+        files::OverrideEdit{Preference::SortDescending, false},
     };
     require(
         second.saveOverrides(disable) == State::DURABLE
@@ -873,7 +869,7 @@ namespace {
             && !second.settings().browser.sort.descending,
         "false-valued batch edits were lost or changed another preference"
     );
-    const std::array inherit{files::OverrideEdit{Preference::SHOW_HIDDEN, std::monostate{}}};
+    const std::array inherit{files::OverrideEdit{Preference::ShowHidden, std::monostate{}}};
     require(
         second.saveOverrides(inherit) == State::DURABLE && !second.settings().browser.showHidden,
         "reset did not restore base inheritance"
@@ -888,7 +884,7 @@ namespace {
     fixture.write("settings.toml", "[browser]\nunknown = true\n");
     const auto invalid = read(fixture.paths().overrides);
     require(
-        second.saveOverrides(show) == State::NOT_COMMITTED
+        second.saveOverrides(show) == State::NotCommitted
             && second.settings() == lastGood
             && read(fixture.paths().overrides) == invalid
             && !second.issues().empty(),
@@ -897,22 +893,22 @@ namespace {
     std::filesystem::remove(fixture.paths().overrides);
     std::filesystem::create_symlink(baseTarget, fixture.paths().overrides);
     require(
-        second.saveOverrides(show) == State::NOT_COMMITTED && read(baseTarget) == baseContent,
+        second.saveOverrides(show) == State::NotCommitted && read(baseTarget) == baseContent,
         "save followed a settings symlink"
     );
     std::filesystem::remove(fixture.paths().overrides);
-    const std::array invalidEdits{files::OverrideEdit{Preference::SORT_BY, true}};
+    const std::array invalidEdits{files::OverrideEdit{Preference::SortBy, true}};
     require(
-        second.saveOverrides(invalidEdits) == State::NOT_COMMITTED
+        second.saveOverrides(invalidEdits) == State::NotCommitted
             && !std::filesystem::exists(fixture.paths().overrides),
         "mistyped preference created an override"
     );
-    const std::array sort{files::OverrideEdit{Preference::SORT_BY, files::SortField::TYPE}};
+    const std::array sort{files::OverrideEdit{Preference::SortBy, files::SortField::TYPE}};
     require(
         second.saveOverrides(sort) == State::DURABLE && second.settings().browser.sort.field == files::SortField::TYPE,
         "typed sort override failed"
     );
-    const std::array grid{files::OverrideEdit{Preference::VIEW_MODE, files::ViewMode::GRID}};
+    const std::array grid{files::OverrideEdit{Preference::ViewMode, files::ViewMode::GRID}};
     require(second.saveOverrides(grid) == State::DURABLE, "grid preference did not persist");
     files::ConfigService reloaded(fixture.paths());
     require(
@@ -922,15 +918,15 @@ namespace {
         "view preference roundtrip lost a typed value or unrelated key"
     );
     const auto gridBytes = read(fixture.paths().overrides);
-    const std::array invalidView{files::OverrideEdit{Preference::VIEW_MODE, true}};
-    const std::array invalidMode{files::OverrideEdit{Preference::VIEW_MODE, static_cast<files::ViewMode>(99)}};
+    const std::array invalidView{files::OverrideEdit{Preference::ViewMode, true}};
+    const std::array invalidMode{files::OverrideEdit{Preference::ViewMode, static_cast<files::ViewMode>(99)}};
     require(
-        second.saveOverrides(invalidView) == State::NOT_COMMITTED
-            && second.saveOverrides(invalidMode) == State::NOT_COMMITTED
+        second.saveOverrides(invalidView) == State::NotCommitted
+            && second.saveOverrides(invalidMode) == State::NotCommitted
             && read(fixture.paths().overrides) == gridBytes,
         "invalid view preference changed the sidecar"
     );
-    const std::array resetView{files::OverrideEdit{Preference::VIEW_MODE, std::monostate{}}};
+    const std::array resetView{files::OverrideEdit{Preference::ViewMode, std::monostate{}}};
     require(
         second.saveOverrides(resetView) == State::DURABLE
             && second.settings().browser.viewMode == files::ViewMode::LIST
@@ -939,7 +935,7 @@ namespace {
     );
     files::ConfigService aliased({.base = fixture.paths().base, .overrides = fixture.paths().base});
     require(
-        aliased.saveOverrides(show) == State::NOT_COMMITTED && read(baseTarget) == baseContent,
+        aliased.saveOverrides(show) == State::NotCommitted && read(baseTarget) == baseContent,
         "save accepted the base path as its override destination"
     );
     Fixture reverseAlias;
@@ -948,7 +944,7 @@ namespace {
     std::filesystem::create_symlink(reverseAlias.paths().overrides, reverseAlias.paths().base);
     files::ConfigService sameFile(reverseAlias.paths());
     require(
-        sameFile.saveOverrides(show) == State::NOT_COMMITTED && read(reverseAlias.paths().overrides) == aliasedContent,
+        sameFile.saveOverrides(show) == State::NotCommitted && read(reverseAlias.paths().overrides) == aliasedContent,
         "base symlink alias was modified indirectly"
     );
 
@@ -960,7 +956,7 @@ namespace {
     const auto beforeSettings = protectedConfig.settings();
     invalidBase.write("config.toml", "schema_version = 999\n");
     require(
-        protectedConfig.saveOverrides(sort) == State::NOT_COMMITTED
+        protectedConfig.saveOverrides(sort) == State::NotCommitted
             && protectedConfig.settings() == beforeSettings
             && read(invalidBase.paths().overrides) == before,
         "invalid base allowed a save or changed the published settings"

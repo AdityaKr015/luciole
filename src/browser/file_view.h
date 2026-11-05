@@ -59,7 +59,7 @@ namespace files {
     std::optional<EntryId> m_lastClick;
     std::chrono::steady_clock::time_point m_lastClickTime;
     std::function<void(EntryId)> m_activate;
-    ActivationMode m_activationMode = ActivationMode::DOUBLE_CLICK;
+    ActivationMode m_activationMode = ActivationMode::DoubleClick;
     bool m_dragged = false;
     bool m_plainClick = false;
     bool m_collapseSelectionOnClick = false;

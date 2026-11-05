@@ -12,7 +12,7 @@
 namespace files {
   using EntryId = std::uint64_t;
 
-  enum class SelectionMode : std::uint8_t { REPLACE, TOGGLE, RANGE, ADD_RANGE };
+  enum class SelectionMode : std::uint8_t { REPLACE, TOGGLE, RANGE, AddRange };
   struct SelectionState {
     std::unordered_set<EntryId> selected;
     std::optional<EntryId> focused;

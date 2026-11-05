@@ -45,12 +45,12 @@ namespace {
     writer.save(files::ViewMode::LIST);
     writer.save(files::ViewMode::GRID);
     writer.submit(
-        {{files::BrowserPreference::THUMBNAIL_POLICY, files::ThumbnailPolicy::NEVER},
-         {files::BrowserPreference::THUMBNAIL_CACHE_MIB, 256}}
+        {{files::BrowserPreference::ThumbnailPolicy, files::ThumbnailPolicy::NEVER},
+         {files::BrowserPreference::ThumbnailCacheMib, 256}}
     );
     writer.submit(
-        {{files::BrowserPreference::THUMBNAIL_POLICY, files::ThumbnailPolicy::ALL},
-         {files::BrowserPreference::THUMBNAIL_CACHE_MIB, 64}}
+        {{files::BrowserPreference::ThumbnailPolicy, files::ThumbnailPolicy::ALL},
+         {files::BrowserPreference::ThumbnailCacheMib, 64}}
     );
     writer.saveGridIconSize(96);
     writer.saveGridIconSize(64);
@@ -78,9 +78,9 @@ namespace {
     writer.saveColumnWidths({400, 200, 100, 180});
     const files::DetailsColumnWidths finalWidths{640, 192, 96, 224};
     writer.saveColumnWidths(finalWidths);
-    writer.saveInteraction(files::ActivationMode::SINGLE_CLICK, files::TypingMode::SEARCH);
-    writer.saveInteraction(files::ActivationMode::DOUBLE_CLICK, files::TypingMode::TYPEAHEAD);
-    writer.saveInteraction(files::ActivationMode::SINGLE_CLICK, files::TypingMode::TYPEAHEAD);
+    writer.saveInteraction(files::ActivationMode::SingleClick, files::TypingMode::SEARCH);
+    writer.saveInteraction(files::ActivationMode::DoubleClick, files::TypingMode::TYPEAHEAD);
+    writer.saveInteraction(files::ActivationMode::SingleClick, files::TypingMode::TYPEAHEAD);
     wait();
     const auto loaded = files::loadSettings(paths);
     require(
@@ -97,7 +97,7 @@ namespace {
             && loaded->browser.columns == hiddenColumns
             && loaded->browser.columnOrder == finalOrder
             && loaded->browser.columnWidths == finalWidths
-            && loaded->browser.activationMode == files::ActivationMode::SINGLE_CLICK
+            && loaded->browser.activationMode == files::ActivationMode::SingleClick
             && loaded->browser.typingMode == files::TypingMode::TYPEAHEAD,
         "rapid changes did not persist the latest view or overwrote unrelated preferences"
     );
@@ -117,7 +117,7 @@ namespace {
             && shown->browser.columns == hiddenColumns
             && shown->browser.columnOrder == finalOrder
             && shown->browser.columnWidths == finalWidths
-            && shown->browser.activationMode == files::ActivationMode::SINGLE_CLICK
+            && shown->browser.activationMode == files::ActivationMode::SingleClick
             && shown->browser.typingMode == files::TypingMode::TYPEAHEAD,
         "showing hidden entries did not persist or lost unrelated overrides"
     );
@@ -126,7 +126,7 @@ namespace {
     writer.saveDetailsColumns({});
     writer.saveColumnOrder(files::kDefaultDetailsColumnOrder);
     writer.saveColumnWidths(files::kDefaultDetailsColumnWidths);
-    writer.saveInteraction(files::ActivationMode::DOUBLE_CLICK, files::TypingMode::SEARCH);
+    writer.saveInteraction(files::ActivationMode::DoubleClick, files::TypingMode::SEARCH);
     wait();
     const auto reset = files::loadSettings(paths);
     require(
@@ -138,7 +138,7 @@ namespace {
             && reset->browser.columns == files::DetailsColumnVisibility{}
             && reset->browser.columnOrder == files::kDefaultDetailsColumnOrder
             && reset->browser.columnWidths == files::kDefaultDetailsColumnWidths
-            && reset->browser.activationMode == files::ActivationMode::DOUBLE_CLICK
+            && reset->browser.activationMode == files::ActivationMode::DoubleClick
             && reset->browser.typingMode == files::TypingMode::SEARCH,
         "restoring default sort choices did not persist or lost unrelated overrides"
     );
@@ -205,7 +205,7 @@ namespace {
         writer->inheritedSettings()->browser.sidebarWidth == 240,
         "new directories or declarative symlink were not watched"
     );
-    writer->submit({{P::SHOW_HIDDEN, false}, {P::VIEW_MODE, files::ViewMode::LIST}});
+    writer->submit({{P::ShowHidden, false}, {P::ViewMode, files::ViewMode::LIST}});
     writer->saveGridIconSize(128);
     writer->reload();
     until([&] { return !writer->busy(); });
@@ -217,7 +217,7 @@ namespace {
             && writer->inheritedSettings()->browser.showHidden,
         "reload raced queued edits or inherited values included overrides"
     );
-    writer->submit({{P::SHOW_HIDDEN, std::monostate{}}});
+    writer->submit({{P::ShowHidden, std::monostate{}}});
     until([&] { return !writer->busy(); });
     require(
         writer->settings()->browser.showHidden && writer->settings()->browser.gridIconSize == 128,

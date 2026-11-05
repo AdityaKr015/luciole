@@ -10,7 +10,7 @@
 namespace files {
   enum class TransferAction { MOVE, COPY };
   enum class TransferOutcome { MOVED, COPIED, SKIPPED, FAILED, CANCELLED, PARTIAL };
-  enum class TransferConflictChoice { REPLACE, SKIP, KEEP_BOTH, CANCEL };
+  enum class TransferConflictChoice { REPLACE, SKIP, KeepBoth, CANCEL };
   struct TransferConflict {
     std::uint64_t id;
     Location source;

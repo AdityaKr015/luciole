@@ -14,7 +14,7 @@
 namespace files {
   struct BrowserSettings {
     SortOptions sort;
-    ActivationMode activationMode = ActivationMode::DOUBLE_CLICK;
+    ActivationMode activationMode = ActivationMode::DoubleClick;
     TypingMode typingMode = TypingMode::SEARCH;
     ViewMode viewMode = ViewMode::LIST;
     bool showHidden = false;
@@ -46,32 +46,32 @@ namespace files {
   using SettingsResult = std::expected<Settings, ConfigIssues>;
 
   enum class BrowserPreference : std::uint8_t {
-    ACTIVATION_MODE,
-    TYPING_MODE,
-    SHOW_HIDDEN,
-    SORT_BY,
-    SORT_DESCENDING,
-    DIRECTORIES_FIRST,
-    VIEW_MODE,
-    GRID_ICON_SIZE,
-    SIDEBAR_WIDTH,
-    SHOW_SIDEBAR,
-    SHOW_PREVIEW,
-    PREVIEW_WIDTH,
-    MILLER_COLUMN_WIDTH,
-    MILLER_SHOW_PARENTS,
-    SHOW_TYPE_COLUMN,
-    SHOW_SIZE_COLUMN,
-    SHOW_MODIFIED_COLUMN,
-    COLUMN_ORDER,
-    NAME_COLUMN_WIDTH,
-    TYPE_COLUMN_WIDTH,
-    SIZE_COLUMN_WIDTH,
-    MODIFIED_COLUMN_WIDTH,
-    THUMBNAIL_POLICY,
-    THUMBNAIL_MAX_FILE_MIB,
-    THUMBNAIL_MAX_MEGAPIXELS,
-    THUMBNAIL_CACHE_MIB,
+    ActivationMode,
+    TypingMode,
+    ShowHidden,
+    SortBy,
+    SortDescending,
+    DirectoriesFirst,
+    ViewMode,
+    GridIconSize,
+    SidebarWidth,
+    ShowSidebar,
+    ShowPreview,
+    PreviewWidth,
+    MillerColumnWidth,
+    MillerShowParents,
+    ShowTypeColumn,
+    ShowSizeColumn,
+    ShowModifiedColumn,
+    ColumnOrder,
+    NameColumnWidth,
+    TypeColumnWidth,
+    SizeColumnWidth,
+    ModifiedColumnWidth,
+    ThumbnailPolicy,
+    ThumbnailMaxFileMib,
+    ThumbnailMaxMegapixels,
+    ThumbnailCacheMib,
     COUNT
   };
   struct OverrideEdit {

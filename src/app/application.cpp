@@ -127,20 +127,20 @@ namespace {
   using Action = files::BrowserAction;
 
   enum class WorkspaceCommand {
-    CLOSE_PANE,
-    NEW_TAB,
+    ClosePane,
+    NewTab,
     DUPLICATE,
     CLOSE,
     REOPEN,
     SPLIT,
-    SWITCH_AREA,
+    SwitchArea,
     SWAP,
-    NEW_WINDOW,
+    NewWindow,
     DETACH,
-    MOVE_WINDOW,
-    OPEN_OTHER,
-    COPY_OTHER,
-    MOVE_OTHER
+    MoveWindow,
+    OpenOther,
+    CopyOther,
+    MoveOther
   };
 
   class BrowserPage : public TextInputClient, public SelectPopupContext {
@@ -631,7 +631,7 @@ namespace {
     float previewAreaWidth() const { return m_previewBounds ? m_previewBounds->width : 0; }
     void savePreviewWidth(int width) {
       m_savedSettings.previewWidth = std::clamp(width, 208, 800);
-      m_preferences.submit({{files::BrowserPreference::PREVIEW_WIDTH, m_savedSettings.previewWidth}});
+      m_preferences.submit({{files::BrowserPreference::PreviewWidth, m_savedSettings.previewWidth}});
       m_surface->requestLayout();
     }
     void setPreviewBounds(std::optional<LayoutRect> bounds) { m_previewBounds = bounds; }
@@ -877,17 +877,17 @@ namespace {
           if (auto index = m_list->itemAtScene(x, y); index && *index < browser().model().rows().size()) {
             const auto* entry = browser().model().entry(browser().model().rows()[*index]);
             if (entry && entry->type == G_FILE_TYPE_DIRECTORY)
-              m_workspaceRequest(WorkspaceCommand::NEW_TAB, entry->location);
+              m_workspaceRequest(WorkspaceCommand::NewTab, entry->location);
             return;
           }
         for (const auto& [location, button] : m_dropBreadcrumbs)
           if (button->containsScenePoint(x, y)) {
-            m_workspaceRequest(WorkspaceCommand::NEW_TAB, location);
+            m_workspaceRequest(WorkspaceCommand::NewTab, location);
             return;
           }
         if (m_places)
           if (auto folder = m_places->folderAt(x, y)) {
-            m_workspaceRequest(WorkspaceCommand::NEW_TAB, folder->location);
+            m_workspaceRequest(WorkspaceCommand::NewTab, folder->location);
             return;
           }
       }
@@ -1254,14 +1254,14 @@ namespace {
             && event.modifiers == KeyMod::Ctrl
             && (event.sym == XKB_KEY_c || event.sym == XKB_KEY_x || event.sym == XKB_KEY_v)) {
           dispatchAction(
-              event.sym == XKB_KEY_c       ? Action::COPY_FILES
-                  : event.sym == XKB_KEY_x ? Action::CUT_FILES
-                                           : Action::PASTE_FILES
+              event.sym == XKB_KEY_c       ? Action::CopyFiles
+                  : event.sym == XKB_KEY_x ? Action::CutFiles
+                                           : Action::PasteFiles
           );
           return;
         }
         if (!editing && event.modifiers == 0 && !event.repeat && event.sym == XKB_KEY_F8) {
-          dispatchAction(Action::SHOW_PREVIEW);
+          dispatchAction(Action::ShowPreview);
           return;
         }
         if (!editing
@@ -1269,7 +1269,7 @@ namespace {
             && !event.repeat
             && KeySymbol::isSpace(event.sym)
             && m_dispatcher.focusedArea() == m_list->focusArea()) {
-          dispatchAction(Action::QUICK_PREVIEW);
+          dispatchAction(Action::QuickPreview);
           return;
         }
         if (!m_typeaheadPreedit.empty()) {
@@ -1311,7 +1311,7 @@ namespace {
           return;
         }
         if (event.sym == XKB_KEY_l && event.modifiers == KeyMod::Ctrl && m_location != nullptr) {
-          dispatchAction(Action::EDIT_LOCATION);
+          dispatchAction(Action::EditLocation);
           return;
         }
         if ((event.sym == XKB_KEY_k || event.sym == XKB_KEY_f)
@@ -1371,14 +1371,14 @@ namespace {
         if (!editing && zoomFromKey(event))
           return;
         if (!editing && event.sym == XKB_KEY_F9 && event.modifiers == 0 && !event.repeat) {
-          dispatchAction(Action::SHOW_SIDEBAR);
+          dispatchAction(Action::ShowSidebar);
           return;
         }
         if (!editing
             && (event.sym == XKB_KEY_n || event.sym == XKB_KEY_N)
             && event.modifiers == (KeyMod::Ctrl | KeyMod::Shift)
             && !event.repeat) {
-          dispatchAction(Action::CREATE_FOLDER);
+          dispatchAction(Action::CreateFolder);
           return;
         }
         if (!editing
@@ -1447,7 +1447,7 @@ namespace {
           return;
         }
         if (!editing && event.sym == XKB_KEY_h && event.modifiers == KeyMod::Ctrl) {
-          dispatchAction(Action::SHOW_HIDDEN);
+          dispatchAction(Action::ShowHidden);
           return;
         }
         if (m_list != nullptr && m_dispatcher.focusedArea() == m_list->focusArea() && listKey(event)) {
@@ -1593,16 +1593,16 @@ namespace {
         if (const auto* entry = browser().model().entry(target.id))
           targets.push_back(*entry);
       switch (action) {
-      case Action::CUT_FILES:
-      case Action::COPY_FILES: {
-        files::FilePayload payload{.locations = {}, .cut = action == Action::CUT_FILES};
+      case Action::CutFiles:
+      case Action::CopyFiles: {
+        files::FilePayload payload{.locations = {}, .cut = action == Action::CutFiles};
         for (const auto& target : targets)
           payload.locations.push_back(target.location);
         if (!m_clipboard.setFiles(std::move(payload)))
           actionError("The file selection could not be copied to the clipboard.");
         break;
       }
-      case Action::PASTE_FILES: {
+      case Action::PasteFiles: {
         m_pendingFilePaste = true;
         const std::weak_ptr<int> lifetime = m_lifetime;
         m_clipboard.requestFiles([this, lifetime, request](std::optional<files::ClipboardFiles> selection) {
@@ -1634,15 +1634,15 @@ namespace {
         });
         break;
       }
-      case Action::SHOW_PREVIEW:
+      case Action::ShowPreview:
         m_savedSettings.showPreview = !m_savedSettings.showPreview;
-        m_preferences.submit({{files::BrowserPreference::SHOW_PREVIEW, m_savedSettings.showPreview}});
+        m_preferences.submit({{files::BrowserPreference::ShowPreview, m_savedSettings.showPreview}});
         m_surface->requestLayout();
         break;
-      case Action::QUICK_PREVIEW:
+      case Action::QuickPreview:
         showQuickPreview();
         break;
-      case Action::OPEN_WITH:
+      case Action::OpenWith:
         showApplications(targets.front());
         break;
       case Action::COMPRESS: {
@@ -1653,14 +1653,14 @@ namespace {
         openArchiveDialog(std::move(sources), {}, true);
         break;
       }
-      case Action::EXTRACT_TO:
+      case Action::ExtractTo:
         openArchiveDialog({targets.front().location}, {}, false);
         break;
-      case Action::EXTRACT_HERE:
+      case Action::ExtractHere:
         if (!m_archives.extract(targets.front().location, archiveDestination(targets.front().location)))
           actionError("Could not start extraction.");
         break;
-      case Action::BROWSE_ARCHIVE:
+      case Action::BrowseArchive:
         if (m_archives.inspect(targets.front().location)) {
           m_archiveSource = targets.front().location;
           m_archiveWanted = true;
@@ -1668,18 +1668,18 @@ namespace {
         } else
           actionError("Could not read this archive.");
         break;
-      case Action::COPY_PATH:
-      case Action::COPY_URI:
-      case Action::COPY_TARGET_PATH:
-      case Action::COPY_TARGET_URI: {
+      case Action::CopyPath:
+      case Action::CopyUri:
+      case Action::CopyTargetPath:
+      case Action::CopyTargetUri: {
         std::string text;
-        const bool uri = action == Action::COPY_URI || action == Action::COPY_TARGET_URI;
+        const bool uri = action == Action::CopyUri || action == Action::CopyTargetUri;
         const auto append = [&](const files::Location& location) {
           if (!text.empty())
             text += '\n';
           text += uri ? location.uri() : files::locationEditText(location);
         };
-        if (action == Action::COPY_PATH || action == Action::COPY_URI)
+        if (action == Action::CopyPath || action == Action::CopyUri)
           append(*request.folder);
         else
           for (const auto& target : targets)
@@ -1691,7 +1691,7 @@ namespace {
         break;
       }
       case Action::TERMINAL:
-      case Action::TARGET_TERMINAL: {
+      case Action::TargetTerminal: {
         const auto target = action == Action::TERMINAL ? *request.folder : targets.front().location;
         const auto context = browser().contextSerial();
         const std::weak_ptr<int> lifetime = m_lifetime;
@@ -1722,7 +1722,7 @@ namespace {
       case Action::STOP:
         browser().stop();
         break;
-      case Action::EDIT_LOCATION:
+      case Action::EditLocation:
         beginLocationEdit();
         break;
       case Action::SEARCH:
@@ -1737,27 +1737,27 @@ namespace {
       case Action::MILLER:
         setViewMode(files::ViewMode::MILLER);
         break;
-      case Action::SHOW_HIDDEN:
+      case Action::ShowHidden:
         toggleHidden();
         break;
-      case Action::SHOW_SIDEBAR:
+      case Action::ShowSidebar:
         setSidebarVisible(!m_showSidebar);
         break;
-      case Action::SORT_NAME:
-      case Action::SORT_TYPE:
-      case Action::SORT_SIZE:
-      case Action::SORT_MODIFIED:
+      case Action::SortName:
+      case Action::SortType:
+      case Action::SortSize:
+      case Action::SortModified:
       case Action::ASCENDING:
       case Action::DESCENDING:
-      case Action::FOLDERS_FIRST: {
+      case Action::FoldersFirst: {
         auto options = browser().model().sort();
-        const auto field = action == Action::SORT_NAME ? files::SortField::NAME
-            : action == Action::SORT_TYPE              ? files::SortField::TYPE
-            : action == Action::SORT_SIZE              ? files::SortField::SIZE
-                                                       : files::SortField::MODIFIED;
+        const auto field = action == Action::SortName ? files::SortField::NAME
+            : action == Action::SortType              ? files::SortField::TYPE
+            : action == Action::SortSize              ? files::SortField::SIZE
+                                                      : files::SortField::MODIFIED;
         if (action == Action::ASCENDING || action == Action::DESCENDING)
           options.descending = action == Action::DESCENDING;
-        else if (action == Action::FOLDERS_FIRST)
+        else if (action == Action::FoldersFirst)
           options.directoriesFirst = !options.directoriesFirst;
         else if (options.field != field) {
           options.field = field;
@@ -1780,10 +1780,10 @@ namespace {
             browser().activate(target.id);
         }
         break;
-      case Action::CONTAINING_FOLDER:
+      case Action::ContainingFolder:
         showContaining(targets.front().location);
         break;
-      case Action::ORIGINAL_LOCATION:
+      case Action::OriginalLocation:
         showContaining(*targets.front().trash.original);
         break;
       case Action::PIN: {
@@ -1802,18 +1802,18 @@ namespace {
         m_pins.removeMany(locations);
         break;
       }
-      case Action::PIN_CURRENT:
+      case Action::PinCurrent:
         pinFolders(
             {{files::locationBreadcrumbs(*request.folder).back().label, *request.folder}}, m_pins.bookmarks().size()
         );
         break;
-      case Action::UNPIN_CURRENT:
+      case Action::UnpinCurrent:
         m_pins.remove(*request.folder);
         break;
-      case Action::RELOAD_PINS:
+      case Action::ReloadPins:
         m_pins.reload();
         break;
-      case Action::EMPTY_TRASH:
+      case Action::EmptyTrash:
         openEmptyTrash();
         break;
       case Action::RENAME:
@@ -1825,32 +1825,32 @@ namespace {
       case Action::PROPERTIES:
         showProperties(targets);
         break;
-      case Action::CREATE_FOLDER:
-      case Action::CREATE_FILE:
+      case Action::CreateFolder:
+      case Action::CreateFile:
         openCreateItem(
-            *request.folder, action == Action::CREATE_FOLDER ? files::CreateKind::FOLDER : files::CreateKind::EMPTY_FILE
+            *request.folder, action == Action::CreateFolder ? files::CreateKind::FOLDER : files::CreateKind::EmptyFile
         );
         break;
-      case Action::SELECT_ALL:
+      case Action::SelectAll:
         browser().model().selectAll();
         break;
-      case Action::INVERT_SELECTION:
+      case Action::InvertSelection:
         (void)browser().model().invertSelection();
         break;
-      case Action::CLEAR_SELECTION:
+      case Action::ClearSelection:
         m_list->cancelPointerGesture();
         browser().model().clearSelection();
         break;
-      case Action::SELECT_PATTERN:
+      case Action::SelectPattern:
         openPatternSelection(request);
         break;
-      case Action::SINGLE_CLICK:
-      case Action::DOUBLE_CLICK:
-      case Action::TYPE_TO_SEARCH:
+      case Action::SingleClick:
+      case Action::DoubleClick:
+      case Action::TypeToSearch:
       case Action::TYPEAHEAD:
-        if (action == Action::SINGLE_CLICK || action == Action::DOUBLE_CLICK)
-          m_activationMode = action == Action::SINGLE_CLICK ? files::ActivationMode::SINGLE_CLICK
-                                                            : files::ActivationMode::DOUBLE_CLICK;
+        if (action == Action::SingleClick || action == Action::DoubleClick)
+          m_activationMode =
+              action == Action::SingleClick ? files::ActivationMode::SingleClick : files::ActivationMode::DoubleClick;
         else
           m_typingMode = action == Action::TYPEAHEAD ? files::TypingMode::TYPEAHEAD : files::TypingMode::SEARCH;
         for (auto* adapter : {&m_listAdapter, &m_gridAdapter}) {
@@ -1866,24 +1866,24 @@ namespace {
       case Action::ABOUT:
         openAbout();
         break;
-      case Action::VIEW_MENU:
+      case Action::ViewMenu:
         openMenu();
         break;
-      case Action::SORT_MENU:
+      case Action::SortMenu:
         openSortMenu();
         break;
-      case Action::SELECTION_MENU:
+      case Action::SelectionMenu:
         openSelectionMenu();
         break;
-      case Action::INTERACTION_MENU:
+      case Action::InteractionMenu:
         openInteractionMenu();
         break;
       }
       if (!m_menuSurface
           && (selectionAction
-              || action == Action::SINGLE_CLICK
-              || action == Action::DOUBLE_CLICK
-              || action == Action::TYPE_TO_SEARCH
+              || action == Action::SingleClick
+              || action == Action::DoubleClick
+              || action == Action::TypeToSearch
               || action == Action::TYPEAHEAD))
         m_dispatcher.setFocus(m_list->focusArea());
       m_browserDirty = true;
@@ -1896,7 +1896,7 @@ namespace {
           "Use * for any text and ? for one character. Matches visible names, ignoring case.",
           files::selectionPatternProblem,
           [this, request](std::string pattern) {
-            const auto state = actionState(Action::SELECT_PATTERN, request);
+            const auto state = actionState(Action::SelectPattern, request);
             if (!state.enabled) {
               m_patternEditor->showError(std::string(state.reason));
               return;
@@ -1964,29 +1964,29 @@ namespace {
       if (!id) {
         if (m_hasOther && m_hasOther())
           entries.push_back({.id = 9005, .label = "Close Pane", .shortcut = "Ctrl+Alt+W"});
-        add(Action::CREATE_FOLDER);
-        add(Action::CREATE_FILE);
-        add(Action::PASTE_FILES);
+        add(Action::CreateFolder);
+        add(Action::CreateFile);
+        add(Action::PasteFiles);
         separator();
-        add(Action::SELECT_ALL);
-        add(Action::INVERT_SELECTION);
-        add(Action::SELECT_PATTERN);
+        add(Action::SelectAll);
+        add(Action::InvertSelection);
+        add(Action::SelectPattern);
         separator();
         add(Action::REFRESH);
         if (request.folder && !request.folder->isTrash())
-          add(m_pins.contains(*request.folder) ? Action::UNPIN_CURRENT : Action::PIN_CURRENT);
-        add(Action::RELOAD_PINS);
+          add(m_pins.contains(*request.folder) ? Action::UnpinCurrent : Action::PinCurrent);
+        add(Action::ReloadPins);
         separator();
-        add(Action::COPY_PATH);
-        add(Action::COPY_URI);
+        add(Action::CopyPath);
+        add(Action::CopyUri);
         add(Action::TERMINAL);
       } else {
         if (request.targets.empty())
           return;
         add(Action::OPEN);
         if (request.targets.size() == 1) {
-          add(Action::OPEN_WITH);
-          add(Action::QUICK_PREVIEW);
+          add(Action::OpenWith);
+          add(Action::QuickPreview);
         }
         if (request.targets.size() == 1) {
           const auto* entry = browser().model().entry(request.targets.front().id);
@@ -1997,8 +1997,8 @@ namespace {
           }
         }
         separator();
-        add(Action::CUT_FILES);
-        add(Action::COPY_FILES);
+        add(Action::CutFiles);
+        add(Action::CopyFiles);
         entries.push_back(
             {.id = 9003,
              .label = "Copy to Other Pane",
@@ -2012,15 +2012,15 @@ namespace {
         if (request.targets.size() == 1) {
           const auto* entry = browser().model().entry(request.targets.front().id);
           if (entry && files::isSupportedArchive(entry->location, entry->contentType)) {
-            add(Action::BROWSE_ARCHIVE);
-            add(Action::EXTRACT_HERE);
-            add(Action::EXTRACT_TO);
+            add(Action::BrowseArchive);
+            add(Action::ExtractHere);
+            add(Action::ExtractTo);
           }
         }
         if (request.targets.size() == 1) {
-          add(Action::CONTAINING_FOLDER);
+          add(Action::ContainingFolder);
           if (browser().model().entry(request.targets.front().id)->trash.original)
-            add(Action::ORIGINAL_LOCATION);
+            add(Action::OriginalLocation);
         }
         const bool folders = std::ranges::all_of(request.targets, [this](const auto& target) {
           const auto* entry = browser().model().entry(target.id);
@@ -2046,10 +2046,10 @@ namespace {
           add(Action::TRASH);
         }
         separator();
-        add(Action::COPY_TARGET_PATH);
-        add(Action::COPY_TARGET_URI);
+        add(Action::CopyTargetPath);
+        add(Action::CopyTargetUri);
         if (folders && request.targets.size() == 1)
-          add(Action::TARGET_TERMINAL);
+          add(Action::TargetTerminal);
         separator();
         add(Action::PROPERTIES);
       }
@@ -2058,18 +2058,18 @@ namespace {
           [this, request](int action) {
             if (action == 9005) {
               if (m_workspaceRequest)
-                m_workspaceRequest(WorkspaceCommand::CLOSE_PANE, std::nullopt);
+                m_workspaceRequest(WorkspaceCommand::ClosePane, std::nullopt);
               return;
             }
             if (action >= 9000) {
               if (!files::ActionRegistry::current(actionContext(), request, files::ActionScope::TARGETS)
                   || !m_workspaceRequest)
                 return;
-              const auto command = action == 9000 ? WorkspaceCommand::NEW_TAB
-                  : action == 9001                ? WorkspaceCommand::OPEN_OTHER
-                  : action == 9002                ? WorkspaceCommand::NEW_WINDOW
-                  : action == 9003                ? WorkspaceCommand::COPY_OTHER
-                                                  : WorkspaceCommand::MOVE_OTHER;
+              const auto command = action == 9000 ? WorkspaceCommand::NewTab
+                  : action == 9001                ? WorkspaceCommand::OpenOther
+                  : action == 9002                ? WorkspaceCommand::NewWindow
+                  : action == 9003                ? WorkspaceCommand::CopyOther
+                                                  : WorkspaceCommand::MoveOther;
               if (action >= 9003)
                 m_pendingWorkspaceRequest = request;
               m_workspaceRequest(
@@ -2102,7 +2102,7 @@ namespace {
         entries.push_back(
             {.id = 7,
              .label = "Empty Trash…",
-             .enabled = actionState(Action::EMPTY_TRASH, actionRequest(false)).enabled,
+             .enabled = actionState(Action::EmptyTrash, actionRequest(false)).enabled,
              .destructive = true}
         );
         entries.push_back({.label = "", .separator = true});
@@ -2120,7 +2120,7 @@ namespace {
             } else if (action == 2) {
               m_pins.remove(bookmark.location);
             } else if (action == 7 && bookmark.location == files::Location::trash()) {
-              dispatchAction(Action::EMPTY_TRASH);
+              dispatchAction(Action::EmptyTrash);
             } else if (action == 6) {
               openPlaceRename(bookmark);
             } else if (action == 3 || action == 4) {
@@ -2341,7 +2341,7 @@ namespace {
       }
     }
 
-    bool canCreateItem() const { return actionState(Action::CREATE_FOLDER, actionRequest(false)).enabled; }
+    bool canCreateItem() const { return actionState(Action::CreateFolder, actionRequest(false)).enabled; }
     void openCreateItem(files::Location parent, files::CreateKind kind) {
       if (!canCreateItem() || browser().model().snapshot().location != parent) {
         actionError("Open an available writable folder to create a file or folder.");
@@ -3007,7 +3007,7 @@ namespace {
       DeferredCall::callLater([this, lifetime, request, entry, with] {
         if (lifetime.expired() || !m_active)
           return;
-        if (!actionState(with ? Action::OPEN_WITH : Action::OPEN, request).enabled) {
+        if (!actionState(with ? Action::OpenWith : Action::OPEN, request).enabled) {
           actionError("The previewed item changed. Select it again.");
           return;
         }
@@ -3026,7 +3026,7 @@ namespace {
             if (quick)
               dismissMenu();
             else
-              dispatchAction(Action::SHOW_PREVIEW);
+              dispatchAction(Action::ShowPreview);
           },
           [this] { previewOpen(false); }, [this] { previewOpen(true); }
       );
@@ -3091,7 +3091,7 @@ namespace {
               return;
             while (!m_appChoiceContainer->children().empty())
               (void)m_appChoiceContainer->removeChild(m_appChoiceContainer->children().back().get());
-            if (!actionState(Action::OPEN_WITH, request).enabled)
+            if (!actionState(Action::OpenWith, request).enabled)
               apps.clear();
             if (apps.empty())
               m_appChoiceContainer->addChild(
@@ -3105,7 +3105,7 @@ namespace {
                        .variant = ButtonVariant::Ghost,
                        .onClick =
                            [this, request, entry, app] {
-                             if (actionState(Action::OPEN_WITH, request).enabled)
+                             if (actionState(Action::OpenWith, request).enabled)
                                m_launcher.openWith(entry.location, app);
                              else
                                actionError("The item changed. Select it again.");
@@ -3325,7 +3325,7 @@ namespace {
                   {.out = &keepBoth,
                    .text = "Keep both",
                    .variant = ButtonVariant::Primary,
-                   .onClick = [choose] { choose(files::TransferConflictChoice::KEEP_BOTH); }}
+                   .onClick = [choose] { choose(files::TransferConflictChoice::KeepBoth); }}
               ),
               ui::button({.text = "Replace", .variant = ButtonVariant::Destructive, .onClick = [choose] {
                             choose(files::TransferConflictChoice::REPLACE);
@@ -4045,7 +4045,7 @@ namespace {
       }
       entries.push_back({.label = "", .separator = true});
       const auto request = actionRequest(false);
-      for (const auto action : {Action::COPY_PATH, Action::COPY_URI, Action::TERMINAL}) {
+      for (const auto action : {Action::CopyPath, Action::CopyUri, Action::TERMINAL}) {
         auto entry = actionEntry(action, request);
         entry.id = -1 - static_cast<int>(action);
         if (action == Action::TERMINAL)
@@ -4073,7 +4073,7 @@ namespace {
               actionError(std::move(error));
           });
         } else if (m_clipboard.available())
-          m_clipboard.setClipboardText(action == Action::COPY_URI ? target.uri() : files::locationEditText(target));
+          m_clipboard.setClipboardText(action == Action::CopyUri ? target.uri() : files::locationEditText(target));
       };
       showContextMenu(entries, activate, anchor);
       const auto generation = m_menuGeneration;
@@ -4641,10 +4641,10 @@ namespace {
       auto options = browser().model().sort();
       options.descending = options.field == field && !options.descending;
       options.field = field;
-      const auto action = field == files::SortField::NAME ? Action::SORT_NAME
-          : field == files::SortField::TYPE               ? Action::SORT_TYPE
-          : field == files::SortField::SIZE               ? Action::SORT_SIZE
-                                                          : Action::SORT_MODIFIED;
+      const auto action = field == files::SortField::NAME ? Action::SortName
+          : field == files::SortField::TYPE               ? Action::SortType
+          : field == files::SortField::SIZE               ? Action::SortSize
+                                                          : Action::SortModified;
       if (browser().model().sort().field == field)
         dispatchAction(options.descending ? Action::DESCENDING : Action::ASCENDING);
       else
@@ -4787,21 +4787,21 @@ namespace {
         return true;
       }
       if (event.sym == XKB_KEY_a && event.modifiers == KeyMod::Ctrl) {
-        dispatchAction(Action::SELECT_ALL);
+        dispatchAction(Action::SelectAll);
         return true;
       }
       if (event.modifiers == 0 && KeySymbol::isEscape(event.sym)) {
-        dispatchAction(Action::CLEAR_SELECTION);
+        dispatchAction(Action::ClearSelection);
         return true;
       }
       if ((event.sym == XKB_KEY_i || event.sym == XKB_KEY_I) && event.modifiers == (KeyMod::Ctrl | KeyMod::Shift)) {
         if (!event.repeat)
-          dispatchAction(Action::INVERT_SELECTION);
+          dispatchAction(Action::InvertSelection);
         return true;
       }
       if (event.sym == XKB_KEY_s && event.modifiers == KeyMod::Ctrl) {
         if (!event.repeat)
-          dispatchAction(Action::SELECT_PATTERN);
+          dispatchAction(Action::SelectPattern);
         return true;
       }
       if (event.modifiers == 0 && KeySymbol::isEnter(event.sym)) {
@@ -4862,7 +4862,7 @@ namespace {
           m_miller.interact(m_miller.focused());
         (void)model.select(
             id,
-            shift ? (ctrl ? files::SelectionMode::ADD_RANGE : files::SelectionMode::RANGE)
+            shift ? (ctrl ? files::SelectionMode::AddRange : files::SelectionMode::RANGE)
                   : files::SelectionMode::REPLACE
         );
       }
@@ -5771,7 +5771,7 @@ namespace {
       };
       miller->resized = [this](int width) {
         m_miller.defaultWidth = static_cast<float>(width);
-        m_preferences.submit({{files::BrowserPreference::MILLER_COLUMN_WIDTH, width}});
+        m_preferences.submit({{files::BrowserPreference::MillerColumnWidth, width}});
       };
       miller->textInputClient = this;
       miller->requestUpdate = [this] { m_surface->requestUpdate(); };
@@ -5825,7 +5825,7 @@ namespace {
                        .onClick =
                            [this] {
                              if (m_workspaceRequest)
-                               m_workspaceRequest(WorkspaceCommand::CLOSE_PANE, std::nullopt);
+                               m_workspaceRequest(WorkspaceCommand::ClosePane, std::nullopt);
                            }}
                   )
               ),
@@ -6353,17 +6353,17 @@ namespace {
       const auto request = actionRequest(false);
       std::vector<ContextMenuControlEntry> entries;
       if (back) {
-        entries.push_back(actionEntry(Action::VIEW_MENU, request));
+        entries.push_back(actionEntry(Action::ViewMenu, request));
         entries.push_back({.label = "", .separator = true});
       }
       for (const auto action : actions)
-        entries.push_back(actionEntry(action, request, radio && action != Action::FOLDERS_FIRST));
+        entries.push_back(actionEntry(action, request, radio && action != Action::FoldersFirst));
       showContextMenu(
           std::move(entries),
           [this, request](int id) {
             const auto action = static_cast<Action>(id);
             dispatchAction(action, request);
-            if (!m_menuSurface && action != Action::SEARCH && action != Action::EDIT_LOCATION)
+            if (!m_menuSurface && action != Action::SEARCH && action != Action::EditLocation)
               m_dispatcher.setFocus(m_list->focusArea());
           },
           sceneRect(*m_menuButton), true
@@ -6371,25 +6371,25 @@ namespace {
     }
     void openSortMenu() {
       showActionMenu(
-          {Action::SORT_NAME, Action::SORT_TYPE, Action::SORT_SIZE, Action::SORT_MODIFIED, Action::ASCENDING,
-           Action::DESCENDING, Action::FOLDERS_FIRST},
+          {Action::SortName, Action::SortType, Action::SortSize, Action::SortModified, Action::ASCENDING,
+           Action::DESCENDING, Action::FoldersFirst},
           true, true
       );
     }
     void openSelectionMenu() {
       showActionMenu(
-          {Action::SELECT_ALL, Action::INVERT_SELECTION, Action::SELECT_PATTERN, Action::CLEAR_SELECTION}, false, true
+          {Action::SelectAll, Action::InvertSelection, Action::SelectPattern, Action::ClearSelection}, false, true
       );
     }
     void openInteractionMenu() {
       const auto request = actionRequest(false);
       std::vector<ContextMenuControlEntry> entries{
-          actionEntry(Action::VIEW_MENU, request),
+          actionEntry(Action::ViewMenu, request),
           {.label = "Open items with", .header = true},
-          actionEntry(Action::SINGLE_CLICK, request, true),
-          actionEntry(Action::DOUBLE_CLICK, request, true),
+          actionEntry(Action::SingleClick, request, true),
+          actionEntry(Action::DoubleClick, request, true),
           {.label = "Typing in the file view", .header = true},
-          actionEntry(Action::TYPE_TO_SEARCH, request, true),
+          actionEntry(Action::TypeToSearch, request, true),
           actionEntry(Action::TYPEAHEAD, request, true)
       };
       showContextMenu(
@@ -6413,8 +6413,8 @@ namespace {
         entries.push_back(actionEntry(action, request, true));
       entries.push_back({.label = "", .separator = true});
       for (auto action :
-           {Action::SORT_MENU, Action::SELECTION_MENU, Action::INTERACTION_MENU, Action::SHOW_HIDDEN,
-            Action::SHOW_SIDEBAR, Action::SHOW_PREVIEW, Action::SEARCH, Action::SETTINGS, Action::ABOUT})
+           {Action::SortMenu, Action::SelectionMenu, Action::InteractionMenu, Action::ShowHidden, Action::ShowSidebar,
+            Action::ShowPreview, Action::SEARCH, Action::SETTINGS, Action::ABOUT})
         entries.push_back(actionEntry(action, request));
       showContextMenu(
           std::move(entries),
@@ -6422,8 +6422,8 @@ namespace {
             if (id >= 9000) {
               if (m_workspaceRequest)
                 m_workspaceRequest(
-                    id == 9000       ? WorkspaceCommand::NEW_TAB
-                        : id == 9001 ? WorkspaceCommand::NEW_WINDOW
+                    id == 9000       ? WorkspaceCommand::NewTab
+                        : id == 9001 ? WorkspaceCommand::NewWindow
                                      : WorkspaceCommand::SPLIT,
                     std::nullopt
                 );
@@ -6446,7 +6446,7 @@ namespace {
     bool m_millerFocusPending = false;
     bool m_restartMiller = false;
     const files::BrowserController* m_lastBrowser = nullptr;
-    files::ActivationMode m_activationMode = files::ActivationMode::DOUBLE_CLICK;
+    files::ActivationMode m_activationMode = files::ActivationMode::DoubleClick;
     files::TypingMode m_typingMode = files::TypingMode::SEARCH;
     files::TypeaheadSelection m_typeahead;
     std::string m_typeaheadPreedit;
@@ -6966,19 +6966,19 @@ namespace {
                    ctrlShift = event.modifiers == (KeyMod::Ctrl | KeyMod::Shift);
         std::optional<WorkspaceCommand> command;
         if (event.modifiers == (KeyMod::Ctrl | KeyMod::Alt) && (event.sym == XKB_KEY_w || event.sym == XKB_KEY_W))
-          command = WorkspaceCommand::CLOSE_PANE;
+          command = WorkspaceCommand::ClosePane;
         if (ctrl && event.sym == XKB_KEY_t)
-          command = WorkspaceCommand::NEW_TAB;
+          command = WorkspaceCommand::NewTab;
         if (ctrlShift && (event.sym == XKB_KEY_t || event.sym == XKB_KEY_T))
           command = WorkspaceCommand::REOPEN;
         if (ctrl && event.sym == XKB_KEY_w)
           command = WorkspaceCommand::CLOSE;
         if (ctrl && event.sym == XKB_KEY_n)
-          command = WorkspaceCommand::NEW_WINDOW;
+          command = WorkspaceCommand::NewWindow;
         if (event.modifiers == 0 && event.sym == XKB_KEY_F3)
           command = WorkspaceCommand::SPLIT;
         if (event.modifiers == 0 && event.sym == XKB_KEY_F6)
-          command = WorkspaceCommand::SWITCH_AREA;
+          command = WorkspaceCommand::SwitchArea;
         if (ctrlShift && (event.sym == XKB_KEY_d || event.sym == XKB_KEY_D))
           command = WorkspaceCommand::DUPLICATE;
         if (command) {
@@ -7376,7 +7376,7 @@ namespace {
         files::WindowId window, files::TabId tab, WorkspaceCommand command,
         std::optional<files::Location> location = std::nullopt
     ) {
-      if ((command == WorkspaceCommand::COPY_OTHER || command == WorkspaceCommand::MOVE_OTHER) && !location)
+      if ((command == WorkspaceCommand::CopyOther || command == WorkspaceCommand::MoveOther) && !location)
         if (auto other = m_model.other(window))
           location = m_pages.at(*other)->location();
       const std::weak_ptr<int> lifetime = m_lifetime;
@@ -7400,10 +7400,10 @@ namespace {
               || command == WorkspaceCommand::SWAP))
         m_model.select(window, *logical);
       switch (command) {
-      case WorkspaceCommand::CLOSE_PANE:
+      case WorkspaceCommand::ClosePane:
         m_model.closePane(window, source);
         break;
-      case WorkspaceCommand::NEW_TAB:
+      case WorkspaceCommand::NewTab:
         if (!newTab(window, destination ? destination : page.location()))
           page.workspaceError("Close a tab before opening another.");
         break;
@@ -7429,7 +7429,7 @@ namespace {
             if (m_model.tabFor(pageId) == m_model.windows().at(window).selected)
               value->rebind(host.surface);
         break;
-      case WorkspaceCommand::NEW_WINDOW: {
+      case WorkspaceCommand::NewWindow: {
         if (auto id = newWindow()) {
           if (!newTab(id, destination ? destination : page.location())) {
             m_hosts.at(id)->surface.close();
@@ -7440,7 +7440,7 @@ namespace {
         break;
       }
       case WorkspaceCommand::DETACH:
-      case WorkspaceCommand::MOVE_WINDOW: {
+      case WorkspaceCommand::MoveWindow: {
         files::WindowId destinationWindow = 0;
         if (command == WorkspaceCommand::DETACH)
           destinationWindow = newWindow();
@@ -7483,24 +7483,24 @@ namespace {
         else if (!newPane(window, page.location(), source))
           page.workspaceError("The browser-page limit has been reached.");
         break;
-      case WorkspaceCommand::SWITCH_AREA:
+      case WorkspaceCommand::SwitchArea:
         if (auto other = m_model.other(window))
           m_model.focus(window, *other);
         break;
       case WorkspaceCommand::SWAP:
         m_model.swap(window);
         break;
-      case WorkspaceCommand::OPEN_OTHER:
+      case WorkspaceCommand::OpenOther:
         if (auto other = m_model.other(window)) {
           if (destination)
             m_pages.at(*other)->open(*destination);
         } else
           newPane(window, destination ? destination : page.location());
         break;
-      case WorkspaceCommand::COPY_OTHER:
-      case WorkspaceCommand::MOVE_OTHER:
+      case WorkspaceCommand::CopyOther:
+      case WorkspaceCommand::MoveOther:
         if (destination)
-          page.transferTo(*destination, command == WorkspaceCommand::COPY_OTHER);
+          page.transferTo(*destination, command == WorkspaceCommand::CopyOther);
         break;
       }
       host.labels.clear();
@@ -7536,9 +7536,9 @@ namespace {
       page.workspaceMenu(
           std::move(entries),
           [this, window, tab](int id) {
-            const std::array commands{WorkspaceCommand::NEW_TAB, WorkspaceCommand::DUPLICATE,  WorkspaceCommand::CLOSE,
-                                      WorkspaceCommand::REOPEN,  WorkspaceCommand::SPLIT,      WorkspaceCommand::SWAP,
-                                      WorkspaceCommand::DETACH,  WorkspaceCommand::MOVE_WINDOW};
+            const std::array commands{WorkspaceCommand::NewTab, WorkspaceCommand::DUPLICATE, WorkspaceCommand::CLOSE,
+                                      WorkspaceCommand::REOPEN, WorkspaceCommand::SPLIT,     WorkspaceCommand::SWAP,
+                                      WorkspaceCommand::DETACH, WorkspaceCommand::MoveWindow};
             if (id >= 0 && static_cast<std::size_t>(id) < commands.size())
               defer(window, tab, commands[static_cast<std::size_t>(id)]);
           },
@@ -7635,7 +7635,7 @@ namespace {
                .variant = ButtonVariant::Ghost,
                .tooltip = "New tab (Ctrl+T)",
                .onClick = [this, windowId] {
-                 defer(windowId, m_model.windows().at(windowId).active, WorkspaceCommand::NEW_TAB);
+                 defer(windowId, m_model.windows().at(windowId).active, WorkspaceCommand::NewTab);
                }}
           )
       );

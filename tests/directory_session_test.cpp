@@ -264,7 +264,7 @@ namespace {
     fixture.write("plain-file");
     session.open(Location::fromPath((fixture.path / "plain-file").native()));
     pump.until([&session] { return session.snapshot().status == DirectoryStatus::ERROR; });
-    require(session.snapshot().error->kind == files::FileErrorKind::NOT_DIRECTORY, "file location error lost");
+    require(session.snapshot().error->kind == files::FileErrorKind::NotDirectory, "file location error lost");
   }
 
   bool unknown(const files::FileAccess& access) {

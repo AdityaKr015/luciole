@@ -5,7 +5,7 @@
 #include <string>
 
 namespace files {
-  enum class FileErrorKind : std::uint8_t { MISSING, DENIED, NOT_DIRECTORY, UNAVAILABLE, UNSUPPORTED, OTHER };
+  enum class FileErrorKind : std::uint8_t { MISSING, DENIED, NotDirectory, UNAVAILABLE, UNSUPPORTED, OTHER };
 
   struct FileError {
     FileErrorKind kind = FileErrorKind::OTHER;
@@ -24,7 +24,7 @@ namespace files {
         kind = Kind::DENIED;
         break;
       case G_IO_ERROR_NOT_DIRECTORY:
-        kind = Kind::NOT_DIRECTORY;
+        kind = Kind::NotDirectory;
         break;
       case G_IO_ERROR_NOT_MOUNTED:
       case G_IO_ERROR_HOST_NOT_FOUND:
