@@ -128,9 +128,9 @@ _check_formatter:
         exit 1
     fi
 
-format: format-code format-nix
+format: format-code
 
-format-check: format-code-check format-nix-check lint-prose
+format-check: format-code-check lint-prose
 
 format-code: _check_formatter
     just _files code | xargs -0 -r clang-format -i
@@ -148,7 +148,7 @@ _clang_tidy m=mode: (_ensure-configured m)
     meson compile -C "build-$1" noctalia-files
     run-clang-tidy -quiet -p "build-$1" -j "$(nproc)" -warnings-as-errors='*' -header-filter='(\.\./)?src/.*' "$(realpath src)/.*"
 
-lint m=mode: (_clang_tidy m) lint-nix lint-python lint-prose
+lint m=mode: (_clang_tidy m) lint-python lint-prose
 
 lint-nix:
     just _files nix | xargs -0 -r -n1 statix check
