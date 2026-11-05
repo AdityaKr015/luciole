@@ -35,7 +35,11 @@ Headers are linted through the `.cpp` files that include them. Fix every finding
 | Enumerators            | PascalCase           | `SortField::Name`   |
 | Macros                 | SCREAMING_SNAKE_CASE | `TEST_CHECK`        |
 
-Scoped enums (`enum class`) use an explicit `std::uint8_t` underlying type where it makes sense. Getters are the noun, without a `get` prefix: `snapshot()`, `selection()`.
+Scoped enums (`enum class`) use an explicit `std::uint8_t` underlying type where it makes sense.
+
+Getters are the noun, without a `get` prefix: `snapshot()`, `selection()`.
+
+clang-format inserts braces around every control statement body and clang-tidy enforces the naming table for enumerators and private members.
 
 ### Source Conventions
 
