@@ -1,6 +1,7 @@
 #include "app/glib_poll_source.h"
 #include "config/view_preference_writer.h"
 #include "fs/gio_ptr.h"
+#include "test_check.h"
 
 #include <algorithm>
 #include <chrono>
@@ -10,15 +11,10 @@
 #include <stdexcept>
 
 namespace {
-  void require(bool condition, const char* message) {
-    if (!condition) {
-      throw std::runtime_error(message);
-    }
-  }
   void testSaving() {
     namespace fs = std::filesystem;
     const files::GString temporary(g_dir_make_tmp("noctalia-view-writer-XXXXXX", nullptr));
-    require(temporary != nullptr, "cannot create settings fixture");
+    TEST_CHECK(temporary != nullptr);
     const fs::path root(temporary.get());
     struct Cleanup {
       fs::path root;
@@ -33,11 +29,11 @@ namespace {
     const auto wait = [&] {
       const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
       while (writer.busy()) {
-        require(std::chrono::steady_clock::now() < deadline, "settings writer timed out");
+        TEST_CHECK(std::chrono::steady_clock::now() < deadline);
         std::vector<pollfd> fds;
         const auto start = source.addPollFds(fds);
         const int timeout = source.pollTimeoutMs();
-        require(::poll(fds.data(), fds.size(), timeout < 0 ? 20 : std::min(timeout, 20)) >= 0, "poll failed");
+        TEST_CHECK(::poll(fds.data(), fds.size(), timeout < 0 ? 20 : std::min(timeout, 20)) >= 0);
         source.dispatch(fds, start);
       }
     };
@@ -83,43 +79,41 @@ namespace {
     writer.saveInteraction(files::ActivationMode::SingleClick, files::TypingMode::TYPEAHEAD);
     wait();
     const auto loaded = files::loadSettings(paths);
-    require(
+    TEST_CHECK(
         error.empty()
-            && loaded
-            && loaded->browser.viewMode == files::ViewMode::GRID
-            && !loaded->browser.showHidden
-            && loaded->browser.gridIconSize == 64
-            && loaded->browser.thumbnails.policy == files::ThumbnailPolicy::ALL
-            && loaded->browser.thumbnails.cacheMiB == 64
-            && loaded->browser.sidebarWidth == 280
-            && !loaded->browser.showSidebar
-            && loaded->browser.sort == finalSort
-            && loaded->browser.columns == hiddenColumns
-            && loaded->browser.columnOrder == finalOrder
-            && loaded->browser.columnWidths == finalWidths
-            && loaded->browser.activationMode == files::ActivationMode::SingleClick
-            && loaded->browser.typingMode == files::TypingMode::TYPEAHEAD,
-        "rapid changes did not persist the latest view or overwrote unrelated preferences"
+        && loaded
+        && loaded->browser.viewMode == files::ViewMode::GRID
+        && !loaded->browser.showHidden
+        && loaded->browser.gridIconSize == 64
+        && loaded->browser.thumbnails.policy == files::ThumbnailPolicy::ALL
+        && loaded->browser.thumbnails.cacheMiB == 64
+        && loaded->browser.sidebarWidth == 280
+        && !loaded->browser.showSidebar
+        && loaded->browser.sort == finalSort
+        && loaded->browser.columns == hiddenColumns
+        && loaded->browser.columnOrder == finalOrder
+        && loaded->browser.columnWidths == finalWidths
+        && loaded->browser.activationMode == files::ActivationMode::SingleClick
+        && loaded->browser.typingMode == files::TypingMode::TYPEAHEAD
     );
     std::ifstream base(paths.base);
     const std::string content((std::istreambuf_iterator<char>(base)), {});
-    require(content == "[browser]\nshow_hidden = true\nview_mode = 'list'\n", "writer changed the declarative base");
+    TEST_CHECK(content == "[browser]\nshow_hidden = true\nview_mode = 'list'\n");
     writer.saveShowHidden(true);
     wait();
     const auto shown = files::loadSettings(paths);
-    require(
+    TEST_CHECK(
         error.empty()
-            && shown
-            && shown->browser.showHidden
-            && shown->browser.gridIconSize == 64
-            && !shown->browser.showSidebar
-            && shown->browser.sort == finalSort
-            && shown->browser.columns == hiddenColumns
-            && shown->browser.columnOrder == finalOrder
-            && shown->browser.columnWidths == finalWidths
-            && shown->browser.activationMode == files::ActivationMode::SingleClick
-            && shown->browser.typingMode == files::TypingMode::TYPEAHEAD,
-        "showing hidden entries did not persist or lost unrelated overrides"
+        && shown
+        && shown->browser.showHidden
+        && shown->browser.gridIconSize == 64
+        && !shown->browser.showSidebar
+        && shown->browser.sort == finalSort
+        && shown->browser.columns == hiddenColumns
+        && shown->browser.columnOrder == finalOrder
+        && shown->browser.columnWidths == finalWidths
+        && shown->browser.activationMode == files::ActivationMode::SingleClick
+        && shown->browser.typingMode == files::TypingMode::TYPEAHEAD
     );
     const files::SortOptions defaultSort;
     writer.saveSort(defaultSort);
@@ -129,34 +123,30 @@ namespace {
     writer.saveInteraction(files::ActivationMode::DoubleClick, files::TypingMode::SEARCH);
     wait();
     const auto reset = files::loadSettings(paths);
-    require(
+    TEST_CHECK(
         error.empty()
-            && reset
-            && reset->browser.sort == defaultSort
-            && reset->browser.showHidden
-            && reset->browser.gridIconSize == 64
-            && reset->browser.columns == files::DetailsColumnVisibility{}
-            && reset->browser.columnOrder == files::kDefaultDetailsColumnOrder
-            && reset->browser.columnWidths == files::kDefaultDetailsColumnWidths
-            && reset->browser.activationMode == files::ActivationMode::DoubleClick
-            && reset->browser.typingMode == files::TypingMode::SEARCH,
-        "restoring default sort choices did not persist or lost unrelated overrides"
+        && reset
+        && reset->browser.sort == defaultSort
+        && reset->browser.showHidden
+        && reset->browser.gridIconSize == 64
+        && reset->browser.columns == files::DetailsColumnVisibility{}
+        && reset->browser.columnOrder == files::kDefaultDetailsColumnOrder
+        && reset->browser.columnWidths == files::kDefaultDetailsColumnWidths
+        && reset->browser.activationMode == files::ActivationMode::DoubleClick
+        && reset->browser.typingMode == files::TypingMode::SEARCH
     );
     std::ofstream(paths.overrides) << "[broken\n";
     writer.save(files::ViewMode::LIST);
     wait();
-    require(!error.empty(), "invalid sidecar save failure was hidden");
+    TEST_CHECK(!error.empty());
     std::ifstream invalid(paths.overrides);
-    require(
-        std::string((std::istreambuf_iterator<char>(invalid)), {}) == "[broken\n",
-        "failed save replaced invalid settings"
-    );
+    TEST_CHECK(std::string((std::istreambuf_iterator<char>(invalid)), {}) == "[broken\n");
   }
   void testWatchingAndReset() {
     namespace fs = std::filesystem;
     using P = files::BrowserPreference;
     const files::GString temporary(g_dir_make_tmp("noctalia-settings-watch-XXXXXX", nullptr));
-    require(temporary != nullptr, "cannot create watcher fixture");
+    TEST_CHECK(temporary != nullptr);
     const fs::path root(temporary.get());
     struct Cleanup {
       fs::path root;
@@ -180,11 +170,11 @@ namespace {
     const auto until = [&](const std::function<bool()>& done) {
       const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
       while (!done()) {
-        require(std::chrono::steady_clock::now() < deadline, "configuration watcher timed out");
+        TEST_CHECK(std::chrono::steady_clock::now() < deadline);
         std::vector<pollfd> fds;
         const auto start = source.addPollFds(fds);
         const int requested = source.pollTimeoutMs();
-        require(::poll(fds.data(), fds.size(), requested < 0 ? 20 : std::min(requested, 20)) >= 0, "poll failed");
+        TEST_CHECK(::poll(fds.data(), fds.size(), requested < 0 ? 20 : std::min(requested, 20)) >= 0);
         source.dispatch(fds, start);
       }
     };
@@ -194,69 +184,51 @@ namespace {
     };
     writer->startWatching();
     until([&] { return changes > 0 && !writer->busy(); });
-    require(error.empty() && writer->settings() == files::Settings{}, "missing configuration did not load defaults");
+    TEST_CHECK(error.empty() && writer->settings() == files::Settings{});
     fs::create_directories(paths.base.parent_path());
     const std::string base = "[browser]\nshow_hidden = true\nview_mode = 'grid'\nsidebar_width = 240\n";
     write(root / "declarative.toml", base);
     fs::create_symlink(root / "declarative.toml", paths.base);
     fs::permissions(root / "declarative.toml", fs::perms::owner_read);
     until([&] { return writer->settings()->browser.showHidden && !writer->busy(); });
-    require(
-        writer->inheritedSettings()->browser.sidebarWidth == 240,
-        "new directories or declarative symlink were not watched"
-    );
+    TEST_CHECK(writer->inheritedSettings()->browser.sidebarWidth == 240);
     writer->submit({{P::ShowHidden, false}, {P::ViewMode, files::ViewMode::LIST}});
     writer->saveGridIconSize(128);
     writer->reload();
     until([&] { return !writer->busy(); });
-    require(
+    TEST_CHECK(
         error.empty()
-            && !writer->settings()->browser.showHidden
-            && writer->settings()->browser.gridIconSize == 128
-            && writer->settings()->browser.viewMode == files::ViewMode::LIST
-            && writer->inheritedSettings()->browser.showHidden,
-        "reload raced queued edits or inherited values included overrides"
+        && !writer->settings()->browser.showHidden
+        && writer->settings()->browser.gridIconSize == 128
+        && writer->settings()->browser.viewMode == files::ViewMode::LIST
+        && writer->inheritedSettings()->browser.showHidden
     );
     writer->submit({{P::ShowHidden, std::monostate{}}});
     until([&] { return !writer->busy(); });
-    require(
-        writer->settings()->browser.showHidden && writer->settings()->browser.gridIconSize == 128,
-        "individual reset lost inheritance or unrelated settings"
-    );
+    TEST_CHECK(writer->settings()->browser.showHidden && writer->settings()->browser.gridIconSize == 128);
     const auto good = writer->settings();
     const auto previousChanges = changes;
     const std::string invalid = "[browser]\ngrid_icon_size = 45\n";
     write(paths.overrides, invalid);
     until([&] { return changes > previousChanges && !error.empty() && !writer->busy(); });
-    require(writer->settings() == good, "invalid external settings replaced the last valid snapshot");
+    TEST_CHECK(writer->settings() == good);
     writer->saveGridIconSize(64);
     until([&] { return !writer->busy(); });
     std::ifstream broken(paths.overrides);
-    require(
-        std::string((std::istreambuf_iterator<char>(broken)), {}) == invalid, "saving silently repaired an invalid file"
-    );
+    TEST_CHECK(std::string((std::istreambuf_iterator<char>(broken)), {}) == invalid);
     write(paths.overrides, "[browser]\ngrid_icon_size = 96\nshow_sidebar = false\n");
     until([&] { return writer->settings()->browser.gridIconSize == 96 && error.empty() && !writer->busy(); });
-    require(!writer->settings()->browser.showSidebar, "atomic external replacement was not applied");
+    TEST_CHECK(!writer->settings()->browser.showSidebar);
     fs::permissions(paths.overrides, fs::perms::owner_read);
     writer->saveShowSidebar(true);
     until([&] { return !writer->busy(); });
-    require(
-        !error.empty() && !writer->settings()->browser.showSidebar,
-        "failed save reported success or applied an unsaved preference"
-    );
+    TEST_CHECK(!error.empty() && !writer->settings()->browser.showSidebar);
     fs::permissions(paths.overrides, fs::perms::owner_read | fs::perms::owner_write);
     writer->resetAll();
     until([&] { return !writer->busy(); });
-    require(
-        error.empty() && writer->settings() == writer->inheritedSettings(),
-        "reset all did not restore inherited/default values"
-    );
+    TEST_CHECK(error.empty() && writer->settings() == writer->inheritedSettings());
     std::ifstream original(root / "declarative.toml");
-    require(
-        std::string((std::istreambuf_iterator<char>(original)), {}) == base && fs::is_symlink(paths.base),
-        "GUI reset modified the declarative file or its link"
-    );
+    TEST_CHECK(std::string((std::istreambuf_iterator<char>(original)), {}) == base && fs::is_symlink(paths.base));
     write(root / "declarative.toml", "[browser]\nshow_hidden = false\nsidebar_width = 320\n");
     until([&] {
       return writer->settings()->browser.sidebarWidth == 320

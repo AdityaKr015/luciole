@@ -1,6 +1,7 @@
 #include "app/glib_poll_source.h"
 #include "browser/browser_controller.h"
 #include "browser/location_presentation.h"
+#include "test_check.h"
 
 #include <algorithm>
 #include <chrono>
@@ -17,17 +18,11 @@ namespace {
   using files::EntryId;
   using files::Location;
 
-  void require(bool condition, const std::string& message) {
-    if (!condition) {
-      throw std::runtime_error(message);
-    }
-  }
-
   struct Fixture {
     fs::path path;
     Fixture() {
       const files::GString name(g_dir_make_tmp("noctalia-browser-test-XXXXXX", nullptr));
-      require(name != nullptr, "cannot create browser fixture");
+      TEST_CHECK(name != nullptr);
       path = name.get();
       fs::create_directory(path / "child");
       fs::create_directory(path / "other");
@@ -49,20 +44,17 @@ namespace {
     void until(const std::function<bool()>& done) {
       const auto deadline = std::chrono::steady_clock::now() + 5s;
       while (!done()) {
-        require(std::chrono::steady_clock::now() < deadline, "browser navigation timed out");
+        TEST_CHECK(std::chrono::steady_clock::now() < deadline);
         std::vector<pollfd> fds;
         const auto start = m_source.addPollFds(fds);
         const int requested = m_source.pollTimeoutMs();
-        require(::poll(fds.data(), fds.size(), requested < 0 ? 20 : std::min(requested, 20)) >= 0, "poll failed");
+        TEST_CHECK(::poll(fds.data(), fds.size(), requested < 0 ? 20 : std::min(requested, 20)) >= 0);
         m_source.dispatch(fds, start);
       }
     }
     void ready(const BrowserController& browser) {
       until([&] { return browser.model().snapshot().status != DirectoryStatus::LOADING; });
-      require(
-          browser.model().snapshot().status == DirectoryStatus::READY,
-          browser.model().snapshot().error ? browser.model().snapshot().error->message : "browser not ready"
-      );
+      TEST_CHECK(browser.model().snapshot().status == DirectoryStatus::READY);
     }
     void drainFor(std::chrono::milliseconds duration) {
       const auto deadline = std::chrono::steady_clock::now() + duration;
@@ -91,23 +83,20 @@ namespace {
     const auto original = browser.contextSerial();
     browser.refresh();
     pump.ready(browser);
-    require(browser.contextSerial() == original, "refresh invalidated the browsing action context");
+    TEST_CHECK(browser.contextSerial() == original);
     browser.setSearchQuery("file");
     pump.ready(browser);
     const auto search = browser.contextSerial();
-    require(search != original, "search reused the browsing action context");
+    TEST_CHECK(search != original);
     browser.setSearchQuery({});
     pump.ready(browser);
-    require(
-        browser.contextSerial() != original && browser.contextSerial() != search,
-        "returning from search revived an old context"
-    );
+    TEST_CHECK(browser.contextSerial() != original && browser.contextSerial() != search);
     const auto beforeChild = browser.contextSerial();
     browser.activate(id(browser, "child"));
     pump.ready(browser);
     browser.back();
     pump.ready(browser);
-    require(browser.contextSerial() != beforeChild, "history return revived an old menu context");
+    TEST_CHECK(browser.contextSerial() != beforeChild);
     fs::create_symlink("file", fixture.path / "file-link");
     browser.refresh();
     pump.ready(browser);
@@ -115,16 +104,15 @@ namespace {
     browser.setFileActivatedCallback([&](const Location& file) { launched = file; });
     browser.activate(id(browser, "file-link"));
     pump.until([&] { return launched.has_value(); });
-    require(
+    TEST_CHECK(
         launched == Location::fromPath((fixture.path / "file-link").native())
-            && browser.model().snapshot().location == Location::fromPath(fixture.path.native()),
-        "regular-file symlink activation tried to enumerate a directory"
+        && browser.model().snapshot().location == Location::fromPath(fixture.path.native())
     );
     launched.reset();
     browser.activate(id(browser, "file-link"));
     browser.open(Location::fromPath((fixture.path / "child").native()));
     pump.ready(browser);
-    require(!launched, "a late link result opened after navigation");
+    TEST_CHECK(!launched);
     auto retiring = std::make_unique<BrowserController>(files::SortOptions{}, false);
     retiring->open(Location::fromPath(fixture.path.native()));
     pump.ready(*retiring);
@@ -148,32 +136,23 @@ namespace {
     duplicate.open(Location::fromPath((fixture.path / "other").native()));
     duplicate.duplicateFrom(original);
     pump.ready(duplicate);
-    require(
+    TEST_CHECK(
         duplicate.canBack()
-            && duplicate.model().selectedIds().size() == 1
-            && duplicate.model().entry(duplicate.model().selectedIds().front())->name == "inside",
-        "duplicate lost history or stable selection"
+        && duplicate.model().selectedIds().size() == 1
+        && duplicate.model().entry(duplicate.model().selectedIds().front())->name == "inside"
     );
     const auto viewport = duplicate.takeRestoredViewport();
-    require(
-        viewport && viewport->mode == files::ViewMode::LIST && viewport->vertical == 125, "duplicate lost viewport"
-    );
+    TEST_CHECK(viewport && viewport->mode == files::ViewMode::LIST && viewport->vertical == 125);
     duplicate.back();
     pump.ready(duplicate);
-    require(
-        original.model().snapshot().location == Location::fromPath((fixture.path / "child").native()),
-        "duplicate navigation changed source tab"
-    );
+    TEST_CHECK(original.model().snapshot().location == Location::fromPath((fixture.path / "child").native()));
     original.setSearchQuery("inside");
     pump.ready(original);
     duplicate.duplicateFrom(original);
     pump.ready(duplicate);
     original.open(root);
     pump.ready(original);
-    require(
-        duplicate.searchQuery() == "inside" && duplicate.model().rows().size() == 1,
-        "source navigation leaked into duplicated search"
-    );
+    TEST_CHECK(duplicate.searchQuery() == "inside" && duplicate.model().rows().size() == 1);
     auto closing = std::make_unique<BrowserController>(files::SortOptions{}, false);
     closing->duplicateFrom(duplicate);
     closing.reset();
@@ -184,59 +163,44 @@ namespace {
     Pump pump;
     BrowserController browser({}, false);
     const auto root = Location::fromPath(fixture.path.native());
-    require(browser.openText(root.uri()), "URI navigation rejected");
+    TEST_CHECK(browser.openText(root.uri()));
     pump.ready(browser);
-    require(!browser.canBack() && !browser.canForward(), "initial navigation created extra history");
+    TEST_CHECK(!browser.canBack() && !browser.canForward());
     browser.model().select(id(browser, "file"));
     const auto selected = browser.model().selectedIds();
     browser.open(*browser.model().snapshot().location);
     pump.ready(browser);
-    require(
-        browser.model().selectedIds() == selected && !browser.canBack(), "same-location reload lost identity/history"
-    );
+    TEST_CHECK(browser.model().selectedIds() == selected && !browser.canBack());
     browser.activate(id(browser, "child"));
     pump.ready(browser);
-    require(
-        browser.model().snapshot().location == Location::fromPath((fixture.path / "child").native()),
-        "folder activation failed"
-    );
-    require(browser.openText("../other"), "relative navigation rejected");
+    TEST_CHECK(browser.model().snapshot().location == Location::fromPath((fixture.path / "child").native()));
+    TEST_CHECK(browser.openText("../other"));
     pump.ready(browser);
-    require(
-        browser.model().snapshot().location == Location::fromPath((fixture.path / "other").native()),
-        "relative path resolved against wrong directory"
-    );
-    require(browser.back(), "back unavailable");
+    TEST_CHECK(browser.model().snapshot().location == Location::fromPath((fixture.path / "other").native()));
+    TEST_CHECK(browser.back());
     pump.ready(browser);
-    require(
+    TEST_CHECK(
         browser.model().snapshot().location == Location::fromPath((fixture.path / "child").native())
-            && browser.canForward(),
-        "back did not restore history"
+        && browser.canForward()
     );
-    require(browser.forward(), "forward unavailable");
+    TEST_CHECK(browser.forward());
     pump.ready(browser);
-    require(browser.up(), "up unavailable");
+    TEST_CHECK(browser.up());
     pump.ready(browser);
-    require(browser.model().snapshot().location == root, "parent navigation changed target");
-    require(browser.back(), "cannot move back before branching");
+    TEST_CHECK(browser.model().snapshot().location == root);
+    TEST_CHECK(browser.back());
     pump.ready(browser);
     browser.open(root);
     pump.ready(browser);
-    require(!browser.canForward(), "new navigation kept an abandoned forward branch");
+    TEST_CHECK(!browser.canForward());
     browser.activate(id(browser, "folder-link"));
     pump.until([&] {
       return browser.model().snapshot().location == Location::fromPath((fixture.path / "folder-link").native());
     });
     pump.ready(browser);
-    require(
-        browser.model().snapshot().location == Location::fromPath((fixture.path / "folder-link").native()),
-        "folder symlink navigation failed"
-    );
+    TEST_CHECK(browser.model().snapshot().location == Location::fromPath((fixture.path / "folder-link").native()));
     browser.activate(id(browser, "inside"));
-    require(
-        !browser.message().empty() && browser.model().snapshot().status == DirectoryStatus::READY,
-        "file activation navigated as a folder"
-    );
+    TEST_CHECK(!browser.message().empty() && browser.model().snapshot().status == DirectoryStatus::READY);
   }
 
   void testFailureAndLiveUpdates() {
@@ -246,30 +210,27 @@ namespace {
     browser.open(Location::fromPath(fixture.path.native()));
     pump.ready(browser);
     const auto location = browser.model().snapshot().location;
-    require(
-        !browser.openText("sftp://invalid%zz") && browser.model().snapshot().location == location,
-        "invalid input replaced the current location"
-    );
+    TEST_CHECK(!browser.openText("sftp://invalid%zz") && browser.model().snapshot().location == location);
     browser.toggleHidden();
     const auto hidden = id(browser, ".hidden");
     browser.model().select(hidden);
     browser.toggleHidden();
-    require(browser.model().selection().selected.empty(), "hidden selected entry was retained");
+    TEST_CHECK(browser.model().selection().selected.empty());
     browser.activate(hidden);
-    require(browser.model().snapshot().location == location, "activation accepted a filtered ID");
+    TEST_CHECK(browser.model().snapshot().location == location);
     browser.refresh();
     pump.ready(browser);
     const auto file = id(browser, "file");
     browser.model().select(file);
     std::ofstream(fixture.path / "added") << "new file";
     pump.until([&] { return browser.model().snapshot().entries.size() == 6; });
-    require(browser.model().selection().selected.contains(file), "monitor update lost stable selection");
-    require(browser.openText((fixture.path / "missing").native()), "valid missing path rejected synchronously");
+    TEST_CHECK(browser.model().selection().selected.contains(file));
+    TEST_CHECK(browser.openText((fixture.path / "missing").native()));
     pump.until([&] { return browser.model().snapshot().status == DirectoryStatus::ERROR; });
-    require(browser.canBack() && browser.back(), "failed navigation could not be left with Back");
+    TEST_CHECK(browser.canBack() && browser.back());
     pump.ready(browser);
     browser.stop();
-    require(browser.model().snapshot().status == DirectoryStatus::CANCELLED, "stop did not cancel the browser session");
+    TEST_CHECK(browser.model().snapshot().status == DirectoryStatus::CANCELLED);
     browser.refresh();
     pump.ready(browser);
   }
@@ -296,80 +257,62 @@ namespace {
     browser.model().select(oldId);
     browser.setSearchQuery("TARGET");
     pump.ready(browser);
-    require(browser.model().rows().size() == 5, "recursive search missed nested files or followed hidden/link folders");
-    require(browser.model().selection().selected.empty(), "search retargeted an old browsing selection");
+    TEST_CHECK(browser.model().rows().size() == 5);
+    TEST_CHECK(browser.model().selection().selected.empty());
     std::unordered_set<std::string> targets;
     for (const auto& entry : browser.model().snapshot().entries) {
       targets.insert(entry.location.uri());
-      require(!entry.parentDisplayName.empty() && entry.id != oldId, "result lost parent context or source identity");
+      TEST_CHECK(!entry.parentDisplayName.empty() && entry.id != oldId);
       if (entry.type == G_FILE_TYPE_REGULAR && !entry.symlink) {
-        require(entry.contentType == "text/plain", "recursive results lost fast content-type metadata");
+        TEST_CHECK(entry.contentType == "text/plain");
       }
     }
-    require(
+    TEST_CHECK(
         targets.contains(Location::fromPath((fixture.path / "child/deep/target.txt").native()).uri())
-            && !targets.contains(Location::fromPath((outside.path / "outside-target.txt").native()).uri()),
-        "search used wrong operation locations or traversed an external symlink"
+        && !targets.contains(Location::fromPath((outside.path / "outside-target.txt").native()).uri())
     );
     browser.setSearchQuery("STRASSE");
     pump.ready(browser);
-    require(
-        browser.model().rows().size() == 1 && browser.model().snapshot().entries.front().name == "Straße.txt",
-        "recursive query lost Unicode matching"
-    );
+    TEST_CHECK(browser.model().rows().size() == 1 && browser.model().snapshot().entries.front().name == "Straße.txt");
     browser.setSearchQuery("*");
     pump.ready(browser);
-    require(
-        browser.model().rows().size() == 1 && browser.model().snapshot().entries.front().name == "*.txt",
-        "recursive query interpreted a glob"
-    );
+    TEST_CHECK(browser.model().rows().size() == 1 && browser.model().snapshot().entries.front().name == "*.txt");
     browser.setSearchQuery("obsolete");
     browser.setSearchQuery("target");
     browser.setSearchQuery("STRASSE");
     pump.ready(browser);
-    require(
-        browser.model().rows().size() == 1 && browser.searchQuery() == "STRASSE",
-        "late query results replaced current search"
-    );
+    TEST_CHECK(browser.model().rows().size() == 1 && browser.searchQuery() == "STRASSE");
     browser.setSearchQuery("target");
     browser.stop();
-    require(browser.model().snapshot().status == DirectoryStatus::CANCELLED, "search stop was ignored");
+    TEST_CHECK(browser.model().snapshot().status == DirectoryStatus::CANCELLED);
     browser.refresh();
     pump.ready(browser);
-    require(
-        browser.model().rows().size() == 5 && browser.searchQuery() == "target", "search refresh lost query/results"
-    );
+    TEST_CHECK(browser.model().rows().size() == 5 && browser.searchQuery() == "target");
     browser.toggleHidden();
     pump.ready(browser);
-    require(browser.model().rows().size() == 6, "hidden search did not include hidden descendants");
-    require(!browser.openText("sftp://invalid%zz") && browser.searchQuery() == "target", "invalid path cleared query");
+    TEST_CHECK(browser.model().rows().size() == 6);
+    TEST_CHECK(!browser.openText("sftp://invalid%zz") && browser.searchQuery() == "target");
     browser.setSearchQuery({});
-    require(
+    TEST_CHECK(
         browser.model().snapshot().location == root
-            && browser.model().selection().selected.empty()
-            && id(browser, "target.txt") == oldId,
-        "clearing search did not restore the browsing source safely"
+        && browser.model().selection().selected.empty()
+        && id(browser, "target.txt") == oldId
     );
     browser.setSearchQuery("target");
     pump.ready(browser);
     browser.open(root);
     pump.ready(browser);
-    require(browser.searchQuery().empty() && !browser.canBack(), "reopening the search root did not exit search");
+    TEST_CHECK(browser.searchQuery().empty() && !browser.canBack());
     browser.setSearchQuery("target");
     pump.ready(browser);
     const auto directory = id(browser, "target-folder");
     browser.activate(directory);
     pump.ready(browser);
-    require(
-        browser.searchQuery().empty() && browser.model().snapshot().entries.empty(), "folder result activation failed"
-    );
+    TEST_CHECK(browser.searchQuery().empty() && browser.model().snapshot().entries.empty());
     browser.setSearchQuery("missing");
-    require(browser.back(), "Back from search failed");
+    TEST_CHECK(browser.back());
     pump.ready(browser);
-    require(
-        browser.searchQuery() == "target" && browser.model().snapshot().location == root,
-        "history did not restore the search visit"
-    );
+    TEST_CHECK(browser.searchQuery() == "target" && browser.model().snapshot().location == root);
 
     for (int i = 0; i < 180; ++i) {
       std::ofstream(fixture.path / ("batch-match-" + std::to_string(i))) << "batch";
@@ -387,31 +330,28 @@ namespace {
     browser.setSearchQuery("batch-match");
     pump.ready(browser);
     browser.setChangedCallback({});
-    require(
+    TEST_CHECK(
         progressive
-            && selectable
-            && browser.model().rows().size() == 180
-            && browser.model().selection().selected.size() == 1,
-        "search did not publish progressive batches with stable selection"
+        && selectable
+        && browser.model().rows().size() == 180
+        && browser.model().selection().selected.size() == 1
     );
     browser.setSearchQuery("target");
     browser.open(Location::fromPath(outside.path.native()));
     pump.ready(browser);
-    require(
+    TEST_CHECK(
         browser.searchQuery().empty()
-            && browser.model().snapshot().location == Location::fromPath(outside.path.native()),
-        "late search polluted navigation"
+        && browser.model().snapshot().location == Location::fromPath(outside.path.native())
     );
     browser.setSearchQuery("target");
     pump.ready(browser);
-    require(browser.model().rows().size() == 1, "new search used the previous root");
-    require(browser.openText((fixture.path / "missing").native()), "missing path rejected synchronously");
+    TEST_CHECK(browser.model().rows().size() == 1);
+    TEST_CHECK(browser.openText((fixture.path / "missing").native()));
     pump.until([&] { return browser.model().snapshot().status == DirectoryStatus::ERROR; });
     browser.setSearchQuery("target");
     pump.until([&] { return browser.model().snapshot().status == DirectoryStatus::ERROR; });
-    require(
-        browser.model().snapshot().error && browser.model().snapshot().error->kind == files::FileErrorKind::MISSING,
-        "search root failure lost its diagnostic"
+    TEST_CHECK(
+        browser.model().snapshot().error && browser.model().snapshot().error->kind == files::FileErrorKind::MISSING
     );
   }
 
@@ -421,7 +361,7 @@ namespace {
     auto immediate = std::make_unique<files::RecursiveSearch>();
     immediate->setChangedCallback([&] { immediate.reset(); });
     immediate->start(Location::fromPath(fixture.path.native()), "file", false);
-    require(!immediate, "search observer did not destroy its owner during initial publication");
+    TEST_CHECK(!immediate);
     if (::geteuid() != 0) {
       const auto denied = fixture.path / "denied";
       fs::create_directory(denied);
@@ -433,10 +373,7 @@ namespace {
       browser.setSearchQuery("file");
       pump.ready(browser);
       fs::permissions(denied, fs::perms::owner_all);
-      require(
-          browser.model().rows().size() == 1 && browser.skippedSearchFolders() == 1,
-          "unreadable descendant hid accessible results or reported complete coverage"
-      );
+      TEST_CHECK(browser.model().rows().size() == 1 && browser.skippedSearchFolders() == 1);
     }
 
     auto search = std::make_unique<files::RecursiveSearch>();
@@ -455,7 +392,7 @@ namespace {
     pump.ready(browser);
     browser.setSearchQuery("inside");
     pump.ready(browser);
-    require(!browser.model().rows().empty(), "search failed after observer destruction");
+    TEST_CHECK(!browser.model().rows().empty());
   }
 
   void testHistoryState() {
@@ -477,33 +414,25 @@ namespace {
     viewport.first = selected;
     browser.open(Location::fromPath((fixture.path / "child").native()));
     pump.ready(browser);
-    require(
-        browser.viewport().mode == files::ViewMode::GRID && browser.viewport().iconSize == 48,
-        "visit view leaked into global defaults"
-    );
-    require(browser.back(), "history return unavailable");
+    TEST_CHECK(browser.viewport().mode == files::ViewMode::GRID && browser.viewport().iconSize == 48);
+    TEST_CHECK(browser.back());
     pump.ready(browser);
-    require(
-        browser.model().selectedIds() == std::vector{id(browser, "file")} && id(browser, "file") != selected,
-        "history reused an obsolete row ID or lost surviving selection"
-    );
-    require(
+    TEST_CHECK(browser.model().selectedIds() == std::vector{id(browser, "file")} && id(browser, "file") != selected);
+    TEST_CHECK(
         browser.model().selection().focused == id(browser, "child")
-            && browser.model().selection().anchor == id(browser, "other"),
-        "history conflated focus, range anchor and selection"
+        && browser.model().selection().anchor == id(browser, "other")
     );
     auto restored = browser.takeRestoredViewport();
-    require(
+    TEST_CHECK(
         restored
-            && restored->mode == files::ViewMode::LIST
-            && restored->iconSize == 96
-            && restored->first == id(browser, "file")
-            && restored->withinRow == 9.5F
-            && restored->horizontal == 42.0F
-            && restored->vertical == 123.5F,
-        "history lost viewport geometry"
+        && restored->mode == files::ViewMode::LIST
+        && restored->iconSize == 96
+        && restored->first == id(browser, "file")
+        && restored->withinRow == 9.5F
+        && restored->horizontal == 42.0F
+        && restored->vertical == 123.5F
     );
-    require(!browser.takeRestoredViewport(), "viewport restoration was not one-shot");
+    TEST_CHECK(!browser.takeRestoredViewport());
     browser.model().setSort({.field = files::SortField::SIZE, .descending = true, .directoriesFirst = false});
     browser.toggleHidden();
     browser.forward();
@@ -513,11 +442,8 @@ namespace {
     std::ofstream(fixture.path / "file") << "replacement";
     browser.back();
     pump.ready(browser);
-    require(browser.model().selectedIds().empty(), "a replacement at the same path inherited history selection");
-    require(
-        browser.model().sort().field == files::SortField::SIZE && browser.model().filter().showHidden,
-        "history restored obsolete global sort or hidden preferences"
-    );
+    TEST_CHECK(browser.model().selectedIds().empty());
+    TEST_CHECK(browser.model().sort().field == files::SortField::SIZE && browser.model().filter().showHidden);
     browser.setSearchQuery("inside");
     pump.ready(browser);
     browser.model().select(id(browser, "inside"));
@@ -526,18 +452,14 @@ namespace {
     pump.ready(browser);
     browser.back();
     pump.ready(browser);
-    require(
-        browser.searchQuery() == "inside" && browser.model().selectedIds() == std::vector{id(browser, "inside")},
-        "history did not restore a search visit"
+    TEST_CHECK(
+        browser.searchQuery() == "inside" && browser.model().selectedIds() == std::vector{id(browser, "inside")}
     );
     browser.forward();
     browser.back();
     browser.open(Location::fromPath((fixture.path / "child").native()));
     pump.ready(browser);
-    require(
-        browser.searchQuery().empty() && browser.model().selectedIds().empty() && !browser.canForward(),
-        "late history results reached a new visit"
-    );
+    TEST_CHECK(browser.searchQuery().empty() && browser.model().selectedIds().empty() && !browser.canForward());
   }
 
   void testDebouncedSearch() {
@@ -550,88 +472,79 @@ namespace {
     pump.ready(browser);
     browser.model().select(id(browser, "file"));
     browser.editSearchQuery("file");
-    require(
+    TEST_CHECK(
         browser.searchPending()
-            && browser.searchQuery() == "file"
-            && browser.model().snapshot().status == DirectoryStatus::LOADING
-            && browser.model().rows().empty()
-            && !browser.model().selectionAvailable()
-            && browser.model().selectedIds().empty(),
-        "pending query retained actionable browse results or started synchronously"
+        && browser.searchQuery() == "file"
+        && browser.model().snapshot().status == DirectoryStatus::LOADING
+        && browser.model().rows().empty()
+        && !browser.model().selectionAvailable()
+        && browser.model().selectedIds().empty()
     );
     browser.editSearchQuery("ins");
     pump.drainFor(80ms);
     browser.editSearchQuery("inside");
     const auto edited = std::chrono::steady_clock::now();
     pump.ready(browser);
-    require(std::chrono::steady_clock::now() - edited >= 160ms, "search ignored the trailing debounce");
-    require(
+    TEST_CHECK(std::chrono::steady_clock::now() - edited >= 160ms);
+    TEST_CHECK(
         !browser.searchPending()
-            && browser.model().rows().size() == 1
-            && browser.model().snapshot().entries.front().name == "inside",
-        "trailing query did not traverse descendants or accepted an obsolete query"
+        && browser.model().rows().size() == 1
+        && browser.model().snapshot().entries.front().name == "inside"
     );
     browser.editSearchQuery("file");
     browser.submitSearchQuery();
-    require(!browser.searchPending(), "Enter left a query waiting for the timer");
+    TEST_CHECK(!browser.searchPending());
     pump.ready(browser);
-    require(browser.model().rows().size() == 1 && id(browser, "file"), "submitted query returned wrong results");
+    TEST_CHECK(browser.model().rows().size() == 1 && id(browser, "file"));
     browser.editSearchQuery("inside");
     browser.editSearchQuery({});
-    require(
+    TEST_CHECK(
         !browser.searchPending()
-            && browser.searchQuery().empty()
-            && browser.model().snapshot().status == DirectoryStatus::READY
-            && browser.model().selectionAvailable()
-            && browser.model().rows().size() == 4,
-        "clearing a pending query did not restore browsing immediately"
+        && browser.searchQuery().empty()
+        && browser.model().snapshot().status == DirectoryStatus::READY
+        && browser.model().selectionAvailable()
+        && browser.model().rows().size() == 4
     );
     pump.drainFor(230ms);
-    require(browser.searchQuery().empty() && browser.model().rows().size() == 4, "cleared timer repopulated search");
+    TEST_CHECK(browser.searchQuery().empty() && browser.model().rows().size() == 4);
     browser.editSearchQuery("inside");
     browser.stop();
     pump.drainFor(230ms);
-    require(
+    TEST_CHECK(
         !browser.searchPending()
-            && browser.model().snapshot().status == DirectoryStatus::CANCELLED
-            && browser.model().rows().empty(),
-        "stopping a pending query revived old results"
+        && browser.model().snapshot().status == DirectoryStatus::CANCELLED
+        && browser.model().rows().empty()
     );
     browser.refresh();
     pump.ready(browser);
-    require(browser.model().rows().size() == 1 && id(browser, "inside"), "refresh did not restart a stopped query");
+    TEST_CHECK(browser.model().rows().size() == 1 && id(browser, "inside"));
     browser.editSearchQuery("hidden");
     browser.toggleHidden();
     pump.ready(browser);
-    require(!browser.searchPending() && id(browser, ".hidden"), "hidden policy did not replace the pending traversal");
+    TEST_CHECK(!browser.searchPending() && id(browser, ".hidden"));
     browser.editSearchQuery("inside");
     browser.open(child);
     pump.ready(browser);
     pump.drainFor(230ms);
-    require(
+    TEST_CHECK(
         !browser.searchPending()
-            && browser.searchQuery().empty()
-            && browser.model().snapshot().location == child
-            && browser.model().rows().size() == 1,
-        "pending query survived navigation"
+        && browser.searchQuery().empty()
+        && browser.model().snapshot().location == child
+        && browser.model().rows().size() == 1
     );
     browser.back();
     pump.ready(browser);
-    require(browser.searchQuery() == "inside" && id(browser, "inside"), "history lost the latest pending query");
+    TEST_CHECK(browser.searchQuery() == "inside" && id(browser, "inside"));
     browser.editSearchQuery("file");
     browser.forward();
     pump.ready(browser);
     pump.drainFor(230ms);
-    require(
-        browser.searchQuery().empty() && browser.model().snapshot().location == child, "history retained an old timer"
-    );
+    TEST_CHECK(browser.searchQuery().empty() && browser.model().snapshot().location == child);
     browser.editSearchQuery("inside");
     browser.open(child);
     pump.ready(browser);
     pump.drainFor(230ms);
-    require(
-        !browser.searchPending() && browser.searchQuery().empty(), "same-folder navigation did not cancel debounce"
-    );
+    TEST_CHECK(!browser.searchPending() && browser.searchQuery().empty());
   }
 
   void testSearchCompositionAndTimeoutLifetime() {
@@ -645,28 +558,20 @@ namespace {
     browser->setSearchComposing(true);
     browser->submitSearchQuery();
     pump.drainFor(230ms);
-    require(
-        browser->searchPending() && browser->model().rows().empty(),
-        "preedit or Enter during composition launched a query"
-    );
+    TEST_CHECK(browser->searchPending() && browser->model().rows().empty());
     browser->editSearchQuery("inside");
     pump.drainFor(230ms);
-    require(browser->searchPending(), "committed changes launched while composition remained active");
+    TEST_CHECK(browser->searchPending());
     browser->setSearchComposing(false);
     const auto committed = std::chrono::steady_clock::now();
     pump.ready(*browser);
-    require(
-        std::chrono::steady_clock::now() - committed >= 160ms && id(*browser, "inside"),
-        "composition completion did not resume the trailing query"
-    );
+    TEST_CHECK(std::chrono::steady_clock::now() - committed >= 160ms && id(*browser, "inside"));
     browser->editSearchQuery("file");
     browser->setSearchComposing(true);
     browser->editSearchQuery({});
     browser->setSearchComposing(false);
     pump.drainFor(230ms);
-    require(
-        !browser->searchPending() && browser->model().rows().size() == 4, "cleared composition revived a pending query"
-    );
+    TEST_CHECK(!browser->searchPending() && browser->model().rows().size() == 4);
     browser->editSearchQuery("inside");
     browser.reset();
     pump.drainFor(230ms);
@@ -686,26 +591,21 @@ namespace {
   void testLocationPresentation() {
     const auto path = Location::fromPath("/tmp/space here/<literal>/café");
     const auto crumbs = files::locationBreadcrumbs(path);
-    require(
+    TEST_CHECK(
         crumbs.size() == 5
-            && crumbs.front().location == Location::fromPath("/")
-            && crumbs.back().location == path
-            && crumbs[3].label == "<literal>",
-        "breadcrumbs lost ancestors, literal labels or original targets"
+        && crumbs.front().location == Location::fromPath("/")
+        && crumbs.back().location == path
+        && crumbs[3].label == "<literal>"
     );
-    require(files::locationEditText(path) == "/tmp/space here/<literal>/café", "native editor showed URI escapes");
+    TEST_CHECK(files::locationEditText(path) == "/tmp/space here/<literal>/café");
     const auto raw = Location::fromPath("/tmp/raw-" + std::string(1, static_cast<char>(0xff)));
-    require(
-        files::locationEditText(raw) == raw.uri() && files::locationBreadcrumbs(raw).back().location == raw,
-        "non-UTF8 breadcrumb/editor lost operation identity"
-    );
+    TEST_CHECK(files::locationEditText(raw) == raw.uri() && files::locationBreadcrumbs(raw).back().location == raw);
     const auto remote = Location::fromUri("sftp://user:secret@example.org/space%20here/leaf");
     const auto remoteCrumbs = files::locationBreadcrumbs(remote);
-    require(
+    TEST_CHECK(
         remoteCrumbs.back().location == remote
-            && remoteCrumbs.front().label == "example.org"
-            && files::locationEditText(remote) == remote.uri(),
-        "remote breadcrumb root/editor was incorrect"
+        && remoteCrumbs.front().label == "example.org"
+        && files::locationEditText(remote) == remote.uri()
     );
   }
 

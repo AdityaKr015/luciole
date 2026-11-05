@@ -1,4 +1,5 @@
 #include "config/state_store.h"
+#include "test_check.h"
 
 #include <cstdlib>
 #include <fstream>
@@ -16,17 +17,11 @@ namespace {
   using files::SavedWindow;
   using files::StateStore;
 
-  void require(bool condition, const std::string& message) {
-    if (!condition) {
-      throw std::runtime_error(message);
-    }
-  }
-
   struct Fixture {
     fs::path directory;
     Fixture() {
       const files::GString name(g_dir_make_tmp("noctalia-state-test-XXXXXX", nullptr));
-      require(name != nullptr, "cannot create private state fixture");
+      TEST_CHECK(name != nullptr);
       directory = name.get();
     }
     ~Fixture() {
@@ -41,7 +36,7 @@ namespace {
   void write(const fs::path& path, const std::string& text) {
     std::ofstream output(path, std::ios::binary);
     output << text;
-    require(output.good(), "cannot write state fixture");
+    TEST_CHECK(output.good());
   }
 
   std::string read(const fs::path& path) {
@@ -60,8 +55,8 @@ namespace {
     Fixture fixture;
     const auto path = fixture.directory / "not-created" / "state.toml";
     StateStore store(path);
-    require(store.saveBookmarks({}) == AtomicWriteState::NotCommitted, "save was allowed before loading");
-    require(store.load() && !fs::exists(path.parent_path()), "missing state was created during load");
+    TEST_CHECK(store.saveBookmarks({}) == AtomicWriteState::NotCommitted);
+    TEST_CHECK(store.load() && !fs::exists(path.parent_path()));
     const std::string native =
         (fixture.directory / "space #percent%\n").native() + std::string(1, static_cast<char>(0xFF));
     const auto local = Location::fromPath(native);
@@ -71,117 +66,86 @@ namespace {
       deepNative += '/' + std::string(30, static_cast<char>(0xFF));
     }
     const auto deepLocation = Location::fromPath(deepNative);
-    require(deepLocation.uri().size() > 8192, "fixture did not exercise expanded native URI length");
+    TEST_CHECK(deepLocation.uri().size() > 8192);
     const std::vector<Bookmark> bookmarks{
         {.label = "Work \"files\"", .location = local},
         {.label = "共享", .location = remote},
         {.label = "Deep native path", .location = deepLocation}
     };
-    require(store.saveBookmarks(bookmarks) == AtomicWriteState::DURABLE, "bookmark save failed");
+    TEST_CHECK(store.saveBookmarks(bookmarks) == AtomicWriteState::DURABLE);
     std::vector<SavedWindow> windows{window("/tmp/second-tab"), window("/tmp/other-window")};
     windows[0].tabs.insert(
         windows[0].tabs.begin(), {.primary = local, .secondary = remote, .activePane = ActivePane::SECONDARY}
     );
     windows[0].activeTab = 1;
-    require(store.saveWindows(windows) == AtomicWriteState::DURABLE, "session snapshot save failed");
+    TEST_CHECK(store.saveWindows(windows) == AtomicWriteState::DURABLE);
     StateStore restored(path);
-    require(
-        restored.load() && restored.state().bookmarks == bookmarks && restored.state().windows == windows,
-        "structured state roundtrip changed order, active tab or pane"
-    );
-    require(
-        restored.state().bookmarks.front().location.nativePath() == native, "native URI bytes changed in persistence"
-    );
-    require(read(path).contains("schema_version = 1"), "state has no explicit version");
+    TEST_CHECK(restored.load() && restored.state().bookmarks == bookmarks && restored.state().windows == windows);
+    TEST_CHECK(restored.state().bookmarks.front().location.nativePath() == native);
+    TEST_CHECK(read(path).contains("schema_version = 1"));
     const auto bytes = read(path);
     struct stat before{};
-    require(::stat(path.c_str(), &before) == 0 && (before.st_mode & 0777) == 0600, "state is not private");
-    require(
-        restored.saveWindows(windows) == AtomicWriteState::UNCHANGED && read(path) == bytes,
-        "idempotent save rewrote state"
-    );
+    TEST_CHECK(::stat(path.c_str(), &before) == 0 && (before.st_mode & 0777) == 0600);
+    TEST_CHECK(restored.saveWindows(windows) == AtomicWriteState::UNCHANGED && read(path) == bytes);
     struct stat after{};
-    require(::stat(path.c_str(), &after) == 0 && before.st_ino == after.st_ino, "no-op save replaced the state inode");
+    TEST_CHECK(::stat(path.c_str(), &after) == 0 && before.st_ino == after.st_ino);
   }
 
   void testSectionMergingAndConflicts() {
     Fixture fixture;
     StateStore first(fixture.path());
     StateStore second(fixture.path());
-    require(first.load() && second.load(), "cannot load section fixtures");
+    TEST_CHECK(first.load() && second.load());
     const std::vector<Bookmark> a{{.label = "A", .location = Location::fromPath("/tmp/a")}};
     const std::vector<Bookmark> b{{.label = "B", .location = Location::fromPath("/tmp/b")}};
     const std::vector<Bookmark> c{{.label = "C", .location = Location::fromPath("/tmp/c")}};
-    require(first.saveBookmarks(a) == AtomicWriteState::DURABLE, "first bookmark save failed");
-    require(
-        second.saveWindows({window("/tmp/session-one")}) == AtomicWriteState::DURABLE && second.state().bookmarks == a,
-        "stale window save lost bookmarks"
+    TEST_CHECK(first.saveBookmarks(a) == AtomicWriteState::DURABLE);
+    TEST_CHECK(
+        second.saveWindows({window("/tmp/session-one")}) == AtomicWriteState::DURABLE && second.state().bookmarks == a
     );
-    require(
-        first.saveBookmarks(b) == AtomicWriteState::DURABLE && first.state().windows == second.state().windows,
-        "bookmark update lost another instance's window snapshot"
-    );
+    TEST_CHECK(first.saveBookmarks(b) == AtomicWriteState::DURABLE && first.state().windows == second.state().windows);
     const auto before = read(fixture.path());
     const auto lastGood = second.state();
-    require(
+    TEST_CHECK(
         second.saveBookmarks(c) == AtomicWriteState::NotCommitted
-            && read(fixture.path()) == before
-            && second.state() == lastGood
-            && !second.issues().empty(),
-        "conflicting bookmark list was overwritten"
+        && read(fixture.path()) == before
+        && second.state() == lastGood
+        && !second.issues().empty()
     );
-    require(second.load() && second.saveBookmarks(c) == AtomicWriteState::DURABLE, "reloaded bookmark retry failed");
-    require(
-        first.saveWindows({window("/tmp/session-two")}) == AtomicWriteState::DURABLE && first.state().bookmarks == c,
-        "window save failed to preserve newer bookmarks"
+    TEST_CHECK(second.load() && second.saveBookmarks(c) == AtomicWriteState::DURABLE);
+    TEST_CHECK(
+        first.saveWindows({window("/tmp/session-two")}) == AtomicWriteState::DURABLE && first.state().bookmarks == c
     );
     const auto currentBytes = read(fixture.path());
-    require(
+    TEST_CHECK(
         second.saveWindows({window("/tmp/stale-session")}) == AtomicWriteState::NotCommitted
-            && read(fixture.path()) == currentBytes,
-        "conflicting session snapshot was overwritten"
+        && read(fixture.path()) == currentBytes
     );
-    require(
-        second.saveBookmarks(c) == AtomicWriteState::UNCHANGED && second.state() == first.state(),
-        "no-op save did not refresh the other section"
-    );
+    TEST_CHECK(second.saveBookmarks(c) == AtomicWriteState::UNCHANGED && second.state() == first.state());
   }
 
   void testEmptyPlacesSnapshot() {
     Fixture fixture;
     StateStore first(fixture.path());
-    require(first.load() && !first.state().placesCustomized, "missing state already customized Places");
-    require(first.saveWindows({window("/tmp/initial")}) == AtomicWriteState::DURABLE, "cannot save initial window");
+    TEST_CHECK(first.load() && !first.state().placesCustomized);
+    TEST_CHECK(first.saveWindows({window("/tmp/initial")}) == AtomicWriteState::DURABLE);
     StateStore stale(fixture.path());
-    require(stale.load() && !stale.state().placesCustomized, "window-only save initialized Places");
-    require(first.saveBookmarks({}) == AtomicWriteState::DURABLE, "empty Places was treated as an unsaved no-op");
-    require(
+    TEST_CHECK(stale.load() && !stale.state().placesCustomized);
+    TEST_CHECK(first.saveBookmarks({}) == AtomicWriteState::DURABLE);
+    TEST_CHECK(
         stale.saveBookmarks({{.label = "Stale", .location = Location::fromPath("/tmp/stale")}})
-            == AtomicWriteState::NotCommitted,
-        "stale defaults overwrote an explicitly empty Places list"
+        == AtomicWriteState::NotCommitted
     );
-    require(
-        stale.saveWindows({window("/tmp/updated")}) == AtomicWriteState::DURABLE,
-        "window save failed to preserve customized Places"
-    );
-    require(
-        first.load() && first.state().placesCustomized && first.state().bookmarks.empty(),
-        "empty Places did not survive unrelated window saving"
-    );
+    TEST_CHECK(stale.saveWindows({window("/tmp/updated")}) == AtomicWriteState::DURABLE);
+    TEST_CHECK(first.load() && first.state().placesCustomized && first.state().bookmarks.empty());
     const auto bytes = read(fixture.path());
-    require(
-        first.saveBookmarks({}) == AtomicWriteState::UNCHANGED && read(fixture.path()) == bytes,
-        "an already saved empty Places list was rewritten"
-    );
+    TEST_CHECK(first.saveBookmarks({}) == AtomicWriteState::UNCHANGED && read(fixture.path()) == bytes);
   }
 
   void testInvalidStateAndRecovery() {
     Fixture fixture;
     StateStore store(fixture.path());
-    require(
-        store.load() && store.saveWindows({window("/tmp/valid")}) == AtomicWriteState::DURABLE,
-        "cannot create valid state"
-    );
+    TEST_CHECK(store.load() && store.saveWindows({window("/tmp/valid")}) == AtomicWriteState::DURABLE);
     const auto lastGood = store.state();
     for (const auto& invalid : {
              "",
@@ -205,110 +169,83 @@ namespace {
              "'invalid'}]}]",
          }) {
       write(fixture.path(), invalid);
-      require(
-          !store.load() && store.state() == lastGood && !store.issues().empty(),
-          "invalid state replaced last-good snapshot"
-      );
-      require(
+      TEST_CHECK(!store.load() && store.state() == lastGood && !store.issues().empty());
+      TEST_CHECK(
           store.saveWindows({window("/tmp/replacement")}) == AtomicWriteState::NotCommitted
-              && read(fixture.path()) == invalid,
-          "save silently overwrote corrupt/future state"
+          && read(fixture.path()) == invalid
       );
     }
     write(fixture.path(), "schema_version = true\n");
-    require(
-        !store.load() && store.issues().front().line == 1 && store.issues().front().key == "schema_version",
-        "state version diagnostic lost its source"
-    );
+    TEST_CHECK(!store.load() && store.issues().front().line == 1 && store.issues().front().key == "schema_version");
     fs::remove(fixture.path());
-    require(store.load() && store.state() == files::SessionState{}, "explicit removal did not reset state");
+    TEST_CHECK(store.load() && store.state() == files::SessionState{});
   }
 
   void testPrivacyAndBounds() {
     Fixture fixture;
     StateStore store(fixture.path());
-    require(
-        store.load() && store.saveWindows({window("/tmp/valid")}) == AtomicWriteState::DURABLE,
-        "cannot create privacy fixture"
-    );
+    TEST_CHECK(store.load() && store.saveWindows({window("/tmp/valid")}) == AtomicWriteState::DURABLE);
     const auto original = read(fixture.path());
     for (const std::string uri :
          {"sftp://alice:super-secret@example.test/path", "sftp://alice;token=super-secret@example.test/path",
           "https://example.test/path?token=super-secret", "https://example.test/path#super-secret"}) {
       const std::vector<Bookmark> bookmarks{{.label = "Remote", .location = Location::fromUri(uri)}};
-      require(
-          store.saveBookmarks(bookmarks) == AtomicWriteState::NotCommitted && read(fixture.path()) == original,
-          "sensitive URI was persisted"
-      );
+      TEST_CHECK(store.saveBookmarks(bookmarks) == AtomicWriteState::NotCommitted && read(fixture.path()) == original);
       for (const auto& issue : store.issues()) {
-        require(!issue.format().contains("super-secret"), "credential leaked into diagnostic");
+        TEST_CHECK(!issue.format().contains("super-secret"));
       }
       write(fixture.path(), "schema_version = 1\nbookmarks = [{label = 'Remote', uri = '" + uri + "'}]\n");
-      require(!store.load(), "sensitive URI was accepted from disk");
+      TEST_CHECK(!store.load());
       write(fixture.path(), original);
     }
     const auto local = Location::fromPath("/tmp/repeated");
-    require(
+    TEST_CHECK(
         store.saveBookmarks({{.label = "one", .location = local}, {.label = "two", .location = local}})
-            == AtomicWriteState::NotCommitted,
-        "duplicate bookmark locations accepted"
+        == AtomicWriteState::NotCommitted
     );
     for (const auto& label :
          {std::string(257, 'x'), std::string("line\nbreak"), std::string(1, static_cast<char>(0xFF))}) {
-      require(
-          store.saveBookmarks({{.label = label, .location = local}}) == AtomicWriteState::NotCommitted,
-          "invalid bookmark label accepted"
-      );
+      TEST_CHECK(store.saveBookmarks({{.label = label, .location = local}}) == AtomicWriteState::NotCommitted);
     }
-    require(
-        store.saveWindows(std::vector<SavedWindow>(17, window("/tmp/window"))) == AtomicWriteState::NotCommitted,
-        "window count limit ignored"
+    TEST_CHECK(
+        store.saveWindows(std::vector<SavedWindow>(17, window("/tmp/window"))) == AtomicWriteState::NotCommitted
     );
     auto manyTabs = window("/tmp/tabs");
     manyTabs.tabs.resize(65, manyTabs.tabs.front());
-    require(store.saveWindows({manyTabs}) == AtomicWriteState::NotCommitted, "tab count limit ignored");
-    require(read(fixture.path()) == original, "rejected typed state modified the file");
+    TEST_CHECK(store.saveWindows({manyTabs}) == AtomicWriteState::NotCommitted);
+    TEST_CHECK(read(fixture.path()) == original);
   }
 
   void testPrivateReaderAndPaths() {
     Fixture fixture;
     StateStore store(fixture.path());
-    require(
-        store.load() && store.saveWindows({window("/tmp/valid")}) == AtomicWriteState::DURABLE,
-        "cannot create private reader fixture"
-    );
+    TEST_CHECK(store.load() && store.saveWindows({window("/tmp/valid")}) == AtomicWriteState::DURABLE);
     const auto original = read(fixture.path());
-    require(::chmod(fixture.path().c_str(), 0444) == 0 && store.load(), "read-only private state could not load");
-    require(
+    TEST_CHECK(::chmod(fixture.path().c_str(), 0444) == 0 && store.load());
+    TEST_CHECK(
         store.saveBookmarks({{.label = "x", .location = Location::fromPath("/tmp/x")}})
-            == AtomicWriteState::NotCommitted,
-        "save replaced read-only state"
+        == AtomicWriteState::NotCommitted
     );
     struct stat info{};
-    require(
-        ::stat(fixture.path().c_str(), &info) == 0 && (info.st_mode & 0777) == 0444, "load changed state permissions"
-    );
+    TEST_CHECK(::stat(fixture.path().c_str(), &info) == 0 && (info.st_mode & 0777) == 0444);
     const auto target = fixture.directory / "target";
     fs::rename(fixture.path(), target);
     fs::create_symlink(target, fixture.path());
-    require(!store.load() && read(target) == original, "state load followed a symlink");
+    TEST_CHECK(!store.load() && read(target) == original);
     fs::remove(fixture.path());
     fs::create_hard_link(target, fixture.path());
-    require(!store.load(), "state load followed a hard link");
+    TEST_CHECK(!store.load());
     fs::remove(fixture.path());
     fs::create_directory(fixture.path());
-    require(!store.load(), "state directory accepted");
+    TEST_CHECK(!store.load());
     fs::remove(fixture.path());
     write(fixture.path(), std::string(256 * 1024 + 1, '#'));
-    require(!store.load(), "oversized private state accepted");
+    TEST_CHECK(!store.load());
 
     const char* previous = std::getenv("XDG_STATE_HOME");
     const std::optional<std::string> saved = previous != nullptr ? std::optional<std::string>(previous) : std::nullopt;
     ::setenv("XDG_STATE_HOME", "/tmp/noctalia-state-path-test", 1);
-    require(
-        StateStore::pathFromEnvironment() == "/tmp/noctalia-state-path-test/noctalia-files/state.toml",
-        "state path used config directory"
-    );
+    TEST_CHECK(StateStore::pathFromEnvironment() == "/tmp/noctalia-state-path-test/noctalia-files/state.toml");
     ::setenv("XDG_STATE_HOME", "relative-invalid", 1);
     bool rejected = false;
     try {
@@ -316,11 +253,10 @@ namespace {
     } catch (const std::invalid_argument&) {
       rejected = true;
     }
-    require(rejected, "relative state directory accepted");
+    TEST_CHECK(rejected);
     ::unsetenv("XDG_STATE_HOME");
-    require(
-        StateStore::pathFromEnvironment() == fs::path(std::getenv("HOME")) / ".local/state/noctalia-files/state.toml",
-        "state fallback is wrong"
+    TEST_CHECK(
+        StateStore::pathFromEnvironment() == fs::path(std::getenv("HOME")) / ".local/state/noctalia-files/state.toml"
     );
     if (saved) {
       ::setenv("XDG_STATE_HOME", saved->c_str(), 1);

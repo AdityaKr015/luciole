@@ -1,6 +1,7 @@
 #include "app/glib_poll_source.h"
 #include "browser/file_icon_cache.h"
 #include "system/icon_resolver.h"
+#include "test_check.h"
 
 #include <algorithm>
 #include <chrono>
@@ -12,16 +13,11 @@
 
 namespace {
   namespace fs = std::filesystem;
-  void require(bool condition, const char* message) {
-    if (!condition) {
-      throw std::runtime_error(message);
-    }
-  }
   struct Fixture {
     fs::path root;
     Fixture() {
       const files::GString path(g_dir_make_tmp("noctalia-icons-XXXXXX", nullptr));
-      require(path != nullptr, "cannot create icon fixture");
+      TEST_CHECK(path != nullptr);
       root = path.get();
       fs::create_directories(root / "config/gtk-3.0");
       fs::create_directories(root / "data/icons/Test/scalable/apps");
@@ -51,14 +47,14 @@ namespace {
         image.width = image.height = size;
         image.format = PNG_FORMAT_RGBA;
         const std::vector<unsigned char> pixels(static_cast<std::size_t>(size) * size * 4U, 255);
-        require(
+        TEST_CHECK(
             png_image_write_to_file(
                 &image,
                 (root / ("data/icons/Test/" + std::to_string(size) + "x" + std::to_string(size) + "/apps/bitmap.png"))
                     .c_str(),
                 0, pixels.data(), 0, nullptr
-            ) != 0,
-            "cannot write PNG fixture"
+            )
+            != 0
         );
       }
       g_setenv("HOME", root.c_str(), TRUE);
@@ -75,11 +71,11 @@ namespace {
     void until(const std::function<bool()>& done) {
       const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
       while (!done()) {
-        require(std::chrono::steady_clock::now() < deadline, "icon worker timed out");
+        TEST_CHECK(std::chrono::steady_clock::now() < deadline);
         std::vector<pollfd> fds;
         const auto start = source.addPollFds(fds);
         const int timeout = source.pollTimeoutMs();
-        require(::poll(fds.data(), fds.size(), timeout < 0 ? 20 : std::min(timeout, 20)) >= 0, "poll failed");
+        TEST_CHECK(::poll(fds.data(), fds.size(), timeout < 0 ? 20 : std::min(timeout, 20)) >= 0);
         source.dispatch(fds, start);
       }
     }
@@ -91,24 +87,21 @@ namespace {
     Fixture fixture;
     Pump pump;
     IconResolver resolver(true);
-    require(IconResolver::activeThemeName() == "Test", "ignored XDG GTK theme");
-    require(resolver.resolve("inherited", 48).contains("/Parent/"), "theme inheritance failed");
-    require(resolver.resolve("bitmap", 24).contains("/64x64/"), "bitmap selection ignored requested size");
-    require(resolver.resolve("bitmap", 12).contains("/16x16/"), "small bitmap selection failed");
+    TEST_CHECK(IconResolver::activeThemeName() == "Test");
+    TEST_CHECK(resolver.resolve("inherited", 48).contains("/Parent/"));
+    TEST_CHECK(resolver.resolve("bitmap", 24).contains("/64x64/"));
+    TEST_CHECK(resolver.resolve("bitmap", 12).contains("/16x16/"));
 
     files::FileIconCache cache;
     const files::FileIconSource source{.names = {"broken", "missing", "folder"}, .filePath = {}, .desktopFile = {}};
     const auto first = cache.request(source, 48);
-    require(first == cache.request(source, 48), "identical requests were not shared");
+    TEST_CHECK(first == cache.request(source, 48));
     pump.until([&] { return first->ready; });
-    require(
-        first->pixels && first->path.ends_with("folder.svg") && first->pixels->width == 48,
-        "missing/broken icon fallback failed"
-    );
-    require(first->pixels->rgba[1] > first->pixels->rgba[0], "regular artwork lost its original color");
+    TEST_CHECK(first->pixels && first->path.ends_with("folder.svg") && first->pixels->width == 48);
+    TEST_CHECK(first->pixels->rgba[1] > first->pixels->rgba[0]);
     const auto large = cache.request(source, 96);
     pump.until([&] { return large->ready; });
-    require(large->pixels && large->pixels->width == 96, "zoom reused an undersized raster");
+    TEST_CHECK(large->pixels && large->pixels->width == 96);
 
     const files::GioPtr<GFileInfo> info(g_file_info_new());
     const files::GioPtr<GIcon> themed(g_themed_icon_new("inherited"));
@@ -117,16 +110,16 @@ namespace {
     g_file_info_set_file_type(info.get(), G_FILE_TYPE_REGULAR);
     const auto launcher =
         files::readFileIcon(info.get(), files::Location::fromPath((fixture.root / "launcher.desktop").native()));
-    require(launcher.names.front() == "inherited" && !launcher.desktopFile.empty(), "GIO artwork metadata was lost");
+    TEST_CHECK(launcher.names.front() == "inherited" && !launcher.desktopFile.empty());
     const auto app = cache.request(launcher, 48);
     pump.until([&] { return app->ready; });
-    require(app->path.ends_with("custom-app.svg"), "desktop launcher did not use its declared application icon");
+    TEST_CHECK(app->path.ends_with("custom-app.svg"));
 
     const auto obsolete = cache.request(source, 80);
     cache.invalidate();
     const auto current = cache.request(source, 80);
     pump.until([&] { return current->ready; });
-    require(obsolete != current && !obsolete->ready, "obsolete theme completion repopulated a retired binding");
+    TEST_CHECK(obsolete != current && !obsolete->ready);
 
     auto dying = std::make_unique<files::FileIconCache>();
     bool destroyed = false;
@@ -136,7 +129,7 @@ namespace {
     });
     const auto abandoned = dying->request(source, 32);
     pump.until([&] { return destroyed; });
-    require(abandoned->ready, "worker completion failed before observer destruction");
+    TEST_CHECK(abandoned->ready);
   }
 } // namespace
 

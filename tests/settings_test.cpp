@@ -1,5 +1,6 @@
 #include "browser/directory_model.h"
 #include "config/settings.h"
+#include "test_check.h"
 
 #include <algorithm>
 #include <array>
@@ -13,17 +14,11 @@
 #include <unistd.h>
 
 namespace {
-  void require(bool condition, const std::string& message) {
-    if (!condition) {
-      throw std::runtime_error(message);
-    }
-  }
-
   struct Fixture {
     std::filesystem::path directory;
     Fixture() {
       const files::GString name(g_dir_make_tmp("noctalia-settings-test-XXXXXX", nullptr));
-      require(name != nullptr, "cannot create settings fixture");
+      TEST_CHECK(name != nullptr);
       directory = name.get();
     }
     ~Fixture() {
@@ -36,7 +31,7 @@ namespace {
     void write(const std::string& name, const std::string& text) const {
       std::ofstream file(directory / name, std::ios::binary);
       file << text;
-      require(file.good(), "cannot write settings fixture");
+      TEST_CHECK(file.good());
     }
     files::ConfigPaths paths() const {
       return {.base = directory / "config.toml", .overrides = directory / "settings.toml"};
@@ -52,74 +47,67 @@ namespace {
     Fixture fixture;
     fixture.write("config.toml", "[browser]\nview_mode = 'miller'\nmiller_column_width = 300\n");
     files::ConfigService settings(fixture.paths());
-    require(
+    TEST_CHECK(
         settings.reload()
-            && settings.settings().browser.viewMode == files::ViewMode::MILLER
-            && settings.settings().browser.millerColumnWidth == 300,
-        "column defaults were rejected"
+        && settings.settings().browser.viewMode == files::ViewMode::MILLER
+        && settings.settings().browser.millerColumnWidth == 300
     );
     using P = files::BrowserPreference;
     const std::array edits{
         files::OverrideEdit{P::ViewMode, files::ViewMode::MILLER}, files::OverrideEdit{P::MillerColumnWidth, 417}
     };
-    require(settings.saveOverrides(edits) == files::AtomicWriteState::DURABLE, "could not save column preferences");
+    TEST_CHECK(settings.saveOverrides(edits) == files::AtomicWriteState::DURABLE);
     files::ConfigService restored(fixture.paths());
-    require(
+    TEST_CHECK(
         restored.reload()
-            && restored.settings().browser.millerColumnWidth == 417
-            && restored.settings().browser.viewMode == files::ViewMode::MILLER,
-        "column preferences did not round trip"
+        && restored.settings().browser.millerColumnWidth == 417
+        && restored.settings().browser.viewMode == files::ViewMode::MILLER
     );
     const auto before = read(fixture.paths().overrides);
     for (const int width : {179, 801}) {
       const std::array invalid{files::OverrideEdit{P::MillerColumnWidth, width}};
-      require(
+      TEST_CHECK(
           restored.saveOverrides(invalid) == files::AtomicWriteState::NotCommitted
-              && read(fixture.paths().overrides) == before,
-          "invalid column width changed preferences"
+          && read(fixture.paths().overrides) == before
       );
       fixture.write("config.toml", std::format("[browser]\nmiller_column_width = {}\n", width));
-      require(!files::validateConfigFile(fixture.paths().base).empty(), "invalid base column width accepted");
+      TEST_CHECK(!files::validateConfigFile(fixture.paths().base).empty());
     }
     fixture.write("config.toml", "[browser]\nview_mode = 'miller'\nmiller_column_width = 300\n");
     const std::array reset{files::OverrideEdit{P::MillerColumnWidth, std::monostate{}}};
-    require(
+    TEST_CHECK(
         restored.saveOverrides(reset) == files::AtomicWriteState::DURABLE
-            && restored.settings().browser.millerColumnWidth == 300,
-        "column reset did not restore inheritance"
+        && restored.settings().browser.millerColumnWidth == 300
     );
   }
 
   void testMillerParents() {
     Fixture fixture;
     files::ConfigService settings(fixture.paths());
-    require(settings.reload() && settings.settings().browser.millerShowParents, "parents should default to enabled");
+    TEST_CHECK(settings.reload() && settings.settings().browser.millerShowParents);
     using P = files::BrowserPreference;
     const std::array off{files::OverrideEdit{P::MillerShowParents, false}};
-    require(settings.saveOverrides(off) == files::AtomicWriteState::DURABLE, "could not disable parent columns");
+    TEST_CHECK(settings.saveOverrides(off) == files::AtomicWriteState::DURABLE);
     files::ConfigService restored(fixture.paths());
-    require(restored.reload() && !restored.settings().browser.millerShowParents, "parent preference did not persist");
+    TEST_CHECK(restored.reload() && !restored.settings().browser.millerShowParents);
     const auto before = read(fixture.paths().overrides);
     const std::array invalid{files::OverrideEdit{P::MillerShowParents, 1}};
-    require(
+    TEST_CHECK(
         restored.saveOverrides(invalid) == files::AtomicWriteState::NotCommitted
-            && read(fixture.paths().overrides) == before,
-        "nonboolean parent preference changed settings"
+        && read(fixture.paths().overrides) == before
     );
     fixture.write("config.toml", "[browser]\nmiller_show_parents = false\n");
     const std::array on{files::OverrideEdit{P::MillerShowParents, true}};
-    require(
-        restored.saveOverrides(on) == files::AtomicWriteState::DURABLE && restored.settings().browser.millerShowParents,
-        "GUI preference did not override base"
+    TEST_CHECK(
+        restored.saveOverrides(on) == files::AtomicWriteState::DURABLE && restored.settings().browser.millerShowParents
     );
     const std::array reset{files::OverrideEdit{P::MillerShowParents, std::monostate{}}};
-    require(
+    TEST_CHECK(
         restored.saveOverrides(reset) == files::AtomicWriteState::DURABLE
-            && !restored.settings().browser.millerShowParents,
-        "reset did not restore the base preference"
+        && !restored.settings().browser.millerShowParents
     );
     fixture.write("config.toml", "[browser]\nmiller_show_parents = 'true'\n");
-    require(!files::validateConfigFile(fixture.paths().base).empty(), "string parent preference was accepted");
+    TEST_CHECK(!files::validateConfigFile(fixture.paths().base).empty());
   }
 
   void testSchemaAndDiagnostics() {
@@ -129,106 +117,98 @@ namespace {
         "schema_version = 1\n[browser]\nshow_hidden = true\nsort_by = 'modified'\n"
         "sort_descending = true\ndirectories_first = false\nview_mode = 'grid'\n"
     );
-    require(files::validateConfigFile(fixture.paths().base).empty(), "valid settings rejected");
+    TEST_CHECK(files::validateConfigFile(fixture.paths().base).empty());
     fixture.write("settings.toml", "invalid adjacent override");
-    require(files::validateConfigFile(fixture.paths().base).empty(), "single-file validation read overrides");
+    TEST_CHECK(files::validateConfigFile(fixture.paths().base).empty());
     fixture.write("config.toml", "unexpected = 1\n[browser]\nshow_hidden = 1\nsort_by = 'date'\nunknown = false\n");
     const auto errors = files::validateConfigFile(fixture.paths().base);
-    require(errors.size() == 4, "not all unknown/type/enum errors were reported");
+    TEST_CHECK(errors.size() == 4);
     bool foundLine = false;
     for (const auto& error : errors) {
-      require(error.file == fixture.paths().base && error.line > 0 && error.column > 0, "diagnostic lost source");
+      TEST_CHECK(error.file == fixture.paths().base && error.line > 0 && error.column > 0);
       if (error.key == "browser.show_hidden") {
         foundLine = error.line == 3 && error.format().contains("config.toml:3:") && error.message.contains("boolean");
       }
     }
-    require(foundLine, "type diagnostic lost key or source line");
+    TEST_CHECK(foundLine);
     for (const auto& invalid :
          {"schema_version = 2", "schema_version = true", "schema_version = 1.0", "browser = false",
           "[browser]\nshow_hidden = 'true'", "[browser]\nsort_by = 1", "[browser]\nview_mode = true",
           "[browser]\nview_mode = 'icons'", "[browser]\nshow_hidden = true\nshow_hidden = false", "broken = [",
           "theme = {}"}) {
       fixture.write("config.toml", invalid);
-      require(!files::validateConfigFile(fixture.paths().base).empty(), "invalid TOML or schema accepted");
+      TEST_CHECK(!files::validateConfigFile(fixture.paths().base).empty());
     }
     fixture.write("config.toml", "");
-    require(files::validateConfigFile(fixture.paths().base).empty(), "empty partial settings rejected");
+    TEST_CHECK(files::validateConfigFile(fixture.paths().base).empty());
     fixture.write("config.toml", "[browser]\nsort_by = 'type'\n");
     std::filesystem::remove(fixture.paths().overrides);
     const auto typed = files::loadSettings(fixture.paths());
-    require(typed && typed->browser.sort.field == files::SortField::TYPE, "type sort configuration rejected");
+    TEST_CHECK(typed && typed->browser.sort.field == files::SortField::TYPE);
   }
 
   void testLayersAndReload() {
     Fixture fixture;
     files::ConfigService config(fixture.paths());
-    require(config.reload() && config.settings() == files::Settings{}, "missing optional layers lost defaults");
+    TEST_CHECK(config.reload() && config.settings() == files::Settings{});
     fixture.write(
         "config.toml", "[browser]\nshow_hidden = true\nsort_by = 'size'\nsort_descending = true\nview_mode = 'grid'\n"
     );
-    require(
-        config.reload() && config.settings().browser.viewMode == files::ViewMode::GRID, "base grid preference was lost"
-    );
+    TEST_CHECK(config.reload() && config.settings().browser.viewMode == files::ViewMode::GRID);
     fixture.write("settings.toml", "[browser]\nshow_hidden = false\ndirectories_first = false\nview_mode = 'list'\n");
-    require(config.reload(), "valid layered settings rejected");
+    TEST_CHECK(config.reload());
     const auto& browser = config.settings().browser;
-    require(
+    TEST_CHECK(
         !browser.showHidden
-            && browser.sort.field == files::SortField::SIZE
-            && browser.sort.descending
-            && !browser.sort.directoriesFirst
-            && browser.viewMode == files::ViewMode::LIST,
-        "defaults/base/override precedence is wrong"
+        && browser.sort.field == files::SortField::SIZE
+        && browser.sort.descending
+        && !browser.sort.directoriesFirst
+        && browser.viewMode == files::ViewMode::LIST
     );
     const auto lastGood = config.settings();
     fixture.write("settings.toml", "[browser]\nview_mode = 'unknown'\n");
-    require(
-        !config.reload() && config.settings() == lastGood && !config.issues().empty(), "failed reload changed settings"
-    );
+    TEST_CHECK(!config.reload() && config.settings() == lastGood && !config.issues().empty());
     fixture.write("config.toml", "[browser]\nshow_hidden = 'not-a-boolean'\n");
     fixture.write("settings.toml", "[browser]\nshow_hidden = true\n");
-    require(!config.reload() && config.settings() == lastGood, "override masked an invalid base file");
+    TEST_CHECK(!config.reload() && config.settings() == lastGood);
     std::filesystem::remove(fixture.paths().base);
     std::filesystem::remove(fixture.paths().overrides);
-    require(
-        config.reload() && config.issues().empty() && config.settings() == files::Settings{},
-        "removed files did not reset defaults"
-    );
+    TEST_CHECK(config.reload() && config.issues().empty() && config.settings() == files::Settings{});
   }
 
   void testFilesAndLimits() {
     Fixture fixture;
-    require(!files::validateConfigFile(fixture.paths().base).empty(), "missing required file accepted");
+    TEST_CHECK(!files::validateConfigFile(fixture.paths().base).empty());
     fixture.write("target.toml", "[browser]\nshow_hidden = true\n");
     const auto target = fixture.directory / "target.toml";
     std::filesystem::create_symlink(target, fixture.paths().base);
-    require(::chmod(target.c_str(), 0444) == 0, "cannot make declarative fixture read-only");
+    TEST_CHECK(::chmod(target.c_str(), 0444) == 0);
     files::ConfigService config(fixture.paths());
     const auto original = read(target);
-    require(config.reload() && config.settings().browser.showHidden, "read-only declarative symlink rejected");
-    require(read(target) == original && std::filesystem::is_symlink(fixture.paths().base), "loading rewrote a source");
+    TEST_CHECK(config.reload() && config.settings().browser.showHidden);
+    TEST_CHECK(read(target) == original && std::filesystem::is_symlink(fixture.paths().base));
     std::filesystem::remove(fixture.paths().base);
     std::filesystem::create_symlink(fixture.directory / "missing-target", fixture.paths().base);
-    require(!config.reload(), "dangling config symlink treated as missing optional file");
+    TEST_CHECK(!config.reload());
     std::filesystem::remove(fixture.paths().base);
     std::filesystem::create_directory(fixture.paths().base);
-    require(!config.reload(), "configuration directory accepted as a file");
+    TEST_CHECK(!config.reload());
     std::filesystem::remove(fixture.paths().base);
-    require(::mkfifo(fixture.paths().base.c_str(), 0600) == 0, "cannot create FIFO fixture");
-    require(!config.reload(), "FIFO accepted as configuration");
+    TEST_CHECK(::mkfifo(fixture.paths().base.c_str(), 0600) == 0);
+    TEST_CHECK(!config.reload());
     std::filesystem::remove(fixture.paths().base);
     std::string bounded(256 * 1024, '#');
     fixture.write("config.toml", bounded);
-    require(config.reload(), "exactly bounded valid configuration rejected");
+    TEST_CHECK(config.reload());
     bounded.push_back('#');
     fixture.write("config.toml", bounded);
-    require(!config.reload() && config.issues().front().message.contains("256 KiB"), "oversized config accepted");
+    TEST_CHECK(!config.reload() && config.issues().front().message.contains("256 KiB"));
     if (::geteuid() != 0) {
       fixture.write("config.toml", "");
-      require(::chmod(fixture.paths().base.c_str(), 0000) == 0, "cannot set permission fixture");
+      TEST_CHECK(::chmod(fixture.paths().base.c_str(), 0000) == 0);
       const bool loaded = config.reload();
       ::chmod(fixture.paths().base.c_str(), 0600);
-      require(!loaded, "unreadable configuration accepted");
+      TEST_CHECK(!loaded);
     }
   }
 
@@ -237,10 +217,9 @@ namespace {
     const std::optional<std::string> saved = previous != nullptr ? std::optional<std::string>(previous) : std::nullopt;
     ::setenv("XDG_CONFIG_HOME", "/tmp/noctalia-settings-path-test", 1);
     const auto paths = files::ConfigPaths::fromEnvironment();
-    require(
+    TEST_CHECK(
         paths.base == "/tmp/noctalia-settings-path-test/noctalia-files/config.toml"
-            && paths.overrides == "/tmp/noctalia-settings-path-test/noctalia-files/settings.toml",
-        "XDG paths are not canonical"
+        && paths.overrides == "/tmp/noctalia-settings-path-test/noctalia-files/settings.toml"
     );
     ::setenv("XDG_CONFIG_HOME", "relative-invalid-path", 1);
     bool rejected = false;
@@ -249,13 +228,10 @@ namespace {
     } catch (const std::invalid_argument&) {
       rejected = true;
     }
-    require(rejected, "relative XDG_CONFIG_HOME silently resolved");
+    TEST_CHECK(rejected);
     ::unsetenv("XDG_CONFIG_HOME");
     const auto fallback = files::ConfigPaths::fromEnvironment();
-    require(
-        fallback.base == std::filesystem::path(std::getenv("HOME")) / ".config/noctalia-files/config.toml",
-        "default XDG config path is wrong"
-    );
+    TEST_CHECK(fallback.base == std::filesystem::path(std::getenv("HOME")) / ".config/noctalia-files/config.toml");
     if (saved) {
       ::setenv("XDG_CONFIG_HOME", saved->c_str(), 1);
     }
@@ -269,7 +245,7 @@ namespace {
         "directories_first = false\n"
     );
     const auto loaded = files::loadSettings(fixture.paths());
-    require(loaded.has_value(), "cannot load model defaults");
+    TEST_CHECK(loaded.has_value());
     files::DirectoryModel model;
     model.setSort(loaded->browser.sort);
     model.setFilter({.showHidden = loaded->browser.showHidden, .text = {}});
@@ -297,7 +273,7 @@ namespace {
          .parentDisplayName = {}},
     };
     model.applySnapshot(std::move(data));
-    require(model.rows() == std::vector<files::EntryId>{1, 2}, "typed settings did not configure model projection");
+    TEST_CHECK((model.rows() == std::vector<files::EntryId>{1, 2}));
   }
 
   void testGridIconSize() {
@@ -307,39 +283,33 @@ namespace {
     for (const int size : files::kGridIconSizes) {
       fixture.write("config.toml", "[browser]\ngrid_icon_size = " + std::to_string(size) + "\n");
       const auto loaded = files::loadSettings(fixture.paths());
-      require(loaded && loaded->browser.gridIconSize == size, "valid grid icon size rejected");
+      TEST_CHECK(loaded && loaded->browser.gridIconSize == size);
     }
     for (const auto* value : {"0", "31", "49", "129", "257", "-32", "64.0", "true", "'64'", "9223372036854775807"}) {
       fixture.write("config.toml", std::string("[browser]\ngrid_icon_size = ") + value + "\n");
-      require(!files::validateConfigFile(fixture.paths().base).empty(), "invalid grid icon size accepted");
+      TEST_CHECK(!files::validateConfigFile(fixture.paths().base).empty());
     }
     fixture.write("config.toml", "[browser]\ngrid_icon_size = 64\n");
     fixture.write("settings.toml", "[browser]\ngrid_icon_size = 96\nshow_hidden = true\n");
     files::ConfigService config(fixture.paths());
-    require(config.reload() && config.settings().browser.gridIconSize == 96, "zoom layering ignored the override");
+    TEST_CHECK(config.reload() && config.settings().browser.gridIconSize == 96);
     for (const int size : {32, 256}) {
       const std::array zoom{files::OverrideEdit{Preference::GridIconSize, size}};
-      require(config.saveOverrides(zoom) == State::DURABLE, "zoom preference did not persist");
+      TEST_CHECK(config.saveOverrides(zoom) == State::DURABLE);
       const auto loaded = files::loadSettings(fixture.paths());
-      require(
-          loaded && loaded->browser.gridIconSize == size && loaded->browser.showHidden, "zoom roundtrip lost settings"
-      );
+      TEST_CHECK(loaded && loaded->browser.gridIconSize == size && loaded->browser.showHidden);
     }
     const auto previous = read(fixture.paths().overrides);
     for (const auto& value :
          {files::OverrideEdit{Preference::GridIconSize, true}, files::OverrideEdit{Preference::GridIconSize, 33}}) {
       const std::array edit{value};
-      require(
-          config.saveOverrides(edit) == State::NotCommitted && read(fixture.paths().overrides) == previous,
-          "invalid zoom edit changed settings"
-      );
+      TEST_CHECK(config.saveOverrides(edit) == State::NotCommitted && read(fixture.paths().overrides) == previous);
     }
     const std::array reset{files::OverrideEdit{Preference::GridIconSize, std::monostate{}}};
-    require(
+    TEST_CHECK(
         config.saveOverrides(reset) == State::DURABLE
-            && config.settings().browser.gridIconSize == 64
-            && !read(fixture.paths().overrides).contains("grid_icon_size"),
-        "zoom reset did not restore base inheritance"
+        && config.settings().browser.gridIconSize == 64
+        && !read(fixture.paths().overrides).contains("grid_icon_size")
     );
   }
 
@@ -348,108 +318,88 @@ namespace {
     using State = files::AtomicWriteState;
     Fixture fixture;
     files::ConfigService config(fixture.paths());
-    require(config.reload() && config.settings().browser.sidebarWidth == 206, "sidebar default lost");
+    TEST_CHECK(config.reload() && config.settings().browser.sidebarWidth == 206);
     fixture.write("config.toml", "[browser]\nsidebar_width = 280\nshow_hidden = true\n");
     fixture.write("settings.toml", "[browser]\nsidebar_width = 160\nview_mode = 'grid'\n");
-    require(config.reload() && config.settings().browser.sidebarWidth == 160, "sidebar layering failed");
+    TEST_CHECK(config.reload() && config.settings().browser.sidebarWidth == 160);
     for (const auto* invalid : {"159", "401", "true", "200.0", "'200'"}) {
       fixture.write("settings.toml", std::string("[browser]\nsidebar_width = ") + invalid + "\n");
-      require(
-          !config.reload() && config.settings().browser.sidebarWidth == 160, "invalid width replaced last-good settings"
-      );
-      require(config.issues().front().key == "browser.sidebar_width", "width diagnostic lost its key");
+      TEST_CHECK(!config.reload() && config.settings().browser.sidebarWidth == 160);
+      TEST_CHECK(config.issues().front().key == "browser.sidebar_width");
     }
     fixture.write("settings.toml", "[browser]\nview_mode = 'grid'\n");
     const std::array width{files::OverrideEdit{Preference::SidebarWidth, 400}};
-    require(config.saveOverrides(width) == State::DURABLE, "sidebar override save failed");
+    TEST_CHECK(config.saveOverrides(width) == State::DURABLE);
     files::ConfigService reloaded(fixture.paths());
-    require(
+    TEST_CHECK(
         reloaded.reload()
-            && reloaded.settings().browser.sidebarWidth == 400
-            && reloaded.settings().browser.viewMode == files::ViewMode::GRID
-            && reloaded.settings().browser.showHidden,
-        "sidebar roundtrip lost width or unrelated preferences"
+        && reloaded.settings().browser.sidebarWidth == 400
+        && reloaded.settings().browser.viewMode == files::ViewMode::GRID
+        && reloaded.settings().browser.showHidden
     );
     const auto before = read(fixture.paths().overrides);
     for (const auto& value :
          {files::OverrideEdit{Preference::SidebarWidth, 159}, files::OverrideEdit{Preference::SidebarWidth, 401},
           files::OverrideEdit{Preference::SidebarWidth, true}}) {
       const std::array invalid{value};
-      require(
-          config.saveOverrides(invalid) == State::NotCommitted && read(fixture.paths().overrides) == before,
-          "invalid width edit changed overrides"
-      );
+      TEST_CHECK(config.saveOverrides(invalid) == State::NotCommitted && read(fixture.paths().overrides) == before);
     }
     const std::array inherit{files::OverrideEdit{Preference::SidebarWidth, std::monostate{}}};
-    require(
+    TEST_CHECK(
         config.saveOverrides(inherit) == State::DURABLE
-            && config.settings().browser.sidebarWidth == 280
-            && !read(fixture.paths().overrides).contains("sidebar_width"),
-        "sidebar reset lost base inheritance"
+        && config.settings().browser.sidebarWidth == 280
+        && !read(fixture.paths().overrides).contains("sidebar_width")
     );
-    require(
-        read(fixture.paths().base) == "[browser]\nsidebar_width = 280\nshow_hidden = true\n",
-        "sidebar save changed declarative base"
-    );
+    TEST_CHECK(read(fixture.paths().base) == "[browser]\nsidebar_width = 280\nshow_hidden = true\n");
   }
 
   void testPreviewVisibility() {
     using P = files::BrowserPreference;
     Fixture fixture;
     files::ConfigService config(fixture.paths());
-    require(config.reload() && config.settings().browser.showPreview, "preview should be enabled by default");
+    TEST_CHECK(config.reload() && config.settings().browser.showPreview);
     fixture.write("config.toml", "[browser]\nshow_preview = true\nshow_hidden = true\n");
-    require(config.reload() && config.settings().browser.showPreview, "preview base setting ignored");
-    require(
-        config.saveOverrides(std::array{files::OverrideEdit{P::ShowPreview, false}})
-            == files::AtomicWriteState::DURABLE,
-        "preview override did not save"
+    TEST_CHECK(config.reload() && config.settings().browser.showPreview);
+    TEST_CHECK(
+        config.saveOverrides(std::array{files::OverrideEdit{P::ShowPreview, false}}) == files::AtomicWriteState::DURABLE
     );
     const auto loaded = files::loadSettings(fixture.paths());
-    require(
-        loaded && !loaded->browser.showPreview && loaded->browser.showHidden,
-        "preview roundtrip changed another setting"
-    );
+    TEST_CHECK(loaded && !loaded->browser.showPreview && loaded->browser.showHidden);
     const auto saved = read(fixture.paths().overrides);
-    require(
+    TEST_CHECK(
         config.saveOverrides(std::array{files::OverrideEdit{P::ShowPreview, 1}})
-                == files::AtomicWriteState::NotCommitted
-            && read(fixture.paths().overrides) == saved,
-        "invalid preview edit changed settings"
+            == files::AtomicWriteState::NotCommitted
+        && read(fixture.paths().overrides) == saved
     );
-    require(
+    TEST_CHECK(
         config.saveOverrides(std::array{files::OverrideEdit{P::ShowPreview, std::monostate{}}})
-                == files::AtomicWriteState::DURABLE
-            && config.settings().browser.showPreview,
-        "preview reset did not inherit"
+            == files::AtomicWriteState::DURABLE
+        && config.settings().browser.showPreview
     );
     fixture.write("config.toml", "[browser]\nshow_preview = 'true'\n");
-    require(!files::validateConfigFile(fixture.paths().base).empty(), "invalid preview type accepted");
+    TEST_CHECK(!files::validateConfigFile(fixture.paths().base).empty());
     fixture.write("config.toml", "[browser]\npreview_width = 444\nshow_preview = true\n");
-    require(config.reload() && config.settings().browser.previewWidth == 444, "preview width base ignored");
-    require(
-        config.saveOverrides(std::array{files::OverrideEdit{P::PreviewWidth, 555}}) == files::AtomicWriteState::DURABLE,
-        "preview width did not save"
+    TEST_CHECK(config.reload() && config.settings().browser.previewWidth == 444);
+    TEST_CHECK(
+        config.saveOverrides(std::array{files::OverrideEdit{P::PreviewWidth, 555}}) == files::AtomicWriteState::DURABLE
     );
-    require(files::loadSettings(fixture.paths())->browser.previewWidth == 555, "preview width did not roundtrip");
+    TEST_CHECK(files::loadSettings(fixture.paths())->browser.previewWidth == 555);
     const auto before = read(fixture.paths().overrides);
     for (int width : {207, 801}) {
-      require(
+      TEST_CHECK(
           config.saveOverrides(std::array{files::OverrideEdit{P::PreviewWidth, width}})
-                  == files::AtomicWriteState::NotCommitted
-              && read(fixture.paths().overrides) == before,
-          "invalid preview width saved"
+              == files::AtomicWriteState::NotCommitted
+          && read(fixture.paths().overrides) == before
       );
     }
-    require(
+    TEST_CHECK(
         config.saveOverrides(std::array{files::OverrideEdit{P::PreviewWidth, std::monostate{}}})
-                == files::AtomicWriteState::DURABLE
-            && config.settings().browser.previewWidth == 444,
-        "preview width reset lost inheritance"
+            == files::AtomicWriteState::DURABLE
+        && config.settings().browser.previewWidth == 444
     );
     for (const auto* value : {"207", "801", "true", "'320'", "320.0"}) {
       fixture.write("config.toml", std::string("[browser]\npreview_width = ") + value + "\n");
-      require(!files::validateConfigFile(fixture.paths().base).empty(), "invalid preview width type accepted");
+      TEST_CHECK(!files::validateConfigFile(fixture.paths().base).empty());
     }
   }
   void testSidebarVisibility() {
@@ -457,47 +407,36 @@ namespace {
     using State = files::AtomicWriteState;
     Fixture fixture;
     files::ConfigService config(fixture.paths());
-    require(config.reload() && config.settings().browser.showSidebar, "sidebar should be visible by default");
+    TEST_CHECK(config.reload() && config.settings().browser.showSidebar);
     const std::string base = "[browser]\nshow_sidebar = false\nsidebar_width = 280\n";
     fixture.write("config.toml", base);
     fixture.write("settings.toml", "[browser]\nshow_sidebar = true\ngrid_icon_size = 64\n");
-    require(config.reload() && config.settings().browser.showSidebar, "sidebar visibility layering failed");
+    TEST_CHECK(config.reload() && config.settings().browser.showSidebar);
     const std::array hide{files::OverrideEdit{Preference::ShowSidebar, false}};
-    require(config.saveOverrides(hide) == State::DURABLE, "hidden sidebar preference did not save");
+    TEST_CHECK(config.saveOverrides(hide) == State::DURABLE);
     const auto loaded = files::loadSettings(fixture.paths());
-    require(
+    TEST_CHECK(
         loaded
-            && !loaded->browser.showSidebar
-            && loaded->browser.sidebarWidth == 280
-            && loaded->browser.gridIconSize == 64,
-        "visibility roundtrip lost false or changed unrelated preferences"
+        && !loaded->browser.showSidebar
+        && loaded->browser.sidebarWidth == 280
+        && loaded->browser.gridIconSize == 64
     );
     const auto saved = read(fixture.paths().overrides);
     const std::array invalid{files::OverrideEdit{Preference::ShowSidebar, 0}};
-    require(
-        config.saveOverrides(invalid) == State::NotCommitted && read(fixture.paths().overrides) == saved,
-        "mistyped visibility edit changed settings"
-    );
+    TEST_CHECK(config.saveOverrides(invalid) == State::NotCommitted && read(fixture.paths().overrides) == saved);
     const std::array show{files::OverrideEdit{Preference::ShowSidebar, true}};
-    require(
-        config.saveOverrides(show) == State::DURABLE && config.settings().browser.showSidebar,
-        "sidebar show did not save"
-    );
+    TEST_CHECK(config.saveOverrides(show) == State::DURABLE && config.settings().browser.showSidebar);
     const std::array inherit{files::OverrideEdit{Preference::ShowSidebar, std::monostate{}}};
-    require(
+    TEST_CHECK(
         config.saveOverrides(inherit) == State::DURABLE
-            && !config.settings().browser.showSidebar
-            && !read(fixture.paths().overrides).contains("show_sidebar"),
-        "visibility reset lost base inheritance"
+        && !config.settings().browser.showSidebar
+        && !read(fixture.paths().overrides).contains("show_sidebar")
     );
-    require(read(fixture.paths().base) == base, "visibility save changed declarative base");
+    TEST_CHECK(read(fixture.paths().base) == base);
     for (const auto* value : {"0", "'false'", "1.0"}) {
       fixture.write("config.toml", std::string("[browser]\nshow_sidebar = ") + value + "\n");
       const auto issues = files::validateConfigFile(fixture.paths().base);
-      require(
-          issues.size() == 1 && issues.front().key == "browser.show_sidebar",
-          "invalid visibility value accepted or misdiagnosed"
-      );
+      TEST_CHECK(issues.size() == 1 && issues.front().key == "browser.show_sidebar");
     }
   }
 
@@ -517,53 +456,36 @@ namespace {
     for (const auto& column : columns) {
       Fixture fixture;
       files::ConfigService config(fixture.paths());
-      require(
-          config.reload() && config.settings().browser.columns == files::DetailsColumnVisibility{},
-          "detail columns must be visible by default"
-      );
+      TEST_CHECK(config.reload() && config.settings().browser.columns == files::DetailsColumnVisibility{});
       const auto base = std::string("[browser]\n") + column.key + " = false\nshow_hidden = true\n";
       fixture.write("config.toml", base);
       fixture.write("settings.toml", std::string("[browser]\n") + column.key + " = true\ngrid_icon_size = 64\n");
-      require(
-          config.reload() && config.settings().browser.columns.*column.member,
-          "column override did not take precedence over base"
-      );
+      TEST_CHECK(config.reload() && config.settings().browser.columns.*column.member);
       const std::array hide{files::OverrideEdit{column.preference, false}};
-      require(config.saveOverrides(hide) == State::DURABLE, "column hide did not persist");
+      TEST_CHECK(config.saveOverrides(hide) == State::DURABLE);
       const auto loaded = files::loadSettings(fixture.paths());
-      require(
+      TEST_CHECK(
           loaded
-              && !(loaded->browser.columns.*column.member)
-              && loaded->browser.showHidden
-              && loaded->browser.gridIconSize == 64,
-          "column roundtrip lost false or unrelated preferences"
+          && !(loaded->browser.columns.*column.member)
+          && loaded->browser.showHidden
+          && loaded->browser.gridIconSize == 64
       );
       const auto saved = read(fixture.paths().overrides);
       const std::array invalid{files::OverrideEdit{column.preference, 0}};
-      require(
-          config.saveOverrides(invalid) == State::NotCommitted && read(fixture.paths().overrides) == saved,
-          "mistyped column edit changed overrides"
-      );
+      TEST_CHECK(config.saveOverrides(invalid) == State::NotCommitted && read(fixture.paths().overrides) == saved);
       const std::array inherit{files::OverrideEdit{column.preference, std::monostate{}}};
-      require(
+      TEST_CHECK(
           config.saveOverrides(inherit) == State::DURABLE
-              && !(config.settings().browser.columns.*column.member)
-              && !read(fixture.paths().overrides).contains(column.key),
-          "column reset did not restore base inheritance"
+          && !(config.settings().browser.columns.*column.member)
+          && !read(fixture.paths().overrides).contains(column.key)
       );
       const std::array show{files::OverrideEdit{column.preference, true}};
-      require(
-          config.saveOverrides(show) == State::DURABLE && config.settings().browser.columns.*column.member,
-          "column show did not persist"
-      );
-      require(read(fixture.paths().base) == base, "column save modified declarative base");
+      TEST_CHECK(config.saveOverrides(show) == State::DURABLE && config.settings().browser.columns.*column.member);
+      TEST_CHECK(read(fixture.paths().base) == base);
       for (const auto* value : {"0", "'false'", "[]"}) {
         fixture.write("config.toml", std::string("[browser]\n") + column.key + " = " + value + "\n");
         const auto issues = files::validateConfigFile(fixture.paths().base);
-        require(
-            issues.size() == 1 && issues.front().key == std::string("browser.") + column.key,
-            "invalid column type accepted or misdiagnosed"
-        );
+        TEST_CHECK(issues.size() == 1 && issues.front().key == std::string("browser.") + column.key);
       }
     }
   }
@@ -575,11 +497,10 @@ namespace {
     using S = files::AtomicWriteState;
     Fixture fixture;
     files::ConfigService config(fixture.paths());
-    require(
+    TEST_CHECK(
         config.reload()
-            && config.settings().browser.activationMode == A::DoubleClick
-            && config.settings().browser.typingMode == T::SEARCH,
-        "default interaction policies changed"
+        && config.settings().browser.activationMode == A::DoubleClick
+        && config.settings().browser.typingMode == T::SEARCH
     );
     const std::string base =
         "[browser]\nactivation_mode = 'single_click'\ntyping_mode = 'typeahead'\nshow_hidden = true\n";
@@ -590,15 +511,14 @@ namespace {
         const std::array edits{
             files::OverrideEdit{P::ActivationMode, activation}, files::OverrideEdit{P::TypingMode, typing}
         };
-        require(config.saveOverrides(edits) == S::DURABLE, "interaction policies did not save");
+        TEST_CHECK(config.saveOverrides(edits) == S::DURABLE);
         const auto loaded = files::loadSettings(fixture.paths());
-        require(
+        TEST_CHECK(
             loaded
-                && loaded->browser.activationMode == activation
-                && loaded->browser.typingMode == typing
-                && loaded->browser.showHidden
-                && loaded->browser.gridIconSize == 96,
-            "interaction roundtrip lost modes or unrelated preferences"
+            && loaded->browser.activationMode == activation
+            && loaded->browser.typingMode == typing
+            && loaded->browser.showHidden
+            && loaded->browser.gridIconSize == 96
         );
       }
     }
@@ -608,32 +528,29 @@ namespace {
              files::OverrideEdit{P::ActivationMode, static_cast<A>(99)},
              files::OverrideEdit{P::TypingMode, static_cast<T>(99)}, files::OverrideEdit{P::TypingMode, A::SingleClick}
          }) {
-      require(
-          config.saveOverrides(std::span(&bad, 1)) == S::NotCommitted && read(fixture.paths().overrides) == saved,
-          "invalid typed interaction edit changed settings"
+      TEST_CHECK(
+          config.saveOverrides(std::span(&bad, 1)) == S::NotCommitted && read(fixture.paths().overrides) == saved
       );
     }
     const std::array inherit{
         files::OverrideEdit{P::ActivationMode, std::monostate{}}, files::OverrideEdit{P::TypingMode, std::monostate{}}
     };
-    require(
+    TEST_CHECK(
         config.saveOverrides(inherit) == S::DURABLE
-            && config.settings().browser.activationMode == A::SingleClick
-            && config.settings().browser.typingMode == T::TYPEAHEAD
-            && read(fixture.paths().base) == base,
-        "interaction inheritance reset changed the base or lost its policy"
+        && config.settings().browser.activationMode == A::SingleClick
+        && config.settings().browser.typingMode == T::TYPEAHEAD
+        && read(fixture.paths().base) == base
     );
     const auto lastGood = config.settings();
     for (const auto* key : {"activation_mode", "typing_mode"}) {
       for (const auto* bad : {"true", "1", "[]", "'single'", "'Search'", "'double-click'"}) {
         fixture.write("config.toml", std::string("[browser]\n") + key + " = " + bad + "\n");
         const auto issues = files::validateConfigFile(fixture.paths().base);
-        require(
+        TEST_CHECK(
             issues.size() == 1
-                && issues.front().key == std::string("browser.") + key
-                && !config.reload()
-                && config.settings() == lastGood,
-            "invalid interaction policy accepted or replaced last-good settings"
+            && issues.front().key == std::string("browser.") + key
+            && !config.reload()
+            && config.settings() == lastGood
         );
       }
     }
@@ -647,28 +564,24 @@ namespace {
     };
     Fixture fixture;
     files::ConfigService config(fixture.paths());
-    require(
-        config.reload() && config.settings().browser.columnWidths == files::kDefaultDetailsColumnWidths,
-        "default column allocations changed"
-    );
+    TEST_CHECK(config.reload() && config.settings().browser.columnWidths == files::kDefaultDetailsColumnWidths);
     for (std::size_t index = 0; index < preferences.size(); ++index) {
       const std::string key(files::kDetailsColumnWidthKeys[index]);
       const std::string base = "[browser]\n" + key + " = 300\nshow_hidden = true\n";
       fixture.write("config.toml", base);
       fixture.write("settings.toml", "[browser]\ngrid_icon_size = 64\n");
-      require(config.reload() && config.settings().browser.columnWidths[index] == 300, "base width did not load");
+      TEST_CHECK(config.reload() && config.settings().browser.columnWidths[index] == 300);
       for (const int width :
            {files::minimumDetailsColumnWidth(index), files::maximumDetailsColumnWidth(index),
             files::kDefaultDetailsColumnWidths[index]}) {
         const std::array edit{files::OverrideEdit{preferences[index], width}};
-        require(config.saveOverrides(edit) == S::DURABLE, "valid column width failed to save");
+        TEST_CHECK(config.saveOverrides(edit) == S::DURABLE);
         const auto loaded = files::loadSettings(fixture.paths());
-        require(
+        TEST_CHECK(
             loaded
-                && loaded->browser.columnWidths[index] == width
-                && loaded->browser.showHidden
-                && loaded->browser.gridIconSize == 64,
-            "column width roundtrip lost values or unrelated settings"
+            && loaded->browser.columnWidths[index] == width
+            && loaded->browser.showHidden
+            && loaded->browser.gridIconSize == 64
         );
       }
       const auto saved = read(fixture.paths().overrides);
@@ -677,34 +590,31 @@ namespace {
                files::OverrideEdit{preferences[index], files::maximumDetailsColumnWidth(index) + 1},
                files::OverrideEdit{preferences[index], true}
            }) {
-        require(
-            config.saveOverrides(std::span(&bad, 1)) == S::NotCommitted && read(fixture.paths().overrides) == saved,
-            "invalid typed width mutated settings"
+        TEST_CHECK(
+            config.saveOverrides(std::span(&bad, 1)) == S::NotCommitted && read(fixture.paths().overrides) == saved
         );
       }
       const std::array inherit{files::OverrideEdit{preferences[index], std::monostate{}}};
-      require(
+      TEST_CHECK(
           config.saveOverrides(inherit) == S::DURABLE
-              && config.settings().browser.columnWidths[index] == 300
-              && !read(fixture.paths().overrides).contains(key)
-              && read(fixture.paths().base) == base,
-          "width inheritance reset failed or changed the base"
+          && config.settings().browser.columnWidths[index] == 300
+          && !read(fixture.paths().overrides).contains(key)
+          && read(fixture.paths().base) == base
       );
       const auto lastGood = config.settings();
       for (const auto* invalid : {"-1", "1", "63", "16385", "9223372036854775807", "true", "160.0", "'160'", "[]"}) {
         fixture.write("config.toml", "[browser]\n" + key + " = " + invalid + "\n");
         const auto issues = files::validateConfigFile(fixture.paths().base);
-        require(
+        TEST_CHECK(
             issues.size() == 1
-                && issues.front().key == "browser." + key
-                && !config.reload()
-                && config.settings() == lastGood,
-            "invalid width was accepted or replaced last-good settings"
+            && issues.front().key == "browser." + key
+            && !config.reload()
+            && config.settings() == lastGood
         );
       }
       if (index != 0) {
         fixture.write("config.toml", "[browser]\n" + key + " = 0\n");
-        require(!files::validateConfigFile(fixture.paths().base).empty(), "automatic metadata width was accepted");
+        TEST_CHECK(!files::validateConfigFile(fixture.paths().base).empty());
       }
     }
   }
@@ -715,26 +625,22 @@ namespace {
     using State = files::AtomicWriteState;
     Fixture fixture;
     files::ConfigService config(fixture.paths());
-    require(
-        config.reload() && config.settings().browser.columnOrder == files::kDefaultDetailsColumnOrder,
-        "default column order changed"
-    );
+    TEST_CHECK(config.reload() && config.settings().browser.columnOrder == files::kDefaultDetailsColumnOrder);
     const files::DetailsColumnOrder baseOrder{Column::MODIFIED, Column::TYPE, Column::SIZE};
     const std::string base = "[browser]\ncolumn_order = ['modified', 'type', 'size']\nshow_size_column = false\n";
     fixture.write("config.toml", base);
     fixture.write("settings.toml", "[browser]\ngrid_icon_size = 64\n");
-    require(config.reload() && config.settings().browser.columnOrder == baseOrder, "base column order did not load");
+    TEST_CHECK(config.reload() && config.settings().browser.columnOrder == baseOrder);
     auto order = files::kDefaultDetailsColumnOrder;
     do {
       const std::array edit{files::OverrideEdit{Preference::ColumnOrder, order}};
-      require(config.saveOverrides(edit) == State::DURABLE, "column permutation did not save");
+      TEST_CHECK(config.saveOverrides(edit) == State::DURABLE);
       const auto loaded = files::loadSettings(fixture.paths());
-      require(
+      TEST_CHECK(
           loaded
-              && loaded->browser.columnOrder == order
-              && !loaded->browser.columns.size
-              && loaded->browser.gridIconSize == 64,
-          "column permutation roundtrip lost order or unrelated preferences"
+          && loaded->browser.columnOrder == order
+          && !loaded->browser.columns.size
+          && loaded->browser.gridIconSize == 64
       );
     } while (std::ranges::next_permutation(order).found);
     const auto saved = read(fixture.paths().overrides);
@@ -747,18 +653,16 @@ namespace {
                  Preference::ColumnOrder, files::DetailsColumnOrder{Column::TYPE, Column::SIZE, static_cast<Column>(99)}
              }
          }) {
-      require(
-          config.saveOverrides(std::span(&edit, 1)) == State::NotCommitted && read(fixture.paths().overrides) == saved,
-          "invalid typed column order changed overrides"
+      TEST_CHECK(
+          config.saveOverrides(std::span(&edit, 1)) == State::NotCommitted && read(fixture.paths().overrides) == saved
       );
     }
     const std::array inherit{files::OverrideEdit{Preference::ColumnOrder, std::monostate{}}};
-    require(
+    TEST_CHECK(
         config.saveOverrides(inherit) == State::DURABLE
-            && config.settings().browser.columnOrder == baseOrder
-            && !read(fixture.paths().overrides).contains("column_order")
-            && read(fixture.paths().base) == base,
-        "column order reset changed base or failed to restore inheritance"
+        && config.settings().browser.columnOrder == baseOrder
+        && !read(fixture.paths().overrides).contains("column_order")
+        && read(fixture.paths().base) == base
     );
     const auto lastGood = config.settings();
     for (const auto* invalid :
@@ -766,12 +670,11 @@ namespace {
           "['Type', 'size', 'modified']", "['type', 'size', 1]", "['type', 'size', 'modified', 'name']"}) {
       fixture.write("config.toml", std::string("[browser]\ncolumn_order = ") + invalid + "\n");
       const auto issues = files::validateConfigFile(fixture.paths().base);
-      require(
+      TEST_CHECK(
           issues.size() == 1
-              && issues.front().key == "browser.column_order"
-              && !config.reload()
-              && config.settings() == lastGood,
-          "invalid column array was accepted, misdiagnosed or replaced last-good settings"
+          && issues.front().key == "browser.column_order"
+          && !config.reload()
+          && config.settings() == lastGood
       );
     }
   }
@@ -785,22 +688,19 @@ namespace {
         "24\nthumbnail_cache_mib = 256\n"
     );
     files::ConfigService config(fixture.paths());
-    require(
-        config.reload()
-            && config.settings().browser.thumbnails
-                == files::ThumbnailOptions{files::ThumbnailPolicy::ALL, 128, 24, 256},
-        "thumbnail base settings lost typed values"
+    TEST_CHECK(
+        (config.reload()
+         && config.settings().browser.thumbnails == files::ThumbnailOptions{files::ThumbnailPolicy::ALL, 128, 24, 256})
     );
     const std::array edits{
         files::OverrideEdit{P::ThumbnailPolicy, files::ThumbnailPolicy::NEVER},
         files::OverrideEdit{P::ThumbnailMaxFileMib, 512}, files::OverrideEdit{P::ThumbnailMaxMegapixels, 48},
         files::OverrideEdit{P::ThumbnailCacheMib, 512}
     };
-    require(config.saveOverrides(edits) == files::AtomicWriteState::DURABLE, "thumbnail overrides did not save");
+    TEST_CHECK(config.saveOverrides(edits) == files::AtomicWriteState::DURABLE);
     const auto loaded = files::loadSettings(fixture.paths());
-    require(
-        loaded && loaded->browser.thumbnails == files::ThumbnailOptions{files::ThumbnailPolicy::NEVER, 512, 48, 512},
-        "thumbnail override round-trip lost values"
+    TEST_CHECK(
+        (loaded && loaded->browser.thumbnails == files::ThumbnailOptions{files::ThumbnailPolicy::NEVER, 512, 48, 512})
     );
     const std::array reset{
         files::OverrideEdit{P::ThumbnailPolicy, std::monostate{}},
@@ -808,25 +708,21 @@ namespace {
         files::OverrideEdit{P::ThumbnailMaxMegapixels, std::monostate{}},
         files::OverrideEdit{P::ThumbnailCacheMib, std::monostate{}}
     };
-    require(
-        config.saveOverrides(reset) == files::AtomicWriteState::DURABLE
-            && config.settings().browser.thumbnails
-                == files::ThumbnailOptions{files::ThumbnailPolicy::ALL, 128, 24, 256},
-        "thumbnail reset did not restore base inheritance"
+    TEST_CHECK(
+        (config.saveOverrides(reset) == files::AtomicWriteState::DURABLE
+         && config.settings().browser.thumbnails == files::ThumbnailOptions{files::ThumbnailPolicy::ALL, 128, 24, 256})
     );
     for (const auto* invalid :
          {"thumbnail_policy = true", "thumbnail_policy = 'remote'", "thumbnail_max_file_mib = 0",
           "thumbnail_max_file_mib = 1025", "thumbnail_max_megapixels = 0", "thumbnail_max_megapixels = 65",
           "thumbnail_cache_mib = 15", "thumbnail_cache_mib = 1025", "thumbnail_max_file_mib = 1.5"}) {
       fixture.write("config.toml", std::string("[browser]\n") + invalid + "\n");
-      require(!files::validateConfigFile(fixture.paths().base).empty(), "invalid thumbnail setting was accepted");
+      TEST_CHECK(!files::validateConfigFile(fixture.paths().base).empty());
     }
     fixture.write("config.toml", "");
     for (const auto preference : {P::ThumbnailMaxFileMib, P::ThumbnailMaxMegapixels, P::ThumbnailCacheMib}) {
       const std::array invalid{files::OverrideEdit{preference, -1}};
-      require(
-          config.saveOverrides(invalid) == files::AtomicWriteState::NotCommitted, "typed thumbnail edit bypassed bounds"
-      );
+      TEST_CHECK(config.saveOverrides(invalid) == files::AtomicWriteState::NotCommitted);
     }
   }
 
@@ -837,134 +733,105 @@ namespace {
     fixture.write("base-target.toml", "[browser]\nshow_hidden = false\nsort_by = 'size'\n");
     const auto baseTarget = fixture.directory / "base-target.toml";
     std::filesystem::create_symlink(baseTarget, fixture.paths().base);
-    require(::chmod(baseTarget.c_str(), 0444) == 0, "cannot protect declarative base fixture");
+    TEST_CHECK(::chmod(baseTarget.c_str(), 0444) == 0);
     const auto baseContent = read(baseTarget);
     files::ConfigService first(fixture.paths());
     files::ConfigService second(fixture.paths());
-    require(first.reload() && second.reload(), "cannot load save fixtures");
+    TEST_CHECK(first.reload() && second.reload());
     const std::array show{files::OverrideEdit{Preference::ShowHidden, true}};
     const std::array descending{files::OverrideEdit{Preference::SortDescending, true}};
-    require(
-        first.saveOverrides(show) == State::DURABLE && first.settings().browser.showHidden,
-        "override did not persist or update effective settings"
-    );
+    TEST_CHECK(first.saveOverrides(show) == State::DURABLE && first.settings().browser.showHidden);
     // The second instance still has its earlier cache. Saving another key must
     // reread the sidecar under the lock rather than overwrite the first edit.
-    require(second.saveOverrides(descending) == State::DURABLE, "second preference save failed");
-    require(
+    TEST_CHECK(second.saveOverrides(descending) == State::DURABLE);
+    TEST_CHECK(
         second.settings().browser.showHidden
-            && second.settings().browser.sort.descending
-            && second.settings().browser.sort.field == files::SortField::SIZE,
-        "unrelated override was lost"
+        && second.settings().browser.sort.descending
+        && second.settings().browser.sort.field == files::SortField::SIZE
     );
-    require(files::validateConfigFile(fixture.paths().overrides).empty(), "saved sidecar violates schema");
+    TEST_CHECK(files::validateConfigFile(fixture.paths().overrides).empty());
     const auto saved = read(fixture.paths().overrides);
-    require(
-        second.saveOverrides(descending) == State::UNCHANGED && read(fixture.paths().overrides) == saved,
-        "unchanged preference was rewritten"
-    );
+    TEST_CHECK(second.saveOverrides(descending) == State::UNCHANGED && read(fixture.paths().overrides) == saved);
     const std::array disable{
         files::OverrideEdit{Preference::DirectoriesFirst, false},
         files::OverrideEdit{Preference::SortDescending, false},
     };
-    require(
+    TEST_CHECK(
         second.saveOverrides(disable) == State::DURABLE
-            && second.settings().browser.showHidden
-            && !second.settings().browser.sort.directoriesFirst
-            && !second.settings().browser.sort.descending,
-        "false-valued batch edits were lost or changed another preference"
+        && second.settings().browser.showHidden
+        && !second.settings().browser.sort.directoriesFirst
+        && !second.settings().browser.sort.descending
     );
     const std::array inherit{files::OverrideEdit{Preference::ShowHidden, std::monostate{}}};
-    require(
-        second.saveOverrides(inherit) == State::DURABLE && !second.settings().browser.showHidden,
-        "reset did not restore base inheritance"
-    );
-    require(!read(fixture.paths().overrides).contains("show_hidden"), "reset left an explicit override");
-    require(
-        read(baseTarget) == baseContent && std::filesystem::is_symlink(fixture.paths().base),
-        "saving modified declarative base configuration"
-    );
+    TEST_CHECK(second.saveOverrides(inherit) == State::DURABLE && !second.settings().browser.showHidden);
+    TEST_CHECK(!read(fixture.paths().overrides).contains("show_hidden"));
+    TEST_CHECK(read(baseTarget) == baseContent && std::filesystem::is_symlink(fixture.paths().base));
 
     const auto lastGood = second.settings();
     fixture.write("settings.toml", "[browser]\nunknown = true\n");
     const auto invalid = read(fixture.paths().overrides);
-    require(
+    TEST_CHECK(
         second.saveOverrides(show) == State::NotCommitted
-            && second.settings() == lastGood
-            && read(fixture.paths().overrides) == invalid
-            && !second.issues().empty(),
-        "invalid existing sidecar was overwritten or published"
+        && second.settings() == lastGood
+        && read(fixture.paths().overrides) == invalid
+        && !second.issues().empty()
     );
     std::filesystem::remove(fixture.paths().overrides);
     std::filesystem::create_symlink(baseTarget, fixture.paths().overrides);
-    require(
-        second.saveOverrides(show) == State::NotCommitted && read(baseTarget) == baseContent,
-        "save followed a settings symlink"
-    );
+    TEST_CHECK(second.saveOverrides(show) == State::NotCommitted && read(baseTarget) == baseContent);
     std::filesystem::remove(fixture.paths().overrides);
     const std::array invalidEdits{files::OverrideEdit{Preference::SortBy, true}};
-    require(
-        second.saveOverrides(invalidEdits) == State::NotCommitted
-            && !std::filesystem::exists(fixture.paths().overrides),
-        "mistyped preference created an override"
+    TEST_CHECK(
+        second.saveOverrides(invalidEdits) == State::NotCommitted && !std::filesystem::exists(fixture.paths().overrides)
     );
     const std::array sort{files::OverrideEdit{Preference::SortBy, files::SortField::TYPE}};
-    require(
-        second.saveOverrides(sort) == State::DURABLE && second.settings().browser.sort.field == files::SortField::TYPE,
-        "typed sort override failed"
+    TEST_CHECK(
+        second.saveOverrides(sort) == State::DURABLE && second.settings().browser.sort.field == files::SortField::TYPE
     );
     const std::array grid{files::OverrideEdit{Preference::ViewMode, files::ViewMode::GRID}};
-    require(second.saveOverrides(grid) == State::DURABLE, "grid preference did not persist");
+    TEST_CHECK(second.saveOverrides(grid) == State::DURABLE);
     files::ConfigService reloaded(fixture.paths());
-    require(
+    TEST_CHECK(
         reloaded.reload()
-            && reloaded.settings().browser.viewMode == files::ViewMode::GRID
-            && reloaded.settings().browser.sort.field == files::SortField::TYPE,
-        "view preference roundtrip lost a typed value or unrelated key"
+        && reloaded.settings().browser.viewMode == files::ViewMode::GRID
+        && reloaded.settings().browser.sort.field == files::SortField::TYPE
     );
     const auto gridBytes = read(fixture.paths().overrides);
     const std::array invalidView{files::OverrideEdit{Preference::ViewMode, true}};
     const std::array invalidMode{files::OverrideEdit{Preference::ViewMode, static_cast<files::ViewMode>(99)}};
-    require(
+    TEST_CHECK(
         second.saveOverrides(invalidView) == State::NotCommitted
-            && second.saveOverrides(invalidMode) == State::NotCommitted
-            && read(fixture.paths().overrides) == gridBytes,
-        "invalid view preference changed the sidecar"
+        && second.saveOverrides(invalidMode) == State::NotCommitted
+        && read(fixture.paths().overrides) == gridBytes
     );
     const std::array resetView{files::OverrideEdit{Preference::ViewMode, std::monostate{}}};
-    require(
+    TEST_CHECK(
         second.saveOverrides(resetView) == State::DURABLE
-            && second.settings().browser.viewMode == files::ViewMode::LIST
-            && !read(fixture.paths().overrides).contains("view_mode"),
-        "view reset did not restore inheritance"
+        && second.settings().browser.viewMode == files::ViewMode::LIST
+        && !read(fixture.paths().overrides).contains("view_mode")
     );
     files::ConfigService aliased({.base = fixture.paths().base, .overrides = fixture.paths().base});
-    require(
-        aliased.saveOverrides(show) == State::NotCommitted && read(baseTarget) == baseContent,
-        "save accepted the base path as its override destination"
-    );
+    TEST_CHECK(aliased.saveOverrides(show) == State::NotCommitted && read(baseTarget) == baseContent);
     Fixture reverseAlias;
     reverseAlias.write("settings.toml", "[browser]\nshow_hidden = false\n");
     const auto aliasedContent = read(reverseAlias.paths().overrides);
     std::filesystem::create_symlink(reverseAlias.paths().overrides, reverseAlias.paths().base);
     files::ConfigService sameFile(reverseAlias.paths());
-    require(
-        sameFile.saveOverrides(show) == State::NotCommitted && read(reverseAlias.paths().overrides) == aliasedContent,
-        "base symlink alias was modified indirectly"
+    TEST_CHECK(
+        sameFile.saveOverrides(show) == State::NotCommitted && read(reverseAlias.paths().overrides) == aliasedContent
     );
 
     Fixture invalidBase;
     invalidBase.write("config.toml", "[browser]\nshow_hidden = true\n");
     files::ConfigService protectedConfig(invalidBase.paths());
-    require(protectedConfig.saveOverrides(descending) == State::DURABLE, "cannot create invalid-base fixture");
+    TEST_CHECK(protectedConfig.saveOverrides(descending) == State::DURABLE);
     const auto before = read(invalidBase.paths().overrides);
     const auto beforeSettings = protectedConfig.settings();
     invalidBase.write("config.toml", "schema_version = 999\n");
-    require(
+    TEST_CHECK(
         protectedConfig.saveOverrides(sort) == State::NotCommitted
-            && protectedConfig.settings() == beforeSettings
-            && read(invalidBase.paths().overrides) == before,
-        "invalid base allowed a save or changed the published settings"
+        && protectedConfig.settings() == beforeSettings
+        && read(invalidBase.paths().overrides) == before
     );
   }
 } // namespace

@@ -1,5 +1,6 @@
 #include "app/glib_poll_source.h"
 #include "fs/directory_session.h"
+#include "test_check.h"
 
 #include <algorithm>
 #include <chrono>
@@ -18,12 +19,6 @@ namespace {
   using files::DirectoryStatus;
   using files::Location;
   namespace fs = std::filesystem;
-
-  void require(bool condition, const std::string& message) {
-    if (!condition) {
-      throw std::runtime_error(message);
-    }
-  }
 
   struct Fixture {
     fs::path path;
@@ -47,7 +42,7 @@ namespace {
     void write(const std::string& name, const std::string& contents = "data") const {
       std::ofstream file(path / name);
       file << contents;
-      require(file.good(), "cannot create test file");
+      TEST_CHECK(file.good());
     }
     Location location() const { return Location::fromPath(path.native()); }
   };
@@ -57,7 +52,7 @@ namespace {
     void until(const std::function<bool()>& done) {
       const auto deadline = std::chrono::steady_clock::now() + 5s;
       while (!done()) {
-        require(std::chrono::steady_clock::now() < deadline, "timed out waiting for directory state");
+        TEST_CHECK(std::chrono::steady_clock::now() < deadline);
         once();
       }
     }
@@ -67,7 +62,7 @@ namespace {
       const auto start = m_source.addPollFds(fds);
       const int requested = m_source.pollTimeoutMs();
       const int timeout = requested < 0 ? 20 : std::min(requested, 20);
-      require(::poll(fds.data(), fds.size(), timeout) >= 0, "poll failed");
+      TEST_CHECK(::poll(fds.data(), fds.size(), timeout) >= 0);
       m_source.dispatch(fds, start);
     }
 
@@ -78,7 +73,7 @@ namespace {
   const files::DirectoryEntry& entry(const DirectorySession& session, const std::string& name) {
     const auto& entries = session.snapshot().entries;
     const auto it = std::ranges::find(entries, name, &files::DirectoryEntry::name);
-    require(it != entries.end(), "entry missing: " + name);
+    TEST_CHECK(it != entries.end());
     return *it;
   }
 
@@ -89,20 +84,17 @@ namespace {
 
   void ready(Pump& pump, const DirectorySession& session) {
     pump.until([&session] { return session.snapshot().status != DirectoryStatus::LOADING; });
-    require(
-        session.snapshot().status == DirectoryStatus::READY,
-        session.snapshot().error ? session.snapshot().error->message : "directory not ready"
-    );
+    TEST_CHECK(session.snapshot().status == DirectoryStatus::READY);
   }
 
   void testLocations() {
     const std::string bytes = "/tmp/a space#%\n" + std::string(1, static_cast<char>(0xFF));
     const auto location = Location::fromPath(bytes);
-    require(location.nativePath() == bytes, "native bytes were changed");
-    require(location.uri().contains("%23%25%0A%FF"), "filename was not URI escaped");
-    require(Location::fromUri(location.uri()) == location, "URI roundtrip changed identity");
+    TEST_CHECK(location.nativePath() == bytes);
+    TEST_CHECK(location.uri().contains("%23%25%0A%FF"));
+    TEST_CHECK(Location::fromUri(location.uri()) == location);
     const auto remote = Location::fromUri("sftp://example.test/folder%20name");
-    require(!remote.nativePath(), "remote URI became a native path");
+    TEST_CHECK(!remote.nativePath());
     for (const auto& invalid :
          std::vector<std::string>{"relative/path", "file:///bad%xy", std::string("file:///bad\0tail", 17)}) {
       bool rejected = false;
@@ -111,7 +103,7 @@ namespace {
       } catch (const std::invalid_argument&) {
         rejected = true;
       }
-      require(rejected, "invalid URI accepted");
+      TEST_CHECK(rejected);
     }
   }
 
@@ -129,34 +121,34 @@ namespace {
     fs::create_hard_link(fixture.path / "0", fixture.path / "hard-link");
     DirectorySession session;
     session.open(fixture.location());
-    require(session.snapshot().status == DirectoryStatus::LOADING, "enumeration was synchronous");
+    TEST_CHECK(session.snapshot().status == DirectoryStatus::LOADING);
     ready(pump, session);
-    require(session.snapshot().entries.size() == 155, "incomplete batched listing");
-    require(!session.snapshot().monitorError, "local monitor unavailable");
-    require(entry(session, unusual).location.nativePath() == (fixture.path / unusual).native(), "raw name lost");
-    require(g_utf8_validate(entry(session, unusual).displayName.c_str(), -1, nullptr), "invalid display UTF-8");
-    require(entry(session, ".hidden").hidden, "hidden attribute missing");
-    require(entry(session, "broken-link").symlink, "symlink followed or omitted");
-    require(entry(session, "folder").type == G_FILE_TYPE_DIRECTORY, "directory type missing");
-    require(entry(session, "0").id != entry(session, "hard-link").id, "hard links share an entry ID");
+    TEST_CHECK(session.snapshot().entries.size() == 155);
+    TEST_CHECK(!session.snapshot().monitorError);
+    TEST_CHECK(entry(session, unusual).location.nativePath() == (fixture.path / unusual).native());
+    TEST_CHECK(g_utf8_validate(entry(session, unusual).displayName.c_str(), -1, nullptr));
+    TEST_CHECK(entry(session, ".hidden").hidden);
+    TEST_CHECK(entry(session, "broken-link").symlink);
+    TEST_CHECK(entry(session, "folder").type == G_FILE_TYPE_DIRECTORY);
+    TEST_CHECK(entry(session, "0").id != entry(session, "hard-link").id);
     const auto id = entry(session, unusual).id;
-    require(entry(session, "folder").contentType == "inode/directory", "asynchronous fast type metadata missing");
+    TEST_CHECK(entry(session, "folder").contentType == "inode/directory");
     session.refresh();
     ready(pump, session);
-    require(entry(session, unusual).id == id, "refresh changed identity");
+    TEST_CHECK(entry(session, unusual).id == id);
     fs::rename(fixture.path / unusual, fixture.path / "renamed");
     pump.until([&session] {
       return session.snapshot().status == DirectoryStatus::READY && hasEntry(session, "renamed");
     });
-    require(entry(session, "renamed").id == id, "observed rename changed identity");
+    TEST_CHECK(entry(session, "renamed").id == id);
     fixture.write("renamed", "longer contents");
     pump.until([&session] { return entry(session, "renamed").size == 15; });
-    require(entry(session, "renamed").id == id, "metadata change changed identity");
+    TEST_CHECK(entry(session, "renamed").id == id);
     fs::remove(fixture.path / "renamed");
     pump.until([&session] { return !hasEntry(session, "renamed"); });
     fixture.write("renamed");
     pump.until([&session] { return hasEntry(session, "renamed"); });
-    require(entry(session, "renamed").id != id, "delete/create reused identity");
+    TEST_CHECK(entry(session, "renamed").id != id);
   }
 
   void testGenerationAndLifetime(Pump& pump) {
@@ -169,8 +161,8 @@ namespace {
     const auto generation = session.snapshot().generation;
     session.open(second.location());
     ready(pump, session);
-    require(session.snapshot().generation > generation, "navigation did not advance generation");
-    require(!hasEntry(session, "first") && hasEntry(session, "second"), "obsolete result leaked into new location");
+    TEST_CHECK(session.snapshot().generation > generation);
+    TEST_CHECK(!hasEntry(session, "first") && hasEntry(session, "second"));
     session.open(first.location());
     session.cancel();
     bool drained = false;
@@ -182,7 +174,7 @@ namespace {
         &drained
     );
     pump.until([&drained] { return drained; });
-    require(session.snapshot().status == DirectoryStatus::CANCELLED, "cancelled scan published results");
+    TEST_CHECK(session.snapshot().status == DirectoryStatus::CANCELLED);
     session.refresh();
     ready(pump, session);
     first.write("after-resume");
@@ -193,7 +185,7 @@ namespace {
     first.write("first");
     session.refresh();
     ready(pump, session);
-    require(entry(session, "first").id != beforeCancel, "unobserved replacement reused identity after cancel");
+    TEST_CHECK(entry(session, "first").id != beforeCancel);
 
     auto dying = std::make_unique<DirectorySession>();
     dying->setChangedCallback([&dying] { dying.reset(); });
@@ -236,7 +228,7 @@ namespace {
           && hasEntry(session, "during-load")
           && !hasEntry(session, "original");
     });
-    require(entry(session, "moved").id == originalId, "rename while loading lost identity");
+    TEST_CHECK(entry(session, "moved").id == originalId);
 
     // An atomic replacement must invalidate the target's old identity, even
     // when the temporary source never appeared in a published listing.
@@ -248,8 +240,8 @@ namespace {
     session.setChangedCallback({});
     fs::remove_all(fixture.path);
     pump.until([&session] { return session.snapshot().status == DirectoryStatus::ERROR; });
-    require(session.snapshot().error->kind == files::FileErrorKind::MISSING, "deleted directory left a stale listing");
-    require(session.snapshot().entries.empty(), "deleted directory retained entries");
+    TEST_CHECK(session.snapshot().error->kind == files::FileErrorKind::MISSING);
+    TEST_CHECK(session.snapshot().entries.empty());
   }
 
   void testErrorsAndEmpty(Pump& pump) {
@@ -257,14 +249,14 @@ namespace {
     DirectorySession session;
     session.open(fixture.location());
     ready(pump, session);
-    require(session.snapshot().entries.empty(), "empty directory not ready and empty");
+    TEST_CHECK(session.snapshot().entries.empty());
     session.open(Location::fromPath((fixture.path / "missing").native()));
     pump.until([&session] { return session.snapshot().status == DirectoryStatus::ERROR; });
-    require(session.snapshot().error->kind == files::FileErrorKind::MISSING, "missing location not reported");
+    TEST_CHECK(session.snapshot().error->kind == files::FileErrorKind::MISSING);
     fixture.write("plain-file");
     session.open(Location::fromPath((fixture.path / "plain-file").native()));
     pump.until([&session] { return session.snapshot().status == DirectoryStatus::ERROR; });
-    require(session.snapshot().error->kind == files::FileErrorKind::NotDirectory, "file location error lost");
+    TEST_CHECK(session.snapshot().error->kind == files::FileErrorKind::NotDirectory);
   }
 
   bool unknown(const files::FileAccess& access) {
@@ -274,20 +266,19 @@ namespace {
 
   void testMetadataAbsenceAndTypes() {
     const files::GioPtr<GFileInfo> info(g_file_info_new());
-    require(!files::readFastContentType(info.get()), "missing content type became known");
+    TEST_CHECK(!files::readFastContentType(info.get()));
     g_file_info_set_attribute_boolean(info.get(), G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE, true);
-    require(!files::readFastContentType(info.get()), "mistyped content type became known");
+    TEST_CHECK(!files::readFastContentType(info.get()));
     g_file_info_set_attribute_string(info.get(), G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE, "");
-    require(!files::readFastContentType(info.get()), "empty content type became known");
+    TEST_CHECK(!files::readFastContentType(info.get()));
     g_file_info_set_attribute_string(info.get(), G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE, "\xff");
-    require(!files::readFastContentType(info.get()), "invalid UTF-8 content type became known");
+    TEST_CHECK(!files::readFastContentType(info.get()));
     g_file_info_set_attribute_string(info.get(), G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE, "text/plain");
-    require(files::readFastContentType(info.get()) == "text/plain", "typed content type was lost");
-    require(
+    TEST_CHECK(files::readFastContentType(info.get()) == "text/plain");
+    TEST_CHECK(
         unknown(files::readFileAccess(info.get()))
-            && !files::readFilesystemInfo(info.get()).readOnly.has_value()
-            && !files::readFilesystemInfo(info.get()).freeBytes.has_value(),
-        "missing provider attributes became false"
+        && !files::readFilesystemInfo(info.get()).readOnly.has_value()
+        && !files::readFilesystemInfo(info.get()).freeBytes.has_value()
     );
     g_file_info_set_attribute_boolean(info.get(), G_FILE_ATTRIBUTE_ACCESS_CAN_READ, true);
     g_file_info_set_attribute_boolean(info.get(), G_FILE_ATTRIBUTE_ACCESS_CAN_DELETE, false);
@@ -297,21 +288,17 @@ namespace {
     g_file_info_set_attribute_string(info.get(), G_FILE_ATTRIBUTE_FILESYSTEM_FREE, "1024");
     const auto access = files::readFileAccess(info.get());
     const auto filesystem = files::readFilesystemInfo(info.get());
-    require(
-        access.read == true && access.remove == false && !access.write.has_value(),
-        "negative or mistyped provider attributes were misclassified"
-    );
-    require(
+    TEST_CHECK(access.read == true && access.remove == false && !access.write.has_value());
+    TEST_CHECK(
         filesystem.readOnly == false
-            && !filesystem.remote.has_value()
-            && !filesystem.type.has_value()
-            && !filesystem.freeBytes.has_value(),
-        "filesystem false/unknown/type distinction was lost"
+        && !filesystem.remote.has_value()
+        && !filesystem.type.has_value()
+        && !filesystem.freeBytes.has_value()
     );
     g_file_info_set_attribute_uint64(info.get(), G_FILE_ATTRIBUTE_FILESYSTEM_FREE, 0);
-    require(files::readFilesystemInfo(info.get()).freeBytes == 0, "zero free bytes became unknown");
+    TEST_CHECK(files::readFilesystemInfo(info.get()).freeBytes == 0);
     g_file_info_set_attribute_uint64(info.get(), G_FILE_ATTRIBUTE_FILESYSTEM_FREE, G_MAXUINT64);
-    require(files::readFilesystemInfo(info.get()).freeBytes == G_MAXUINT64, "large free byte count was narrowed");
+    TEST_CHECK(files::readFilesystemInfo(info.get()).freeBytes == G_MAXUINT64);
   }
 
   void testCapabilityLifecycle(Pump& pump) {
@@ -321,28 +308,21 @@ namespace {
     fs::permissions(file, fs::perms::owner_read | fs::perms::owner_write);
     DirectorySession session;
     session.open(fixture.location());
-    require(
-        session.snapshot().metadataLoading && unknown(session.snapshot().metadata.access),
-        "initial metadata was not unknown/loading"
-    );
+    TEST_CHECK(session.snapshot().metadataLoading && unknown(session.snapshot().metadata.access));
     ready(pump, session);
     pump.until([&session] { return !session.snapshot().metadataLoading; });
-    require(!session.snapshot().accessError && !session.snapshot().filesystemError, "local metadata query failed");
-    require(
+    TEST_CHECK(!session.snapshot().accessError && !session.snapshot().filesystemError);
+    TEST_CHECK(
         session.snapshot().metadata.access.read == true
-            && session.snapshot().metadata.access.write == true
-            && session.snapshot().metadata.access.execute == true,
-        "directory access metadata missing"
+        && session.snapshot().metadata.access.write == true
+        && session.snapshot().metadata.access.execute == true
     );
-    require(session.snapshot().metadata.filesystem.readOnly == false, "writable fixture filesystem not reported");
-    require(
-        session.snapshot().metadata.filesystem.freeBytes.has_value(), "native asynchronous free-space query missing"
-    );
-    require(
+    TEST_CHECK(session.snapshot().metadata.filesystem.readOnly == false);
+    TEST_CHECK(session.snapshot().metadata.filesystem.freeBytes.has_value());
+    TEST_CHECK(
         entry(session, "plain").access.read == true
-            && entry(session, "plain").access.write == true
-            && entry(session, "plain").access.execute == false,
-        "entry access metadata missing"
+        && entry(session, "plain").access.write == true
+        && entry(session, "plain").access.execute == false
     );
     const auto id = entry(session, "plain").id;
     const auto generation = session.snapshot().generation;
@@ -362,46 +342,34 @@ namespace {
           && session.snapshot().status == DirectoryStatus::READY
           && !session.snapshot().metadataLoading;
     });
-    require(
-        invalidated && entry(session, "plain").id == id,
-        "monitor did not invalidate facts or preserved identity incorrectly"
-    );
-    require(
-        entry(session, "plain").access.execute == (::access(file.c_str(), X_OK) == 0),
-        "refreshed access disagrees with kernel permissions"
-    );
+    TEST_CHECK(invalidated && entry(session, "plain").id == id);
+    TEST_CHECK(entry(session, "plain").access.execute == (::access(file.c_str(), X_OK) == 0));
     session.setChangedCallback({});
     fs::permissions(file, fs::perms::owner_read);
     session.refresh();
-    require(
+    TEST_CHECK(
         session.snapshot().metadataLoading
-            && !session.snapshot().metadata.filesystem.freeBytes.has_value()
-            && unknown(session.snapshot().metadata.access)
-            && unknown(entry(session, "plain").access),
-        "refresh kept old capability facts"
+        && !session.snapshot().metadata.filesystem.freeBytes.has_value()
+        && unknown(session.snapshot().metadata.access)
+        && unknown(entry(session, "plain").access)
     );
     ready(pump, session);
     pump.until([&session] { return !session.snapshot().metadataLoading; });
-    require(
-        entry(session, "plain").access.write == (::access(file.c_str(), W_OK) == 0),
-        "write access was guessed from mode bits rather than queried"
-    );
+    TEST_CHECK(entry(session, "plain").access.write == (::access(file.c_str(), W_OK) == 0));
     session.cancel();
-    require(
+    TEST_CHECK(
         !session.snapshot().metadataLoading
-            && !session.snapshot().metadata.filesystem.freeBytes.has_value()
-            && unknown(session.snapshot().metadata.access)
-            && unknown(entry(session, "plain").access),
-        "cancel kept active capability facts"
+        && !session.snapshot().metadata.filesystem.freeBytes.has_value()
+        && unknown(session.snapshot().metadata.access)
+        && unknown(entry(session, "plain").access)
     );
 
     session.open(Location::fromPath(file.native()));
     pump.until([&session] { return session.snapshot().status == DirectoryStatus::ERROR; });
-    require(
+    TEST_CHECK(
         !session.snapshot().metadataLoading
-            && unknown(session.snapshot().metadata.access)
-            && !session.snapshot().metadata.filesystem.readOnly.has_value(),
-        "failed listing kept folder capabilities"
+        && unknown(session.snapshot().metadata.access)
+        && !session.snapshot().metadata.filesystem.readOnly.has_value()
     );
     // Retire a file query immediately: its non-executable access must never
     // replace the next directory generation's traversal capability.
@@ -409,7 +377,7 @@ namespace {
     session.open(fixture.location());
     ready(pump, session);
     pump.until([&session] { return !session.snapshot().metadataLoading; });
-    require(session.snapshot().metadata.access.execute == true, "retired query replaced current directory metadata");
+    TEST_CHECK(session.snapshot().metadata.access.execute == true);
   }
 } // namespace
 

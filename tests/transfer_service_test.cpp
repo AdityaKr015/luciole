@@ -1,5 +1,6 @@
 #include "app/glib_poll_source.h"
 #include "operations/transfer_service.h"
+#include "test_check.h"
 
 #include <algorithm>
 #include <chrono>
@@ -16,11 +17,6 @@ namespace {
   using files::TransferAction;
   using files::TransferConflictChoice;
   using files::TransferOutcome;
-  void require(bool condition, const char* message) {
-    if (!condition) {
-      throw std::runtime_error(message);
-    }
-  }
   void write(const fs::path& path, const std::string& text) { std::ofstream(path) << text; }
   std::string read(const fs::path& path) {
     std::ifstream input(path);
@@ -31,7 +27,7 @@ namespace {
     fs::path root;
     explicit Fixture(const std::string& parent = "/tmp") {
       std::string name = parent + "/noctalia-transfer-XXXXXX";
-      require(::mkdtemp(name.data()) != nullptr, "cannot create transfer fixture");
+      TEST_CHECK(::mkdtemp(name.data()) != nullptr);
       root = name;
       fs::create_directory(root / "source");
       fs::create_directory(root / "destination");
@@ -50,7 +46,7 @@ namespace {
     fs::path destination(const std::string& name) const { return root / "destination" / name; }
     void clean() const {
       for (const auto& item : fs::recursive_directory_iterator(root)) {
-        require(!item.path().filename().native().starts_with(".noctalia-files-transfer-"), "transfer staging leaked");
+        TEST_CHECK(!item.path().filename().native().starts_with(".noctalia-files-transfer-"));
       }
     }
   };
@@ -59,27 +55,24 @@ namespace {
     void until(const std::function<bool()>& done) {
       const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
       while (!done()) {
-        require(std::chrono::steady_clock::now() < deadline, "transfer worker timed out");
+        TEST_CHECK(std::chrono::steady_clock::now() < deadline);
         std::vector<pollfd> fds;
         const auto first = source.addPollFds(fds);
-        require(::poll(fds.data(), fds.size(), 1) >= 0, "poll failed");
+        TEST_CHECK(::poll(fds.data(), fds.size(), 1) >= 0);
         source.dispatch(fds, first);
       }
     }
     void
     run(files::TransferService& service, std::vector<files::Location> sources, const fs::path& destination,
         TransferAction action, std::function<TransferConflictChoice(const files::TransferConflict&)> choose = {}) {
-      require(service.start({std::move(sources), location(destination), action}), "job was refused");
+      TEST_CHECK(service.start({std::move(sources), location(destination), action}));
       std::uint64_t handled = 0;
       until([&] {
         if (const auto conflict = service.conflict(); conflict && conflict->id != handled) {
           handled = conflict->id;
-          require(
-              !service.resolve(conflict->id + 100000, TransferConflictChoice::REPLACE),
-              "obsolete conflict id was accepted"
-          );
+          TEST_CHECK(!service.resolve(conflict->id + 100000, TransferConflictChoice::REPLACE));
           const auto decision = choose ? choose(*conflict) : TransferConflictChoice::CANCEL;
-          require(service.resolve(conflict->id, decision), "conflict decision was refused");
+          TEST_CHECK(service.resolve(conflict->id, decision));
         }
         return !service.busy();
       });
@@ -102,45 +95,35 @@ namespace {
         service, {location(fixture.source("file.txt")), location(fixture.source("folder"))}, fixture.destination(""),
         TransferAction::MOVE
     );
-    require(
-        service.results().size() == 2
-            && std::ranges::all_of(
-                service.results(),
-                [](const auto& result) { return result.outcome == TransferOutcome::MOVED && result.error.empty(); }
-            ),
-        "native move failed"
-    );
-    require(
+    TEST_CHECK(service.results().size() == 2 && std::ranges::all_of(service.results(), [](const auto& result) {
+                 return result.outcome == TransferOutcome::MOVED && result.error.empty();
+               }));
+    TEST_CHECK(
         !fs::exists(fixture.source("file.txt"))
-            && read(fixture.destination("file.txt")) == "payload"
-            && read(fixture.destination("folder/sub/.hidden")) == "nested",
-        "move lost file data"
+        && read(fixture.destination("file.txt")) == "payload"
+        && read(fixture.destination("folder/sub/.hidden")) == "nested"
     );
-    require(
-        fs::is_symlink(fixture.destination("folder/link")) && read(fixture.root / "outside") == "outside must survive",
-        "move followed a symbolic link"
+    TEST_CHECK(
+        fs::is_symlink(fixture.destination("folder/link")) && read(fixture.root / "outside") == "outside must survive"
     );
     pump.run(service, {location(fixture.destination("folder"))}, fixture.source(""), TransferAction::COPY);
-    require(
+    TEST_CHECK(
         service.results()[0].outcome == TransferOutcome::COPIED
-            && read(fixture.source("folder/sub/.hidden")) == "nested"
-            && fs::read_symlink(fixture.source("folder/link")) == "../../outside",
-        "recursive copy lost data or a link"
+        && read(fixture.source("folder/sub/.hidden")) == "nested"
+        && fs::read_symlink(fixture.source("folder/link")) == "../../outside"
     );
     if (attributes) {
       char value[16]{};
-      require(
+      TEST_CHECK(
           ::getxattr(fixture.source("folder/sub/.hidden").c_str(), "user.noctalia-test", value, sizeof(value)) == 8
-              && std::string(value, 8) == "metadata",
-          "copy lost a user extended attribute"
+          && std::string(value, 8) == "metadata"
       );
     }
     const std::string raw = std::string("raw-") + static_cast<char>(0xff);
     write(fixture.source(raw), "raw filename");
     pump.run(service, {location(fixture.source(raw))}, fixture.destination(""), TransferAction::COPY);
-    require(
-        service.results()[0].outcome == TransferOutcome::COPIED && read(fixture.destination(raw)) == "raw filename",
-        "native filename bytes changed"
+    TEST_CHECK(
+        service.results()[0].outcome == TransferOutcome::COPIED && read(fixture.destination(raw)) == "raw filename"
     );
     fixture.clean();
   }
@@ -153,31 +136,27 @@ namespace {
         service, {location(fixture.source("image.png"))}, fixture.destination(""), TransferAction::COPY,
         [](const auto&) { return TransferConflictChoice::SKIP; }
     );
-    require(
-        service.results()[0].outcome == TransferOutcome::SKIPPED
-            && read(fixture.destination("image.png")) == "existing",
-        "Skip overwrote the destination"
+    TEST_CHECK(
+        service.results()[0].outcome == TransferOutcome::SKIPPED && read(fixture.destination("image.png")) == "existing"
     );
     write(fixture.destination("image (1).png"), "occupied");
     pump.run(
         service, {location(fixture.source("image.png"))}, fixture.destination(""), TransferAction::COPY,
         [](const auto&) { return TransferConflictChoice::KeepBoth; }
     );
-    require(
+    TEST_CHECK(
         service.results()[0].outcome == TransferOutcome::COPIED
-            && read(fixture.destination("image (2).png")) == "incoming"
-            && read(fixture.destination("image.png")) == "existing",
-        "Keep both did not choose an unused numbered name"
+        && read(fixture.destination("image (2).png")) == "incoming"
+        && read(fixture.destination("image.png")) == "existing"
     );
     pump.run(
         service, {location(fixture.source("image.png"))}, fixture.destination(""), TransferAction::MOVE,
         [](const auto&) { return TransferConflictChoice::REPLACE; }
     );
-    require(
+    TEST_CHECK(
         service.results()[0].outcome == TransferOutcome::MOVED
-            && !fs::exists(fixture.source("image.png"))
-            && read(fixture.destination("image.png")) == "incoming",
-        "Replace move did not commit correctly"
+        && !fs::exists(fixture.source("image.png"))
+        && read(fixture.destination("image.png")) == "incoming"
     );
     fs::create_directories(fixture.source("folder"));
     fs::create_directories(fixture.destination("folder"));
@@ -187,12 +166,11 @@ namespace {
         service, {location(fixture.source("folder"))}, fixture.destination(""), TransferAction::COPY,
         [](const auto&) { return TransferConflictChoice::REPLACE; }
     );
-    require(
+    TEST_CHECK(
         service.results()[0].outcome == TransferOutcome::COPIED
-            && read(fixture.destination("folder/new")) == "new"
-            && !fs::exists(fixture.destination("folder/old"))
-            && fs::exists(fixture.source("folder/new")),
-        "folder replacement merged or removed the source"
+        && read(fixture.destination("folder/new")) == "new"
+        && !fs::exists(fixture.destination("folder/old"))
+        && fs::exists(fixture.source("folder/new"))
     );
     fs::create_symlink(fixture.root / "protected", fixture.destination("link"));
     write(fixture.root / "protected", "protected");
@@ -201,11 +179,10 @@ namespace {
         service, {location(fixture.source("link"))}, fixture.destination(""), TransferAction::COPY,
         [](const auto&) { return TransferConflictChoice::REPLACE; }
     );
-    require(
+    TEST_CHECK(
         service.results()[0].outcome == TransferOutcome::COPIED
-            && !fs::is_symlink(fixture.destination("link"))
-            && read(fixture.root / "protected") == "protected",
-        "Replace followed the destination link"
+        && !fs::is_symlink(fixture.destination("link"))
+        && read(fixture.root / "protected") == "protected"
     );
     fixture.clean();
   }
@@ -216,19 +193,15 @@ namespace {
     write(fixture.source("tree/file"), "tree");
     fs::create_directory_symlink(fixture.source("tree/child"), fixture.root / "alias");
     pump.run(service, {location(fixture.source("tree"))}, fixture.root / "alias", TransferAction::COPY);
-    require(
-        service.results()[0].outcome == TransferOutcome::FAILED && fs::is_empty(fixture.source("tree/child")),
-        "a destination alias bypassed the self-copy guard"
-    );
+    TEST_CHECK(service.results()[0].outcome == TransferOutcome::FAILED && fs::is_empty(fixture.source("tree/child")));
     pump.run(
         service, {location(fixture.source("tree/file")), location(fixture.source("tree"))}, fixture.destination(""),
         TransferAction::MOVE
     );
-    require(
+    TEST_CHECK(
         service.results()[0].outcome == TransferOutcome::SKIPPED
-            && service.results()[1].outcome == TransferOutcome::MOVED
-            && read(fixture.destination("tree/file")) == "tree",
-        "overlapping source selection lost data"
+        && service.results()[1].outcome == TransferOutcome::MOVED
+        && read(fixture.destination("tree/file")) == "tree"
     );
     write(fixture.source("race.txt"), "incoming");
     write(fixture.destination("race.txt"), "initial destination");
@@ -244,11 +217,10 @@ namespace {
           return TransferConflictChoice::SKIP;
         }
     );
-    require(
+    TEST_CHECK(
         decisions == 2
-            && service.results()[0].outcome == TransferOutcome::SKIPPED
-            && read(fixture.destination("race.txt")) == "changed destination",
-        "Replace overwrote a changed destination"
+        && service.results()[0].outcome == TransferOutcome::SKIPPED
+        && read(fixture.destination("race.txt")) == "changed destination"
     );
     pump.run(
         service, {location(fixture.source("race.txt"))}, fixture.destination(""), TransferAction::MOVE,
@@ -258,21 +230,19 @@ namespace {
           return TransferConflictChoice::KeepBoth;
         }
     );
-    require(
+    TEST_CHECK(
         service.results()[0].outcome == TransferOutcome::FAILED
-            && read(fixture.source("race.txt")) == "replaced source"
-            && !fs::exists(fixture.destination("race (1).txt")),
-        "a changed source was silently retargeted"
+        && read(fixture.source("race.txt")) == "replaced source"
+        && !fs::exists(fixture.destination("race (1).txt"))
     );
-    require(::mkfifo(fixture.source("pipe").c_str(), 0600) == 0, "cannot create FIFO fixture");
+    TEST_CHECK(::mkfifo(fixture.source("pipe").c_str(), 0600) == 0);
     pump.run(
         service, {location(fixture.source("pipe")), location(fixture.source("race.txt"))}, fixture.destination(""),
         TransferAction::COPY, [](const auto&) { return TransferConflictChoice::SKIP; }
     );
-    require(
+    TEST_CHECK(
         service.results()[0].outcome == TransferOutcome::FAILED
-            && service.results()[1].outcome == TransferOutcome::SKIPPED,
-        "special files blocked or corrupted per-item outcomes"
+        && service.results()[1].outcome == TransferOutcome::SKIPPED
     );
     fixture.clean();
   }
@@ -281,50 +251,43 @@ namespace {
     files::TransferService service;
     write(fixture.source("same.txt"), "same");
     pump.run(service, {location(fixture.source("same.txt"))}, fixture.source(""), TransferAction::COPY);
-    require(
-        service.results()[0].outcome == TransferOutcome::COPIED && read(fixture.source("same (1).txt")) == "same",
-        "same-folder copy did not number its result"
+    TEST_CHECK(
+        service.results()[0].outcome == TransferOutcome::COPIED && read(fixture.source("same (1).txt")) == "same"
     );
     const std::string longName(255, 'a');
     write(fixture.source(longName), "long");
     pump.run(service, {location(fixture.source(longName))}, fixture.source(""), TransferAction::COPY);
-    require(
+    TEST_CHECK(
         service.results()[0].outcome == TransferOutcome::COPIED
-            && read(fixture.source(std::string(251, 'a') + " (1)")) == "long",
-        "numbering exceeded the filename limit"
+        && read(fixture.source(std::string(251, 'a') + " (1)")) == "long"
     );
     write(fixture.destination("same.txt"), "existing");
     pump.run(
         service, {location(fixture.source("same.txt")), location(fixture.source("same (1).txt"))},
         fixture.destination(""), TransferAction::MOVE, [](const auto&) { return TransferConflictChoice::CANCEL; }
     );
-    require(
+    TEST_CHECK(
         std::ranges::all_of(
             service.results(), [](const auto& item) { return item.outcome == TransferOutcome::CANCELLED; }
-        ) && read(fixture.destination("same.txt")) == "existing",
-        "cancelling a decision changed files"
+        )
+        && read(fixture.destination("same.txt")) == "existing"
     );
     write(fixture.source("large"), "");
     fs::resize_file(fixture.source("large"), 1024ULL * 1024 * 1024);
-    require(
-        service.start({{location(fixture.source("large"))}, location(fixture.destination("")), TransferAction::COPY}),
-        "copy refused"
+    TEST_CHECK(
+        service.start({{location(fixture.source("large"))}, location(fixture.destination("")), TransferAction::COPY})
     );
-    require(
-        !service.start({{location(fixture.source("same.txt"))}, location(fixture.destination(""))}),
-        "concurrent job accepted"
-    );
+    TEST_CHECK(!service.start({{location(fixture.source("same.txt"))}, location(fixture.destination(""))}));
     pump.until([&] {
       if (service.bytes() != 0) {
         service.cancel();
       }
       return !service.busy();
     });
-    require(
+    TEST_CHECK(
         service.results()[0].outcome == TransferOutcome::CANCELLED
-            && fs::exists(fixture.source("large"))
-            && !fs::exists(fixture.destination("large")),
-        "cancellation published incomplete data"
+        && fs::exists(fixture.source("large"))
+        && !fs::exists(fixture.destination("large"))
     );
     fixture.clean();
   }
@@ -336,7 +299,7 @@ namespace {
     Fixture source;
     Fixture target("/dev/shm");
     struct stat a{}, b{};
-    require(::stat(source.root.c_str(), &a) == 0 && ::stat(target.root.c_str(), &b) == 0, "cannot inspect fixtures");
+    TEST_CHECK(::stat(source.root.c_str(), &a) == 0 && ::stat(target.root.c_str(), &b) == 0);
     if (a.st_dev == b.st_dev) {
       std::println("Cross-filesystem check skipped: fixtures share a filesystem");
       return;
@@ -347,12 +310,11 @@ namespace {
     fs::create_symlink("missing", source.source("tree/broken"));
     files::TransferService service;
     pump.run(service, {location(source.source("tree"))}, target.destination(""), TransferAction::MOVE);
-    require(
+    TEST_CHECK(
         service.results()[0].outcome == TransferOutcome::MOVED
-            && !fs::exists(source.source("tree"))
-            && read(target.destination("tree/sub/linked")) == "cross filesystem"
-            && fs::is_symlink(target.destination("tree/broken")),
-        "cross-filesystem move did not complete safely"
+        && !fs::exists(source.source("tree"))
+        && read(target.destination("tree/sub/linked")) == "cross filesystem"
+        && fs::is_symlink(target.destination("tree/broken"))
     );
     source.clean();
     target.clean();

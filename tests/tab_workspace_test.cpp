@@ -1,4 +1,5 @@
 #include "browser/tab_workspace.h"
+#include "test_check.h"
 
 #include <algorithm>
 #include <cmath>
@@ -8,89 +9,62 @@
 #include <stdexcept>
 
 namespace {
-  void require(bool value, const char* message) {
-    if (!value) {
-      throw std::runtime_error(message);
-    }
-  }
   void invariant(const files::TabWorkspace& workspace) {
     std::set<files::TabId> ids;
     std::size_t tabCount = 0;
     for (const auto& [id, window] : workspace.windows()) {
       tabCount += window.tabs.size();
       if (window.tabs.empty()) {
-        require(
-            !window.selected && !window.primary && !window.active && !window.secondary, "empty window retained a page"
-        );
+        TEST_CHECK(!window.selected && !window.primary && !window.active && !window.secondary);
       } else {
-        require(std::ranges::contains(window.tabs, window.selected), "selected logical tab lost ownership");
-        require(window.active == window.primary || window.active == window.secondary, "active page is hidden");
+        TEST_CHECK(std::ranges::contains(window.tabs, window.selected));
+        TEST_CHECK(window.active == window.primary || window.active == window.secondary);
         if (window.secondary) {
-          require(*window.secondary != window.primary, "split repeated a page");
+          TEST_CHECK(*window.secondary != window.primary);
         }
       }
-      require(
-          std::isfinite(window.fraction) && window.fraction >= 0.2F && window.fraction <= 0.8F,
-          "invalid divider fraction"
-      );
+      TEST_CHECK(std::isfinite(window.fraction) && window.fraction >= 0.2F && window.fraction <= 0.8F);
       for (auto tab : window.tabs) {
         const auto pages = workspace.pages(tab);
-        require(!pages.empty() && pages.size() <= 2, "invalid logical-tab layout");
+        TEST_CHECK(!pages.empty() && pages.size() <= 2);
         for (auto page : pages) {
-          require(
-              ids.insert(page).second && workspace.owner(page) == id && workspace.tabFor(page) == tab,
-              "page has duplicate ownership"
-          );
+          TEST_CHECK(ids.insert(page).second && workspace.owner(page) == id && workspace.tabFor(page) == tab);
         }
       }
     }
-    require(tabCount <= 32 && ids.size() <= 64, "tab or pane limit exceeded");
+    TEST_CHECK(tabCount <= 32 && ids.size() <= 64);
     for (auto tab : workspace.closed()) {
       for (auto page : workspace.pages(tab)) {
-        require(!ids.contains(page), "closed tab retained a live page");
+        TEST_CHECK(!ids.contains(page));
       }
     }
-    require(workspace.closed().size() <= 16, "closed-tab retention exceeded");
+    TEST_CHECK(workspace.closed().size() <= 16);
   }
   void workflows() {
     files::TabWorkspace workspace;
     const auto left = workspace.addWindow(), right = workspace.addWindow();
     const auto a = workspace.addTab(left);
     const auto auxiliary = workspace.addPane(left);
-    require(
-        auxiliary && workspace.windows().at(left).tabs.size() == 1 && workspace.tabFor(auxiliary) == a,
-        "split became a new tab"
-    );
+    TEST_CHECK(auxiliary && workspace.windows().at(left).tabs.size() == 1 && workspace.tabFor(auxiliary) == a);
     const auto b = workspace.addTab(left);
-    require(!workspace.windows().at(left).secondary, "new tab inherited another tab's split");
+    TEST_CHECK(!workspace.windows().at(left).secondary);
     workspace.select(left, a);
-    require(
-        workspace.windows().at(left).secondary == auxiliary && workspace.windows().at(left).active == auxiliary,
-        "tab switch lost split or focus"
+    TEST_CHECK(workspace.windows().at(left).secondary == auxiliary && workspace.windows().at(left).active == auxiliary);
+    TEST_CHECK(workspace.focus(left, a) && workspace.other(left) == auxiliary);
+    TEST_CHECK(
+        workspace.move(auxiliary, right, 0) && workspace.owner(a) == right && workspace.owner(auxiliary) == right
     );
-    require(workspace.focus(left, a) && workspace.other(left) == auxiliary, "pane focus switched logical tabs");
-    require(
-        workspace.move(auxiliary, right, 0) && workspace.owner(a) == right && workspace.owner(auxiliary) == right,
-        "moving a tab separated its panes"
-    );
-    require(
-        workspace.windows().at(left).selected == b && !workspace.select(left, a),
-        "moved tab remained selectable in the source"
-    );
-    require(
-        workspace.close(auxiliary) && !workspace.owner(a) && workspace.reopen(left),
-        "closing or reopening an auxiliary pane lost its whole tab"
-    );
-    require(workspace.windows().at(left).secondary == auxiliary, "reopen lost auxiliary pane");
-    require(workspace.swap(left) && workspace.windows().at(left).active == a, "swap changed focused page identity");
-    require(
+    TEST_CHECK(workspace.windows().at(left).selected == b && !workspace.select(left, a));
+    TEST_CHECK(workspace.close(auxiliary) && !workspace.owner(a) && workspace.reopen(left));
+    TEST_CHECK(workspace.windows().at(left).secondary == auxiliary);
+    TEST_CHECK(workspace.swap(left) && workspace.windows().at(left).active == a);
+    TEST_CHECK(
         workspace.unsplit(left)
-            && workspace.windows().at(left).tabs.size() == 2
-            && workspace.windows().at(left).primary == a
-            && !workspace.tabFor(auxiliary),
-        "unsplit changed the tab or retained its auxiliary page"
+        && workspace.windows().at(left).tabs.size() == 2
+        && workspace.windows().at(left).primary == a
+        && !workspace.tabFor(auxiliary)
     );
-    require(workspace.move(a, left, 0) && workspace.windows().at(left).tabs.front() == a, "reorder changed ownership");
+    TEST_CHECK(workspace.move(a, left, 0) && workspace.windows().at(left).tabs.front() == a);
     invariant(workspace);
   }
   void closeEitherPane() {
@@ -98,26 +72,18 @@ namespace {
     const auto window = workspace.addWindow();
     const auto original = workspace.addTab(window);
     const auto right = workspace.addPane(window);
-    require(
+    TEST_CHECK(
         workspace.closePane(window, original)
-            && workspace.windows().at(window).primary == right
-            && workspace.windows().at(window).tabs == std::vector{original},
-        "closing the left pane closed or renamed its tab"
+        && workspace.windows().at(window).primary == right
+        && workspace.windows().at(window).tabs == std::vector{original}
     );
     const auto added = workspace.addPane(window);
-    require(
-        workspace.closePane(window, added) && workspace.windows().at(window).primary == right,
-        "closing the right pane changed the surviving page"
-    );
-    require(!workspace.closePane(window, right), "sole pane close bypassed close-tab semantics");
-    require(
-        workspace.close(right) && workspace.reopen(window) && workspace.windows().at(window).primary == right,
-        "reopen lost a promoted pane"
-    );
+    TEST_CHECK(workspace.closePane(window, added) && workspace.windows().at(window).primary == right);
+    TEST_CHECK(!workspace.closePane(window, right));
+    TEST_CHECK(workspace.close(right) && workspace.reopen(window) && workspace.windows().at(window).primary == right);
     const auto second = workspace.addWindow();
-    require(
-        workspace.move(right, second, 0) && workspace.owner(original) == second && workspace.owner(right) == second,
-        "promoted pane lost logical ownership during detach"
+    TEST_CHECK(
+        workspace.move(right, second, 0) && workspace.owner(original) == second && workspace.owner(right) == second
     );
     invariant(workspace);
   }
@@ -164,7 +130,7 @@ namespace {
       }
       invariant(workspace);
     }
-    require(!workspace.resize(1, NAN), "nonfinite divider accepted");
+    TEST_CHECK(!workspace.resize(1, NAN));
   }
 } // namespace
 int main() {

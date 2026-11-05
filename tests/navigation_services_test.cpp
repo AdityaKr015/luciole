@@ -2,6 +2,7 @@
 #include "browser/path_completion.h"
 #include "fs/file_metadata.h"
 #include "platform/terminal_launcher.h"
+#include "test_check.h"
 
 #include <algorithm>
 #include <chrono>
@@ -13,16 +14,11 @@
 
 namespace {
   namespace fs = std::filesystem;
-  void require(bool condition, const std::string& message) {
-    if (!condition) {
-      throw std::runtime_error(message);
-    }
-  }
   struct Fixture {
     fs::path path;
     Fixture() {
       const files::GString temp(g_dir_make_tmp("noctalia-navigation-XXXXXX", nullptr));
-      require(temp != nullptr, "cannot create fixture");
+      TEST_CHECK(temp != nullptr);
       path = temp.get();
       fs::create_directory(path / "Alpha");
       fs::create_directory(path / "A space <literal> café");
@@ -43,11 +39,11 @@ namespace {
     void until(const std::function<bool()>& done) {
       const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
       while (!done()) {
-        require(std::chrono::steady_clock::now() < deadline, "navigation service timed out");
+        TEST_CHECK(std::chrono::steady_clock::now() < deadline);
         std::vector<pollfd> fds;
         const auto start = m_source.addPollFds(fds);
         const int requested = m_source.pollTimeoutMs();
-        require(::poll(fds.data(), fds.size(), requested < 0 ? 20 : std::min(requested, 20)) >= 0, "poll failed");
+        TEST_CHECK(::poll(fds.data(), fds.size(), requested < 0 ? 20 : std::min(requested, 20)) >= 0);
         m_source.dispatch(fds, start);
       }
     }
@@ -57,16 +53,13 @@ namespace {
   };
   void identityChecks() {
     const files::GioPtr<GFileInfo> info(g_file_info_new());
-    require(!files::readFileIdentity(info.get()), "missing provider identity became known");
+    TEST_CHECK(!files::readFileIdentity(info.get()));
     g_file_info_set_attribute_string(info.get(), G_FILE_ATTRIBUTE_ID_FILE, "file");
-    require(!files::readFileIdentity(info.get()), "a file ID without its filesystem was accepted");
+    TEST_CHECK(!files::readFileIdentity(info.get()));
     g_file_info_set_attribute_boolean(info.get(), G_FILE_ATTRIBUTE_ID_FILESYSTEM, true);
-    require(!files::readFileIdentity(info.get()), "a mistyped provider identity was accepted");
+    TEST_CHECK(!files::readFileIdentity(info.get()));
     g_file_info_set_attribute_string(info.get(), G_FILE_ATTRIBUTE_ID_FILESYSTEM, "filesystem");
-    require(
-        files::readFileIdentity(info.get()) == files::FileIdentity{"filesystem", "file"},
-        "complete provider identity was lost"
-    );
+    TEST_CHECK((files::readFileIdentity(info.get()) == files::FileIdentity{"filesystem", "file"}));
   }
   void completionChecks() {
     Fixture fixture;
@@ -81,69 +74,52 @@ namespace {
     };
     completion.complete("A", base, false, receive);
     pump.until([&] { return done; });
-    require(
-        result.error.empty() && result.items.size() == 3,
-        "completion did not limit to matching folders including directory links"
-    );
+    TEST_CHECK(result.error.empty() && result.items.size() == 3);
     for (const auto& item : result.items) {
-      require(
-          files::resolveLocationText(item.text, base) == item.location,
-          "suggestion did not round-trip its operation location"
-      );
+      TEST_CHECK(files::resolveLocationText(item.text, base) == item.location);
     }
     done = false;
     completion.complete(".", base, false, receive);
     pump.until([&] { return done; });
-    require(
-        result.items.size() == 1 && result.items.front().label == ".hidden",
-        "explicit hidden prefix did not show its folder"
-    );
+    TEST_CHECK(result.items.size() == 1 && result.items.front().label == ".hidden");
     done = false;
     completion.complete(base.uri() + "/raw-", base, false, receive);
     pump.until([&] { return done; });
-    require(
+    TEST_CHECK(
         result.items.size() == 1
-            && result.items.front().text.starts_with("file:")
-            && result.items.front().text.contains("%FF"),
-        "raw filename was converted into a lossy display address"
+        && result.items.front().text.starts_with("file:")
+        && result.items.front().text.contains("%FF")
     );
-    require(
-        files::resolveLocationText(result.items.front().text, base) == result.items.front().location,
-        "raw URI completion failed to round-trip"
-    );
+    TEST_CHECK(files::resolveLocationText(result.items.front().text, base) == result.items.front().location);
     done = false;
     completion.complete("A%20", base, false, receive);
     pump.until([&] { return done; });
-    require(result.items.empty(), "native percent bytes were interpreted as URI escaping");
+    TEST_CHECK(result.items.empty());
     done = false;
     completion.complete(base.uri() + "/A%20", base, false, receive);
     pump.until([&] { return done; });
-    require(
-        result.items.size() == 1 && result.items.front().label == "A space <literal> café",
-        "URI escaping was not decoded for matching"
-    );
+    TEST_CHECK(result.items.size() == 1 && result.items.front().label == "A space <literal> café");
     bool obsolete = false;
     done = false;
     completion.children(base, true, [&](const files::PathSuggestions&) { obsolete = true; });
     completion.complete("Alpha", base, false, receive);
     pump.until([&] { return done; });
-    require(!obsolete && result.items.size() == 1, "obsolete completion affected another editor request");
+    TEST_CHECK(!obsolete && result.items.size() == 1);
     done = false;
     completion.complete((fixture.path / "missing").native() + "/", base, false, receive);
     pump.until([&] { return done; });
-    require(!result.error.empty() && result.items.empty(), "unavailable parent produced misleading suggestions");
+    TEST_CHECK(!result.error.empty() && result.items.empty());
     for (int i = 0; i < 270; ++i) {
       fs::create_directory(fixture.path / ("many-" + std::to_string(i)));
     }
     done = false;
     completion.complete("many-", base, false, receive);
     pump.until([&] { return done; });
-    require(result.truncated && result.items.size() == 256, "completion results were not bounded explicitly");
+    TEST_CHECK(result.truncated && result.items.size() == 256);
     const auto home = files::Location::fromPath(g_get_home_dir());
-    require(files::resolveLocationText("~/", base) == home, "home expansion disagreed with navigation");
-    require(
-        files::resolveLocationText("./Alpha", base) == files::Location::fromPath((fixture.path / "Alpha").native()),
-        "relative location parsing disagreed with completion"
+    TEST_CHECK(files::resolveLocationText("~/", base) == home);
+    TEST_CHECK(
+        files::resolveLocationText("./Alpha", base) == files::Location::fromPath((fixture.path / "Alpha").native())
     );
     bool rejected = false;
     try {
@@ -151,14 +127,14 @@ namespace {
     } catch (const std::invalid_argument&) {
       rejected = true;
     }
-    require(rejected, "location parser accepted embedded NUL");
+    TEST_CHECK(rejected);
     auto destroyed = std::make_unique<files::PathCompletion>();
     destroyed->children(base, true, [&](const files::PathSuggestions&) { obsolete = true; });
     destroyed.reset();
     done = false;
     completion.children(base, true, receive);
     pump.until([&] { return done; });
-    require(!obsolete, "destroyed completion owner received results");
+    TEST_CHECK(!obsolete);
   }
   void terminalChecks() {
     Fixture fixture;
@@ -166,7 +142,7 @@ namespace {
     const char* oldPath = g_getenv("PATH");
     const std::string original = oldPath ? oldPath : "";
     const files::GString shell(g_find_program_in_path("sh"));
-    require(shell != nullptr, "shell prerequisite unavailable");
+    TEST_CHECK(shell != nullptr);
     const auto helper = fixture.path / "xdg-terminal-exec";
     const auto log = fixture.path / "terminal.log";
     {
@@ -178,7 +154,7 @@ namespace {
     g_setenv("NOCTALIA_TEST_TERMINAL_LOG", log.c_str(), true);
     files::TerminalLauncher launcher;
     g_setenv("PATH", original.c_str(), true);
-    require(launcher.available(), "terminal helper not resolved");
+    TEST_CHECK(launcher.available());
     const auto target = fixture.path / "quotes ' $() ; newline\n日本語";
     fs::create_directory(target);
     bool done = false;
@@ -189,29 +165,26 @@ namespace {
     };
     launcher.open(files::Location::fromPath(target.native()), receive);
     pump.until([&] { return done; });
-    require(error.empty(), "terminal helper failed: " + error);
+    TEST_CHECK(error.empty());
     std::ifstream stream(log, std::ios::binary);
     const std::string output{std::istreambuf_iterator<char>(stream), {}};
-    require(
-        output == target.native() + std::string(1, '\0') + "--dir=" + target.native() + std::string(1, '\0'),
-        "terminal launch split/interpolated arguments or lost the native working directory"
-    );
+    TEST_CHECK(output == target.native() + std::string(1, '\0') + "--dir=" + target.native() + std::string(1, '\0'));
     done = false;
     launcher.open(files::Location::fromUri("sftp://example.invalid/folder"), receive);
     pump.until([&] { return done; });
-    require(!error.empty(), "terminal launch accepted a remote URI");
+    TEST_CHECK(!error.empty());
     done = false;
     launcher.open(files::Location::fromPath((fixture.path / "A file").native()), receive);
     pump.until([&] { return done; });
-    require(!error.empty(), "terminal launch accepted a regular file");
+    TEST_CHECK(!error.empty());
     g_setenv("PATH", "", true);
     files::TerminalLauncher missing;
     g_setenv("PATH", original.c_str(), true);
-    require(!missing.available(), "missing terminal helper was reported available");
+    TEST_CHECK(!missing.available());
     done = false;
     missing.open(files::Location::fromPath(target.native()), receive);
     pump.until([&] { return done; });
-    require(!error.empty(), "missing helper did not report a launch error");
+    TEST_CHECK(!error.empty());
     auto destroyed = std::make_unique<files::TerminalLauncher>();
     bool called = false;
     destroyed->open(files::Location::fromUri("sftp://example.invalid/folder"), [&](const std::string&) {
@@ -221,7 +194,7 @@ namespace {
     done = false;
     missing.open(files::Location::fromPath(target.native()), receive);
     pump.until([&] { return done; });
-    require(!called, "destroyed terminal owner received a callback");
+    TEST_CHECK(!called);
     g_unsetenv("NOCTALIA_TEST_TERMINAL_LOG");
   }
 } // namespace

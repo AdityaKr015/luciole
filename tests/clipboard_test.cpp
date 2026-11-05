@@ -1,4 +1,5 @@
 #include "platform/text_clipboard.h"
+#include "test_check.h"
 
 #include <algorithm>
 #include <chrono>
@@ -16,11 +17,6 @@
 namespace {
   using namespace files;
   using namespace std::chrono_literals;
-  void require(bool value, const char* message) {
-    if (!value) {
-      throw std::runtime_error(message);
-    }
-  }
   using MimeData = std::unordered_map<std::string, std::string>;
 
   // A private wire peer, without a compositor, desktop clipboard or mock UI.
@@ -152,7 +148,7 @@ namespace {
 
   public:
     ClipboardPeer() {
-      require(m_server != nullptr, "server display creation failed");
+      TEST_CHECK(m_server != nullptr);
       wl_global_create(m_server, &wl_data_device_manager_interface, 3, this, &bindManager);
       wl_global_create(
           m_server, &wl_seat_interface, 1, nullptr, [](wl_client* client, void*, std::uint32_t, std::uint32_t id) {
@@ -162,10 +158,10 @@ namespace {
           }
       );
       int fds[2];
-      require(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, fds) == 0, "socketpair failed");
-      require(wl_client_create(m_server, fds[0]) != nullptr, "server client creation failed");
+      TEST_CHECK(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, fds) == 0);
+      TEST_CHECK(wl_client_create(m_server, fds[0]) != nullptr);
       m_client = wl_display_connect_to_fd(fds[1]);
-      require(m_client != nullptr, "client display creation failed");
+      TEST_CHECK(m_client != nullptr);
       m_registry = wl_display_get_registry(m_client);
       static const wl_registry_listener registry{
           .global =
@@ -201,12 +197,12 @@ namespace {
       }
     }
     void pump() {
-      require(wl_display_flush(m_client) >= 0, "client connection failed");
+      TEST_CHECK(wl_display_flush(m_client) >= 0);
       wl_event_loop_dispatch(wl_display_get_event_loop(m_server), 0);
       wl_display_flush_clients(m_server);
       pollfd fd{wl_display_get_fd(m_client), POLLIN, 0};
       if (::poll(&fd, 1, 0) > 0) {
-        require(wl_display_dispatch(m_client) >= 0, "clipboard protocol error");
+        TEST_CHECK(wl_display_dispatch(m_client) >= 0);
       }
       while (g_main_context_iteration(nullptr, false)) {
       }
@@ -218,8 +214,8 @@ namespace {
         pollfd fd{wl_display_get_fd(m_client), POLLIN, 0};
         ::poll(&fd, 1, 1);
       }
-      require(condition(), "clipboard peer timed out");
-      require(m_invalidWrites == 0, "clipboard published without current focus/serial");
+      TEST_CHECK(condition());
+      TEST_CHECK(m_invalidWrites == 0);
     }
     WaylandTextClipboard& clipboard() { return *m_clipboard; }
     void blur() { m_focused = false; }
@@ -271,7 +267,7 @@ namespace {
         received = true;
       });
       until([&] { return received; });
-      require(selection.has_value(), "file selection was lost");
+      TEST_CHECK(selection.has_value());
       return *selection;
     }
     std::string read(const char* mime) {
@@ -279,7 +275,7 @@ namespace {
         return m_external.contains(mime) ? m_external.at(mime) : "";
       }
       int fds[2];
-      require(pipe2(fds, O_CLOEXEC | O_NONBLOCK) == 0, "selection pipe failed");
+      TEST_CHECK(pipe2(fds, O_CLOEXEC | O_NONBLOCK) == 0);
       wl_data_source_send_send(m_selection, mime, fds[1]);
       ::close(fds[1]);
       std::string bytes;
@@ -309,10 +305,10 @@ namespace {
     ClipboardPeer peer;
     auto& clipboard = peer.clipboard();
     const auto original = payload();
-    require(clipboard.setFiles(original), "cut could not be published");
+    TEST_CHECK(clipboard.setFiles(original));
     peer.until([&] { return peer.writes() == 1; });
     const auto selection = peer.capture();
-    require(clipboard.claimMove(selection.revision), "move claim failed");
+    TEST_CHECK(clipboard.claimMove(selection.revision));
     peer.blur();
     const std::vector<TransferResult> results{
         {original.locations[0], TransferOutcome::MOVED, {}},
@@ -320,34 +316,28 @@ namespace {
     };
     clipboard.finishMove(selection, results);
     peer.pump();
-    require(peer.writes() == 1, "cleanup wrote the clipboard without focus");
-    require(!clipboard.isCut(original.locations[0]), "completed source still appeared cut");
-    require(clipboard.isCut(original.locations[1]) == partial, "remaining cut state was lost");
-    require(clipboard.hasFiles() == partial, "deferred empty selection still enabled paste");
-    require(!clipboard.claimMove(selection.revision), "pending cleanup allowed a second move claim");
-    require(
-        peer.read(kGnomeFilesMime.data()) == *encodeFilePayload(original, kGnomeFilesMime),
-        "outgoing source mutated before reconciliation"
-    );
+    TEST_CHECK(peer.writes() == 1);
+    TEST_CHECK(!clipboard.isCut(original.locations[0]));
+    TEST_CHECK(clipboard.isCut(original.locations[1]) == partial);
+    TEST_CHECK(clipboard.hasFiles() == partial);
+    TEST_CHECK(!clipboard.claimMove(selection.revision));
+    TEST_CHECK(peer.read(kGnomeFilesMime.data()) == *encodeFilePayload(original, kGnomeFilesMime));
     peer.enter();
     peer.until([&] { return peer.writes() == 2; });
-    require(peer.writtenSerial() == peer.serial(), "cleanup reused the old input serial");
+    TEST_CHECK(peer.writtenSerial() == peer.serial());
     if (partial) {
       const auto current = peer.capture();
-      require(current.payload.locations == std::vector{original.locations[1]}, "cleanup retained completed sources");
-      require(current.revision != selection.revision, "cleanup reused an obsolete clipboard revision");
-      require(
-          peer.read(kGnomeFilesMime.data()) == *encodeFilePayload(current.payload, kGnomeFilesMime),
-          "wire payload did not match remaining sources"
-      );
+      TEST_CHECK(current.payload.locations == std::vector{original.locations[1]});
+      TEST_CHECK(current.revision != selection.revision);
+      TEST_CHECK(peer.read(kGnomeFilesMime.data()) == *encodeFilePayload(current.payload, kGnomeFilesMime));
     } else {
-      require(!clipboard.hasFiles(), "finished cut selection remained available");
-      require(peer.read(kGnomeFilesMime.data()).empty(), "finished cut source stayed selected");
+      TEST_CHECK(!clipboard.hasFiles());
+      TEST_CHECK(peer.read(kGnomeFilesMime.data()).empty());
     }
     clipboard.keyboardFocusEntered();
     clipboard.finishMove(selection, results);
     peer.pump();
-    require(peer.writes() == 2, "duplicate completion or focus event republished cleanup");
+    TEST_CHECK(peer.writes() == 2);
   }
   void testReplacement(bool duringEnter) {
     ClipboardPeer peer;
@@ -365,9 +355,9 @@ namespace {
       peer.replace({{"text/plain", "new external selection"}});
       peer.enter();
     }
-    require(peer.writes() == 1, "deferred cleanup replaced a newer clipboard owner");
-    require(peer.read("text/plain") == "new external selection", "new selection bytes changed");
-    require(!clipboard.isCut(original.locations[1]), "replacement retained obsolete cut styling");
+    TEST_CHECK(peer.writes() == 1);
+    TEST_CHECK(peer.read("text/plain") == "new external selection");
+    TEST_CHECK(!clipboard.isCut(original.locations[1]));
   }
   void testForeignOfferIdentity() {
     ClipboardPeer peer;
@@ -376,14 +366,14 @@ namespace {
     const MimeData bytes{{std::string(kGnomeFilesMime), *encodeFilePayload(original, kGnomeFilesMime)}};
     peer.replace(bytes);
     const auto selection = peer.capture();
-    require(clipboard.claimMove(selection.revision), "external move claim failed");
+    TEST_CHECK(clipboard.claimMove(selection.revision));
     peer.blur();
     clipboard.finishMove(selection, {{original.locations[0], TransferOutcome::MOVED, {}}});
     // Equal bytes do not establish identity: this is a fresh external intent.
     peer.replace(bytes);
     peer.enter();
-    require(peer.writes() == 0, "cleanup stole an indistinguishable fresh external offer");
-    require(peer.capture().payload.locations == original.locations, "new foreign file payload was pruned");
+    TEST_CHECK(peer.writes() == 0);
+    TEST_CHECK(peer.capture().payload.locations == original.locations);
   }
 } // namespace
 int main() {

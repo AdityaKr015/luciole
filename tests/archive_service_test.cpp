@@ -1,6 +1,7 @@
 #include "app/glib_poll_source.h"
 #include "operations/archive_service.h"
 #include "operations/archive_work.h"
+#include "test_check.h"
 
 #include <algorithm>
 #include <archive.h>
@@ -19,17 +20,12 @@
 namespace {
   namespace fs = std::filesystem;
   using namespace std::chrono_literals;
-  void require(bool value, const char* message) {
-    if (!value) {
-      throw std::runtime_error(message);
-    }
-  }
   struct Fixture {
     fs::path root;
     Fixture() {
       std::string pattern = "/tmp/noctalia-archive-test-XXXXXX";
       const char* path = ::mkdtemp(pattern.data());
-      require(path, "cannot create archive fixture");
+      TEST_CHECK(path);
       root = path;
       fs::create_directory(root / "tmp");
       ::setenv("TMPDIR", (root / "tmp").c_str(), 1);
@@ -44,11 +40,11 @@ namespace {
     void until(const std::function<bool()>& done) {
       const auto deadline = std::chrono::steady_clock::now() + 20s;
       while (!done()) {
-        require(std::chrono::steady_clock::now() < deadline, "archive operation timed out");
+        TEST_CHECK(std::chrono::steady_clock::now() < deadline);
         std::vector<pollfd> fds;
         auto start = m_source.addPollFds(fds);
         const int timeout = m_source.pollTimeoutMs();
-        require(::poll(fds.data(), fds.size(), timeout < 0 ? 20 : std::min(timeout, 20)) >= 0, "poll failed");
+        TEST_CHECK(::poll(fds.data(), fds.size(), timeout < 0 ? 20 : std::min(timeout, 20)) >= 0);
         m_source.dispatch(fds, start);
       }
     }
@@ -59,7 +55,7 @@ namespace {
   void write(const fs::path& path, const std::string& text) {
     std::ofstream out(path, std::ios::binary);
     out << text;
-    require(out.good(), "cannot write archive fixture");
+    TEST_CHECK(out.good());
   }
   std::string read(const fs::path& path) {
     std::ifstream file(path, std::ios::binary);
@@ -75,8 +71,8 @@ namespace {
     const std::unique_ptr<struct archive, decltype(&archive_write_free)> writer(
         archive_write_new(), &archive_write_free
     );
-    require(archive_write_set_format_pax_restricted(writer.get()) == ARCHIVE_OK, "cannot configure tar fixture");
-    require(archive_write_open_filename(writer.get(), path.c_str()) == ARCHIVE_OK, "cannot open tar fixture");
+    TEST_CHECK(archive_write_set_format_pax_restricted(writer.get()) == ARCHIVE_OK);
+    TEST_CHECK(archive_write_open_filename(writer.get(), path.c_str()) == ARCHIVE_OK);
     for (const auto& item : entries) {
       const std::unique_ptr<struct archive_entry, decltype(&archive_entry_free)> entry(
           archive_entry_new(), &archive_entry_free
@@ -94,16 +90,15 @@ namespace {
           archive_entry_set_hardlink(entry.get(), item.link.c_str());
         }
       }
-      require(archive_write_header(writer.get(), entry.get()) == ARCHIVE_OK, "cannot write hostile tar header");
+      TEST_CHECK(archive_write_header(writer.get(), entry.get()) == ARCHIVE_OK);
       if (item.kind == AE_IFREG && item.link.empty() && !item.data.empty()) {
-        require(
+        TEST_CHECK(
             archive_write_data(writer.get(), item.data.data(), item.data.size())
-                == static_cast<la_ssize_t>(item.data.size()),
-            "cannot write tar fixture data"
+            == static_cast<la_ssize_t>(item.data.size())
         );
       }
     }
-    require(archive_write_close(writer.get()) == ARCHIVE_OK, "cannot finish tar fixture");
+    TEST_CHECK(archive_write_close(writer.get()) == ARCHIVE_OK);
   }
   void wait(files::ArchiveService& service, Pump& pump) {
     pump.until([&] { return !service.busy(); });
@@ -114,77 +109,62 @@ namespace {
     write(src / "hello.txt", "archive content");
     write(src / "café\nnotes.txt", "Unicode and newline");
     fs::create_symlink("hello.txt", src / "link");
-    require(!files::archiveFormats().empty(), "archive backend has no write formats");
+    TEST_CHECK(!files::archiveFormats().empty());
     for (const auto& format : files::archiveFormats()) {
       const auto archive = fixture.root / ("roundtrip" + std::string(format.suffix));
       files::ArchiveService service;
-      require(service.compress({location(src)}, location(archive), format.format), "compression was not accepted");
+      TEST_CHECK(service.compress({location(src)}, location(archive), format.format));
       wait(service, pump);
       if (!service.error().empty()) {
         throw std::runtime_error(service.error());
       }
-      require(service.error().empty() && fs::exists(archive), "compression failed");
-      require(service.inspect(location(archive)), "inspection was not accepted");
+      TEST_CHECK(service.error().empty() && fs::exists(archive));
+      TEST_CHECK(service.inspect(location(archive)));
       wait(service, pump);
-      require(
-          service.error().empty() && service.catalog() && service.catalog()->entries.size() >= 5,
-          "archive contents missing"
-      );
+      TEST_CHECK(service.error().empty() && service.catalog() && service.catalog()->entries.size() >= 5);
       const auto dest = fixture.root / ("unpacked" + std::to_string(static_cast<int>(format.format)));
-      require(service.extract(location(archive), location(dest)), "extraction was not accepted");
+      TEST_CHECK(service.extract(location(archive), location(dest)));
       wait(service, pump);
-      require(
+      TEST_CHECK(
           service.error().empty()
-              && read(dest / "source/hello.txt") == "archive content"
-              && read(dest / "source/café\nnotes.txt") == "Unicode and newline"
-              && fs::is_directory(dest / "source/empty"),
-          "archive round-trip changed files"
+          && read(dest / "source/hello.txt") == "archive content"
+          && read(dest / "source/café\nnotes.txt") == "Unicode and newline"
+          && fs::is_directory(dest / "source/empty")
       );
-      require(
-          fs::is_symlink(dest / "source/link") && fs::read_symlink(dest / "source/link") == "hello.txt",
-          "safe symlink was not retained"
-      );
-      require(service.openMember("source/hello.txt"), "member open was not accepted");
+      TEST_CHECK(fs::is_symlink(dest / "source/link") && fs::read_symlink(dest / "source/link") == "hello.txt");
+      TEST_CHECK(service.openMember("source/hello.txt"));
       wait(service, pump);
       const auto opened = service.takeOpenedFile();
-      require(
-          opened && read(*opened->nativePath()) == "archive content", "member open did not materialize its own data"
-      );
+      TEST_CHECK(opened && read(*opened->nativePath()) == "archive content");
       const auto temporary = *opened->nativePath();
       service.shutdown();
       wait(service, pump);
-      require(!fs::exists(temporary), "temporary open files survived shutdown");
+      TEST_CHECK(!fs::exists(temporary));
     }
   }
   void testConflicts(const Fixture& fixture, Pump& pump) {
     const auto source = fixture.root / "conflict.txt", archive = fixture.root / "conflict.zip";
     write(source, "first");
     files::ArchiveService service;
-    require(
-        service.compress({location(source)}, location(archive), files::ArchiveFormat::ZIP),
-        "cannot start collision fixture"
-    );
+    TEST_CHECK(service.compress({location(source)}, location(archive), files::ArchiveFormat::ZIP));
     wait(service, pump);
     const auto original = read(archive);
     write(source, "second content");
     for (const auto choice :
          {files::TransferConflictChoice::SKIP, files::TransferConflictChoice::KeepBoth,
           files::TransferConflictChoice::REPLACE}) {
-      require(
-          service.compress({location(source)}, location(archive), files::ArchiveFormat::ZIP),
-          "cannot retry archive publication"
-      );
+      TEST_CHECK(service.compress({location(source)}, location(archive), files::ArchiveFormat::ZIP));
       pump.until([&] { return service.conflict().has_value(); });
       const auto conflict = service.conflict();
-      require(service.resolve(conflict->id, choice), "archive conflict decision rejected");
+      TEST_CHECK(service.resolve(conflict->id, choice));
       wait(service, pump);
       if (choice != files::TransferConflictChoice::REPLACE) {
-        require(read(archive) == original, "unapproved conflict overwrote archive");
+        TEST_CHECK(read(archive) == original);
       } else {
-        require(service.error().empty() && read(archive) != original, "approved replacement failed");
+        TEST_CHECK(service.error().empty() && read(archive) != original);
       }
     }
-    require(fs::exists(fixture.root / "conflict (1).zip"), "keep-both naming was not reused");
+    TEST_CHECK(fs::exists(fixture.root / "conflict (1).zip"));
   }
   void testHostile(const Fixture& fixture, Pump& pump) {
     const std::vector<std::vector<Entry>> cases{
@@ -207,11 +187,11 @@ namespace {
                  dest = fixture.root / ("rejected" + std::to_string(index++));
       tar(source, entries);
       files::ArchiveService service;
-      require(service.extract(location(source), location(dest)), "hostile fixture was not attempted");
+      TEST_CHECK(service.extract(location(source), location(dest)));
       wait(service, pump);
-      require(!service.error().empty() && !fs::exists(dest), "hostile archive changed its destination");
+      TEST_CHECK(!service.error().empty() && !fs::exists(dest));
     }
-    require(!fs::exists(fixture.root / "escaped"), "archive traversed the destination boundary");
+    TEST_CHECK(!fs::exists(fixture.root / "escaped"));
   }
   void testLimitsAndTruncation(const Fixture& fixture, Pump& pump) {
     const auto source = fixture.root / "limits.tar";
@@ -225,18 +205,18 @@ namespace {
     for (std::size_t i = 0; i < limits.size(); ++i) {
       files::ArchiveService service(limits[i]);
       const auto dest = fixture.root / ("limited" + std::to_string(i));
-      require(service.extract(location(source), location(dest)), "limit fixture was not attempted");
+      TEST_CHECK(service.extract(location(source), location(dest)));
       wait(service, pump);
-      require(!service.error().empty() && !fs::exists(dest), "archive bypassed a resource limit");
+      TEST_CHECK(!service.error().empty() && !fs::exists(dest));
     }
     const auto truncated = fixture.root / "truncated.tar";
     fs::copy_file(source, truncated);
     fs::resize_file(truncated, 515);
     files::ArchiveService service;
     const auto dest = fixture.root / "truncated-output";
-    require(service.extract(location(truncated), location(dest)), "truncated archive not attempted");
+    TEST_CHECK(service.extract(location(truncated), location(dest)));
     wait(service, pump);
-    require(!service.error().empty() && !fs::exists(dest), "truncated data was published");
+    TEST_CHECK(!service.error().empty() && !fs::exists(dest));
   }
   void testLinksAndSelection(const Fixture& fixture, Pump& pump) {
     const auto source = fixture.root / "links.tar";
@@ -245,37 +225,24 @@ namespace {
          {"alias", {}, "dir/real", AE_IFREG},
          {"safe", {}, "dir/../dir/real", AE_IFLNK}});
     files::ArchiveService service;
-    require(service.inspect(location(source)), "cannot inspect linked fixture");
+    TEST_CHECK(service.inspect(location(source)));
     wait(service, pump);
-    require(service.error().empty(), "valid linked fixture rejected");
+    TEST_CHECK(service.error().empty());
     const auto dest = fixture.root / "selected";
-    require(service.extract(location(source), location(dest), {"alias"}), "selected link extraction not attempted");
+    TEST_CHECK(service.extract(location(source), location(dest), {"alias"}));
     wait(service, pump);
-    require(
-        service.error().empty() && read(dest / "alias") == "linked data" && !fs::exists(dest / "dir/real"),
-        "selected hard link did not materialize its own content"
-    );
+    TEST_CHECK(service.error().empty() && read(dest / "alias") == "linked data" && !fs::exists(dest / "dir/real"));
     struct stat info{};
-    require(
-        ::stat((dest / "alias").c_str(), &info) == 0 && (info.st_mode & S_ISUID) == 0 && info.st_uid == ::getuid(),
-        "privileged archive attributes were restored"
+    TEST_CHECK(
+        ::stat((dest / "alias").c_str(), &info) == 0 && (info.st_mode & S_ISUID) == 0 && info.st_uid == ::getuid()
     );
     write(source, read(source) + "changed");
-    require(
-        service.extract(location(source), location(fixture.root / "changed"), {"alias"}),
-        "changed fixture not attempted"
-    );
+    TEST_CHECK(service.extract(location(source), location(fixture.root / "changed"), {"alias"}));
     wait(service, pump);
-    require(!service.error().empty() && !fs::exists(fixture.root / "changed"), "changed catalog authorized extraction");
-    require(
-        service.extract(location(source), location(fixture.root / "changed-all")),
-        "changed whole-archive fixture not attempted"
-    );
+    TEST_CHECK(!service.error().empty() && !fs::exists(fixture.root / "changed"));
+    TEST_CHECK(service.extract(location(source), location(fixture.root / "changed-all")));
     wait(service, pump);
-    require(
-        !service.error().empty() && !fs::exists(fixture.root / "changed-all"),
-        "whole-archive extraction ignored a changed catalog"
-    );
+    TEST_CHECK(!service.error().empty() && !fs::exists(fixture.root / "changed-all"));
   }
   void testHardlinkOutputLimit(const Fixture& fixture, Pump& pump) {
     const auto path = fixture.root / "link-limit.tar";
@@ -283,24 +250,21 @@ namespace {
     files::ArchiveLimits limits;
     limits.maxExpandedBytes = 9;
     files::ArchiveService service(limits);
-    require(service.extract(location(path), location(fixture.root / "link-limit")), "hardlink limit did not start");
+    TEST_CHECK(service.extract(location(path), location(fixture.root / "link-limit")));
     wait(service, pump);
-    require(
-        !service.error().empty() && !fs::exists(fixture.root / "link-limit"), "hardlink aliases bypassed output limit"
-    );
+    TEST_CHECK(!service.error().empty() && !fs::exists(fixture.root / "link-limit"));
   }
   void testEncryptedAndWriteFailure(const Fixture& fixture, Pump& pump) {
     const auto path = fixture.root / "encrypted.zip";
     const std::unique_ptr<struct archive, decltype(&archive_write_free)> writer(
         archive_write_new(), &archive_write_free
     );
-    require(
+    TEST_CHECK(
         archive_write_set_format_zip(writer.get()) == ARCHIVE_OK
-            && archive_write_set_options(writer.get(), "zip:encryption=aes256") == ARCHIVE_OK
-            && archive_write_set_passphrase(writer.get(), "test password") == ARCHIVE_OK,
-        "cannot configure encrypted fixture"
+        && archive_write_set_options(writer.get(), "zip:encryption=aes256") == ARCHIVE_OK
+        && archive_write_set_passphrase(writer.get(), "test password") == ARCHIVE_OK
     );
-    require(archive_write_open_filename(writer.get(), path.c_str()) == ARCHIVE_OK, "cannot open encrypted fixture");
+    TEST_CHECK(archive_write_open_filename(writer.get(), path.c_str()) == ARCHIVE_OK);
     const std::unique_ptr<struct archive_entry, decltype(&archive_entry_free)> entry(
         archive_entry_new(), &archive_entry_free
     );
@@ -308,29 +272,20 @@ namespace {
     archive_entry_set_filetype(entry.get(), AE_IFREG);
     archive_entry_set_perm(entry.get(), 0600);
     archive_entry_set_size(entry.get(), 6);
-    require(
+    TEST_CHECK(
         archive_write_header(writer.get(), entry.get()) == ARCHIVE_OK
-            && archive_write_data(writer.get(), "secret", 6) == 6
-            && archive_write_close(writer.get()) == ARCHIVE_OK,
-        "cannot create encrypted fixture"
+        && archive_write_data(writer.get(), "secret", 6) == 6
+        && archive_write_close(writer.get()) == ARCHIVE_OK
     );
     files::ArchiveService service;
-    require(
-        service.extract(location(path), location(fixture.root / "encrypted-output")),
-        "encrypted extraction did not start"
-    );
+    TEST_CHECK(service.extract(location(path), location(fixture.root / "encrypted-output")));
     wait(service, pump);
-    require(
-        !service.error().empty() && !fs::exists(fixture.root / "encrypted-output"), "encrypted input published output"
-    );
+    TEST_CHECK(!service.error().empty() && !fs::exists(fixture.root / "encrypted-output"));
     const auto file = fixture.root / "not-a-folder";
     write(file, "untouched");
-    require(
-        service.compress({location(file)}, location(file / "failure.tar"), files::ArchiveFormat::TAR),
-        "invalid destination did not reach worker"
-    );
+    TEST_CHECK(service.compress({location(file)}, location(file / "failure.tar"), files::ArchiveFormat::TAR));
     wait(service, pump);
-    require(!service.error().empty() && read(file) == "untouched", "publication failure changed existing destination");
+    TEST_CHECK(!service.error().empty() && read(file) == "untouched");
   }
   int boundedWriteFailure() {
     Fixture fixture;
@@ -338,7 +293,7 @@ namespace {
     write(source, std::string(8192, 'a'));
     std::signal(SIGXFSZ, SIG_IGN);
     const rlimit limit{1024, 1024};
-    require(::setrlimit(RLIMIT_FSIZE, &limit) == 0, "cannot limit fixture output");
+    TEST_CHECK(::setrlimit(RLIMIT_FSIZE, &limit) == 0);
     files::archive_work::Progress progress;
     files::GioPtr<GCancellable> cancel(g_cancellable_new());
     bool failed = false;
@@ -350,33 +305,24 @@ namespace {
     } catch (const std::exception&) {
       failed = true;
     }
-    require(
-        failed && !fs::exists(fixture.root / "out.tar") && fs::is_empty(fixture.root / "tmp"),
-        "bounded output failure leaked or published data"
-    );
+    TEST_CHECK(failed && !fs::exists(fixture.root / "out.tar") && fs::is_empty(fixture.root / "tmp"));
     return 0;
   }
   void testCancelAndDestruction(const Fixture& fixture, Pump& pump) {
     const auto source = fixture.root / "cancel.txt", output = fixture.root / "cancel.zip";
     write(source, std::string(1024 * 1024, 'x'));
     files::ArchiveService service;
-    require(
-        service.compress({location(source)}, location(output), files::ArchiveFormat::ZIP),
-        "cancel fixture did not start"
-    );
+    TEST_CHECK(service.compress({location(source)}, location(output), files::ArchiveFormat::ZIP));
     service.cancel();
     wait(service, pump);
-    require(!fs::exists(output) && !service.error().empty(), "cancelled compression was published");
+    TEST_CHECK(!fs::exists(output) && !service.error().empty());
     write(output, "keep me");
     auto owner = std::make_unique<files::ArchiveService>();
-    require(
-        owner->compress({location(source)}, location(output), files::ArchiveFormat::ZIP),
-        "destruction fixture did not start"
-    );
+    TEST_CHECK(owner->compress({location(source)}, location(output), files::ArchiveFormat::ZIP));
     pump.until([&] { return owner->conflict().has_value(); });
     owner.reset();
     pump.until([&] { return fs::is_empty(fixture.root / "tmp"); });
-    require(read(output) == "keep me", "destroying a pending archive job changed its destination");
+    TEST_CHECK(read(output) == "keep me");
   }
 } // namespace
 int main(int argc, char** argv) {
@@ -397,8 +343,8 @@ int main(int argc, char** argv) {
     files::GioPtr<GSubprocess> child(
         g_subprocess_new(G_SUBPROCESS_FLAGS_NONE, nullptr, "/proc/self/exe", "--bounded-write-failure", nullptr)
     );
-    require(child && g_subprocess_wait_check(child.get(), nullptr, nullptr), "bounded output subprocess failed");
-    require(fs::is_empty(fixture.root / "tmp"), "archive staging leaked");
+    TEST_CHECK(child && g_subprocess_wait_check(child.get(), nullptr, nullptr));
+    TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
     std::println("archive checks passed");
     return 0;
   } catch (const std::exception& error) {

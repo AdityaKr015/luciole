@@ -296,11 +296,11 @@ if build_tests
   ))
   input_test = executable('input-lifetime-test', 'tests/input_lifetime_test.cpp',
     protocol_sources, protocol_headers, objects: input_objects,
-    include_directories: include_directories('src', '.'), dependencies: ui_dependencies)
+    include_directories: include_directories('src', '.'), dependencies: ui_dependencies, override_options: ['b_ndebug=false'])
   test('input-lifetime', input_test)
-  tab_test = executable('tab-workspace-test', 'tests/tab_workspace_test.cpp', 'src/browser/tab_workspace.cpp', include_directories: include_directories('src'))
+  tab_test = executable('tab-workspace-test', 'tests/tab_workspace_test.cpp', 'src/browser/tab_workspace.cpp', include_directories: include_directories('src'), override_options: ['b_ndebug=false'])
   test('tab-workspace', tab_test)
-  archive_test = executable('archive-service-test', 'tests/archive_service_test.cpp', dependencies: archive_service)
+  archive_test = executable('archive-service-test', 'tests/archive_service_test.cpp', dependencies: archive_service, override_options: ['b_ndebug=false'])
   test('archive-service', archive_test, timeout: 90, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   thumbnail_test = executable('thumbnail-test',
     'tests/thumbnail_test.cpp',
@@ -314,7 +314,7 @@ if build_tests
     'src/render/core/image_decoder.cpp',
     'src/render/core/image_resize.cpp',
     'src/render/core/stb_image_resize_impl.cpp',
-    dependencies: [filesystem_service, settings_service, gdk_pixbuf, webp, dependency('libpng'), dependency('nlohmann_json'), dependency('threads')],
+    dependencies: [filesystem_service, settings_service, gdk_pixbuf, webp, dependency('libpng'), dependency('nlohmann_json'), dependency('threads')], override_options: ['b_ndebug=false']
   )
   test('thumbnail', thumbnail_test, timeout: 90, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   preview_test = executable('preview-service-test', 'tests/preview_service_test.cpp',
@@ -325,28 +325,28 @@ if build_tests
       'src/browser/thumbnail_provider.cpp', 'src/browser/thumbnail_worker.cpp',
       'src/browser/thumbnail_service.cpp', 'src/render/core/image_orientation.cpp',
       'src/render/core/image_decoder.cpp', 'src/render/core/image_resize.cpp', 'src/render/core/stb_image_resize_impl.cpp')),
-    dependencies: [filesystem_service, settings_service, gdk_pixbuf, webp, dependency('libpng'), dependency('nlohmann_json'), dependency('threads')])
+    dependencies: [filesystem_service, settings_service, gdk_pixbuf, webp, dependency('libpng'), dependency('nlohmann_json'), dependency('threads')], override_options: ['b_ndebug=false'])
   test('preview-service', preview_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   python = import('python').find_installation('python3')
-  clipboard_test = executable('clipboard-test', 'tests/clipboard_test.cpp', 'src/platform/text_clipboard.cpp', 'src/platform/file_payload.cpp', dependencies: [filesystem_service, dependency('wayland-client'), dependency('wayland-server')])
+  clipboard_test = executable('clipboard-test', 'tests/clipboard_test.cpp', 'src/platform/text_clipboard.cpp', 'src/platform/file_payload.cpp', dependencies: [filesystem_service, dependency('wayland-client'), dependency('wayland-server')], override_options: ['b_ndebug=false'])
   test('clipboard', clipboard_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  payload_test = executable('file-payload-test', 'tests/file_payload_test.cpp', 'src/platform/file_payload.cpp', dependencies: filesystem_service)
+  payload_test = executable('file-payload-test', 'tests/file_payload_test.cpp', 'src/platform/file_payload.cpp', dependencies: filesystem_service, override_options: ['b_ndebug=false'])
   test('file-payload', payload_test, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  actions_test = executable('browser-actions-test', 'tests/browser_actions_test.cpp', dependencies: browser_model)
+  actions_test = executable('browser-actions-test', 'tests/browser_actions_test.cpp', dependencies: browser_model, override_options: ['b_ndebug=false'])
   test('browser-actions', actions_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  empty_trash_test = executable('empty-trash-service-test', 'tests/empty_trash_service_test.cpp', dependencies: trash_service)
+  empty_trash_test = executable('empty-trash-service-test', 'tests/empty_trash_service_test.cpp', dependencies: trash_service, override_options: ['b_ndebug=false'])
   test('empty-trash-service', empty_trash_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  trash_browse_test = executable('trash-browse-test', 'tests/trash_browse_test.cpp', dependencies: browser_model)
+  trash_browse_test = executable('trash-browse-test', 'tests/trash_browse_test.cpp', dependencies: browser_model, override_options: ['b_ndebug=false'])
   test('trash-browse', trash_browse_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  trash_test = executable('trash-service-test', 'tests/trash_service_test.cpp', dependencies: [trash_service, browser_model])
+  trash_test = executable('trash-service-test', 'tests/trash_service_test.cpp', dependencies: [trash_service, browser_model], override_options: ['b_ndebug=false'])
   test('trash-service', trash_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  create_test = executable('create-service-test', 'tests/create_service_test.cpp', dependencies: [create_service, browser_model])
+  create_test = executable('create-service-test', 'tests/create_service_test.cpp', dependencies: [create_service, browser_model], override_options: ['b_ndebug=false'])
   test('create-service', create_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  rename_test = executable('rename-service-test', 'tests/rename_service_test.cpp', dependencies: [rename_service, browser_model])
+  rename_test = executable('rename-service-test', 'tests/rename_service_test.cpp', dependencies: [rename_service, browser_model], override_options: ['b_ndebug=false'])
   test('rename-service', rename_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  transfer_test = executable('transfer-service-test', 'tests/transfer_service_test.cpp', dependencies: transfer_service)
+  transfer_test = executable('transfer-service-test', 'tests/transfer_service_test.cpp', dependencies: transfer_service, override_options: ['b_ndebug=false'])
   test('transfer-service', transfer_test, timeout: 90, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  places_test = executable('places-test', 'tests/places_test.cpp', dependencies: places_service)
+  places_test = executable('places-test', 'tests/places_test.cpp', dependencies: places_service, override_options: ['b_ndebug=false'])
   test('places', places_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   icon_test = executable('file-icon-test',
     'tests/file_icon_test.cpp',
@@ -356,44 +356,44 @@ if build_tests
     'src/render/core/image_file_loader.cpp',
     'src/render/core/image_decoder.cpp',
     'src/core/log.cpp',
-    dependencies: ui_dependencies + [filesystem_service],
+    dependencies: ui_dependencies + [filesystem_service], override_options: ['b_ndebug=false']
   )
   test('file-icon', icon_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   view_writer_test = executable('view-preference-writer-test',
     'tests/view_preference_writer_test.cpp',
     'src/config/view_preference_writer.cpp',
-    dependencies: [settings_service, filesystem_service],
+    dependencies: [settings_service, filesystem_service], override_options: ['b_ndebug=false']
   )
   test('view-preference-writer', view_writer_test, timeout: 30, env: ['G_DEBUG=fatal-warnings'])
   directory_test = executable('directory-session-test',
     'tests/directory_session_test.cpp',
     include_directories: include_directories('src'),
-    dependencies: filesystem_service,
+    dependencies: filesystem_service, override_options: ['b_ndebug=false']
   )
   test('directory-session', directory_test, timeout: 30,
     env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],
   )
   browser_test = executable('directory-model-test',
     'tests/directory_model_test.cpp',
-    dependencies: browser_model,
+    dependencies: browser_model, override_options: ['b_ndebug=false']
   )
   test('directory-model', browser_test, timeout: 30,
     env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],
   )
   file_launcher_test = executable('file-launcher-test',
     'tests/file_launcher_test.cpp', 'src/platform/file_launcher.cpp', 'src/core/log.cpp',
-    dependencies: filesystem_service,
+    dependencies: filesystem_service, override_options: ['b_ndebug=false']
   )
   test('file-launcher', python,
     args: [files('tests/file_launcher_test.py'), file_launcher_test], timeout: 30,
   )
   controller_test = executable('browser-controller-test',
     'tests/browser_controller_test.cpp',
-    dependencies: browser_model,
+    dependencies: browser_model, override_options: ['b_ndebug=false']
   )
   miller_test = executable('miller-columns-test',
     'tests/miller_columns_test.cpp',
-    dependencies: browser_model,
+    dependencies: browser_model, override_options: ['b_ndebug=false']
   )
   test('miller-columns', miller_test, timeout: 30,
     env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],
@@ -403,26 +403,26 @@ if build_tests
   )
   navigation_test = executable('navigation-services-test',
     'tests/navigation_services_test.cpp', 'src/platform/terminal_launcher.cpp',
-    dependencies: browser_model,
+    dependencies: browser_model, override_options: ['b_ndebug=false']
   )
   test('navigation-services', navigation_test, timeout: 30,
     env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],
   )
   settings_test = executable('settings-test',
     'tests/settings_test.cpp',
-    dependencies: [settings_service, browser_model],
+    dependencies: [settings_service, browser_model], override_options: ['b_ndebug=false']
   )
   test('settings', settings_test, timeout: 30,
     env: ['G_DEBUG=fatal-warnings'],
   )
   atomic_test = executable('atomic-file-test',
     'tests/atomic_file_test.cpp',
-    dependencies: settings_service,
+    dependencies: settings_service, override_options: ['b_ndebug=false']
   )
   test('atomic-file', atomic_test, timeout: 30)
   state_test = executable('state-store-test',
     'tests/state_store_test.cpp',
-    dependencies: state_service,
+    dependencies: state_service, override_options: ['b_ndebug=false']
   )
   test('state-store', state_test, timeout: 30,
     env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],

@@ -7,6 +7,7 @@
 #include "render/core/image_decoder.h"
 #include "render/core/image_orientation.h"
 #include "render/core/image_resize.h"
+#include "test_check.h"
 
 #include <algorithm>
 #include <chrono>
@@ -25,21 +26,16 @@ namespace {
   namespace fs = std::filesystem;
   using namespace std::chrono_literals;
   using files::GioPtr;
-  void require(bool condition, const char* message) {
-    if (!condition) {
-      throw std::runtime_error(message);
-    }
-  }
   class Pump {
   public:
     void until(const std::function<bool()>& done) {
       const auto limit = std::chrono::steady_clock::now() + 20s;
       while (!done()) {
-        require(std::chrono::steady_clock::now() < limit, "thumbnail request timed out");
+        TEST_CHECK(std::chrono::steady_clock::now() < limit);
         std::vector<pollfd> fds;
         const auto start = m_source.addPollFds(fds);
         const int requested = m_source.pollTimeoutMs();
-        require(::poll(fds.data(), fds.size(), requested < 0 ? 20 : std::min(requested, 20)) >= 0, "poll failed");
+        TEST_CHECK(::poll(fds.data(), fds.size(), requested < 0 ? 20 : std::min(requested, 20)) >= 0);
         m_source.dispatch(fds, start);
       }
     }
@@ -55,7 +51,7 @@ namespace {
     fs::path root;
     Fixture() {
       const files::GString temporary(g_dir_make_tmp("noctalia-thumbnails-test-XXXXXX", nullptr));
-      require(temporary != nullptr, "cannot create thumbnail fixture");
+      TEST_CHECK(temporary != nullptr);
       root = temporary.get();
       fs::create_directory(root / "home");
       ::setenv("HOME", (root / "home").c_str(), 1);
@@ -90,18 +86,18 @@ namespace {
   void write(const fs::path& path, std::span<const std::uint8_t> bytes) {
     std::ofstream stream(path, std::ios::binary);
     stream.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-    require(static_cast<bool>(stream), "cannot write image fixture");
+    TEST_CHECK(static_cast<bool>(stream));
   }
   std::vector<std::uint8_t> png(const LoadedImageFile& image) {
     auto bytes = files::writeThumbnailPng({.image = image, .text = {}});
-    require(bytes.has_value(), "cannot encode PNG fixture");
+    TEST_CHECK(bytes.has_value());
     return std::move(*bytes);
   }
   files::DirectoryEntry source(const fs::path& path, Pump& pump) {
     files::DirectorySession session;
     session.open(files::Location::fromPath(path.parent_path().native()));
     pump.until([&] { return session.snapshot().status != files::DirectoryStatus::LOADING; });
-    require(session.snapshot().status == files::DirectoryStatus::READY, "cannot list thumbnail fixture");
+    TEST_CHECK(session.snapshot().status == files::DirectoryStatus::READY);
     for (const auto& entry : session.snapshot().entries) {
       if (entry.name == path.filename().native()) {
         return entry;
@@ -114,50 +110,35 @@ namespace {
     const auto original = picture();
     auto data = png(original);
     auto decoded = files::decodeThumbnail(data, 128, 1000000, cancel.get());
-    require(
-        decoded && decoded->rgba == original.rgba && decoded->width == 32 && decoded->height == 16,
-        "PNG lost alpha, aspect ratio or original pixels"
-    );
-    require(!files::decodeThumbnail(data, 128, 100, cancel.get()), "oversized source bypassed pixel limits");
+    TEST_CHECK(decoded && decoded->rgba == original.rgba && decoded->width == 32 && decoded->height == 16);
+    TEST_CHECK(!files::decodeThumbnail(data, 128, 100, cancel.get()));
     auto small = files::decodeThumbnail(data, 8, 1000000, cancel.get());
-    require(
-        small && small->width == 8 && small->height == 4 && small->rgba[3] >= 127 && small->rgba[3] <= 129,
-        "downscaling lost aspect or transparency"
-    );
+    TEST_CHECK(small && small->width == 8 && small->height == 4 && small->rgba[3] >= 127 && small->rgba[3] <= 129);
     // Exercise the full-size output allowed by system loaders, independently of their scaling support.
     const GioPtr<GdkPixbuf> fullSize(gdk_pixbuf_new(GDK_COLORSPACE_RGB, true, 8, 1600, 900));
     gdk_pixbuf_fill(fullSize.get(), 0x20408080U);
     auto fitted = files::fitThumbnailPixels(fullSize.get(), 512, 2'000'000);
-    require(
-        fitted && fitted->width == 512 && fitted->height == 288 && fitted->rgba[0] == 32 && fitted->rgba[3] == 128,
-        "full-size decoder output was not bounded with alpha and aspect preserved"
+    TEST_CHECK(
+        fitted && fitted->width == 512 && fitted->height == 288 && fitted->rgba[0] == 32 && fitted->rgba[3] == 128
     );
-    require(
-        !files::fitThumbnailPixels(fullSize.get(), 512, 1'000'000), "post-decode scaling bypassed source pixel limits"
-    );
+    TEST_CHECK(!files::fitThumbnailPixels(fullSize.get(), 512, 1'000'000));
     const std::string svg =
         "<svg xmlns='http://www.w3.org/2000/svg'><image href='https://invalid.example/a.png'/></svg>";
-    require(
-        !files::decodeThumbnail(
-            {reinterpret_cast<const std::uint8_t*>(svg.data()), svg.size()}, 128, 1000000, cancel.get()
-        ),
-        "SVG resolved external resources through the raster decoder"
-    );
+    TEST_CHECK(!files::decodeThumbnail(
+        {reinterpret_cast<const std::uint8_t*>(svg.data()), svg.size()}, 128, 1000000, cancel.get()
+    ));
     std::uint8_t* webp = nullptr;
     const auto length =
         WebPEncodeLosslessRGBA(original.rgba.data(), original.width, original.height, original.width * 4, &webp);
-    require(length > 0, "cannot create WebP fixture");
+    TEST_CHECK(length > 0);
     decoded = files::decodeThumbnail({webp, length}, 128, 1000000, cancel.get());
     WebPFree(webp);
-    require(decoded && decoded->rgba == original.rgba, "WebP lost transparency or pixels");
+    TEST_CHECK(decoded && decoded->rgba == original.rgba);
     const GioPtr<GdkPixbuf> pixbuf(gdk_pixbuf_new(GDK_COLORSPACE_RGB, false, 8, 32, 16));
     gdk_pixbuf_fill(pixbuf.get(), 0xff3020ffU);
     gchar* jpeg = nullptr;
     gsize jpegSize = 0;
-    require(
-        gdk_pixbuf_save_to_buffer(pixbuf.get(), &jpeg, &jpegSize, "jpeg", nullptr, "quality", "100", nullptr),
-        "JPEG encoder unavailable"
-    );
+    TEST_CHECK(gdk_pixbuf_save_to_buffer(pixbuf.get(), &jpeg, &jpegSize, "jpeg", nullptr, "quality", "100", nullptr));
     std::vector<std::uint8_t> oriented(
         reinterpret_cast<std::uint8_t*>(jpeg), reinterpret_cast<std::uint8_t*>(jpeg) + jpegSize
     );
@@ -166,27 +147,23 @@ namespace {
                                             0,    0x12, 1, 3,  0,   1,   0,   0,   0, 6, 0,   0,   0,  0, 0, 0, 0};
     oriented.insert(oriented.begin() + 2, exif.begin(), exif.end());
     decoded = files::decodeThumbnail(oriented, 128, 1000000, cancel.get());
-    require(decoded && decoded->width == 16 && decoded->height == 32, "JPEG EXIF orientation was not applied");
-    require(!files::readThumbnailPng(std::span(data).first(20), 128), "truncated PNG was accepted");
+    TEST_CHECK(decoded && decoded->width == 16 && decoded->height == 32);
+    TEST_CHECK(!files::readThumbnailPng(std::span(data).first(20), 128));
     data[20] ^= 1;
-    require(!files::readThumbnailPng(data, 128), "corrupt PNG CRC was ignored");
+    TEST_CHECK(!files::readThumbnailPng(data, 128));
     g_cancellable_cancel(cancel.get());
-    require(!files::decodeThumbnail(png(original), 128, 1000000, cancel.get()), "cancelled decode completed");
+    TEST_CHECK(!files::decodeThumbnail(png(original), 128, 1000000, cancel.get()));
   }
   void testRasterFormats() {
     const GioPtr<GCancellable> cancel(g_cancellable_new());
     const std::vector<std::uint8_t> gif{'G', 'I',  'F', '8', '9', 'a', 1, 0, 1, 0, 0x80, 0, 0, 0,    0, 0, 255, 255,
                                         255, 0x2c, 0,   0,   0,   0,   1, 0, 1, 0, 0,    2, 2, 0x44, 1, 0, 0x3b};
     auto decoded = files::decodeThumbnail(gif, 128, 1000000, cancel.get());
-    require(
-        decoded && decoded->width == 1 && decoded->height == 1 && decoded->rgba[3] == 255,
-        "raster decoder did not decode the first GIF frame"
-    );
+    TEST_CHECK(decoded && decoded->width == 1 && decoded->height == 1 && decoded->rgba[3] == 255);
     const std::vector<std::uint8_t> pnm{'P', '6', '\n', '2', ' ', '1', '\n', '2', '5', '5', '\n', 255, 0, 0, 0, 255, 0};
     decoded = files::decodeThumbnail(pnm, 128, 1000000, cancel.get());
-    require(
-        decoded && decoded->width == 2 && decoded->height == 1 && decoded->rgba[0] == 255 && decoded->rgba[5] == 255,
-        "raster decoder lost PNM pixels"
+    TEST_CHECK(
+        decoded && decoded->width == 2 && decoded->height == 1 && decoded->rgba[0] == 255 && decoded->rgba[5] == 255
     );
     std::vector<std::uint8_t> bmp(62);
     const auto put32 = [](auto& data, std::size_t offset, std::uint32_t value) {
@@ -206,10 +183,7 @@ namespace {
     bmp[56] = 255;
     bmp[58] = 255;
     decoded = files::decodeThumbnail(bmp, 128, 1000000, cancel.get());
-    require(
-        decoded && decoded->width == 2 && decoded->rgba[0] == 255 && decoded->rgba[5] == 255,
-        "raster decoder lost BMP channel order"
-    );
+    TEST_CHECK(decoded && decoded->width == 2 && decoded->rgba[0] == 255 && decoded->rgba[5] == 255);
     const auto pngData = png(picture());
     std::vector<std::uint8_t> ico(22);
     ico[2] = 1;
@@ -222,7 +196,7 @@ namespace {
     put32(ico, 18, 22);
     ico.insert(ico.end(), pngData.begin(), pngData.end());
     decoded = files::decodeThumbnail(ico, 128, 1000000, cancel.get());
-    require(decoded && decoded->rgba == picture().rgba, "ICO loader lost embedded PNG alpha");
+    TEST_CHECK(decoded && decoded->rgba == picture().rgba);
     // Verify both PNG-backed and 32-bit DIB icon transparency.
     ico.resize(22);
     ico[6] = 2;
@@ -240,38 +214,34 @@ namespace {
     dib[47] = 255;
     ico.insert(ico.end(), dib.begin(), dib.end());
     decoded = files::decodeThumbnail(ico, 128, 1000000, cancel.get());
-    require(
+    TEST_CHECK(
         decoded
-            && decoded->width == 2
-            && decoded->height == 1
-            && decoded->rgba[0] == 255
-            && decoded->rgba[3] == 128
-            && decoded->rgba[5] == 255,
-        "ICO DIB loader lost alpha or channel order"
+        && decoded->width == 2
+        && decoded->height == 1
+        && decoded->rgba[0] == 255
+        && decoded->rgba[3] == 128
+        && decoded->rgba[5] == 255
     );
-    require(!files::decodeThumbnail(ico, 128, 1, cancel.get()), "ICO bypassed source pixel limits");
+    TEST_CHECK(!files::decodeThumbnail(ico, 128, 1, cancel.get()));
     put32(ico, 26, 0x80000000U);
-    require(!files::decodeThumbnail(ico, 128, 1000000, cancel.get()), "ICO accepted invalid signed dimensions");
+    TEST_CHECK(!files::decodeThumbnail(ico, 128, 1000000, cancel.get()));
     const std::array<std::uint8_t, 8> transparentRedBlue{255, 0, 0, 0, 0, 0, 255, 255};
     const auto resized = resizeToRgba(transparentRedBlue.data(), 2, 1, ResizeSourceLayout::Rgba, 1, 1);
-    require(
-        resized.size() == 4 && resized[0] < 5 && resized[2] > 250 && resized[3] >= 125 && resized[3] <= 130,
-        "Noctalia resampling introduced a transparent-edge halo"
-    );
+    TEST_CHECK(resized.size() == 4 && resized[0] < 5 && resized[2] > 250 && resized[3] >= 125 && resized[3] <= 130);
     auto corrupt = pngData;
     corrupt[20] ^= 1;
-    require(!files::decodeThumbnail(corrupt, 128, 1000000, cancel.get()), "raster decoder ignored PNG header checksum");
-    require(!decodeRasterImage(pngData.data(), pngData.size(), 100), "raster decoder allocated an oversized image");
+    TEST_CHECK(!files::decodeThumbnail(corrupt, 128, 1000000, cancel.get()));
+    TEST_CHECK(!decodeRasterImage(pngData.data(), pngData.size(), 100));
     const auto theme = decodeRasterImage(pngData.data(), pngData.size());
-    require(theme && theme->pixels == picture().rgba, "theme PNG artwork did not decode");
+    TEST_CHECK(theme && theme->pixels == picture().rgba);
   }
   void benchmarkThumbnails(const fs::path& directory, std::size_t limit, bool videos) {
-    require(limit >= 1 && limit <= 256, "benchmark count must be between 1 and 256");
+    TEST_CHECK(limit >= 1 && limit <= 256);
     Pump pump;
     files::DirectorySession session;
     session.open(files::Location::fromPath(fs::absolute(directory).native()));
     pump.until([&] { return session.snapshot().status != files::DirectoryStatus::LOADING; });
-    require(session.snapshot().status == files::DirectoryStatus::READY, "cannot read benchmark directory");
+    TEST_CHECK(session.snapshot().status == files::DirectoryStatus::READY);
     auto entries = session.snapshot().entries;
     std::erase_if(entries, [videos](const auto& entry) {
       return entry.type != G_FILE_TYPE_REGULAR
@@ -283,7 +253,7 @@ namespace {
     if (entries.size() > limit) {
       entries.erase(entries.begin() + static_cast<std::ptrdiff_t>(limit), entries.end());
     }
-    require(!entries.empty(), videos ? "benchmark requires video files" : "benchmark requires image files");
+    TEST_CHECK(!entries.empty());
     files::ThumbnailService service;
     const auto phase = [&](const char* name) {
       std::vector<std::shared_ptr<const files::FileIconImage>> assets;
@@ -297,7 +267,7 @@ namespace {
         bool done = true;
         const auto now = std::chrono::steady_clock::now();
         for (std::size_t i = 0; i < assets.size(); ++i) {
-          require(assets[i] != nullptr, "benchmark request exceeded admission limits");
+          TEST_CHECK(assets[i] != nullptr);
           if (!assets[i]->ready) {
             done = false;
           } else if (elapsed[i] < 0) {
@@ -306,10 +276,7 @@ namespace {
         }
         return done;
       });
-      require(
-          std::ranges::all_of(assets, [](const auto& image) { return image->pixels.has_value(); }),
-          "benchmark input has unsupported, invalid or oversized media"
-      );
+      TEST_CHECK(std::ranges::all_of(assets, [](const auto& image) { return image->pixels.has_value(); }));
       std::ranges::sort(elapsed);
       std::println(
           "{} count={} first={:.2f} median={:.2f} last={:.2f} ms", name, entries.size(), elapsed.front(),
@@ -330,35 +297,31 @@ namespace {
   void testWorkerTransport() {
     std::vector<std::uint8_t> valid{'N', 'F', 'R', '1', 0, 0, 0, 1, 0, 0, 0, 1, 240, 20, 40, 128};
     const auto result = files::readThumbnailWorkerResult(valid, 128);
-    require(
+    TEST_CHECK(
         result
-            && result->width == 1
-            && result->height == 1
-            && result->rgba == std::vector<std::uint8_t>({240, 20, 40, 128}),
-        "private worker transport lost pixels or alpha"
+        && result->width == 1
+        && result->height == 1
+        && result->rgba == std::vector<std::uint8_t>({240, 20, 40, 128})
     );
     auto malformed = valid;
     malformed[0] = 'X';
-    require(!files::readThumbnailWorkerResult(malformed, 128), "worker transport accepted invalid magic");
+    TEST_CHECK(!files::readThumbnailWorkerResult(malformed, 128));
     malformed = valid;
     malformed.pop_back();
-    require(!files::readThumbnailWorkerResult(malformed, 128), "worker transport accepted truncated pixels");
+    TEST_CHECK(!files::readThumbnailWorkerResult(malformed, 128));
     malformed = valid;
     malformed.push_back(0);
-    require(!files::readThumbnailWorkerResult(malformed, 128), "worker transport accepted trailing bytes");
+    TEST_CHECK(!files::readThumbnailWorkerResult(malformed, 128));
     malformed = valid;
     malformed[4] = 1;
-    require(!files::readThumbnailWorkerResult(malformed, 128), "worker transport accepted oversized dimensions");
-    require(!files::readThumbnailWorkerResult(valid, 0), "worker transport accepted an invalid size limit");
+    TEST_CHECK(!files::readThumbnailWorkerResult(malformed, 128));
+    TEST_CHECK(!files::readThumbnailWorkerResult(valid, 0));
     const std::string diagnostic = "NFE1GdkPixbuf: decoder unavailable";
     const auto failed = files::readThumbnailWorkerResult({diagnostic.begin(), diagnostic.end()}, 128);
-    require(!failed && failed.error() == diagnostic.substr(4), "worker lost its decoder diagnostic");
+    TEST_CHECK(!failed && failed.error() == diagnostic.substr(4));
     auto oversized = std::vector<std::uint8_t>(1025, 'a');
     std::copy_n(diagnostic.begin(), 4, oversized.begin());
-    require(
-        files::readThumbnailWorkerResult(oversized, 128).error() != std::string(1021, 'a'),
-        "worker accepted an oversized diagnostic"
-    );
+    TEST_CHECK(files::readThumbnailWorkerResult(oversized, 128).error() != std::string(1021, 'a'));
   }
   void testBatchAndLargerCache() {
     files::ThumbnailStore store;
@@ -376,19 +339,15 @@ namespace {
     const std::array writes{files::ThumbnailCacheWrite{make(uri), 256}, files::ThumbnailCacheWrite{make(second), 512}};
     store.writeBatch(writes, 16U * 1024U * 1024U, cancel.get());
     const auto cached = store.read(uri, 128, 123, 42, "same");
-    require(
+    TEST_CHECK(
         cached
-            && cached->image.width == 128
-            && cached->image.height == 64
-            && cached->image.rgba[0] == 240
-            && cached->image.rgba[3] == 128,
-        "larger cache reuse lost bounds, aspect or alpha"
+        && cached->image.width == 128
+        && cached->image.height == 64
+        && cached->image.rgba[0] == 240
+        && cached->image.rgba[3] == 128
     );
-    require(
-        store.read(second, 128, 123, 42, "same").has_value() && !store.read(uri, 128, 123, 42, "changed"),
-        "batch cache lost an item or accepted a stale larger image"
-    );
-    require(store.clear().empty(), "batch cache clearing failed");
+    TEST_CHECK(store.read(second, 128, 123, 42, "same").has_value() && !store.read(uri, 128, 123, 42, "changed"));
+    TEST_CHECK(store.clear().empty());
   }
   void testCache() {
     files::ThumbnailStore store;
@@ -401,44 +360,33 @@ namespace {
     };
     store.write(make(uri), 128, 16U * 1024U * 1024U, cancel.get());
     const auto path = store.root() / "normal" / files::ThumbnailStore::filename(uri);
-    require(
-        fs::exists(path) && files::ThumbnailStore::filename("abc") == "900150983cd24fb0d6963f7d28e17f72.png",
-        "cache is not URI/MD5 keyed under the standard class"
-    );
+    TEST_CHECK(fs::exists(path) && files::ThumbnailStore::filename("abc") == "900150983cd24fb0d6963f7d28e17f72.png");
     const auto cached = store.read(uri, 128, 123, 42);
-    require(cached && cached->image.rgba == picture().rgba, "standard cache PNG did not round-trip");
+    TEST_CHECK(cached && cached->image.rgba == picture().rgba);
     const GioPtr<GdkPixbuf> independent(gdk_pixbuf_new_from_file(path.c_str(), nullptr));
     const char* tag = independent ? gdk_pixbuf_get_option(independent.get(), "tEXt::Thumb::URI") : nullptr;
-    require(tag && uri == tag, "another PNG reader could not read standard thumbnail metadata");
-    require(
-        !store.read(uri, 128, 124, 42) && !store.read(uri, 128, 122, 42) && !store.read(uri, 128, 123, 43),
-        "cache accepted stale metadata"
-    );
+    TEST_CHECK(tag && uri == tag);
+    TEST_CHECK(!store.read(uri, 128, 124, 42) && !store.read(uri, 128, 122, 42) && !store.read(uri, 128, 123, 43));
     struct stat mode{};
-    require(::stat(path.c_str(), &mode) == 0 && (mode.st_mode & 0777) == 0600, "thumbnail permissions are not private");
+    TEST_CHECK(::stat(path.c_str(), &mode) == 0 && (mode.st_mode & 0777) == 0600);
     auto foreign = make("sftp://example.invalid/photo.png");
     auto bytes = files::writeThumbnailPng(foreign);
-    require(bytes.has_value(), "cannot encode foreign cache fixture");
+    TEST_CHECK(bytes.has_value());
     const auto foreignPath = store.root() / "normal" / files::ThumbnailStore::filename(foreign.text.at("Thumb::URI"));
     write(foreignPath, *bytes);
-    require(
-        store.clear().empty() && !fs::exists(path) && fs::exists(foreignPath),
-        "cache clearing removed foreign data or retained owned data"
-    );
+    TEST_CHECK(store.clear().empty() && !fs::exists(path) && fs::exists(foreignPath));
     store.write(make(uri), 256, 16U * 1024U * 1024U, cancel.get());
     const auto large = store.root() / "large" / files::ThumbnailStore::filename(uri);
-    require(fs::exists(large), "large thumbnail class was not written");
+    TEST_CHECK(fs::exists(large));
     fs::rename(large, large.string() + ".old");
     write(large, *bytes);
-    require(
-        store.clear().empty() && fs::exists(large), "clearing deleted a foreign replacement at a previously owned name"
-    );
+    TEST_CHECK(store.clear().empty() && fs::exists(large));
     auto bad = make(uri);
     bad.text.erase("Thumb::MTime");
     bytes = files::writeThumbnailPng(bad);
-    require(bytes.has_value(), "cannot encode missing metadata fixture");
+    TEST_CHECK(bytes.has_value());
     write(path, *bytes);
-    require(!store.read(uri, 128, 123, 42), "cache accepted missing mandatory mtime");
+    TEST_CHECK(!store.read(uri, 128, 123, 42));
   }
   void testCacheLimits() {
     files::ThumbnailStore store;
@@ -454,18 +402,15 @@ namespace {
     const auto first = files::Location::fromPath("/tmp/cache-one.png").uri();
     const auto second = files::Location::fromPath("/tmp/cache-two.png").uri();
     store.write(make(first, "source-one"), 128, 1000000, cancel.get());
-    require(
-        store.read(first, 128, 123, 42, "source-one").has_value() && !store.read(first, 128, 123, 42, "source-two"),
-        "cache did not reject a same-size/mtime source revision"
+    TEST_CHECK(
+        store.read(first, 128, 123, 42, "source-one").has_value() && !store.read(first, 128, 123, 42, "source-two")
     );
     const auto one = store.root() / "normal" / files::ThumbnailStore::filename(first);
     const auto budget = fs::file_size(one) + 32;
     store.write(make(second, "source-two"), 128, budget, cancel.get());
     const auto two = store.root() / "normal" / files::ThumbnailStore::filename(second);
-    require(
-        !fs::exists(one) && fs::exists(two) && fs::file_size(two) <= budget, "disk cache exceeded its pruning budget"
-    );
-    require(store.clear().empty(), "cannot clear cache budget fixture");
+    TEST_CHECK(!fs::exists(one) && fs::exists(two) && fs::file_size(two) <= budget);
+    TEST_CHECK(store.clear().empty());
   }
   void command(const std::vector<std::string>& args) {
     std::vector<const char*> argv;
@@ -478,7 +423,7 @@ namespace {
         argv.data(),
         static_cast<GSubprocessFlags>(G_SUBPROCESS_FLAGS_STDOUT_SILENCE | G_SUBPROCESS_FLAGS_STDERR_SILENCE), nullptr
     ));
-    require(process && g_subprocess_wait_check(process.get(), nullptr, nullptr), "cannot generate real media fixture");
+    TEST_CHECK(process && g_subprocess_wait_check(process.get(), nullptr, nullptr));
   }
   void testProviders(const Fixture& fixture) {
     const auto pngPath = fixture.root / "artwork.png";
@@ -563,13 +508,13 @@ namespace {
          "-c:v", "mpeg4", largeVideo.native()}
     );
     const int largeInput = ::open(largeVideo.c_str(), O_RDONLY | O_CLOEXEC);
-    require(largeInput >= 0, "cannot open oversized media fixture");
+    TEST_CHECK(largeInput >= 0);
     const GioPtr<GCancellable> limitCancel(g_cancellable_new());
     auto limited = files::ThumbnailOptions{};
     limited.maxMegapixels = 1;
     const auto tooLarge = files::renderThumbnailProvider(largeInput, "video/mp4", 128, limited, limitCancel.get());
     ::close(largeInput);
-    require(!tooLarge, "media decoder bypassed its source-pixel limit");
+    TEST_CHECK(!tooLarge);
     const auto audio = fixture.root / "artwork.mp3";
     command(
         {"ffmpeg",
@@ -622,7 +567,7 @@ namespace {
     const GioPtr<GCancellable> cancel(g_cancellable_new());
     const auto render = [&](const fs::path& path, const std::string& mime) {
       const int input = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
-      require(input >= 0, "cannot open provider fixture");
+      TEST_CHECK(input >= 0);
       auto result = files::renderThumbnailProvider(input, mime, 128, {}, cancel.get());
       ::close(input);
       return result;
@@ -630,9 +575,8 @@ namespace {
     const auto corrupt = fixture.root / "broken.png";
     std::ofstream(corrupt, std::ios::binary) << "not an image";
     const auto failedImage = render(corrupt, "image/png");
-    require(
-        !failedImage && failedImage.error().contains("GdkPixbuf") && !failedImage.error().contains(corrupt.native()),
-        "isolated decoder lost its bounded diagnostic or exposed the source path"
+    TEST_CHECK(
+        !failedImage && failedImage.error().contains("GdkPixbuf") && !failedImage.error().contains(corrupt.native())
     );
     const auto rasterSource = fixture.root / "format-source.png";
     write(rasterSource, png(picture(128, 64)));
@@ -656,12 +600,11 @@ namespace {
     if (!richImage) {
       std::println(stderr, "JPEG XL fixture error: {}", richImage.error());
     }
-    require(
+    TEST_CHECK(
         richImage
-            && richImage->width == 4
-            && richImage->height == 4
-            && richImage->rgba == std::vector<std::uint8_t>(jxlRgba.begin(), jxlRgba.end()),
-        "Glycin JPEG XL decode lost size, color or alpha"
+        && richImage->width == 4
+        && richImage->height == 4
+        && richImage->rgba == std::vector<std::uint8_t>(jxlRgba.begin(), jxlRgba.end())
     );
     const auto avif = fixture.root / "format.avif";
     command(
@@ -669,10 +612,7 @@ namespace {
          "-cpu-used", "8", "-still-picture", "1", "-pix_fmt", "yuv444p", "-threads", "1", avif.native()}
     );
     richImage = render(avif, "image/avif");
-    require(
-        richImage && richImage->width == 128 && richImage->height == 64 && richImage->rgba[0] > 180,
-        "Glycin AVIF loader did not decode the expected image"
-    );
+    TEST_CHECK(richImage && richImage->width == 128 && richImage->height == 64 && richImage->rgba[0] > 180);
     const auto animated = fixture.root / "animated.webp";
     command(
         {"ffmpeg",
@@ -702,66 +642,42 @@ namespace {
          animated.native()}
     );
     richImage = render(animated, "image/webp");
-    require(
+    TEST_CHECK(
         richImage
-            && richImage->width == 64
-            && richImage->height == 32
-            && richImage->rgba[0] > 220
-            && richImage->rgba[2] < 30,
-        "animated WebP did not use its first frame"
+        && richImage->width == 64
+        && richImage->height == 32
+        && richImage->rgba[0] > 220
+        && richImage->rgba[2] < 30
     );
     auto still = render(video, "video/mp4");
-    require(
-        still && still->width == 128 && still->height == 64 && still->rgba.front() > 220,
-        "video provider did not render the expected still"
-    );
+    TEST_CHECK(still && still->width == 128 && still->height == 64 && still->rgba.front() > 220);
     still = render(shortVideo, "video/mp4");
-    require(
-        still && still->width == 128 && still->height == 64 && still->rgba[0] > 220,
-        "single-frame video did not produce a thumbnail"
-    );
+    TEST_CHECK(still && still->width == 128 && still->height == 64 && still->rgba[0] > 220);
     still = render(longGop, "video/mp4");
-    require(
-        still && still->width == 128 && still->height == 64 && still->rgba[2] > 220,
-        "long-GOP B-frame video did not produce its actual frame"
-    );
+    TEST_CHECK(still && still->width == 128 && still->height == 64 && still->rgba[2] > 220);
     still = render(rotatedVideo, "video/mp4");
-    require(
-        still && still->width == 64 && still->height == 128 && still->rgba[2] > 220,
-        "video display rotation or aspect was lost"
-    );
+    TEST_CHECK(still && still->width == 64 && still->height == 128 && still->rgba[2] > 220);
     still = render(intraVideo, "video/x-msvideo");
-    require(
-        still && still->width == 128 && still->height == 64 && still->rgba[2] > 220,
-        "intra-only video did not produce its actual frame"
-    );
+    TEST_CHECK(still && still->width == 128 && still->height == 64 && still->rgba[2] > 220);
     still = render(coveredVideo, "video/mp4");
-    require(
-        still && still->width == 128 && still->height == 64 && still->rgba[2] > 220 && still->rgba[0] < 30,
-        "video thumbnail selected attached artwork instead of a video frame"
-    );
+    TEST_CHECK(still && still->width == 128 && still->height == 64 && still->rgba[2] > 220 && still->rgba[0] < 30);
     still = render(document, "application/pdf");
-    require(
-        still && still->width == 128 && still->height == 64 && still->rgba.front() > 220,
-        "PDF provider did not render the first page"
-    );
+    TEST_CHECK(still && still->width == 128 && still->height == 64 && still->rgba.front() > 220);
     still = render(audio, "audio/mpeg");
-    require(still && still->width == 128 && still->height == 64, "audio provider did not extract artwork");
-    require(!render(plain, "audio/x-wav"), "audio without artwork fabricated a thumbnail");
+    TEST_CHECK(still && still->width == 128 && still->height == 64);
+    TEST_CHECK(!render(plain, "audio/x-wav"));
     const std::string originalPath = std::getenv("PATH");
     ::setenv("PATH", "/noctalia-thumbnail-test-no-tools", 1);
-    require(
-        !render(document, "application/pdf") && !render(video, "video/mp4"), "unavailable providers did not fall back"
-    );
+    TEST_CHECK(!render(document, "application/pdf") && !render(video, "video/mp4"));
     ::setenv("PATH", originalPath.c_str(), 1);
     const auto bin = fixture.root / "slow-bin";
     fs::create_directory(bin);
     const files::GString sleep(g_find_program_in_path("sleep"));
-    require(sleep != nullptr, "missing cancellation fixture helper");
+    TEST_CHECK(sleep != nullptr);
     const files::GString shell(g_find_program_in_path("sh"));
-    require(shell != nullptr, "missing cancellation fixture shell");
+    TEST_CHECK(shell != nullptr);
     std::ofstream(bin / "pdftoppm") << "#!" << shell.get() << "\nexec " << sleep.get() << " 30\n";
-    require(::chmod((bin / "pdftoppm").c_str(), 0700) == 0, "cannot enable cancellation helper");
+    TEST_CHECK(::chmod((bin / "pdftoppm").c_str(), 0700) == 0);
     ::setenv("PATH", bin.c_str(), 1);
     const auto started = std::chrono::steady_clock::now();
     std::thread cancelling([&] {
@@ -774,9 +690,9 @@ namespace {
     const auto timeoutStarted = std::chrono::steady_clock::now();
     still = render(document, "application/pdf");
     ::setenv("PATH", originalPath.c_str(), 1);
-    require(timeoutStarted - started < 2s, "cancelled helper remained alive");
+    TEST_CHECK(timeoutStarted - started < 2s);
     const auto elapsed = std::chrono::steady_clock::now() - timeoutStarted;
-    require(!still && elapsed >= 7s && elapsed < 12s, "provider wall-clock deadline was not enforced");
+    TEST_CHECK(!still && elapsed >= 7s && elapsed < 12s);
   }
   void testCacheLanesAndCancellation(const Fixture& fixture) {
     Pump pump;
@@ -799,22 +715,19 @@ namespace {
     const auto bin = fixture.root / "blocked-bin";
     fs::create_directory(bin);
     const files::GString shell(g_find_program_in_path("sh")), sleep(g_find_program_in_path("sleep"));
-    require(shell && sleep, "missing isolated provider fixture tools");
+    TEST_CHECK(shell && sleep);
     std::ofstream(bin / "pdftoppm") << "#!" << shell.get() << "\nexec " << sleep.get() << " 30\n";
-    require(::chmod((bin / "pdftoppm").c_str(), 0700) == 0, "cannot enable isolated provider fixture");
+    TEST_CHECK(::chmod((bin / "pdftoppm").c_str(), 0700) == 0);
     const std::string path = std::getenv("PATH");
     ::setenv("PATH", bin.c_str(), 1);
     files::ThumbnailService service;
     auto a = service.request(first, 128), b = service.request(second, 128);
-    require(a && b, "slow provider fixtures were not admitted");
+    TEST_CHECK(a && b);
     pump.until([&] { return service.activeJobs() == 2; });
     auto cached = service.request(warm, 128);
-    require(cached != nullptr, "warm cache fixture was not admitted");
+    TEST_CHECK(cached != nullptr);
     pump.until([&] { return cached->ready; });
-    require(
-        cached->pixels && service.activeJobs() == 2 && !a->ready && !b->ready,
-        "warm cached image waited for occupied decoder slots"
-    );
+    TEST_CHECK(cached->pixels && service.activeJobs() == 2 && !a->ready && !b->ready);
     a.reset();
     b.reset();
     service.endFrame();
@@ -844,16 +757,16 @@ namespace {
       }
       sizes.emplace(candidate.size(), std::move(candidate));
     }
-    require(!alternate.empty(), "cannot create a same-size source-edit fixture");
+    TEST_CHECK(!alternate.empty());
     write(path, original);
     auto entry = source(path, pump);
     files::ThumbnailService service;
     auto asset = service.request(entry, 128);
-    require(asset != nullptr, "publication fixture denied");
+    TEST_CHECK(asset != nullptr);
     pump.until([&] { return asset->ready; });
     const auto cachePath =
         files::ThumbnailStore{}.root() / "normal" / files::ThumbnailStore::filename(entry.location.uri());
-    require(asset->pixels && !fs::exists(cachePath), "decoded pixels waited for cache persistence");
+    TEST_CHECK(asset->pixels && !fs::exists(cachePath));
     pump.until([&] { return fs::exists(cachePath); });
     files::DirectorySnapshot snapshot;
     snapshot.generation = 100;
@@ -863,30 +776,23 @@ namespace {
     service.synchronizeSources(snapshot);
     ++snapshot.generation;
     service.synchronizeSources(snapshot);
-    require(
-        service.touch(asset, true) && service.request(entry, 128) == asset && asset->pixels,
-        "metadata-only publication discarded a valid thumbnail"
-    );
+    TEST_CHECK(service.touch(asset, true) && service.request(entry, 128) == asset && asset->pixels);
     const auto oldMtime = fs::last_write_time(path);
     write(path, alternate);
     fs::last_write_time(path, oldMtime);
     auto updated = source(path, pump);
-    require(
+    TEST_CHECK(
         updated.size == entry.size
-            && updated.modifiedSeconds == entry.modifiedSeconds
-            && updated.contentRevision != entry.contentRevision,
-        "source-edit fixture did not preserve size/mtime or update change time"
+        && updated.modifiedSeconds == entry.modifiedSeconds
+        && updated.contentRevision != entry.contentRevision
     );
     snapshot.entries = {updated};
     ++snapshot.generation;
     service.synchronizeSources(snapshot);
-    require(!service.touch(asset, true) && !asset->pixels, "source revision change retained stale pixels");
+    TEST_CHECK(!service.touch(asset, true) && !asset->pixels);
     auto replacement = service.request(updated, 128);
     pump.until([&] { return replacement->ready; });
-    require(
-        replacement != asset && replacement->pixels && replacement->pixels->rgba[0] == color,
-        "same-size/preserved-mtime edit did not update the image"
-    );
+    TEST_CHECK(replacement != asset && replacement->pixels && replacement->pixels->rgba[0] == color);
   }
   void testService(const Fixture& fixture) {
     Pump pump;
@@ -895,16 +801,10 @@ namespace {
     auto entry = source(path, pump);
     files::ThumbnailService thumbnails;
     auto asset = thumbnails.request(entry, 48);
-    require(asset != nullptr, "native thumbnail request was denied");
+    TEST_CHECK(asset != nullptr);
     pump.until([&] { return asset->ready; });
-    require(
-        asset->pixels && asset->pixels->width == 32 && asset->pixels->rgba[3] == 128,
-        "isolated image worker did not publish correct pixels"
-    );
-    require(
-        thumbnails.activeJobs() <= 2 && thumbnails.reservedBytes() <= 64U * 1024U * 1024U,
-        "thumbnail residency/concurrency exceeded bounds"
-    );
+    TEST_CHECK(asset->pixels && asset->pixels->width == 32 && asset->pixels->rgba[3] == 128);
+    TEST_CHECK(thumbnails.activeJobs() <= 2 && thumbnails.reservedBytes() <= 64U * 1024U * 1024U);
     const auto original = asset;
     const auto stampBefore = fs::last_write_time(path);
     auto replacement = picture();
@@ -912,15 +812,15 @@ namespace {
     write(path, png(replacement));
     fs::last_write_time(path, stampBefore);
     thumbnails.invalidate();
-    require(!original->pixels, "retired assets retained decoded buffers");
+    TEST_CHECK(!original->pixels);
     entry = source(path, pump);
     asset = thumbnails.request(entry, 48);
     pump.until([&] { return asset->ready; });
-    require(asset->pixels && asset->pixels->rgba.front() == 255, "preserved-mtime source edit reused stale pixels");
+    TEST_CHECK(asset->pixels && asset->pixels->rgba.front() == 255);
     auto options = files::ThumbnailOptions{};
     options.policy = files::ThumbnailPolicy::NEVER;
     thumbnails.setOptions(options);
-    require(!thumbnails.request(entry, 48), "disabled policy still requested thumbnails");
+    TEST_CHECK(!thumbnails.request(entry, 48));
     options.policy = files::ThumbnailPolicy::LOCAL;
     thumbnails.setOptions(options);
     std::vector<std::shared_ptr<const files::FileIconImage>> held;
@@ -930,9 +830,8 @@ namespace {
         held.push_back(std::move(image));
       }
     }
-    require(
-        thumbnails.reservedBytes() <= 64U * 1024U * 1024U && held.size() < 1200 && thumbnails.queuedJobs() <= 1024,
-        "pinned requests bypassed hard admission limits"
+    TEST_CHECK(
+        thumbnails.reservedBytes() <= 64U * 1024U * 1024U && held.size() < 1200 && thumbnails.queuedJobs() <= 1024
     );
     thumbnails.invalidate();
     held.clear();
@@ -940,31 +839,28 @@ namespace {
     for (std::uint64_t id = 1; id <= 16; ++id) {
       entry.id = id;
       overscan.push_back(thumbnails.request(entry, 1024, false));
-      require(overscan.back() != nullptr, "overscan admission failed before its byte limit");
+      TEST_CHECK(overscan.back() != nullptr);
     }
     entry.id = 17;
     auto visible = thumbnails.request(entry, 1024, true);
-    require(
-        visible && thumbnails.reservedBytes() == 64U * 1024U * 1024U,
-        "visible request could not reclaim overscan within the byte budget"
-    );
+    TEST_CHECK(visible && thumbnails.reservedBytes() == 64U * 1024U * 1024U);
     entry.id = 1;
-    require(!thumbnails.request(entry, 1024, false), "evicted overscan retained its reservation");
+    TEST_CHECK(!thumbnails.request(entry, 1024, false));
     pump.until([&] { return thumbnails.activeJobs() == 2; });
-    require(thumbnails.queuedJobs() == 14, "decode concurrency did not stop at two jobs");
+    TEST_CHECK(thumbnails.queuedJobs() == 14);
     visible.reset();
     overscan.clear();
     thumbnails.endFrame();
     pump.drain();
-    require(thumbnails.queuedJobs() == 0 && thumbnails.activeJobs() == 0, "released cells continued decoding");
+    TEST_CHECK(thumbnails.queuedJobs() == 0 && thumbnails.activeJobs() == 0);
     thumbnails.invalidate();
     entry = source(path, pump);
     asset = thumbnails.request(entry, 48);
     pump.until([&] { return thumbnails.activeJobs() > 0; });
     thumbnails.clearCache();
-    require(!thumbnails.request(entry, 48), "clear admitted a new decode before removal finished");
+    TEST_CHECK(!thumbnails.request(entry, 48));
     pump.until([&] { return !thumbnails.clearing() && thumbnails.activeJobs() == 0; });
-    require(thumbnails.error().empty() && !asset->pixels, "clear failed or a retired worker repopulated its asset");
+    TEST_CHECK(thumbnails.error().empty() && !asset->pixels);
     const auto remote = files::Location::fromUri("sftp://example.invalid/photo.png");
     files::DirectoryEntry remoteEntry{
         .id = 99,
@@ -978,18 +874,18 @@ namespace {
         .parentDisplayName = {},
         .contentType = "image/png"
     };
-    require(!thumbnails.request(remoteEntry, 48), "local policy fetched a remote entry");
+    TEST_CHECK(!thumbnails.request(remoteEntry, 48));
     options.policy = files::ThumbnailPolicy::ALL;
     thumbnails.setOptions(options);
     auto remoteAsset = thumbnails.request(remoteEntry, 48);
     pump.until([&] { return remoteAsset->ready; });
-    require(remoteAsset->pixels.has_value(), "all-locations policy did not use an existing remote PNG cache");
+    TEST_CHECK(remoteAsset->pixels.has_value());
     auto owner = std::make_unique<files::ThumbnailService>();
     auto retiring = owner->request(entry, 48);
     owner->setChangedCallback([&] { owner.reset(); });
     pump.until([&] { return !owner; });
     pump.drain();
-    require(!retiring->pixels, "destruction retained prepared image ownership");
+    TEST_CHECK(!retiring->pixels);
   }
 } // namespace
 
@@ -1006,11 +902,7 @@ int main(int argc, char** argv) {
     Fixture fixture;
     if (!args.empty() && (args.front() == "--benchmark" || args.front() == "--benchmark-videos")) {
       const bool videos = args.front() == "--benchmark-videos";
-      require(
-          args.size() == 2 || args.size() == 3,
-          videos ? "usage: thumbnail-test --benchmark-videos DIRECTORY [COUNT]"
-                 : "usage: thumbnail-test --benchmark DIRECTORY [COUNT]"
-      );
+      TEST_CHECK(args.size() == 2 || args.size() == 3);
       benchmarkThumbnails(std::string(args[1]), args.size() == 3 ? std::stoul(std::string(args[2])) : 48, videos);
       return 0;
     }

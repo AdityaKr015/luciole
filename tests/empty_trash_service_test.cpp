@@ -1,5 +1,6 @@
 #include "app/glib_poll_source.h"
 #include "operations/empty_trash_service.h"
+#include "test_check.h"
 
 #include <algorithm>
 #include <chrono>
@@ -13,11 +14,6 @@ namespace {
   namespace fs = std::filesystem;
   using Outcome = files::EmptyTrashOutcome;
   using Status = files::EmptyTrashStatus;
-  void require(bool value, const std::string& message) {
-    if (!value) {
-      throw std::runtime_error(message);
-    }
-  }
   void write(const fs::path& path, const std::string& value) { std::ofstream(path) << value; }
   std::string read(const fs::path& path) {
     std::ifstream input(path);
@@ -27,7 +23,7 @@ namespace {
     fs::path root;
     Fixture() {
       const files::GString path(g_dir_make_tmp("noctalia-empty-trash-XXXXXX", nullptr));
-      require(path != nullptr, "fixture failed");
+      TEST_CHECK(path != nullptr);
       root = path.get();
     }
     ~Fixture() {
@@ -40,25 +36,22 @@ namespace {
     void until(const std::function<bool()>& done) {
       const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
       while (!done()) {
-        require(std::chrono::steady_clock::now() < deadline, "empty trash timed out");
+        TEST_CHECK(std::chrono::steady_clock::now() < deadline);
         std::vector<pollfd> fds;
         const auto start = source.addPollFds(fds);
-        require(::poll(fds.data(), fds.size(), 1) >= 0, "poll failed");
+        TEST_CHECK(::poll(fds.data(), fds.size(), 1) >= 0);
         source.dispatch(fds, start);
       }
     }
     void prepare(files::EmptyTrashService& service) {
-      require(service.prepare(), "prepare refused");
+      TEST_CHECK(service.prepare());
       until([&] { return !service.busy(); });
-      require(
-          service.snapshot().status == Status::READY,
-          service.snapshot().error.empty() ? "prepare did not become ready" : service.snapshot().error
-      );
+      TEST_CHECK(service.snapshot().status == Status::READY);
     }
     void empty(files::EmptyTrashService& service) {
-      require(service.empty(), "empty refused");
+      TEST_CHECK(service.empty());
       until([&] { return !service.busy(); });
-      require(service.snapshot().status == Status::FINISHED, "actual outcomes lost");
+      TEST_CHECK(service.snapshot().status == Status::FINISHED);
     }
 
   private:
@@ -69,7 +62,7 @@ namespace {
     const bool ok = g_file_trash(files::Location::fromPath(path.native()).file().get(), nullptr, &error);
     const std::string message = error ? error->message : "trash failed";
     g_clear_error(&error);
-    require(ok, message);
+    TEST_CHECK(ok);
   }
   fs::path trashFiles() { return fs::path(g_get_user_data_dir()) / "Trash/files"; }
   fs::path trashInfo() { return fs::path(g_get_user_data_dir()) / "Trash/info"; }
@@ -77,37 +70,34 @@ namespace {
     Fixture fixture;
     write(fixture.root / "keep", "native content");
     files::EmptyTrashService service;
-    require(!service.empty(), "unprepared empty accepted");
-    require(service.prepare(), "preparation refused");
-    require(!service.prepare() && !service.empty(), "busy request accepted");
+    TEST_CHECK(!service.empty());
+    TEST_CHECK(service.prepare());
+    TEST_CHECK(!service.prepare() && !service.empty());
     pump.until([&] { return !service.busy(); });
-    require(
+    TEST_CHECK(
         service.snapshot().status == Status::ERROR
-            && !service.canEmpty()
-            && read(fixture.root / "keep") == "native content",
-        "missing provider deleted native data or claimed success"
+        && !service.canEmpty()
+        && read(fixture.root / "keep") == "native content"
     );
-    require(service.prepare(), "cancel preparation refused");
+    TEST_CHECK(service.prepare());
     service.cancel();
     pump.until([&] { return !service.busy(); });
-    require(service.snapshot().status == Status::CANCELLED && !service.empty(), "cancelled preparation committed");
+    TEST_CHECK(service.snapshot().status == Status::CANCELLED && !service.empty());
     auto destroyed = std::make_unique<files::EmptyTrashService>();
     bool notified = false;
     destroyed->setChangedCallback([&] { notified = true; });
-    require(destroyed->prepare(), "lifetime preparation refused");
+    TEST_CHECK(destroyed->prepare());
     notified = false;
     destroyed.reset();
-    require(service.prepare(), "drain preparation refused");
+    TEST_CHECK(service.prepare());
     pump.until([&] { return !service.busy(); });
-    require(!notified, "destroyed observer called");
+    TEST_CHECK(!notified);
   }
   void successfulEmptyAndNewArrivals(Pump& pump) {
     Fixture fixture;
     files::EmptyTrashService service;
     pump.prepare(service);
-    require(
-        service.snapshot().results.empty() && !service.canEmpty() && !service.empty(), "empty trash enabled deletion"
-    );
+    TEST_CHECK(service.snapshot().results.empty() && !service.canEmpty() && !service.empty());
     fs::create_directories(fixture.root / "first/Folder 文");
     fs::create_directories(fixture.root / "second");
     write(fixture.root / "first/same #%.txt", "one");
@@ -126,48 +116,34 @@ namespace {
       trash(path);
     }
     pump.prepare(service);
-    require(service.snapshot().results.size() == 7 && service.canEmpty(), "preparation omitted trash entries");
+    TEST_CHECK(service.snapshot().results.size() == 7 && service.canEmpty());
     const auto expectedSize =
         28U + (fixture.root / "outside").native().size() + (fixture.root / "second").native().size();
-    require(
-        service.snapshot().size == expectedSize && !service.snapshot().sizeIncomplete,
-        "recursive size followed links, counted directory metadata or omitted file contents"
-    );
-    require(
-        std::distance(fs::directory_iterator(trashInfo()), fs::directory_iterator{}) == 7,
-        "prepare deleted recovery metadata"
-    );
+    TEST_CHECK(service.snapshot().size == expectedSize && !service.snapshot().sizeIncomplete);
+    TEST_CHECK(std::distance(fs::directory_iterator(trashInfo()), fs::directory_iterator{}) == 7);
     service.cancel();
-    require(!service.canEmpty() && fs::exists(trashFiles() / "same #%.txt"), "dialog cancellation deleted contents");
+    TEST_CHECK(!service.canEmpty() && fs::exists(trashFiles() / "same #%.txt"));
     pump.prepare(service);
     write(fixture.root / "arrived-later", "retain");
     trash(fixture.root / "arrived-later");
     pump.empty(service);
-    require(
+    TEST_CHECK(
         service.snapshot().results.size() == 7
-            && service.completed() == 7
-            && std::ranges::all_of(
-                service.snapshot().results, [](const auto& item) { return item.outcome == Outcome::DELETED; }
-            ),
-        "provider did not accept every prepared deletion"
+        && service.completed() == 7
+        && std::ranges::all_of(service.snapshot().results, [](const auto& item) {
+             return item.outcome == Outcome::DELETED;
+           })
     );
-    require(
-        read(fixture.root / "outside") == "untouched" && fs::is_directory(fixture.root / "second"),
-        "symlink target followed"
-    );
-    require(
+    TEST_CHECK(read(fixture.root / "outside") == "untouched" && fs::is_directory(fixture.root / "second"));
+    TEST_CHECK(
         fs::exists(trashFiles() / "arrived-later")
-            && fs::exists(trashInfo() / "arrived-later.trashinfo")
-            && std::distance(fs::directory_iterator(trashInfo()), fs::directory_iterator{}) == 1,
-        "new arrivals deleted or metadata left behind"
+        && fs::exists(trashInfo() / "arrived-later.trashinfo")
+        && std::distance(fs::directory_iterator(trashInfo()), fs::directory_iterator{}) == 1
     );
     pump.prepare(service);
     pump.empty(service);
     pump.prepare(service);
-    require(
-        service.snapshot().results.empty() && fs::is_empty(trashInfo()) && fs::is_empty(trashFiles()),
-        "trash root or recovery metadata not empty"
-    );
+    TEST_CHECK(service.snapshot().results.empty() && fs::is_empty(trashInfo()) && fs::is_empty(trashFiles()));
     service.cancel();
   }
   void staleItemsAndPartialOutcomes(Pump& pump) {
@@ -185,17 +161,15 @@ namespace {
     fs::rename(trashFiles() / "restored", fixture.root / "restored");
     fs::remove(trashInfo() / "restored.trashinfo");
     pump.empty(service);
-    require(
+    TEST_CHECK(
         std::ranges::count(service.snapshot().results, Outcome::DELETED, &files::EmptyTrashResult::outcome) == 1
-            && std::ranges::count(service.snapshot().results, Outcome::FAILED, &files::EmptyTrashResult::outcome) == 1
-            && std::ranges::count(service.snapshot().results, Outcome::SKIPPED, &files::EmptyTrashResult::outcome) == 1,
-        "stale sources lost partial outcomes"
+        && std::ranges::count(service.snapshot().results, Outcome::FAILED, &files::EmptyTrashResult::outcome) == 1
+        && std::ranges::count(service.snapshot().results, Outcome::SKIPPED, &files::EmptyTrashResult::outcome) == 1
     );
-    require(
+    TEST_CHECK(
         read(trashFiles() / "replaced") == "replacement"
-            && read(fixture.root / "held-original") == "original"
-            && read(fixture.root / "restored") == "restore",
-        "replaced or restored item deleted"
+        && read(fixture.root / "held-original") == "original"
+        && read(fixture.root / "restored") == "restore"
     );
     pump.prepare(service);
     pump.empty(service);
@@ -209,18 +183,18 @@ namespace {
     }
     files::EmptyTrashService service;
     pump.prepare(service);
-    require(service.empty(), "cancellation job refused");
+    TEST_CHECK(service.empty());
     pump.until([&] { return service.completed() != 0 || !service.busy(); });
     service.cancel();
     pump.until([&] { return !service.busy(); });
-    require(service.snapshot().status == Status::FINISHED, "cancellation erased completed outcomes");
+    TEST_CHECK(service.snapshot().status == Status::FINISHED);
     for (const auto& result : service.snapshot().results) {
       const files::GString name(g_file_get_basename(result.location.file().get()));
       const bool exists = fs::exists(trashFiles() / name.get());
-      require((result.outcome == Outcome::DELETED) == !exists, "cancellation result contradicted disk");
+      TEST_CHECK((result.outcome == Outcome::DELETED) == !exists);
     }
     service.cancel();
-    require(service.snapshot().status == Status::FINISHED, "late cancel replaced actual results");
+    TEST_CHECK(service.snapshot().status == Status::FINISHED);
     pump.prepare(service);
     if (service.canEmpty()) {
       pump.empty(service);
@@ -244,17 +218,16 @@ namespace {
         accepted = service.empty();
       }
     });
-    require(service.prepare(), "early confirmation preparation refused");
+    TEST_CHECK(service.prepare());
     pump.until([&] {
       return service.snapshot().status == Status::FINISHED || service.snapshot().status == Status::ERROR;
     });
-    require(
+    TEST_CHECK(
         requested
-            && measuring
-            && accepted
-            && service.snapshot().results.front().outcome == Outcome::DELETED
-            && !fs::exists(trashFiles() / "large-folder"),
-        "confirmation waited for size or lost deletion"
+        && measuring
+        && accepted
+        && service.snapshot().results.front().outcome == Outcome::DELETED
+        && !fs::exists(trashFiles() / "large-folder")
     );
     service.setChangedCallback({});
   }
@@ -269,12 +242,10 @@ namespace {
     fs::permissions(trashFiles() / "unreadable", fs::perms::none);
     files::EmptyTrashService service;
     pump.prepare(service);
-    require(service.snapshot().sizeIncomplete, "unreadable contents presented an exact size");
+    TEST_CHECK(service.snapshot().sizeIncomplete);
     fs::permissions(trashFiles() / "unreadable", fs::perms::owner_all);
     pump.prepare(service);
-    require(
-        service.snapshot().size == 6 && !service.snapshot().sizeIncomplete, "size did not recover after access restored"
-    );
+    TEST_CHECK(service.snapshot().size == 6 && !service.snapshot().sizeIncomplete);
     pump.empty(service);
   }
 } // namespace
@@ -289,7 +260,7 @@ int main(int argc, char** argv) {
       confirmationDoesNotWaitForSize(pump);
       incompleteSize(pump);
     } else {
-      require(argc == 1, "unexpected test arguments");
+      TEST_CHECK(argc == 1);
       unavailableAndLifetime(pump);
     }
     std::println("empty-trash-service checks passed");
