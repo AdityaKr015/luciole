@@ -15,8 +15,9 @@
 namespace {
   namespace fs = std::filesystem;
   void require(bool value, const char* message) {
-    if (!value)
+    if (!value) {
       throw std::runtime_error(message);
+    }
   }
   files::Location location(const fs::path& path) { return files::Location::fromPath(path.native()); }
   void write(const fs::path& path, const std::string& value) { std::ofstream(path) << value; }
@@ -48,8 +49,9 @@ namespace {
     std::vector<fs::path> archived(const fs::path& original) const {
       std::vector<fs::path> paths;
       const auto info = data / "Trash/info";
-      if (!fs::exists(info))
+      if (!fs::exists(info)) {
         return paths;
+      }
       for (const auto& entry : fs::directory_iterator(info)) {
         std::unique_ptr<GKeyFile, decltype(&g_key_file_unref)> key(g_key_file_new(), g_key_file_unref);
         require(
@@ -82,8 +84,9 @@ namespace {
     void prepare(files::TrashService& service, const fs::path& parent, const std::vector<fs::path>& paths) {
       std::vector<files::Location> sources;
       sources.reserve(paths.size());
-      for (const auto& path : paths)
+      for (const auto& path : paths) {
         sources.push_back(location(path));
+      }
       require(service.prepare(location(parent), std::move(sources)), "preparation refused");
       until([&] { return !service.busy(); });
       require(service.canTrash(), "preparation failed");
@@ -156,8 +159,9 @@ namespace {
   }
   void staleTargetsAndPartialResults(const Fixture& fixture, Pump& pump) {
     const auto parent = fixture.folder("partial");
-    for (const auto* name : {"replaced", "good", "missing"})
+    for (const auto* name : {"replaced", "good", "missing"}) {
       write(parent / name, name);
+    }
     files::TrashService service;
     pump.prepare(service, parent, {parent / "replaced", parent / "good", parent / "missing"});
     fs::rename(parent / "replaced", parent / "original");
@@ -254,8 +258,9 @@ namespace {
           (result.outcome == files::TrashOutcome::TRASHED) == !fs::exists(path),
           "cancellation outcome contradicted disk"
       );
-      if (result.outcome == files::TrashOutcome::TRASHED)
+      if (result.outcome == files::TrashOutcome::TRASHED) {
         require(fixture.archived(path).size() == 1, "committed trash lost recovery metadata");
+      }
     }
     service.cancel();
     require(service.snapshot().status == files::TrashStatus::FINISHED, "cancel erased actual results");
@@ -271,8 +276,9 @@ namespace {
     service.cancel();
   }
   void permissionFailure(const Fixture& fixture, Pump& pump) {
-    if (::geteuid() == 0)
+    if (::geteuid() == 0) {
       return;
+    }
     const auto parent = fixture.folder("permission");
     write(parent / "keep", "keep");
     files::TrashService service;

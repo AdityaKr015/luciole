@@ -14,8 +14,9 @@
 namespace {
   namespace fs = std::filesystem;
   void require(bool condition, const std::string& message) {
-    if (!condition)
+    if (!condition) {
       throw std::runtime_error(message);
+    }
   }
   struct Fixture {
     fs::path path;
@@ -84,11 +85,12 @@ namespace {
         result.error.empty() && result.items.size() == 3,
         "completion did not limit to matching folders including directory links"
     );
-    for (const auto& item : result.items)
+    for (const auto& item : result.items) {
       require(
           files::resolveLocationText(item.text, base) == item.location,
           "suggestion did not round-trip its operation location"
       );
+    }
     done = false;
     completion.complete(".", base, false, receive);
     pump.until([&] { return done; });
@@ -130,8 +132,9 @@ namespace {
     completion.complete((fixture.path / "missing").native() + "/", base, false, receive);
     pump.until([&] { return done; });
     require(!result.error.empty() && result.items.empty(), "unavailable parent produced misleading suggestions");
-    for (int i = 0; i < 270; ++i)
+    for (int i = 0; i < 270; ++i) {
       fs::create_directory(fixture.path / ("many-" + std::to_string(i)));
+    }
     done = false;
     completion.complete("many-", base, false, receive);
     pump.until([&] { return done; });

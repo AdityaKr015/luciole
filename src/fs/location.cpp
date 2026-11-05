@@ -10,8 +10,9 @@ namespace {
     if (trashUri(uri)) {
       // Keep GVfs's interned Trash mount alive across UI/worker handle churn.
       static const files::GioPtr<GFile> root(g_file_new_for_uri("trash:///"));
-      if (uri == "trash:///")
+      if (uri == "trash:///") {
         return files::GioPtr<GFile>(G_FILE(g_object_ref(root.get())));
+      }
     }
     return files::GioPtr<GFile>(g_file_new_for_uri(uri.c_str()));
   }
@@ -47,8 +48,9 @@ files::Location files::Location::fromPath(const std::string& absolutePath) {
 }
 
 std::optional<std::string> files::Location::nativePath() const {
-  if (isTrash())
+  if (isTrash()) {
     return std::nullopt;
+  }
   const GString path(g_file_get_path(file().get()));
   return path ? std::optional<std::string>(path.get()) : std::nullopt;
 }

@@ -11,10 +11,12 @@ namespace {
   using P = files::BrowserPreference;
   std::vector<int> widths(int minimum, int maximum, bool automatic = false) {
     std::vector<int> result;
-    if (automatic)
+    if (automatic) {
       result.push_back(0);
-    for (int value = minimum; value <= maximum; value += 16)
+    }
+    for (int value = minimum; value <= maximum; value += 16) {
       result.push_back(value);
+    }
     return result;
   }
 } // namespace
@@ -125,8 +127,9 @@ BrowserSettingsView::BrowserSettingsView(
   do {
     std::string label;
     for (const auto column : order) {
-      if (!label.empty())
+      if (!label.empty()) {
         label += " / ";
+      }
       label += column == files::DetailsColumn::TYPE ? "Type"
           : column == files::DetailsColumn::SIZE    ? "Size"
                                                     : "Modified";
@@ -277,8 +280,9 @@ void BrowserSettingsView::addChoice(P key, const std::string& title, Read read, 
   auto* select = control.get();
   std::vector<std::string> options;
   options.reserve(choices.size());
-  for (const auto& choice : choices)
+  for (const auto& choice : choices) {
     options.push_back(choice.first);
+  }
   select->setOptions(std::move(options));
   select->setMinWidth(180.0F);
   select->setMaxWidth(180.0F);
@@ -322,13 +326,15 @@ void BrowserSettingsView::addNumber(
           value > previous ? (next == values.end() ? values.back() : *next)
                            : (next == values.begin() ? values.front() : *std::prev(next))
       );
-    } else if (key == P::NameColumnWidth && value > 0 && value < 160)
+    } else if (key == P::NameColumnWidth && value > 0 && value < 160) {
       stepper->setValue(value > previous ? 160 : 0);
+    }
   });
   stepper->setOnValueCommitted([this, key](int value) { send(key, value); });
   m_apply[key] = [stepper](const Value& value) {
-    if (stepper->value() != std::get<int>(value) || !stepper->valueField()->inputArea()->focused())
+    if (stepper->value() != std::get<int>(value) || !stepper->valueField()->inputArea()->focused()) {
       stepper->setValue(std::get<int>(value));
+    }
   };
   addRow(key, title, std::move(read), std::move(control));
 }

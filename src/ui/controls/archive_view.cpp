@@ -44,11 +44,11 @@ namespace {
       m_name->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurface));
       m_icon->bind(entry.icon, colorSpecFromRole(ColorRole::OnSurface));
       std::string size;
-      if (entry.kind == files::ArchiveEntryKind::DIRECTORY)
+      if (entry.kind == files::ArchiveEntryKind::DIRECTORY) {
         size = "Folder";
-      else if (entry.kind == files::ArchiveEntryKind::SYMLINK || entry.kind == files::ArchiveEntryKind::HARDLINK)
+      } else if (entry.kind == files::ArchiveEntryKind::SYMLINK || entry.kind == files::ArchiveEntryKind::HARDLINK) {
         size = "Link";
-      else if (entry.size) {
+      } else if (entry.size) {
         const files::GString value(g_format_size_full(*entry.size, G_FORMAT_SIZE_IEC_UNITS));
         size = value.get();
       }
@@ -191,8 +191,9 @@ ArchiveView::ArchiveView(
                           const auto found = std::ranges::find_if(m_rows, [this](auto index) {
                             return m_catalog->entries[index].path == *m_selection.begin();
                           });
-                          if (found != m_rows.end())
+                          if (found != m_rows.end()) {
                             activate(static_cast<std::size_t>(found - m_rows.begin()));
+                          }
                         }
                       }})
       )
@@ -260,19 +261,24 @@ void ArchiveView::rebuild() {
   m_grid->cancelPointerGesture();
   m_adapter->onPointerCancel();
   m_rows.clear();
-  if (m_catalog)
-    for (std::size_t i = 0; i < m_catalog->entries.size(); ++i)
-      if (m_catalog->entries[i].parent == m_parent)
+  if (m_catalog) {
+    for (std::size_t i = 0; i < m_catalog->entries.size(); ++i) {
+      if (m_catalog->entries[i].parent == m_parent) {
         m_rows.push_back(i);
-  if (m_catalog)
+      }
+    }
+  }
+  if (m_catalog) {
     std::ranges::sort(m_rows, [this](auto left, auto right) {
       const auto& a = m_catalog->entries[left];
       const auto& b = m_catalog->entries[right];
-      if ((a.kind == files::ArchiveEntryKind::DIRECTORY) != (b.kind == files::ArchiveEntryKind::DIRECTORY))
+      if ((a.kind == files::ArchiveEntryKind::DIRECTORY) != (b.kind == files::ArchiveEntryKind::DIRECTORY)) {
         return a.kind == files::ArchiveEntryKind::DIRECTORY;
+      }
       const int order = g_utf8_collate(a.displayName.c_str(), b.displayName.c_str());
       return order == 0 ? a.path < b.path : order < 0;
     });
+  }
   m_path->setText(m_parent.empty() ? "/" : m_parent);
   m_up->setEnabled(!m_parent.empty());
   m_grid->setSelectedIndex(std::nullopt);
@@ -293,17 +299,21 @@ void ArchiveView::selectionChanged() {
   markLayoutDirty();
 }
 void ArchiveView::choose(std::size_t index, std::uint32_t modifiers) {
-  if (index >= m_rows.size() || !m_catalog)
+  if (index >= m_rows.size() || !m_catalog) {
     return;
+  }
   const auto& path = m_catalog->entries[m_rows[index]].path;
   if ((modifiers & KeyMod::Shift) != 0 && m_anchor) {
-    if ((modifiers & KeyMod::Ctrl) == 0)
+    if ((modifiers & KeyMod::Ctrl) == 0) {
       m_selection.clear();
-    for (auto i = std::min(index, *m_anchor); i <= std::max(index, *m_anchor) && i < m_rows.size(); ++i)
+    }
+    for (auto i = std::min(index, *m_anchor); i <= std::max(index, *m_anchor) && i < m_rows.size(); ++i) {
       m_selection.insert(m_catalog->entries[m_rows[i]].path);
+    }
   } else if ((modifiers & KeyMod::Ctrl) != 0) {
-    if (!m_selection.erase(path))
+    if (!m_selection.erase(path)) {
       m_selection.insert(path);
+    }
     m_anchor = index;
   } else {
     m_selection = {path};
@@ -314,8 +324,9 @@ void ArchiveView::choose(std::size_t index, std::uint32_t modifiers) {
   selectionChanged();
 }
 void ArchiveView::activate(std::size_t index) {
-  if (m_busy || !m_catalog || index >= m_rows.size())
+  if (m_busy || !m_catalog || index >= m_rows.size()) {
     return;
+  }
   const auto& entry = m_catalog->entries[m_rows[index]];
   if (entry.kind == files::ArchiveEntryKind::DIRECTORY) {
     m_parent = entry.path;
@@ -323,12 +334,14 @@ void ArchiveView::activate(std::size_t index) {
     m_focus.reset();
     m_anchor.reset();
     rebuild();
-  } else if (entry.kind != files::ArchiveEntryKind::SYMLINK)
+  } else if (entry.kind != files::ArchiveEntryKind::SYMLINK) {
     m_open(entry.path);
+  }
 }
 void ArchiveView::up() {
-  if (m_parent.empty())
+  if (m_parent.empty()) {
     return;
+  }
   const auto slash = m_parent.rfind('/');
   m_parent = slash == std::string::npos ? "" : m_parent.substr(0, slash);
   m_selection.clear();
@@ -339,9 +352,11 @@ void ArchiveView::up() {
 bool ArchiveView::key(std::uint32_t symbol, std::uint32_t modifiers) {
   if (symbol == XKB_KEY_a && modifiers == KeyMod::Ctrl) {
     m_selection.clear();
-    if (m_catalog)
-      for (auto index : m_rows)
+    if (m_catalog) {
+      for (auto index : m_rows) {
         m_selection.insert(m_catalog->entries[index].path);
+      }
+    }
     selectionChanged();
     return true;
   }
@@ -350,22 +365,25 @@ bool ArchiveView::key(std::uint32_t symbol, std::uint32_t modifiers) {
     return true;
   }
   if (KeySymbol::isEnter(symbol)) {
-    if (m_focus)
+    if (m_focus) {
       activate(*m_focus);
+    }
     return true;
   }
   if (!m_rows.empty()
       && (KeySymbol::isUp(symbol) || KeySymbol::isDown(symbol) || symbol == XKB_KEY_Home || symbol == XKB_KEY_End)) {
     std::size_t index = m_focus.value_or(0);
-    if (symbol == XKB_KEY_Home)
+    if (symbol == XKB_KEY_Home) {
       index = 0;
-    else if (symbol == XKB_KEY_End)
+    } else if (symbol == XKB_KEY_End) {
       index = m_rows.size() - 1;
-    else if (KeySymbol::isUp(symbol)) {
-      if (index)
+    } else if (KeySymbol::isUp(symbol)) {
+      if (index) {
         --index;
-    } else
+      }
+    } else {
       index = std::min(index + 1, m_rows.size() - 1);
+    }
     choose(index, modifiers);
     return true;
   }
@@ -397,16 +415,18 @@ ArchiveDialog::ArchiveDialog(
                           this->submit();
                         }}));
     std::vector<ui::SegmentedOption> options;
-    for (const auto& format : files::archiveFormats())
+    for (const auto& format : files::archiveFormats()) {
       options.push_back({.label = std::string(format.label), .glyph = {}, .tooltip = {}});
+    }
     addChild(
         ui::segmented(
             {.options = std::move(options), .equalSegmentWidths = true, .onChange = [this](std::size_t index) {
                const auto formats = files::archiveFormats();
                std::string value = m_name->value();
                const auto old = formats[m_format].suffix;
-               if (value.ends_with(old))
+               if (value.ends_with(old)) {
                  value.resize(value.size() - old.size());
+               }
                m_format = index;
                value += formats[index].suffix;
                m_name->setValue(value);
@@ -418,7 +438,7 @@ ArchiveDialog::ArchiveDialog(
   addChild(ui::input({.out = &m_destination, .value = std::move(destination), .onSubmit = [this](const std::string&) {
                         this->submit();
                       }}));
-  if (!compress)
+  if (!compress) {
     addChild(
         ui::label(
             {.text = "Extract into a new folder. Existing folders require a conflict decision.",
@@ -427,6 +447,7 @@ ArchiveDialog::ArchiveDialog(
              .maxLines = 2}
         )
     );
+  }
   addChild(ui::label({.out = &m_error, .color = colorSpecFromRole(ColorRole::Error), .height = 40.0F, .maxLines = 2}));
   addChild(
       ui::row(

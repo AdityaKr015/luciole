@@ -16,12 +16,14 @@ namespace {
   class Fd {
   public:
     explicit Fd(int fd) : m_fd(fd) {
-      if (fd < 0)
+      if (fd < 0) {
         throw std::runtime_error(std::strerror(errno));
+      }
     }
     ~Fd() {
-      if (m_fd >= 0)
+      if (m_fd >= 0) {
         ::close(m_fd);
+      }
     }
     int close() { return ::close(std::exchange(m_fd, -1)); }
     Fd(const Fd&) = delete;
@@ -33,8 +35,9 @@ namespace {
   };
   struct stat metadata(int fd) {
     struct stat value{};
-    if (::fstat(fd, &value) != 0)
+    if (::fstat(fd, &value) != 0) {
       throw std::runtime_error(std::strerror(errno));
+    }
     return value;
   }
   bool sameIdentity(const struct stat& a, const struct stat& b) {
@@ -47,8 +50,9 @@ namespace {
         : path(std::move(path)), directory(::open(this->path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC)) {}
     void requireCurrent() const {
       Fd current(::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
-      if (!sameIdentity(metadata(current.get()), metadata(directory.get())))
+      if (!sameIdentity(metadata(current.get()), metadata(directory.get()))) {
         throw std::runtime_error("The destination folder changed. Close this dialog and try again.");
+      }
     }
   };
   struct Reply {
@@ -57,14 +61,18 @@ namespace {
     std::string error;
   };
   std::string creationError(int code) {
-    if (code == EEXIST || code == ENOTEMPTY)
+    if (code == EEXIST || code == ENOTEMPTY) {
       return "An item with that name already exists.";
-    if (code == ENAMETOOLONG)
+    }
+    if (code == ENAMETOOLONG) {
       return "The name is too long for this folder.";
-    if (code == EACCES || code == EPERM)
+    }
+    if (code == EACCES || code == EPERM) {
       return "Permission denied.";
-    if (code == ENOENT)
+    }
+    if (code == ENOENT) {
       return "The destination folder is no longer available.";
+    }
     return std::strerror(code);
   }
 } // namespace
@@ -77,8 +85,9 @@ struct files::CreateService::State {
   std::function<void()> changed;
   void notify() const {
     const auto callback = changed;
-    if (callback)
+    if (callback) {
       callback();
+    }
   }
   static void launch(const std::shared_ptr<State>& owner, std::function<Reply()> work) {
     struct Request {
@@ -119,8 +128,9 @@ struct files::CreateService::State {
       auto& request = *static_cast<Request*>(data);
       auto reply = std::make_unique<Reply>();
       try {
-        if (!request.owner->cancelled.load())
+        if (!request.owner->cancelled.load()) {
           *reply = request.work();
+        }
       } catch (const std::exception& error) {
         reply->error = error.what();
       }
@@ -145,27 +155,31 @@ void files::CreateService::cancel() {
   m_state->target.reset();
   if (!busy()
       && m_state->snapshot.status != CreateStatus::SUCCEEDED
-      && m_state->snapshot.status != CreateStatus::PARTIAL)
+      && m_state->snapshot.status != CreateStatus::PARTIAL) {
     m_state->snapshot.status = CreateStatus::CANCELLED;
+  }
 }
 bool files::CreateService::prepare(const Location& parent, CreateKind kind) {
-  if (busy() || (kind != CreateKind::FOLDER && kind != CreateKind::EmptyFile))
+  if (busy() || (kind != CreateKind::FOLDER && kind != CreateKind::EmptyFile)) {
     return false;
+  }
   m_state->target.reset();
   m_state->snapshot = {
       .status = CreateStatus::PREPARING, .kind = kind, .parent = parent, .destination = std::nullopt, .error = {}
   };
   State::launch(m_state, [parent] {
     const auto path = parent.nativePath();
-    if (!path)
+    if (!path) {
       throw std::runtime_error("Creating remote files or folders is not supported yet.");
+    }
     return Reply{.target = std::make_shared<Target>(*path), .destination = std::nullopt, .error = {}};
   });
   return true;
 }
 bool files::CreateService::create(std::string name) {
-  if (!canCreate())
+  if (!canCreate()) {
     return false;
+  }
   if (const auto error = filenameProblem(name)) {
     m_state->snapshot.status = CreateStatus::ERROR;
     m_state->snapshot.error = *error;
@@ -184,24 +198,29 @@ bool files::CreateService::create(std::string name) {
         std::string closeError = "The file was created, but it could not be closed cleanly.";
         target->requireCurrent();
         const auto limit = ::fpathconf(target->directory.get(), _PC_NAME_MAX);
-        if (limit >= 0 && name.size() > static_cast<std::size_t>(limit))
+        if (limit >= 0 && name.size() > static_cast<std::size_t>(limit)) {
           throw std::runtime_error(creationError(ENAMETOOLONG));
-        if (owner->cancelled.load())
+        }
+        if (owner->cancelled.load()) {
           return Reply{};
+        }
         if (kind == CreateKind::FOLDER) {
-          if (::mkdirat(target->directory.get(), name.c_str(), 0777) != 0)
+          if (::mkdirat(target->directory.get(), name.c_str(), 0777) != 0) {
             throw std::runtime_error(creationError(errno));
+          }
         } else {
           // Exclusive creation refuses every existing entry, including dangling links and FIFOs.
           const int fd = ::openat(
               target->directory.get(), name.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0666
           );
-          if (fd < 0)
+          if (fd < 0) {
             throw std::runtime_error(creationError(errno));
+          }
           Fd output(fd);
           // Linux closes the descriptor even on EINTR; retrying could close an unrelated descriptor.
-          if (output.close() != 0)
+          if (output.close() != 0) {
             result.error = std::move(closeError);
+          }
         }
         return result;
       }

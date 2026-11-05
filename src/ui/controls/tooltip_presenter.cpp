@@ -51,8 +51,9 @@ void TooltipPresenter::dismiss() {
 }
 
 void TooltipPresenter::sync(Renderer& renderer, Node& root, float pointerX, float pointerY, LayoutSize bounds) {
-  if (!m_armed)
+  if (!m_armed) {
     return;
+  }
   InputArea* area = nullptr;
   for (auto* node = Node::hitTest(&root, pointerX, pointerY); node; node = node->parent()) {
     if (auto* input = dynamic_cast<InputArea*>(node); input && input->hasTooltip()) {
@@ -95,8 +96,9 @@ void TooltipPresenter::sync(Renderer& renderer, Node& root, float pointerX, floa
       m_requestUpdate();
     });
   }
-  if (!m_ready)
+  if (!m_ready) {
     return;
+  }
 
   m_label->setText(m_text);
   m_label->setMaxWidth(std::max(1.0F, std::min(kMaxContentWidth, bounds.width - 2 * (Style::spaceSm + kPadH))));
@@ -105,9 +107,9 @@ void TooltipPresenter::sync(Renderer& renderer, Node& root, float pointerX, floa
   float y = anchor.y + anchor.height + Style::spaceXs;
   if (placement == TooltipPlacement::Above
       || ((placement == TooltipPlacement::Default || placement == TooltipPlacement::Below)
-          && y + size.height > bounds.height - Style::spaceSm))
+          && y + size.height > bounds.height - Style::spaceSm)) {
     y = anchor.y - size.height - Style::spaceSm;
-  else if (placement == TooltipPlacement::Left || placement == TooltipPlacement::Right) {
+  } else if (placement == TooltipPlacement::Left || placement == TooltipPlacement::Right) {
     x = placement == TooltipPlacement::Left ? anchor.x - size.width - Style::spaceSm
                                             : anchor.x + anchor.width + Style::spaceSm;
     y = anchor.y + (anchor.height - size.height) * 0.5F;

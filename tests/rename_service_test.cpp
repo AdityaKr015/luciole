@@ -14,8 +14,9 @@
 namespace {
   namespace fs = std::filesystem;
   void require(bool value, const char* message) {
-    if (!value)
+    if (!value) {
       throw std::runtime_error(message);
+    }
   }
   void write(const fs::path& path, const std::string& text) { std::ofstream(path) << text; }
   std::string read(const fs::path& path) {
@@ -194,8 +195,9 @@ namespace {
             && fs::exists(fixture.root / "source") != committed,
         "cancellation reported an incorrect committed outcome"
     );
-    if (committed)
+    if (committed) {
       fs::rename(fixture.root / "cancel-result", fixture.root / "source");
+    }
     require(service.prepare(location(fixture.root / "source")), "preparation refused");
     require(!service.prepare(location(fixture.root / "source")) && !service.rename("other"), "busy operation accepted");
     service.cancel();

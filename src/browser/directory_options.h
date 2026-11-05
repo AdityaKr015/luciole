@@ -58,9 +58,11 @@ namespace files {
     return {};
   }
   inline std::optional<DetailsColumn> detailsColumnFromName(std::string_view name) {
-    for (const auto column : kDefaultDetailsColumnOrder)
-      if (detailsColumnName(column) == name)
+    for (const auto column : kDefaultDetailsColumnOrder) {
+      if (detailsColumnName(column) == name) {
         return column;
+      }
+    }
     return std::nullopt;
   }
   inline bool detailsColumnVisible(DetailsColumnVisibility visibility, DetailsColumn column) {
@@ -78,11 +80,13 @@ namespace files {
   moveDetailsColumn(DetailsColumnOrder order, DetailsColumn column, int direction, DetailsColumnVisibility visible) {
     if (!validDetailsColumnOrder(order)
         || (direction != -1 && direction != 1)
-        || !detailsColumnVisible(visible, column))
+        || !detailsColumnVisible(visible, column)) {
       return std::nullopt;
+    }
     auto* const found = std::ranges::find(order, column);
-    if (found == order.end())
+    if (found == order.end()) {
       return std::nullopt;
+    }
     const auto source = found - order.begin();
     for (auto target = source + direction; target >= 0 && target < static_cast<std::ptrdiff_t>(order.size());
          target += direction) {
@@ -97,21 +101,26 @@ namespace files {
   insertDetailsColumnBefore(DetailsColumnOrder order, DetailsColumn column, std::optional<DetailsColumn> before) {
     if (!validDetailsColumnOrder(order)
         || !std::ranges::contains(order, column)
-        || (before && !std::ranges::contains(order, *before)))
+        || (before && !std::ranges::contains(order, *before))) {
       return std::nullopt;
-    if (before == column)
+    }
+    if (before == column) {
       return order;
+    }
     DetailsColumnOrder result{};
     std::size_t index = 0;
     for (const auto candidate : order) {
-      if (candidate == column)
+      if (candidate == column) {
         continue;
-      if (before == candidate)
+      }
+      if (before == candidate) {
         result[index++] = column;
+      }
       result[index++] = candidate;
     }
-    if (!before)
+    if (!before) {
       result[index] = column;
+    }
     return result;
   }
   enum class SortField : std::uint8_t { NAME, SIZE, MODIFIED, TYPE };

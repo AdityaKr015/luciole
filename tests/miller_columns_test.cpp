@@ -16,8 +16,9 @@ namespace {
   using files::MillerColumns;
 
   void require(bool value, const std::string& message) {
-    if (!value)
+    if (!value) {
       throw std::runtime_error(message);
+    }
   }
   class Fixture {
   public:
@@ -59,8 +60,9 @@ namespace {
     }
     void loaded(MillerColumns& columns) {
       const auto count = columns.columns().size();
-      for (auto i = count > 3 ? count - 3 : 0; i < count; ++i)
+      for (auto i = count > 3 ? count - 3 : 0; i < count; ++i) {
         columns.load(i);
+      }
       until([&] {
         columns.synchronize();
         return std::ranges::all_of(columns.columns(), [](const auto& column) {
@@ -74,17 +76,21 @@ namespace {
     GlibPollSource m_source;
   };
   files::EntryId entry(const BrowserController& browser, const std::string& name) {
-    for (const auto& item : browser.model().snapshot().entries)
-      if (item.name == name)
+    for (const auto& item : browser.model().snapshot().entries) {
+      if (item.name == name) {
         return item.id;
+      }
+    }
     throw std::runtime_error("missing entry: " + name);
   }
 
   std::size_t columnAt(const MillerColumns& columns, const fs::path& path) {
     const auto location = Location::fromPath(path.native());
-    for (std::size_t i = 0; i < columns.columns().size(); ++i)
-      if (columns.columns()[i]->location == location)
+    for (std::size_t i = 0; i < columns.columns().size(); ++i) {
+      if (columns.columns()[i]->location == location) {
         return i;
+      }
+    }
     throw std::runtime_error("missing ancestor: " + path.native());
   }
 

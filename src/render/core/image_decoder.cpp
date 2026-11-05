@@ -6,8 +6,9 @@ std::expected<DecodedRasterImage, std::string>
 decodeRasterImage(const std::uint8_t* data, std::size_t size, std::uint64_t maxPixels) {
   png_image image{};
   image.version = PNG_IMAGE_VERSION;
-  if (!data || !size || !maxPixels || maxPixels > 64'000'000)
+  if (!data || !size || !maxPixels || maxPixels > 64'000'000) {
     return std::unexpected("invalid PNG input or pixel limit");
+  }
   if (png_image_begin_read_from_memory(&image, data, size) == 0) {
     const std::string error(image.message);
     png_image_free(&image);

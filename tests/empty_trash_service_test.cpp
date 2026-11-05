@@ -14,8 +14,9 @@ namespace {
   using Outcome = files::EmptyTrashOutcome;
   using Status = files::EmptyTrashStatus;
   void require(bool value, const std::string& message) {
-    if (!value)
+    if (!value) {
       throw std::runtime_error(message);
+    }
   }
   void write(const fs::path& path, const std::string& value) { std::ofstream(path) << value; }
   std::string read(const fs::path& path) {
@@ -121,8 +122,9 @@ namespace {
     write(fixture.root / ".hidden", "hidden");
     for (const auto& path :
          {fixture.root / "first/same #%.txt", fixture.root / "second/same #%.txt", fixture.root / "first/Folder 文",
-          fixture.root / "link", fixture.root / "broken", fixture.root / raw, fixture.root / ".hidden"})
+          fixture.root / "link", fixture.root / "broken", fixture.root / raw, fixture.root / ".hidden"}) {
       trash(path);
+    }
     pump.prepare(service);
     require(service.snapshot().results.size() == 7 && service.canEmpty(), "preparation omitted trash entries");
     const auto expectedSize =
@@ -173,8 +175,9 @@ namespace {
     write(fixture.root / "replaced", "original");
     write(fixture.root / "good", "remove");
     write(fixture.root / "restored", "restore");
-    for (const auto* name : {"replaced", "good", "restored"})
+    for (const auto* name : {"replaced", "good", "restored"}) {
       trash(fixture.root / name);
+    }
     files::EmptyTrashService service;
     pump.prepare(service);
     fs::rename(trashFiles() / "replaced", fixture.root / "held-original");
@@ -219,16 +222,18 @@ namespace {
     service.cancel();
     require(service.snapshot().status == Status::FINISHED, "late cancel replaced actual results");
     pump.prepare(service);
-    if (service.canEmpty())
+    if (service.canEmpty()) {
       pump.empty(service);
-    else
+    } else {
       service.cancel();
+    }
   }
   void confirmationDoesNotWaitForSize(Pump& pump) {
     Fixture fixture;
     fs::create_directory(fixture.root / "large-folder");
-    for (int index = 0; index < 256; ++index)
+    for (int index = 0; index < 256; ++index) {
       write(fixture.root / "large-folder" / std::to_string(index), "data");
+    }
     trash(fixture.root / "large-folder");
     files::EmptyTrashService service;
     bool requested = false, accepted = false, measuring = false;
@@ -254,8 +259,9 @@ namespace {
     service.setChangedCallback({});
   }
   void incompleteSize(Pump& pump) {
-    if (::geteuid() == 0)
+    if (::geteuid() == 0) {
       return;
+    }
     Fixture fixture;
     fs::create_directory(fixture.root / "unreadable");
     write(fixture.root / "unreadable/content", "retain");

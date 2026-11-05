@@ -17,8 +17,9 @@ namespace {
   using namespace files;
   using namespace std::chrono_literals;
   void require(bool value, const char* message) {
-    if (!value)
+    if (!value) {
       throw std::runtime_error(message);
+    }
   }
   using MimeData = std::unordered_map<std::string, std::string>;
 
@@ -57,10 +58,11 @@ namespace {
           .receive =
               [](wl_client*, wl_resource* resource, const char* mime, int fd) {
                 const auto& offer = *static_cast<Offer*>(wl_resource_get_user_data(resource));
-                if (offer.source)
+                if (offer.source) {
                   wl_data_source_send_send(offer.source, mime, fd);
-                else if (const auto found = offer.data.find(mime); found != offer.data.end())
+                } else if (const auto found = offer.data.find(mime); found != offer.data.end()) {
                   (void)::write(fd, found->second.data(), found->second.size());
+                }
                 ::close(fd);
               },
           .destroy = [](wl_client*, wl_resource* resource) { wl_resource_destroy(resource); },
@@ -72,12 +74,15 @@ namespace {
         data->peer->m_offers.erase(resource);
       });
       wl_data_device_send_data_offer(m_device, resource);
-      if (m_selection)
-        for (const auto& type : static_cast<Source*>(wl_resource_get_user_data(m_selection))->types)
+      if (m_selection) {
+        for (const auto& type : static_cast<Source*>(wl_resource_get_user_data(m_selection))->types) {
           wl_data_offer_send_offer(resource, type.c_str());
-      else
-        for (const auto& [type, unused] : m_external)
+        }
+      } else {
+        for (const auto& [type, unused] : m_external) {
           wl_data_offer_send_offer(resource, type.c_str());
+        }
+      }
       wl_data_device_send_selection(m_device, resource);
     }
     static void bindManager(wl_client* client, void* data, std::uint32_t, std::uint32_t id) {
@@ -97,12 +102,14 @@ namespace {
                 wl_resource_set_implementation(
                     resource, &implementation, new Source{peer, {}}, [](wl_resource* resource) {
                       const std::unique_ptr<Source> data(static_cast<Source*>(wl_resource_get_user_data(resource)));
-                      if (data->peer->m_selection == resource)
+                      if (data->peer->m_selection == resource) {
                         data->peer->m_selection = nullptr;
+                      }
                       for (auto* offer : data->peer->m_offers) {
                         auto* value = static_cast<Offer*>(wl_resource_get_user_data(offer));
-                        if (value->source == resource)
+                        if (value->source == resource) {
                           value->source = nullptr;
+                        }
                       }
                     }
                 );
@@ -123,14 +130,16 @@ namespace {
                           }
                           ++peer.m_writes;
                           peer.m_writtenSerial = serial;
-                          if (peer.m_selection && peer.m_selection != source)
+                          if (peer.m_selection && peer.m_selection != source) {
                             wl_data_source_send_cancelled(peer.m_selection);
+                          }
                           peer.m_selection = source;
                           peer.m_external.clear();
-                          if (source)
+                          if (source) {
                             peer.offer();
-                          else
+                          } else {
                             wl_data_device_send_selection(resource, nullptr);
+                          }
                         },
                     .release = [](wl_client*, wl_resource* resource) { wl_resource_destroy(resource); }
                 };
@@ -162,12 +171,13 @@ namespace {
           .global =
               [](void* data, wl_registry* registry, std::uint32_t id, const char* type, std::uint32_t) {
                 auto& peer = *static_cast<ClipboardPeer*>(data);
-                if (std::string_view(type) == wl_data_device_manager_interface.name)
+                if (std::string_view(type) == wl_data_device_manager_interface.name) {
                   peer.m_manager = static_cast<wl_data_device_manager*>(
                       wl_registry_bind(registry, id, &wl_data_device_manager_interface, 3)
                   );
-                else if (std::string_view(type) == wl_seat_interface.name)
+                } else if (std::string_view(type) == wl_seat_interface.name) {
                   peer.m_seat = static_cast<wl_seat*>(wl_registry_bind(registry, id, &wl_seat_interface, 1));
+                }
               },
           .global_remove = [](void*, wl_registry*, std::uint32_t) {}
       };
@@ -195,8 +205,9 @@ namespace {
       wl_event_loop_dispatch(wl_display_get_event_loop(m_server), 0);
       wl_display_flush_clients(m_server);
       pollfd fd{wl_display_get_fd(m_client), POLLIN, 0};
-      if (::poll(&fd, 1, 0) > 0)
+      if (::poll(&fd, 1, 0) > 0) {
         require(wl_display_dispatch(m_client) >= 0, "clipboard protocol error");
+      }
       while (g_main_context_iteration(nullptr, false)) {
       }
     }
@@ -217,19 +228,23 @@ namespace {
       m_serial += 10;
       offer();
       // Selection is introduced before keyboard enter, even for the same owner.
-      for (int i = 0; i < 3; ++i)
+      for (int i = 0; i < 3; ++i) {
         pump();
+      }
       m_clipboard->keyboardFocusEntered();
       pump();
     }
     void replace(MimeData data) {
-      if (m_selection)
+      if (m_selection) {
         wl_data_source_send_cancelled(std::exchange(m_selection, nullptr));
+      }
       m_external = std::move(data);
-      if (m_focused)
+      if (m_focused) {
         offer();
-      for (int i = 0; i < 3; ++i)
+      }
+      for (int i = 0; i < 3; ++i) {
         pump();
+      }
     }
     void replaceDuringEnter(MimeData data) {
       m_focused = true;
@@ -237,14 +252,16 @@ namespace {
       auto* previous = std::exchange(m_selection, nullptr);
       m_external = std::move(data);
       offer();
-      for (int i = 0; i < 3; ++i)
+      for (int i = 0; i < 3; ++i) {
         pump();
+      }
       m_clipboard->keyboardFocusEntered();
       // The source cancellation arrives after the keyboard-enter callback,
       // before the compositor processes this client's next request.
       wl_data_source_send_cancelled(previous);
-      for (int i = 0; i < 4; ++i)
+      for (int i = 0; i < 4; ++i) {
         pump();
+      }
     }
     ClipboardFiles capture() {
       std::optional<ClipboardFiles> selection;
@@ -258,8 +275,9 @@ namespace {
       return *selection;
     }
     std::string read(const char* mime) {
-      if (!m_selection)
+      if (!m_selection) {
         return m_external.contains(mime) ? m_external.at(mime) : "";
+      }
       int fds[2];
       require(pipe2(fds, O_CLOEXEC | O_NONBLOCK) == 0, "selection pipe failed");
       wl_data_source_send_send(m_selection, mime, fds[1]);
@@ -269,10 +287,11 @@ namespace {
       until([&] {
         char buffer[4096];
         const auto count = ::read(fds[0], buffer, sizeof(buffer));
-        if (count > 0)
+        if (count > 0) {
           bytes.append(buffer, static_cast<std::size_t>(count));
-        else if (count == 0)
+        } else if (count == 0) {
           eof = true;
+        }
         return eof;
       });
       ::close(fds[0]);
@@ -340,9 +359,9 @@ namespace {
     clipboard.claimMove(selection.revision);
     peer.blur();
     clipboard.finishMove(selection, {{original.locations[0], TransferOutcome::MOVED, {}}});
-    if (duringEnter)
+    if (duringEnter) {
       peer.replaceDuringEnter({{"text/plain", "new external selection"}});
-    else {
+    } else {
       peer.replace({{"text/plain", "new external selection"}});
       peer.enter();
     }

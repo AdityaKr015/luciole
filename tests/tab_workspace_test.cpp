@@ -9,23 +9,25 @@
 
 namespace {
   void require(bool value, const char* message) {
-    if (!value)
+    if (!value) {
       throw std::runtime_error(message);
+    }
   }
   void invariant(const files::TabWorkspace& workspace) {
     std::set<files::TabId> ids;
     std::size_t tabCount = 0;
     for (const auto& [id, window] : workspace.windows()) {
       tabCount += window.tabs.size();
-      if (window.tabs.empty())
+      if (window.tabs.empty()) {
         require(
             !window.selected && !window.primary && !window.active && !window.secondary, "empty window retained a page"
         );
-      else {
+      } else {
         require(std::ranges::contains(window.tabs, window.selected), "selected logical tab lost ownership");
         require(window.active == window.primary || window.active == window.secondary, "active page is hidden");
-        if (window.secondary)
+        if (window.secondary) {
           require(*window.secondary != window.primary, "split repeated a page");
+        }
       }
       require(
           std::isfinite(window.fraction) && window.fraction >= 0.2F && window.fraction <= 0.8F,
@@ -34,17 +36,20 @@ namespace {
       for (auto tab : window.tabs) {
         const auto pages = workspace.pages(tab);
         require(!pages.empty() && pages.size() <= 2, "invalid logical-tab layout");
-        for (auto page : pages)
+        for (auto page : pages) {
           require(
               ids.insert(page).second && workspace.owner(page) == id && workspace.tabFor(page) == tab,
               "page has duplicate ownership"
           );
+        }
       }
     }
     require(tabCount <= 32 && ids.size() <= 64, "tab or pane limit exceeded");
-    for (auto tab : workspace.closed())
-      for (auto page : workspace.pages(tab))
+    for (auto tab : workspace.closed()) {
+      for (auto page : workspace.pages(tab)) {
         require(!ids.contains(page), "closed tab retained a live page");
+      }
+    }
     require(workspace.closed().size() <= 16, "closed-tab retention exceeded");
   }
   void workflows() {
@@ -119,8 +124,9 @@ namespace {
   void transitions() {
     files::TabWorkspace workspace;
     std::mt19937 random(42);
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < 4; ++i) {
       workspace.addWindow();
+    }
     for (int i = 0; i < 10000; ++i) {
       const auto window = 1 + random() % 4;
       const auto page = 1 + random() % 500;

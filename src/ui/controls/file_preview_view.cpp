@@ -93,10 +93,12 @@ void FilePreviewView::sync(
   const float budget = std::max(40.0F, width - Style::spaceMd * 2 - Style::scrollbarWidth - Style::scrollbarGap);
   m_heading->setMaxWidth(std::max(1.0F, width - Style::spaceMd * 2 - Style::controlHeightSm - Style::spaceSm));
   m_actions->setDirection(width < 240 ? FlexDirection::Vertical : FlexDirection::Horizontal);
-  for (auto* button : {m_open, m_openWith})
+  for (auto* button : {m_open, m_openWith}) {
     button->setMaxWidth(std::max(40.0F, width - Style::spaceMd * 2));
-  for (auto* label : {m_name, m_metadata, m_status, m_text})
+  }
+  for (auto* label : {m_name, m_metadata, m_status, m_text}) {
     label->setMaxWidth(budget);
+  }
   const auto& entry = snapshot.entry;
   const std::string location = entry ? entry->location.uri() : "";
   if (location != m_location) {

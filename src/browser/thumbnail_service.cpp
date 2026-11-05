@@ -24,8 +24,9 @@ namespace {
   struct Fd {
     int value;
     ~Fd() {
-      if (value >= 0)
+      if (value >= 0) {
         ::close(value);
+      }
     }
   };
   std::string stamp(const struct stat& info) {
@@ -58,13 +59,16 @@ namespace {
     ThumbnailStore store;
     const auto native = source.location.nativePath();
     if (!native) {
-      if (options.policy == ThumbnailPolicy::ALL && source.modifiedSeconds)
-        if (auto cached = store.read(source.location.uri(), side, *source.modifiedSeconds, source.size))
+      if (options.policy == ThumbnailPolicy::ALL && source.modifiedSeconds) {
+        if (auto cached = store.read(source.location.uri(), side, *source.modifiedSeconds, source.size)) {
           result.image.pixels = std::move(cached->image);
+        }
+      }
       return result;
     }
-    if (g_cancellable_is_cancelled(cancel))
+    if (g_cancellable_is_cancelled(cancel)) {
       return result;
+    }
     const GioPtr<GFileInfo> filesystem(
         g_file_query_filesystem_info(source.location.file().get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE, cancel, nullptr)
     );
@@ -72,9 +76,11 @@ namespace {
         && g_file_info_has_attribute(filesystem.get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE)
         && !g_file_info_get_attribute_boolean(filesystem.get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE);
     if (!local) {
-      if (options.policy == ThumbnailPolicy::ALL && source.modifiedSeconds)
-        if (auto cached = store.read(source.location.uri(), side, *source.modifiedSeconds, source.size))
+      if (options.policy == ThumbnailPolicy::ALL && source.modifiedSeconds) {
+        if (auto cached = store.read(source.location.uri(), side, *source.modifiedSeconds, source.size)) {
           result.image.pixels = std::move(cached->image);
+        }
+      }
       return result;
     }
     const Fd file{::open(native->c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)};
@@ -83,11 +89,14 @@ namespace {
         || ::fstat(file.value, &before) < 0
         || !S_ISREG(before.st_mode)
         || before.st_size <= 0
-        || static_cast<std::uint64_t>(before.st_size) > static_cast<std::uint64_t>(options.maxFileMiB) * 1024U * 1024U)
+        || static_cast<std::uint64_t>(before.st_size)
+            > static_cast<std::uint64_t>(options.maxFileMiB) * 1024U * 1024U) {
       return result;
+    }
     if ((source.size && *source.size != static_cast<std::uint64_t>(before.st_size))
-        || (source.modifiedSeconds && *source.modifiedSeconds != static_cast<std::uint64_t>(before.st_mtim.tv_sec)))
+        || (source.modifiedSeconds && *source.modifiedSeconds != static_cast<std::uint64_t>(before.st_mtim.tv_sec))) {
       return result;
+    }
     const GioPtr<GFileInfo> current(g_file_query_info(
         source.location.file().get(),
         G_FILE_ATTRIBUTE_ETAG_VALUE "," G_FILE_ATTRIBUTE_ID_FILE "," G_FILE_ATTRIBUTE_ID_FILESYSTEM
@@ -97,19 +106,23 @@ namespace {
     ));
     if (!current
         || (source.etag
-            && (!g_file_info_get_etag(current.get()) || *source.etag != g_file_info_get_etag(current.get()))))
+            && (!g_file_info_get_etag(current.get()) || *source.etag != g_file_info_get_etag(current.get())))) {
       return result;
-    if (source.identity && readFileIdentity(current.get()) != source.identity)
+    }
+    if (source.identity && readFileIdentity(current.get()) != source.identity) {
       return result;
+    }
     if (source.contentRevision) {
-      if (!g_file_info_has_attribute(current.get(), G_FILE_ATTRIBUTE_TIME_CHANGED))
+      if (!g_file_info_has_attribute(current.get(), G_FILE_ATTRIBUTE_TIME_CHANGED)) {
         return result;
+      }
       const auto seconds = g_file_info_get_attribute_uint64(current.get(), G_FILE_ATTRIBUTE_TIME_CHANGED);
       const auto nanos = g_file_info_has_attribute(current.get(), "time::changed-nsec")
           ? g_file_info_get_attribute_uint32(current.get(), "time::changed-nsec")
           : g_file_info_get_attribute_uint32(current.get(), G_FILE_ATTRIBUTE_TIME_CHANGED_USEC) * 1000U;
-      if (*source.contentRevision != std::to_string(seconds) + ':' + std::to_string(nanos))
+      if (*source.contentRevision != std::to_string(seconds) + ':' + std::to_string(nanos)) {
         return result;
+      }
     }
     const auto sourceStamp = stamp(before);
     const auto relative = std::filesystem::path(*native).lexically_relative(store.root());
@@ -120,8 +133,9 @@ namespace {
               static_cast<std::uint64_t>(before.st_size), sourceStamp
           )) {
         struct stat after{};
-        if (::fstat(file.value, &after) == 0 && stamp(after) == sourceStamp && !g_cancellable_is_cancelled(cancel))
+        if (::fstat(file.value, &after) == 0 && stamp(after) == sourceStamp && !g_cancellable_is_cancelled(cancel)) {
           result.image.pixels = std::move(cached->image);
+        }
         return result;
       }
     }
@@ -131,20 +145,24 @@ namespace {
     }
     std::expected<LoadedImageFile, std::string> decoded = std::unexpected("no thumbnail decoder");
     const auto mime = source.contentType.value_or("");
-    if (mime.starts_with("image/") || !insideCache)
+    if (mime.starts_with("image/") || !insideCache) {
       decoded = renderThumbnailProvider(file.value, mime, side, options, cancel);
-    if (!decoded && !g_cancellable_is_cancelled(cancel))
+    }
+    if (!decoded && !g_cancellable_is_cancelled(cancel)) {
       logDebug("[thumbnail] mime={} size={}: {}", mime, side, decoded.error());
+    }
     struct stat after{};
     if (!decoded
         || ::fstat(file.value, &after) < 0
         || sourceStamp != stamp(after)
-        || g_cancellable_is_cancelled(cancel))
+        || g_cancellable_is_cancelled(cancel)) {
       return result;
+    }
     // Reject replacement of the original pathname while the held descriptor was decoded.
     struct stat named{};
-    if (::lstat(native->c_str(), &named) < 0 || stamp(named) != sourceStamp)
+    if (::lstat(native->c_str(), &named) < 0 || stamp(named) != sourceStamp) {
       return result;
+    }
     if (!insideCache && side <= 1024) {
       ThumbnailPng cached{
           .image = *decoded,
@@ -211,8 +229,9 @@ struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
   std::vector<GioPtr<GCancellable>> running;
   void notify() {
     const auto callback = changed;
-    if (alive && callback)
+    if (alive && callback) {
       callback();
+    }
   }
   static void destroySource(GSource*& source) {
     if (source) {
@@ -222,8 +241,9 @@ struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
   }
   void retire() {
     ++epoch;
-    for (const auto& cancel : running)
+    for (const auto& cancel : running) {
       g_cancellable_cancel(cancel.get());
+    }
     for (const auto& [_, item] : cache) {
       g_cancellable_cancel(item.cancel.get());
       item.image->pixels.reset();
@@ -250,20 +270,24 @@ struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
   bool reserve(std::size_t bytes, bool visible) {
     while (reserved + bytes > kResidentBudget || cache.size() >= kMaxEntries) {
       auto oldest = cache.end();
-      for (auto it = cache.begin(); it != cache.end(); ++it)
+      for (auto it = cache.begin(); it != cache.end(); ++it) {
         if ((it->second.image.use_count() == 1 || (visible && !it->second.visible))
-            && (oldest == cache.end() || it->second.used < oldest->second.used))
+            && (oldest == cache.end() || it->second.used < oldest->second.used)) {
           oldest = it;
-      if (oldest == cache.end())
+        }
+      }
+      if (oldest == cache.end()) {
         return false;
+      }
       erase(oldest);
     }
     reserved += bytes;
     return true;
   }
   void schedule() {
-    if (idle || !alive || clearing)
+    if (idle || !alive || clearing) {
       return;
+    }
     idle = g_idle_source_new();
     g_source_set_callback(
         idle,
@@ -279,15 +303,17 @@ struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
   }
   void queueWrite(ThumbnailCacheWrite write) {
     const auto bytes = write.thumbnail.image.rgba.size();
-    if (!alive || clearing || writes.size() >= 32 || bytes > kWriteBudget - writeBytes)
+    if (!alive || clearing || writes.size() >= 32 || bytes > kWriteBudget - writeBytes) {
       return;
+    }
     writeBytes += bytes;
     writes.push_back(std::move(write));
     scheduleWrites();
   }
   void scheduleWrites() {
-    if (!alive || clearing || writing || writeTimer || writes.empty())
+    if (!alive || clearing || writing || writeTimer || writes.empty()) {
       return;
+    }
     // Gather nearby completions without holding up decoded-pixel publication.
     writeTimer = g_timeout_source_new(25);
     g_source_set_callback(
@@ -303,8 +329,9 @@ struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
     g_source_attach(writeTimer, g_main_context_default());
   }
   void startWrites() {
-    if (writing || writes.empty() || !alive || clearing)
+    if (writing || writes.empty() || !alive || clearing) {
       return;
+    }
     auto batch = std::make_unique<WriteBatch>();
     batch->owner = shared_from_this();
     batch->budget = static_cast<std::uint64_t>(options.cacheMiB) * 1024U * 1024U;
@@ -341,21 +368,24 @@ struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
   }
   auto next(Stage stage) {
     auto result = cache.end();
-    for (auto it = cache.begin(); it != cache.end(); ++it)
+    for (auto it = cache.begin(); it != cache.end(); ++it) {
       if (it->second.stage == stage
           && (result == cache.end()
               || (it->second.visible && !result->second.visible)
-              || (it->second.visible == result->second.visible && it->second.used < result->second.used)))
+              || (it->second.visible == result->second.visible && it->second.used < result->second.used))) {
         result = it;
+      }
+    }
     return result;
   }
   void start(std::unordered_map<std::string, Item>::iterator next, bool generate) {
     auto& item = next->second;
     item.stage = generate ? Stage::DECODING : Stage::PROBING;
-    if (generate)
+    if (generate) {
       ++active;
-    else
+    } else {
       ++probes;
+    }
     running.emplace_back(static_cast<GCancellable*>(g_object_ref(item.cancel.get())));
     const GioPtr<GTask> task(g_task_new(
         nullptr, item.cancel.get(),
@@ -366,10 +396,11 @@ struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
           GError* error = nullptr;
           const std::unique_ptr<Result> loaded(static_cast<Result*>(g_task_propagate_pointer(task, &error)));
           g_clear_error(&error);
-          if (request->generate)
+          if (request->generate) {
             --owner->active;
-          else
+          } else {
             --owner->probes;
+          }
           std::erase_if(owner->running, [&](const auto& cancel) {
             return cancel.get() == g_task_get_cancellable(task);
           });
@@ -387,10 +418,12 @@ struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
               *item.image = std::move(loaded->loaded.image);
               item.failed = !item.image->pixels;
               item.retry = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-              if (loaded->loaded.write)
+              if (loaded->loaded.write) {
                 owner->queueWrite(std::move(*loaded->loaded.write));
-              if (!loaded->error.empty())
+              }
+              if (!loaded->error.empty()) {
                 owner->error = loaded->error;
+              }
             }
           }
           owner->pump();
@@ -415,26 +448,30 @@ struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
     });
   }
   void pump() {
-    if (!alive || clearing)
+    if (!alive || clearing) {
       return;
+    }
     // Cancellation must run even while both decoders are occupied.
     for (auto it = cache.begin(); it != cache.end();) {
       if (it->second.stage != Stage::READY && it->second.image.use_count() == 1) {
         const auto old = it++;
         erase(old);
-      } else
+      } else {
         ++it;
+      }
     }
     while (probes < 4) {
       const auto item = next(Stage::ProbeQueued);
-      if (item == cache.end())
+      if (item == cache.end()) {
         break;
+      }
       start(item, false);
     }
     while (active < 2) {
       const auto item = next(Stage::DecodeQueued);
-      if (item == cache.end())
+      if (item == cache.end()) {
         break;
+      }
       start(item, true);
     }
   }
@@ -469,8 +506,9 @@ files::ThumbnailService::request(const DirectoryEntry& source, int pixels, bool 
       || source.symlink
       || !source.modifiedSeconds
       || privateUri(source.location.uri())
-      || (state.options.policy == ThumbnailPolicy::LOCAL && !source.location.nativePath()))
+      || (state.options.policy == ThumbnailPolicy::LOCAL && !source.location.nativePath())) {
     return {};
+  }
   const int side = pixelSizeClass(pixels, mime->starts_with("image/") ? state.purpose : ThumbnailPurpose::THUMBNAIL);
   const auto key = std::format(
       "{}\n{}\n{}\n{}\n{}\n{}\n{}", source.location.uri(), source.id, source.etag.value_or(""),
@@ -482,8 +520,9 @@ files::ThumbnailService::request(const DirectoryEntry& source, int pixels, bool 
     found = state.cache.end();
   }
   if (found == state.cache.end()) {
-    if (!state.reserve(static_cast<std::size_t>(side) * side * 4, visible))
+    if (!state.reserve(static_cast<std::size_t>(side) * side * 4, visible)) {
       return {};
+    }
     State::Item item(source);
     item.image = std::make_shared<FileIconImage>();
     item.serial = ++state.serial;
@@ -493,24 +532,28 @@ files::ThumbnailService::request(const DirectoryEntry& source, int pixels, bool 
   }
   found->second.visible = visible;
   found->second.used = ++state.clock;
-  if (found->second.stage == State::Stage::ProbeQueued || found->second.stage == State::Stage::DecodeQueued)
+  if (found->second.stage == State::Stage::ProbeQueued || found->second.stage == State::Stage::DecodeQueued) {
     state.schedule();
+  }
   return found->second.image;
 }
 bool files::ThumbnailService::touch(const std::shared_ptr<const FileIconImage>& image, bool visible) {
   const auto found = m_state->leases.find(image.get());
-  if (found == m_state->leases.end())
+  if (found == m_state->leases.end()) {
     return false;
+  }
   auto& item = *found->second;
-  if (item.failed && std::chrono::steady_clock::now() >= item.retry)
+  if (item.failed && std::chrono::steady_clock::now() >= item.retry) {
     return false;
+  }
   item.visible = visible;
   item.used = ++m_state->clock;
   return true;
 }
 std::shared_ptr<const files::FileIconImage> files::ThumbnailService::prepared(const DirectoryEntry& source) {
-  if (m_state->clearing || m_state->options.policy == ThumbnailPolicy::NEVER)
+  if (m_state->clearing || m_state->options.policy == ThumbnailPolicy::NEVER) {
     return {};
+  }
   for (const int side : {1024, 512, 256, 128}) {
     const auto key = std::format(
         "{}\n{}\n{}\n{}\n{}\n{}\n{}", source.location.uri(), source.id, source.etag.value_or(""),
@@ -530,16 +573,19 @@ std::shared_ptr<const files::FileIconImage> files::ThumbnailService::prepared(co
   return {};
 }
 void files::ThumbnailService::synchronizeSources(const DirectorySnapshot& snapshot) {
-  if (m_state->cache.empty())
+  if (m_state->cache.empty()) {
     return;
+  }
   std::unordered_map<std::string, const DirectoryEntry*> current;
   current.reserve(m_state->cache.size());
-  for (const auto& [_, item] : m_state->cache)
+  for (const auto& [_, item] : m_state->cache) {
     current.emplace(item.source.location.uri(), nullptr);
+  }
   for (const auto& entry : snapshot.entries) {
     const auto found = current.find(entry.location.uri());
-    if (found != current.end())
+    if (found != current.end()) {
       found->second = &entry;
+    }
   }
   for (auto it = m_state->cache.begin(); it != m_state->cache.end();) {
     const auto found = current.find(it->second.source.location.uri());
@@ -556,13 +602,15 @@ void files::ThumbnailService::synchronizeSources(const DirectorySnapshot& snapsh
             || before.contentType != after->contentType)) {
       const auto old = it++;
       m_state->erase(old);
-    } else
+    } else {
       ++it;
+    }
   }
 }
 void files::ThumbnailService::setOptions(ThumbnailOptions options) {
-  if (options == m_state->options)
+  if (options == m_state->options) {
     return;
+  }
   const bool trim = options.cacheMiB < m_state->options.cacheMiB;
   m_state->retire();
   m_state->options = options;
@@ -590,8 +638,9 @@ void files::ThumbnailService::setChangedCallback(std::function<void()> callback)
   m_state->changed = std::move(callback);
 }
 void files::ThumbnailService::clearCache() {
-  if (m_state->clearing)
+  if (m_state->clearing) {
     return;
+  }
   m_state->retire();
   m_state->clearing = true;
   m_state->error.clear();

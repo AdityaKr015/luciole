@@ -33,8 +33,9 @@ files::FileLauncher::~FileLauncher() {
 }
 void files::FileLauncher::cancelApplications() {
   ++m_state->querySerial;
-  if (m_state->queryCancel)
+  if (m_state->queryCancel) {
     g_cancellable_cancel(m_state->queryCancel.get());
+  }
 }
 void files::FileLauncher::applications(std::string mime, std::function<void(std::vector<ApplicationChoice>)> callback) {
   cancelApplications();
@@ -54,8 +55,9 @@ void files::FileLauncher::applications(std::string mime, std::function<void(std:
         const std::unique_ptr<std::vector<ApplicationChoice>> choices(
             static_cast<std::vector<ApplicationChoice>*>(g_task_propagate_pointer(G_TASK(result), nullptr))
         );
-        if (choices && query.serial == query.state->querySerial)
+        if (choices && query.serial == query.state->querySerial) {
           query.callback(std::move(*choices));
+        }
       },
       nullptr
   ));
@@ -71,8 +73,9 @@ void files::FileLauncher::applications(std::string mime, std::function<void(std:
       auto* app = G_APP_INFO(item->data);
       const char* id = g_app_info_get_id(app);
       const char* name = g_app_info_get_display_name(app);
-      if (id && name && g_app_info_should_show(app))
+      if (id && name && g_app_info_should_show(app)) {
         result->push_back({id, name, std::shared_ptr<GAppInfo>(G_APP_INFO(g_object_ref(app)), ObjectUnref{})});
+      }
     }
     g_list_free_full(applications, g_object_unref);
     g_task_return_pointer(task, result.release(), [](gpointer p) {
@@ -81,8 +84,9 @@ void files::FileLauncher::applications(std::string mime, std::function<void(std:
   });
 }
 void files::FileLauncher::openWith(const Location& location, const ApplicationChoice& application) {
-  if (!application.app)
+  if (!application.app) {
     return;
+  }
   struct LaunchWith {
     std::shared_ptr<State> state;
     std::shared_ptr<GAppInfo> app;
@@ -103,8 +107,9 @@ void files::FileLauncher::openWith(const Location& location, const ApplicationCh
         --request->state->active;
         const std::string message = error ? error->message : success ? "" : "Could not open this file.";
         g_clear_error(&error);
-        if (request->state->changed && !g_cancellable_is_cancelled(request->state->cancellable.get()))
+        if (request->state->changed && !g_cancellable_is_cancelled(request->state->cancellable.get())) {
           request->state->changed(message);
+        }
       },
       request
   );
@@ -136,8 +141,9 @@ void files::FileLauncher::open(const Location& location) {
       G_CALLBACK(+[](GAppLaunchContext*, GAppInfo*, GVariant* platform, gpointer data) {
         const auto& request = *static_cast<State::Launch*>(data);
         gint32 pid = 0;
-        if (platform)
+        if (platform) {
           (void)g_variant_lookup(platform, "pid", "i", &pid);
+        }
         kLog.debug(
             "request {}: desktop handoff at {:.2f} ms (pid={}, not viewer readiness)", request.serial,
             request.elapsedMs(), pid
@@ -163,8 +169,9 @@ void files::FileLauncher::open(const Location& location) {
         const auto callback = state->changed;
         const std::string message = error != nullptr ? error->message : (launched ? "" : "Could not open this file.");
         g_clear_error(&error);
-        if (callback && !cancelled)
+        if (callback && !cancelled) {
           callback(message);
+        }
       },
       launch
   );

@@ -46,30 +46,36 @@ namespace {
   TextResult readText(const files::DirectoryEntry& entry, GCancellable* cancel) {
     using namespace files;
     const auto path = entry.location.nativePath();
-    if (!path)
+    if (!path) {
       return {{}, "Text previews are available for local files."};
+    }
     const GioPtr<GFileInfo> fs(
         g_file_query_filesystem_info(entry.location.file().get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE, cancel, nullptr)
     );
     if (!fs
         || !g_file_info_has_attribute(fs.get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE)
-        || g_file_info_get_attribute_boolean(fs.get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE))
+        || g_file_info_get_attribute_boolean(fs.get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE)) {
       return {{}, "Text previews are available for local files."};
+    }
     struct File {
       int fd;
       ~File() {
-        if (fd >= 0)
+        if (fd >= 0) {
           ::close(fd);
+        }
       }
     } file{::open(path->c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)};
     struct stat before{};
-    if (file.fd < 0 || ::fstat(file.fd, &before) < 0)
+    if (file.fd < 0 || ::fstat(file.fd, &before) < 0) {
       return {{}, "Could not read this file.", true};
-    if (!S_ISREG(before.st_mode))
+    }
+    if (!S_ISREG(before.st_mode)) {
       return {{}, "This item does not have a text preview."};
+    }
     if ((entry.size && *entry.size != static_cast<std::uint64_t>(before.st_size))
-        || (entry.modifiedSeconds && *entry.modifiedSeconds != static_cast<std::uint64_t>(before.st_mtim.tv_sec)))
+        || (entry.modifiedSeconds && *entry.modifiedSeconds != static_cast<std::uint64_t>(before.st_mtim.tv_sec))) {
       return {{}, "The file changed. Select it again.", true};
+    }
     const GioPtr<GFileInfo> info(g_file_query_info(
         entry.location.file().get(),
         G_FILE_ATTRIBUTE_ID_FILE "," G_FILE_ATTRIBUTE_ID_FILESYSTEM "," G_FILE_ATTRIBUTE_ETAG_VALUE
@@ -79,46 +85,55 @@ namespace {
     ));
     if (!info
         || (entry.identity && readFileIdentity(info.get()) != entry.identity)
-        || (entry.etag && (!g_file_info_get_etag(info.get()) || *entry.etag != g_file_info_get_etag(info.get()))))
+        || (entry.etag && (!g_file_info_get_etag(info.get()) || *entry.etag != g_file_info_get_etag(info.get())))) {
       return {{}, "The file changed. Select it again.", true};
+    }
     if (entry.contentRevision) {
       const auto seconds = g_file_info_get_attribute_uint64(info.get(), G_FILE_ATTRIBUTE_TIME_CHANGED);
       const auto nanos = g_file_info_has_attribute(info.get(), "time::changed-nsec")
           ? g_file_info_get_attribute_uint32(info.get(), "time::changed-nsec")
           : g_file_info_get_attribute_uint32(info.get(), G_FILE_ATTRIBUTE_TIME_CHANGED_USEC) * 1000U;
-      if (*entry.contentRevision != std::to_string(seconds) + ':' + std::to_string(nanos))
+      if (*entry.contentRevision != std::to_string(seconds) + ':' + std::to_string(nanos)) {
         return {{}, "The file changed. Select it again.", true};
+      }
     }
     constexpr std::size_t limit = 64U * 1024U;
     std::string bytes;
     std::array<char, 4096> buffer{};
     while (bytes.size() < limit && !g_cancellable_is_cancelled(cancel)) {
       const auto count = ::read(file.fd, buffer.data(), std::min(buffer.size(), limit - bytes.size()));
-      if (count < 0 && errno == EINTR)
+      if (count < 0 && errno == EINTR) {
         continue;
-      if (count < 0)
+      }
+      if (count < 0) {
         return {{}, "Could not read this file.", true};
-      if (!count)
+      }
+      if (!count) {
         break;
+      }
       bytes.append(buffer.data(), static_cast<std::size_t>(count));
     }
     struct stat after{}, named{};
-    if (g_cancellable_is_cancelled(cancel))
+    if (g_cancellable_is_cancelled(cancel)) {
       return {};
+    }
     if (::fstat(file.fd, &after) < 0
         || ::lstat(path->c_str(), &named) < 0
         || stamp(before) != stamp(after)
-        || stamp(before) != stamp(named))
+        || stamp(before) != stamp(named)) {
       return {{}, "The file changed while reading the preview.", true};
+    }
     bool truncated = static_cast<std::uint64_t>(before.st_size) > bytes.size();
-    if (bytes.starts_with("\xEF\xBB\xBF"))
+    if (bytes.starts_with("\xEF\xBB\xBF")) {
       bytes.erase(0, 3);
+    }
     const char* end = nullptr;
     if (!g_utf8_validate(bytes.data(), static_cast<gssize>(bytes.size()), &end)) {
       if (!truncated
           || bytes.data() + bytes.size() - end > 3
-          || g_utf8_get_char_validated(end, bytes.data() + bytes.size() - end) != static_cast<gunichar>(-2))
+          || g_utf8_get_char_validated(end, bytes.data() + bytes.size() - end) != static_cast<gunichar>(-2)) {
         return {{}, "This file does not contain supported UTF-8 text."};
+      }
       bytes.resize(static_cast<std::size_t>(end - bytes.data()));
     }
     std::string text;
@@ -134,10 +149,11 @@ namespace {
         columns = 0;
         text += '\n';
       } else if (columns++ < 240) {
-        if (character == '\t')
+        if (character == '\t') {
           text += "    ";
-        else if (!g_unichar_iscntrl(character))
+        } else if (!g_unichar_iscntrl(character)) {
           text.append(p, static_cast<std::size_t>(g_utf8_next_char(p) - p));
+        }
       } else if (columns == 241) {
         text += "…";
         truncated = true;
@@ -160,17 +176,20 @@ struct files::PreviewService::State : std::enable_shared_from_this<State> {
   void resetSelection() {
     ++serial;
     pending = false;
-    if (cancel)
+    if (cancel) {
       g_cancellable_cancel(cancel.get());
+    }
     view = {};
     pendingImage.reset();
     thumbnails.endFrame();
   }
   void imageChanged() {
-    if (!pendingImage || !pendingImage->ready)
+    if (!pendingImage || !pendingImage->ready) {
       return;
-    if (pendingImage->pixels)
+    }
+    if (pendingImage->pixels) {
       view.image = pendingImage;
+    }
     view.imageUpgradeFailed = !pendingImage->pixels;
     view.status = view.image && view.image->pixels ? PreviewStatus::READY : PreviewStatus::UNAVAILABLE;
     view.message = pendingImage->pixels ? ""
@@ -179,12 +198,14 @@ struct files::PreviewService::State : std::enable_shared_from_this<State> {
     pendingImage.reset();
   }
   void notify() {
-    if (changed)
+    if (changed) {
       changed();
+    }
   }
   void start() {
-    if (!alive || running || !pending || !view.entry)
+    if (!alive || running || !pending || !view.entry) {
       return;
+    }
     pending = false;
     running = true;
     cancel.reset(g_cancellable_new());
@@ -225,8 +246,9 @@ files::PreviewService::PreviewService() : m_state(std::make_shared<State>()) {
   const std::weak_ptr<State> weak = m_state;
   m_state->thumbnails.setChangedCallback([weak] {
     const auto state = weak.lock();
-    if (!state || !state->alive || !state->pendingImage)
+    if (!state || !state->alive || !state->pendingImage) {
       return;
+    }
     state->imageChanged();
     state->notify();
   });
@@ -237,8 +259,9 @@ files::PreviewService::~PreviewService() {
   m_state->changed = {};
 }
 void files::PreviewService::clear() {
-  if (!m_state->view.entry && !m_state->pendingImage && !m_state->pending && m_state->thumbnails.reservedBytes() == 0)
+  if (!m_state->view.entry && !m_state->pendingImage && !m_state->pending && m_state->thumbnails.reservedBytes() == 0) {
     return;
+  }
   m_state->resetSelection();
   m_state->thumbnails.invalidate();
 }
@@ -271,8 +294,9 @@ void files::PreviewService::show(
     }
     return;
   }
-  if (unchanged && m_state->view.image && m_state->view.image->pixels)
+  if (unchanged && m_state->view.image && m_state->view.image->pixels) {
     prepared = m_state->view.image;
+  }
   m_state->resetSelection();
   auto& state = *m_state;
   state.pixels = pixels;

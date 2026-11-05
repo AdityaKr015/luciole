@@ -15,8 +15,9 @@ namespace {
   class Fd {
   public:
     explicit Fd(int fd) : m_fd(fd) {
-      if (fd < 0)
+      if (fd < 0) {
         throw std::runtime_error(std::strerror(errno));
+      }
     }
     ~Fd() { ::close(m_fd); }
     Fd(const Fd&) = delete;
@@ -28,8 +29,9 @@ namespace {
   };
   struct stat metadata(int fd) {
     struct stat result{};
-    if (::fstat(fd, &result) != 0)
+    if (::fstat(fd, &result) != 0) {
       throw std::runtime_error(std::strerror(errno));
+    }
     return result;
   }
   bool sameIdentity(const struct stat& a, const struct stat& b) {
@@ -67,8 +69,9 @@ struct files::TrashService::State {
   std::function<void()> changed;
   void notify() const {
     const auto callback = changed;
-    if (callback)
+    if (callback) {
       callback();
+    }
   }
   static void launch(const std::shared_ptr<State>& owner, std::function<Reply()> work) {
     struct Request {
@@ -108,8 +111,9 @@ struct files::TrashService::State {
       auto& request = *static_cast<Request*>(data);
       auto reply = std::make_unique<Reply>();
       try {
-        if (!g_cancellable_is_cancelled(request.owner->cancellable.get()))
+        if (!g_cancellable_is_cancelled(request.owner->cancellable.get())) {
           *reply = request.work();
+        }
       } catch (const std::exception& error) {
         reply->error = error.what();
       }
@@ -132,33 +136,40 @@ const files::TrashSnapshot& files::TrashService::snapshot() const { return m_sta
 void files::TrashService::cancel() {
   g_cancellable_cancel(m_state->cancellable.get());
   m_state->prepared.reset();
-  if (!busy() && m_state->snapshot.status != TrashStatus::FINISHED)
+  if (!busy() && m_state->snapshot.status != TrashStatus::FINISHED) {
     m_state->snapshot.status = TrashStatus::CANCELLED;
+  }
 }
 bool files::TrashService::prepare(const Location& parent, std::vector<Location> sources) {
-  if (busy() || sources.empty())
+  if (busy() || sources.empty()) {
     return false;
+  }
   m_state->prepared.reset();
   m_state->cancellable.reset(g_cancellable_new());
   m_state->completed.store(0);
   m_state->snapshot = {.status = TrashStatus::PREPARING, .results = {}, .error = {}};
-  for (const auto& source : sources)
+  for (const auto& source : sources) {
     m_state->snapshot.results.push_back({source, TrashOutcome::CANCELLED, {}});
+  }
   State::launch(m_state, [owner = m_state, parent, sources = std::move(sources)] {
     const auto path = parent.nativePath();
-    if (!path)
+    if (!path) {
       throw std::runtime_error("Moving remote items to Trash is not supported yet.");
+    }
     auto prepared = std::make_shared<Prepared>(*path);
     std::set<std::string> names;
     for (const auto& source : sources) {
-      if (g_cancellable_is_cancelled(owner->cancellable.get()))
+      if (g_cancellable_is_cancelled(owner->cancellable.get())) {
         return Reply{};
+      }
       const auto native = source.nativePath();
-      if (!native || std::filesystem::path(*native).parent_path().native() != *path)
+      if (!native || std::filesystem::path(*native).parent_path().native() != *path) {
         throw std::runtime_error("Trash requires items from the current native folder.");
+      }
       const auto name = std::filesystem::path(*native).filename().native();
-      if (name.empty() || name == "." || name == ".." || !names.insert(name).second)
+      if (name.empty() || name == "." || name == ".." || !names.insert(name).second) {
         throw std::runtime_error("The Trash selection contains an invalid or repeated item.");
+      }
       prepared->targets.push_back(std::make_unique<Target>(source, name, prepared->parent.get()));
     }
     return Reply{.prepared = std::move(prepared), .results = {}, .error = {}, .finished = false};
@@ -166,29 +177,36 @@ bool files::TrashService::prepare(const Location& parent, std::vector<Location> 
   return true;
 }
 bool files::TrashService::trash() {
-  if (!canTrash())
+  if (!canTrash()) {
     return false;
+  }
   m_state->snapshot.status = TrashStatus::TRASHING;
   State::launch(m_state, [owner = m_state, prepared = m_state->prepared] {
     Reply reply{.prepared = {}, .results = {}, .error = {}, .finished = true};
-    for (const auto& target : prepared->targets)
+    for (const auto& target : prepared->targets) {
       reply.results.push_back({target->location, TrashOutcome::CANCELLED, {}});
+    }
     for (std::size_t index = 0; index < prepared->targets.size(); ++index) {
-      if (g_cancellable_is_cancelled(owner->cancellable.get()))
+      if (g_cancellable_is_cancelled(owner->cancellable.get())) {
         break;
+      }
       const auto& target = *prepared->targets[index];
       auto& result = reply.results[index];
       try {
         Fd currentParent(::open(prepared->path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
-        if (!sameIdentity(metadata(prepared->parent.get()), metadata(currentParent.get())))
+        if (!sameIdentity(metadata(prepared->parent.get()), metadata(currentParent.get()))) {
           throw std::runtime_error("The containing folder changed. Select the items again.");
+        }
         struct stat current{};
-        if (::fstatat(prepared->parent.get(), target.name.c_str(), &current, AT_SYMLINK_NOFOLLOW) != 0)
+        if (::fstatat(prepared->parent.get(), target.name.c_str(), &current, AT_SYMLINK_NOFOLLOW) != 0) {
           throw std::runtime_error(std::strerror(errno));
-        if (!sameIdentity(metadata(target.item.get()), current))
+        }
+        if (!sameIdentity(metadata(target.item.get()), current)) {
           throw std::runtime_error("The item was replaced or moved. Select it again.");
-        if (g_cancellable_is_cancelled(owner->cancellable.get()))
+        }
+        if (g_cancellable_is_cancelled(owner->cancellable.get())) {
           break;
+        }
         GError* error = nullptr;
         if (g_file_trash(target.location.file().get(), owner->cancellable.get(), &error)) {
           result.outcome = TrashOutcome::TRASHED;

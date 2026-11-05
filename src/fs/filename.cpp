@@ -3,14 +3,18 @@
 #include <glib.h>
 
 std::optional<std::string> files::filenameProblem(const std::string& name) {
-  if (name.empty())
+  if (name.empty()) {
     return "Enter a name.";
-  if (name == "." || name == "..")
+  }
+  if (name == "." || name == "..") {
     return "Names cannot be . or ..";
-  if (name.contains('/') || name.contains('\0'))
+  }
+  if (name.contains('/') || name.contains('\0')) {
     return "Names cannot contain / or a NUL byte.";
-  if (!g_utf8_validate(name.data(), static_cast<gssize>(name.size()), nullptr))
+  }
+  if (!g_utf8_validate(name.data(), static_cast<gssize>(name.size()), nullptr)) {
     return "Enter a valid UTF-8 name.";
+  }
   return std::nullopt;
 }
 std::size_t files::filenameStemLength(const std::string& name, bool directory) {

@@ -360,8 +360,9 @@ struct files::DirectorySession::State : std::enable_shared_from_this<State> {
     }
     identities = std::move(retained);
     snapshot.error = std::move(error);
-    if (snapshot.location->isTrash() && snapshot.error && snapshot.error->kind == FileErrorKind::UNSUPPORTED)
+    if (snapshot.location->isTrash() && snapshot.error && snapshot.error->kind == FileErrorKind::UNSUPPORTED) {
       snapshot.error->message = "Trash browsing is unavailable. The desktop trash service is not accessible.";
+    }
     snapshot.status = snapshot.error ? DirectoryStatus::ERROR : DirectoryStatus::READY;
     if (snapshot.error) {
       g_cancellable_cancel(scan->cancellable.get());

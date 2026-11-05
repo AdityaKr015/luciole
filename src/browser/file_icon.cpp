@@ -19,8 +19,9 @@ files::FileIcon::~FileIcon() {
   }
 }
 void files::FileIcon::bind(const FileIconSource& source, ColorSpec foreground) {
-  if (!m_thumbnailSource && source == m_source && foreground == m_foreground)
+  if (!m_thumbnailSource && source == m_source && foreground == m_foreground) {
     return;
+  }
   m_thumbnailSource.reset();
   m_thumbnail.reset();
   m_thumbnailPixels = 0;
@@ -40,8 +41,9 @@ void files::FileIcon::bindFile(const DirectoryEntry& entry, ColorSpec foreground
       || entry.type != m_thumbnailSource->type
       || entry.symlink != m_thumbnailSource->symlink
       || entry.contentType != m_thumbnailSource->contentType;
-  if (!changed && entry.icon == m_source && foreground == m_foreground)
+  if (!changed && entry.icon == m_source && foreground == m_foreground) {
     return;
+  }
   if (changed) {
     m_thumbnail.reset();
     m_thumbnailPixels = 0;
@@ -64,12 +66,14 @@ void files::FileIcon::releaseFile(Renderer& renderer) {
   m_thumbnail.reset();
   m_thumbnailPixels = 0;
   m_asset.reset();
-  if (m_texture.valid())
+  if (m_texture.valid()) {
     renderer.textureManager().unload(m_texture);
+  }
   m_texture = {};
   m_image->setTextureId({});
-  if (changed)
+  if (changed) {
     markLayoutDirty();
+  }
 }
 void files::FileIcon::setIconSize(float size) {
   if (m_size != size) {

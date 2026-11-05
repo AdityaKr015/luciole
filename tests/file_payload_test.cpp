@@ -5,8 +5,9 @@
 
 namespace {
   void require(bool value, const char* message) {
-    if (!value)
+    if (!value) {
       throw std::runtime_error(message);
+    }
   }
   void testRoundTrip() {
     using namespace files;
@@ -32,8 +33,9 @@ namespace {
     for (const auto* bytes :
          {"", "# no files\n", "/tmp/plain-path", "file:///tmp/a b", "file:///tmp/a\rgarbage", "file:///tmp/a%00b",
           "file:///tmp/a#fragment", "file:///tmp/a?query", "file:///tmp/a\nfile:///tmp/a",
-          "file:///tmp/good\nnot-a-uri"})
+          "file:///tmp/good\nnot-a-uri"}) {
       require(!parseFilePayload(kUriListMime, bytes), "malformed file payload was partially accepted");
+    }
     require(!parseFilePayload(kGnomeFilesMime, "move\nfile:///tmp/a"), "unknown clipboard action accepted");
     require(!parseFilePayload(kGnomeFilesMime, "cut\n"), "empty cut selection accepted");
     require(!parseFilePayload(kGnomeFilesMime, "copy\nfile:///tmp/a\n\nfile:///tmp/b"), "empty GNOME URI accepted");
@@ -41,15 +43,17 @@ namespace {
     require(!parseFilePayload(kUriListMime, std::string(kFilePayloadLimit + 1, '#')), "oversized offer accepted");
     require(!encodeFilePayload({}, kUriListMime), "empty outgoing selection accepted");
     std::string many;
-    for (std::size_t i = 0; i <= kFilePayloadCount; ++i)
+    for (std::size_t i = 0; i <= kFilePayloadCount; ++i) {
       many += "file:///tmp/item" + std::to_string(i) + "\n";
+    }
     require(!parseFilePayload(kUriListMime, many), "unbounded URI count accepted");
   }
   void testPartialMoves() {
     using namespace files;
     FilePayload selection{{}, true};
-    for (int i = 0; i < 7; ++i)
+    for (int i = 0; i < 7; ++i) {
       selection.locations.push_back(Location::fromPath("/tmp/source/" + std::to_string(i)));
+    }
     const std::vector<TransferResult> results{
         {selection.locations[0], TransferOutcome::MOVED, {}},
         {selection.locations[1], TransferOutcome::SKIPPED, {}},

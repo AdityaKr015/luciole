@@ -151,8 +151,11 @@ struct files::PinService::State : std::enable_shared_from_this<State> {
           }
           result->bookmarks = std::move(initial);
         }
-        if (std::ranges::none_of(result->bookmarks, [](const auto& pin) { return pin.location == Location::trash(); }))
+        if (std::ranges::none_of(result->bookmarks, [](const auto& pin) {
+              return pin.location == Location::trash();
+            })) {
           result->bookmarks.push_back({"Trash", Location::trash()});
+        }
       } catch (const std::exception& error) {
         result->error = error.what();
       }
@@ -220,8 +223,9 @@ bool files::PinService::add(std::vector<Bookmark> bookmarks, std::size_t before)
 }
 bool files::PinService::remove(const Location& location) { return removeMany({location}); }
 bool files::PinService::removeMany(const std::vector<Location>& locations) {
-  if (std::ranges::any_of(locations, [](const auto& location) { return location.isTrash(); }))
+  if (std::ranges::any_of(locations, [](const auto& location) { return location.isTrash(); })) {
     return false;
+  }
   auto proposed = m_state->bookmarks;
   std::erase_if(proposed, [&](const auto& pin) { return std::ranges::contains(locations, pin.location); });
   return save(std::move(proposed));

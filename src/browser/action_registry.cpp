@@ -82,24 +82,29 @@ namespace {
 std::span<const files::ActionDefinition> files::ActionRegistry::definitions() { return kActions; }
 const files::ActionDefinition& files::ActionRegistry::definition(BrowserAction action) {
   const auto* found = std::ranges::find(kActions, action, &ActionDefinition::action);
-  if (found == kActions.end())
+  if (found == kActions.end()) {
     throw std::invalid_argument("unknown browser action");
+  }
   return *found;
 }
 files::ActionRequest files::ActionRegistry::capture(const ActionContext& context) {
   ActionRequest request{context.context, context.model.snapshot().location, std::string(context.query), {}};
-  for (const auto id : context.model.selectedIds())
-    if (const auto* entry = context.model.entry(id))
+  for (const auto id : context.model.selectedIds()) {
+    if (const auto* entry = context.model.entry(id)) {
       request.targets.push_back({id, entry->location});
+    }
+  }
   return request;
 }
 bool files::ActionRegistry::current(const ActionContext& context, const ActionRequest& request, ActionScope scope) {
-  if (scope == ActionScope::GLOBAL)
+  if (scope == ActionScope::GLOBAL) {
     return true;
+  }
   if (request.context != context.context
       || request.folder != context.model.snapshot().location
-      || request.query != context.query)
+      || request.query != context.query) {
     return false;
+  }
   return scope != ActionScope::TARGETS || std::ranges::all_of(request.targets, [&](const auto& target) {
            const auto* entry = context.model.entry(target.id);
            return entry != nullptr
@@ -109,13 +114,16 @@ bool files::ActionRegistry::current(const ActionContext& context, const ActionRe
 }
 files::ActionState files::ActionRegistry::state(BrowserAction action, const ActionContext& c, const ActionRequest& r) {
   const auto scope = definition(action).scope;
-  if (!current(c, r, scope))
+  if (!current(c, r, scope)) {
     return unavailable("The folder or targets changed. Open the menu again.");
+  }
   const auto& snapshot = c.model.snapshot();
-  if (scope == ActionScope::TARGETS && r.targets.empty())
+  if (scope == ActionScope::TARGETS && r.targets.empty()) {
     return unavailable("Select an item first.");
-  if ((scope == ActionScope::TARGETS || scope == ActionScope::SELECTION) && !c.model.selectionAvailable())
+  }
+  if ((scope == ActionScope::TARGETS || scope == ActionScope::SELECTION) && !c.model.selectionAvailable()) {
     return unavailable("The listing is not available for selection.");
+  }
   const bool ready = snapshot.status == DirectoryStatus::READY || snapshot.status == DirectoryStatus::LOADING;
   const bool native = r.folder && r.folder->nativePath().has_value();
   const auto single = [&] { return r.targets.size() == 1; };
@@ -127,10 +135,12 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
         && std::ranges::any_of(r.targets, [&](const auto& target) { return c.pinned(target.location) == pinned; });
   };
   const auto writable = [&] -> ActionState {
-    if (c.operationsBusy)
+    if (c.operationsBusy) {
       return unavailable("Another file operation is still finishing.");
-    if (snapshot.metadata.filesystem.readOnly == true)
+    }
+    if (snapshot.metadata.filesystem.readOnly == true) {
       return unavailable("The filesystem is read-only.");
+    }
     return {};
   };
   switch (action) {
@@ -146,28 +156,33 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
         : unavailable("Select one readable file.");
   case A::CopyPath:
   case A::CopyUri:
-    if (!r.folder)
+    if (!r.folder) {
       return unavailable("Open a folder first.");
+    }
     [[fallthrough]];
   case A::CopyTargetPath:
   case A::CopyTargetUri:
     return c.clipboardAvailable ? ActionState{} : unavailable("The application clipboard is unavailable.");
   case A::TERMINAL:
   case A::TargetTerminal:
-    if (!c.terminalAvailable)
+    if (!c.terminalAvailable) {
       return unavailable("Install xdg-terminal-exec to open a terminal.");
+    }
     if (action == A::TERMINAL) {
-      if (!native || r.folder->isTrash())
+      if (!native || r.folder->isTrash()) {
         return unavailable("Terminals require a native folder.");
-      if (snapshot.metadata.access.execute == false)
+      }
+      if (snapshot.metadata.access.execute == false) {
         return unavailable("Access to this folder is not permitted.");
+      }
     } else {
       if (!single() || !all([](const auto& entry) {
             return entry.type == G_FILE_TYPE_DIRECTORY
                 && entry.location.nativePath().has_value()
                 && entry.access.execute.value_or(true);
-          }))
+          })) {
         return unavailable("Select one accessible native folder.");
+      }
     }
     return {};
   case A::BACK:
@@ -183,97 +198,120 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
     return snapshot.status == DirectoryStatus::LOADING ? ActionState{} : unavailable("Nothing is loading.");
   case A::CutFiles:
   case A::CopyFiles:
-    if (!c.clipboardAvailable)
+    if (!c.clipboardAvailable) {
       return unavailable("The application clipboard is unavailable.");
+    }
     if (!all([&](const auto& entry) {
           return entry.location.nativePath().has_value()
               && entry.access.read.value_or(true)
               && (entry.type == G_FILE_TYPE_DIRECTORY || entry.type == G_FILE_TYPE_REGULAR || entry.symlink)
               && (action != A::CutFiles || entry.access.rename.value_or(true));
-        }))
+        })) {
       return unavailable("Select accessible native files or folders outside Trash.");
+    }
     return {};
   case A::PasteFiles:
-    if (!c.clipboardAvailable || !c.clipboardHasFiles)
+    if (!c.clipboardAvailable || !c.clipboardHasFiles) {
       return unavailable("The clipboard has no available files.");
+    }
     [[fallthrough]];
   case A::CreateFolder:
   case A::CreateFile:
-    if (!native || !c.query.empty() || !ready)
+    if (!native || !c.query.empty() || !ready) {
       return unavailable("Open an available native folder first.");
-    if (snapshot.metadata.access.write == false)
+    }
+    if (snapshot.metadata.access.write == false) {
       return unavailable("Writing to this folder is not permitted.");
+    }
     return writable();
   case A::RENAME:
   case A::TRASH: {
-    if (const auto state = writable(); !state.enabled)
+    if (const auto state = writable(); !state.enabled) {
       return state;
-    if (action == A::RENAME && !single())
+    }
+    if (action == A::RENAME && !single()) {
       return unavailable("Select exactly one item to rename.");
-    if (!all([](const auto& entry) { return entry.location.nativePath().has_value(); }))
+    }
+    if (!all([](const auto& entry) { return entry.location.nativePath().has_value(); })) {
       return unavailable("This operation currently supports native files only.");
-    if (action == A::TRASH && (!native || !c.query.empty() || !ready))
+    }
+    if (action == A::TRASH && (!native || !c.query.empty() || !ready)) {
       return unavailable("Open the containing native folder before moving items to Trash.");
+    }
     if (!all([&](const auto& entry) {
           return (action == A::RENAME ? entry.access.rename : entry.access.trash).value_or(true);
-        }))
+        })) {
       return unavailable("The provider does not permit this operation on every selected item.");
+    }
     return {};
   }
   case A::COMPRESS:
   case A::ExtractHere:
   case A::ExtractTo:
   case A::BrowseArchive:
-    if (c.operationsBusy)
+    if (c.operationsBusy) {
       return unavailable("Another file operation is still finishing.");
+    }
     if (!all([](const auto& entry) {
           return entry.location.nativePath().has_value() && entry.access.read.value_or(true);
-        }))
+        })) {
       return unavailable("Archives require readable native items.");
+    }
     if (action == A::COMPRESS) {
       if (!all([](const auto& entry) {
             return entry.type == G_FILE_TYPE_REGULAR || entry.type == G_FILE_TYPE_DIRECTORY || entry.symlink;
-          }))
+          })) {
         return unavailable("Special files cannot be compressed.");
+      }
     } else if (!single() || !all([](const auto& entry) {
                  return entry.type == G_FILE_TYPE_REGULAR
                      && !entry.symlink
                      && isSupportedArchive(entry.location, entry.contentType);
-               }))
+               })) {
       return unavailable("Select one ZIP or TAR archive.");
+    }
     return {};
   case A::OPEN:
-    if (!single() && !all([](const auto& entry) { return entry.type == G_FILE_TYPE_REGULAR; }))
+    if (!single() && !all([](const auto& entry) { return entry.type == G_FILE_TYPE_REGULAR; })) {
       return unavailable("Open folders individually.");
+    }
     if (!all([](const auto& entry) {
           return !entry.location.isTrash() || (entry.type == G_FILE_TYPE_DIRECTORY && !entry.symlink);
-        }))
+        })) {
       return unavailable("Restore this item before opening it.");
-    if (!all([](const auto& entry) { return entry.access.read.value_or(true); }))
+    }
+    if (!all([](const auto& entry) { return entry.access.read.value_or(true); })) {
       return unavailable("Reading this item is not permitted.");
+    }
     return {};
   case A::ContainingFolder:
   case A::OriginalLocation:
-    if (!single())
+    if (!single()) {
       return unavailable("Select exactly one item.");
-    if (action == A::OriginalLocation && !c.model.entry(r.targets.front().id)->trash.original)
+    }
+    if (action == A::OriginalLocation && !c.model.entry(r.targets.front().id)->trash.original) {
       return unavailable("The original location is unavailable.");
+    }
     return {};
   case A::PIN:
   case A::UNPIN:
-    if (!all([](const auto& entry) { return entry.type == G_FILE_TYPE_DIRECTORY && !entry.location.isTrash(); }))
+    if (!all([](const auto& entry) { return entry.type == G_FILE_TYPE_DIRECTORY && !entry.location.isTrash(); })) {
       return unavailable("Only folders outside Trash can be pinned.");
-    if (!c.pinsEditable)
+    }
+    if (!c.pinsEditable) {
       return unavailable("Reload valid pins before editing them, or wait for the save to finish.");
+    }
     return anyPinned(action == A::UNPIN)
         ? ActionState{}
         : unavailable(action == A::UNPIN ? "These folders are not pinned." : "These folders are already pinned.");
   case A::PinCurrent:
   case A::UnpinCurrent:
-    if (!r.folder || r.folder->isTrash())
+    if (!r.folder || r.folder->isTrash()) {
       return unavailable("This location cannot be pinned.");
-    if (!c.pinsEditable)
+    }
+    if (!c.pinsEditable) {
       return unavailable("Reload valid pins before editing them, or wait for the save to finish.");
+    }
     return c.pinned && c.pinned(*r.folder) == (action == A::UNPIN) ? ActionState{}
                                                                    : unavailable("The pin state changed.");
   case A::ReloadPins:

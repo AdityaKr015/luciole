@@ -3,8 +3,9 @@
 #include <ranges>
 
 void files::MillerColumns::notify() const {
-  if (m_changed)
+  if (m_changed) {
     m_changed();
+  }
 }
 
 std::unique_ptr<files::MillerColumns::Column>
@@ -13,23 +14,26 @@ files::MillerColumns::makeColumn(BrowserController& source, const Location& loca
       ++m_nextId, std::make_unique<BrowserController>(source.model().sort(), source.model().filter().showHidden),
       location, std::nullopt, defaultWidth
   });
-  if (inheritHistory)
+  if (inheritHistory) {
     column->browser->duplicateFrom(source);
+  }
   column->browser->setViewDefaults(
       ViewMode::MILLER, inheritHistory ? column->browser->viewport().iconSize : source.viewport().iconSize
   );
   column->browser->setChangedCallback([this] { notify(); });
   column->browser->setFileActivatedCallback([this](const Location& target) {
-    if (m_activate)
+    if (m_activate) {
       m_activate(target);
+    }
   });
   return column;
 }
 
 void files::MillerColumns::start(BrowserController& source, bool showParents) {
   const auto location = source.model().snapshot().location;
-  if (!location)
+  if (!location) {
     return;
+  }
   m_showParents = showParents;
   buildChain(makeColumn(source, *location));
 }
@@ -39,8 +43,9 @@ void files::MillerColumns::buildChain(std::unique_ptr<Column> current) {
   auto file = current->location.file();
   while (m_showParents && parents.size() + 1 < maxColumns) {
     GioPtr<GFile> parent(g_file_get_parent(file.get()));
-    if (!parent || g_file_equal(file.get(), parent.get()))
+    if (!parent || g_file_equal(file.get(), parent.get())) {
       break;
+    }
     const GString uri(g_file_get_uri(parent.get()));
     parents.push_back(Location::fromUri(uri.get()));
     file = std::move(parent);
@@ -78,16 +83,18 @@ void files::MillerColumns::collectRetired() { m_retired.clear(); }
 
 bool files::MillerColumns::focus(std::size_t index) {
   load(index);
-  if (index >= m_columns.size() || index == m_focused)
+  if (index >= m_columns.size() || index == m_focused) {
     return false;
+  }
   m_focused = index;
   notify();
   return true;
 }
 
 void files::MillerColumns::load(std::size_t index) {
-  if (index < m_columns.size() && m_columns[index]->browser->model().snapshot().status == DirectoryStatus::IDLE)
+  if (index < m_columns.size() && m_columns[index]->browser->model().snapshot().status == DirectoryStatus::IDLE) {
     m_columns[index]->browser->open(m_columns[index]->location);
+  }
 }
 
 void files::MillerColumns::interact(std::size_t index) {
@@ -98,18 +105,22 @@ void files::MillerColumns::interact(std::size_t index) {
 }
 
 void files::MillerColumns::synchronize() {
-  if (!enabled())
+  if (!enabled()) {
     return;
+  }
   // Address-bar, history, search-result and sidebar navigation can replace a
   // column's location. Reuse the controller carrying that visit's history.
   for (std::size_t i = 0; i < m_columns.size(); ++i) {
     const auto target = m_columns[i]->browser->model().snapshot().location;
-    if (!target || *target == m_columns[i]->location)
+    if (!target || *target == m_columns[i]->location) {
       continue;
+    }
     std::optional<std::size_t> ancestor;
-    for (std::size_t j = 0; j < i; ++j)
-      if (m_columns[j]->location == *target)
+    for (std::size_t j = 0; j < i; ++j) {
+      if (m_columns[j]->location == *target) {
         ancestor = j;
+      }
+    }
     auto moved = std::move(m_columns[i]);
     m_columns.erase(m_columns.begin() + static_cast<std::ptrdiff_t>(i));
     moved->location = *target;
@@ -122,8 +133,9 @@ void files::MillerColumns::synchronize() {
       m_columns.push_back(std::move(moved));
       m_focused = *ancestor;
       notify();
-    } else
+    } else {
       buildChain(std::move(moved));
+    }
     break;
   }
   for (std::size_t i = 0; i < m_columns.size(); ++i) {
@@ -136,35 +148,40 @@ void files::MillerColumns::synchronize() {
       }
       continue;
     }
-    if (model.snapshot().status == DirectoryStatus::LOADING || model.snapshot().status == DirectoryStatus::IDLE)
+    if (model.snapshot().status == DirectoryStatus::LOADING || model.snapshot().status == DirectoryStatus::IDLE) {
       continue;
+    }
     auto& parent = *m_columns[i];
     if (parent.seedPath && i + 1 < m_columns.size()) {
       auto& child = *m_columns[i + 1];
-      if (!model.selection().selected.empty())
+      if (!model.selection().selected.empty()) {
         parent.seedPath = false;
-      else {
+      } else {
         if (parent.seedRevision != model.snapshot().generation) {
           parent.seedRevision = model.snapshot().generation;
           parent.pathEntry.reset();
           for (const auto& entry : model.snapshot().entries) {
-            if (entry.location != child.location)
+            if (entry.location != child.location) {
               continue;
+            }
             if (child.identity && child.identity != entry.identity) {
               parent.seedPath = false;
               break;
             }
             child.identity = entry.identity;
-            if (entry.type == G_FILE_TYPE_DIRECTORY || entry.symlink)
+            if (entry.type == G_FILE_TYPE_DIRECTORY || entry.symlink) {
               parent.pathEntry = entry.id;
+            }
             break;
           }
         }
-        if (parent.pathEntry && browser.model().select(*parent.pathEntry))
+        if (parent.pathEntry && browser.model().select(*parent.pathEntry)) {
           parent.seedPath = false;
+        }
         // Hidden or unreadable ancestors must not discard the requested folder.
-        if (parent.seedPath)
+        if (parent.seedPath) {
           continue;
+        }
       }
     }
     const auto& selected = model.selection().selected;
@@ -173,21 +190,24 @@ void files::MillerColumns::synchronize() {
         entry && entry->type == G_FILE_TYPE_DIRECTORY && !entry->symlink && browser.searchQuery().empty();
     if (i + 1 < m_columns.size()) {
       auto& child = *m_columns[i + 1];
-      if (child.explicitPath && !child.identity && entry && entry->location == child.location)
+      if (child.explicitPath && !child.identity && entry && entry->location == child.location) {
         child.identity = entry->identity;
+      }
       const bool linkedPath = child.explicitPath && entry && entry->symlink;
       if ((!folder && !linkedPath) || entry->location != child.location || entry->identity != child.identity) {
         trim(i + 1);
         notify();
       }
     }
-    if (i != m_focused || !folder || i + 1 < m_columns.size())
+    if (i != m_focused || !folder || i + 1 < m_columns.size()) {
       continue;
+    }
     const bool cycle = std::ranges::any_of(m_columns, [&](const auto& column) {
       return column->location == entry->location || (entry->identity && column->identity == entry->identity);
     });
-    if (cycle)
+    if (cycle) {
       continue;
+    }
     const auto destination = entry->location;
     const auto identity = entry->identity;
     auto child = makeColumn(browser, destination);

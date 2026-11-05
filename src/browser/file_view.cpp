@@ -16,13 +16,15 @@ namespace {
   constexpr float kHiddenTextOpacity = 0.7F;
 
   std::string modifiedTime(std::optional<std::uint64_t> seconds, const char* format) {
-    if (!seconds || *seconds > static_cast<std::uint64_t>(G_MAXINT64))
+    if (!seconds || *seconds > static_cast<std::uint64_t>(G_MAXINT64)) {
       return "Unknown";
+    }
     const std::unique_ptr<GDateTime, decltype(&g_date_time_unref)> date(
         g_date_time_new_from_unix_local(static_cast<gint64>(*seconds)), &g_date_time_unref
     );
-    if (!date)
+    if (!date) {
       return "Unknown";
+    }
     const files::GString text(g_date_time_format(date.get(), format));
     return text ? text.get() : "Unknown";
   }
@@ -90,8 +92,9 @@ namespace {
       m_columns = columns;
       m_columnOrder = order;
       m_icon->setOpacity(cut ? 0.4F : entry.hidden ? kHiddenIconOpacity : 1.0F);
-      for (auto* label : {m_name, m_parent, m_kind, m_size, m_modified})
+      for (auto* label : {m_name, m_parent, m_kind, m_size, m_modified}) {
         label->setOpacity(entry.hidden && !selected ? kHiddenTextOpacity : 1.0F);
+      }
       const bool directory = entry.type == G_FILE_TYPE_DIRECTORY;
       m_arrow->setVisible(m_miller && directory);
       m_arrow->setParticipatesInLayout(m_miller && directory);
@@ -127,10 +130,11 @@ namespace {
       m_background->setFill(
           !selected && (hovered || path) ? colorSpecFromRole(ColorRole::SurfaceContainerHigh) : clearColorSpec()
       );
-      if (!selected && focused)
+      if (!selected && focused) {
         m_background->setBorder(colorSpecFromRole(ColorRole::Primary), Style::focusRingWidth);
-      else
+      } else {
         m_background->clearBorder();
+      }
     }
 
   protected:
@@ -221,8 +225,9 @@ namespace {
 
     void bind(const files::DirectoryEntry& entry, bool selected, bool focused, bool hovered, float iconSize, bool cut) {
       m_icon->setOpacity(cut ? 0.4F : entry.hidden ? kHiddenIconOpacity : 1.0F);
-      for (auto* label : {m_name, m_parent})
+      for (auto* label : {m_name, m_parent}) {
         label->setOpacity(entry.hidden && !selected ? kHiddenTextOpacity : 1.0F);
+      }
       m_iconSize = iconSize;
       m_icon->setIconSize(iconSize);
       m_icon->bindFile(entry, colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurface));
@@ -236,10 +241,11 @@ namespace {
       m_background->setFill(
           !selected && hovered ? colorSpecFromRole(ColorRole::SurfaceContainerHigh) : clearColorSpec()
       );
-      if (!selected && focused)
+      if (!selected && focused) {
         m_background->setBorder(colorSpecFromRole(ColorRole::Primary), Style::focusRingWidth);
-      else
+      } else {
         m_background->clearBorder();
+      }
     }
 
   protected:
@@ -310,24 +316,27 @@ void files::FileViewAdapter::bindDecoration(Node& decoration, const VirtualGridD
 
 std::string files::FileViewAdapter::itemTooltip(std::size_t index) const {
   const auto& model = m_browser.model();
-  if (m_mode == ViewMode::GRID || index >= model.rows().size())
+  if (m_mode == ViewMode::GRID || index >= model.rows().size()) {
     return {};
+  }
   const auto id = model.rows()[index];
   const auto* entry = model.entry(id);
   return entry != nullptr ? std::format("{}\n{}", entry->displayName, model.typeLabel(id)) : std::string{};
 }
 
 void files::FileViewAdapter::setTileVisible(Node& tile, bool visible) {
-  if (m_mode == ViewMode::GRID)
+  if (m_mode == ViewMode::GRID) {
     static_cast<FileTile&>(tile).setThumbnailVisible(visible);
-  else
+  } else {
     static_cast<FileRow&>(tile).setThumbnailVisible(visible);
+  }
 }
 void files::FileViewAdapter::releaseTile(Node& tile, Renderer& renderer) {
-  if (m_mode == ViewMode::GRID)
+  if (m_mode == ViewMode::GRID) {
     static_cast<FileTile&>(tile).releaseFile(renderer);
-  else
+  } else {
     static_cast<FileRow&>(tile).releaseFile(renderer);
+  }
 }
 void files::FileViewAdapter::bindTile(Node& tile, std::size_t index, bool, bool hovered) {
   const auto& model = m_browser.model();
@@ -516,7 +525,8 @@ bool files::FileViewAdapter::itemHitTest(std::size_t, float x, float y, float wi
 void files::FileViewAdapter::onActivate(std::size_t index) {
   Logger("file-launch").debug("File-view activation received");
   if (index < itemCount()) {
-    if (m_activate)
+    if (m_activate) {
       m_activate(m_browser.model().rows()[index]);
+    }
   }
 }

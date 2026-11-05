@@ -4,15 +4,17 @@
 #include <cmath>
 
 files::WindowId files::TabWorkspace::addWindow() {
-  if (m_windows.size() >= 8)
+  if (m_windows.size() >= 8) {
     return 0;
+  }
   const auto id = ++m_nextWindow;
   m_windows.emplace(id, TabWindow{});
   return id;
 }
 void files::TabWorkspace::save(TabWindow& window) {
-  if (window.selected)
+  if (window.selected) {
     m_layouts.at(window.selected) = static_cast<const TabLayout&>(window);
+  }
 }
 void files::TabWorkspace::load(TabWindow& window, TabId tab) {
   window.selected = tab;
@@ -20,15 +22,17 @@ void files::TabWorkspace::load(TabWindow& window, TabId tab) {
 }
 files::TabId files::TabWorkspace::addTab(WindowId id) {
   auto found = m_windows.find(id);
-  if (found == m_windows.end())
+  if (found == m_windows.end()) {
     return 0;
+  }
   std::size_t count = 0;
   for (const auto& [key, window] : m_windows) {
     (void)key;
     count += window.tabs.size();
   }
-  if (count >= 32)
+  if (count >= 32) {
     return 0;
+  }
   const auto tab = ++m_nextTab;
   m_layouts.emplace(tab, TabLayout{.primary = tab, .active = tab, .secondary = std::nullopt});
   auto& window = found->second;
@@ -38,42 +42,51 @@ files::TabId files::TabWorkspace::addTab(WindowId id) {
   return tab;
 }
 std::optional<files::TabId> files::TabWorkspace::tabFor(TabId page) const {
-  for (const auto& [id, layout] : m_layouts)
-    if (page == id || page == layout.primary || page == layout.secondary)
+  for (const auto& [id, layout] : m_layouts) {
+    if (page == id || page == layout.primary || page == layout.secondary) {
       return id;
+    }
+  }
   return std::nullopt;
 }
 std::vector<files::TabId> files::TabWorkspace::pages(TabId page) const {
   const auto tab = tabFor(page);
-  if (!tab)
+  if (!tab) {
     return {};
+  }
   const auto& layout = m_layouts.at(*tab);
   std::vector<TabId> result{layout.primary};
-  if (layout.secondary)
+  if (layout.secondary) {
     result.push_back(*layout.secondary);
+  }
   return result;
 }
 std::optional<files::WindowId> files::TabWorkspace::owner(TabId page) const {
   const auto tab = tabFor(page);
-  if (!tab)
+  if (!tab) {
     return std::nullopt;
-  for (const auto& [id, window] : m_windows)
-    if (std::ranges::contains(window.tabs, *tab))
+  }
+  for (const auto& [id, window] : m_windows) {
+    if (std::ranges::contains(window.tabs, *tab)) {
       return id;
+    }
+  }
   return std::nullopt;
 }
 bool files::TabWorkspace::select(WindowId id, TabId tab) {
   const auto found = m_windows.find(id);
-  if (found == m_windows.end() || !std::ranges::contains(found->second.tabs, tab))
+  if (found == m_windows.end() || !std::ranges::contains(found->second.tabs, tab)) {
     return false;
+  }
   save(found->second);
   load(found->second, tab);
   return true;
 }
 bool files::TabWorkspace::focus(WindowId id, TabId page) {
   const auto found = m_windows.find(id);
-  if (found == m_windows.end() || (page != found->second.primary && page != found->second.secondary))
+  if (found == m_windows.end() || (page != found->second.primary && page != found->second.secondary)) {
     return false;
+  }
   found->second.active = page;
   save(found->second);
   return true;
@@ -83,13 +96,15 @@ void files::TabWorkspace::remove(TabWindow& window, TabId tab) {
   const auto found = std::ranges::find(window.tabs, tab);
   const auto index = static_cast<std::size_t>(found - window.tabs.begin());
   window.tabs.erase(found);
-  if (window.selected == tab)
+  if (window.selected == tab) {
     load(window, window.tabs.empty() ? 0 : window.tabs[std::min(index, window.tabs.size() - 1)]);
+  }
 }
 bool files::TabWorkspace::close(TabId page) {
   const auto id = owner(page), tab = tabFor(page);
-  if (!id || !tab)
+  if (!id || !tab) {
     return false;
+  }
   remove(m_windows.at(*id), *tab);
   m_closed.push_back(*tab);
   if (m_closed.size() > 16) {
@@ -99,15 +114,17 @@ bool files::TabWorkspace::close(TabId page) {
   return true;
 }
 bool files::TabWorkspace::reopen(WindowId id) {
-  if (m_closed.empty() || !m_windows.contains(id))
+  if (m_closed.empty() || !m_windows.contains(id)) {
     return false;
+  }
   std::size_t count = 0;
   for (const auto& [key, window] : m_windows) {
     (void)key;
     count += window.tabs.size();
   }
-  if (count >= 32)
+  if (count >= 32) {
     return false;
+  }
   const auto tab = m_closed.back();
   m_closed.pop_back();
   auto& window = m_windows.at(id);
@@ -118,8 +135,9 @@ bool files::TabWorkspace::reopen(WindowId id) {
 }
 bool files::TabWorkspace::move(TabId page, WindowId destination, std::size_t index) {
   const auto origin = owner(page), tab = tabFor(page);
-  if (!origin || !tab || !m_windows.contains(destination))
+  if (!origin || !tab || !m_windows.contains(destination)) {
     return false;
+  }
   if (*origin == destination) {
     auto& tabs = m_windows.at(destination).tabs;
     std::erase(tabs, *tab);
@@ -135,8 +153,9 @@ bool files::TabWorkspace::move(TabId page, WindowId destination, std::size_t ind
 }
 files::TabId files::TabWorkspace::addPane(WindowId id) {
   const auto found = m_windows.find(id);
-  if (found == m_windows.end() || !found->second.selected || found->second.secondary)
+  if (found == m_windows.end() || !found->second.selected || found->second.secondary) {
     return 0;
+  }
   const auto page = ++m_nextTab;
   found->second.secondary = page;
   found->second.active = page;
@@ -145,8 +164,9 @@ files::TabId files::TabWorkspace::addPane(WindowId id) {
 }
 bool files::TabWorkspace::unsplit(WindowId id) {
   const auto found = m_windows.find(id);
-  if (found == m_windows.end())
+  if (found == m_windows.end()) {
     return false;
+  }
   auto& window = found->second;
   window.primary = window.active;
   window.secondary.reset();
@@ -155,13 +175,15 @@ bool files::TabWorkspace::unsplit(WindowId id) {
 }
 bool files::TabWorkspace::closePane(WindowId id, TabId page) {
   const auto found = m_windows.find(id);
-  if (found == m_windows.end() || !found->second.secondary)
+  if (found == m_windows.end() || !found->second.secondary) {
     return false;
+  }
   auto& window = found->second;
-  if (page == window.primary)
+  if (page == window.primary) {
     window.primary = *window.secondary;
-  else if (page != window.secondary)
+  } else if (page != window.secondary) {
     return false;
+  }
   window.secondary.reset();
   window.active = window.primary;
   save(window);
@@ -169,36 +191,41 @@ bool files::TabWorkspace::closePane(WindowId id, TabId page) {
 }
 std::optional<files::TabLayout> files::TabWorkspace::layout(TabId page) const {
   const auto tab = tabFor(page);
-  if (!tab)
+  if (!tab) {
     return std::nullopt;
+  }
   return m_layouts.at(*tab);
 }
 bool files::TabWorkspace::swap(WindowId id) {
   const auto found = m_windows.find(id);
-  if (found == m_windows.end() || !found->second.secondary)
+  if (found == m_windows.end() || !found->second.secondary) {
     return false;
+  }
   std::swap(found->second.primary, *found->second.secondary);
   save(found->second);
   return true;
 }
 bool files::TabWorkspace::resize(WindowId id, float value) {
   const auto found = m_windows.find(id);
-  if (found == m_windows.end() || !std::isfinite(value))
+  if (found == m_windows.end() || !std::isfinite(value)) {
     return false;
+  }
   found->second.fraction = std::clamp(value, 0.2F, 0.8F);
   save(found->second);
   return true;
 }
 std::optional<files::TabId> files::TabWorkspace::other(WindowId id) const {
   const auto found = m_windows.find(id);
-  if (found == m_windows.end() || !found->second.secondary)
+  if (found == m_windows.end() || !found->second.secondary) {
     return std::nullopt;
+  }
   return found->second.active == found->second.primary ? found->second.secondary : std::optional(found->second.primary);
 }
 bool files::TabWorkspace::removeWindow(WindowId id) {
   const auto found = m_windows.find(id);
-  if (found == m_windows.end() || !found->second.tabs.empty())
+  if (found == m_windows.end() || !found->second.tabs.empty()) {
     return false;
+  }
   m_windows.erase(found);
   return true;
 }

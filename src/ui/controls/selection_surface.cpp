@@ -46,17 +46,22 @@ namespace {
     };
     for (std::size_t y = 0; y < rows; ++y) {
       for (std::size_t x = 0; x < columns; ++x) {
-        if (!active(x, y))
+        if (!active(x, y)) {
           continue;
+        }
         // Clockwise edges keep selected content on the right, including holes.
-        if (y == 0 || !active(x, y - 1))
+        if (y == 0 || !active(x, y - 1)) {
           add({x, y}, {x + 1, y}, 0);
-        if (!active(x + 1, y))
+        }
+        if (!active(x + 1, y)) {
           add({x + 1, y}, {x + 1, y + 1}, 1);
-        if (!active(x, y + 1))
+        }
+        if (!active(x, y + 1)) {
           add({x + 1, y + 1}, {x, y + 1}, 2);
-        if (x == 0 || !active(x - 1, y))
+        }
+        if (x == 0 || !active(x - 1, y)) {
           add({x, y + 1}, {x, y}, 3);
+        }
       }
     }
     const auto point = [&](Vertex v) {
@@ -76,15 +81,17 @@ namespace {
       // Turning left at a diagonal junction produces a rounded neck, not crossing strokes.
       for (auto turn : {3UZ, 0UZ, 1UZ, 2UZ}) {
         const auto candidate = choices[(edge.direction + turn) % 4];
-        if (candidate != absent)
+        if (candidate != absent) {
           return candidate;
+        }
       }
       return absent;
     };
     std::vector<bool> visited(edges.size(), false);
     for (std::size_t start = 0; start < edges.size(); ++start) {
-      if (visited[start])
+      if (visited[start]) {
         continue;
+      }
       std::vector<Point> vertices;
       auto index = start;
       do {
@@ -92,8 +99,9 @@ namespace {
         vertices.push_back(point(edges[index].from));
         index = next(edges[index]);
       } while (index != start && index != absent && !visited[index]);
-      if (index != start || vertices.size() < 4)
+      if (index != start || vertices.size() < 4) {
         continue;
+      }
       constexpr double radius = SelectionSurface::cornerRadius;
       constexpr double arc = 0.5522847498307936;
       for (std::size_t i = 0; i <= vertices.size(); ++i) {
@@ -136,10 +144,12 @@ SelectionSurface::SelectionSurface() {
 SelectionSurface::~SelectionSurface() { releaseTextures(); }
 void SelectionSurface::releaseTextures() {
   if (m_textures != nullptr) {
-    if (m_fillTexture.valid())
+    if (m_fillTexture.valid()) {
       m_textures->unload(m_fillTexture);
-    if (m_outlineTexture.valid())
+    }
+    if (m_outlineTexture.valid()) {
       m_textures->unload(m_outlineTexture);
+    }
   }
 }
 void SelectionSurface::bind(
@@ -157,10 +167,12 @@ void SelectionSurface::bind(
 void SelectionSurface::doLayout(Renderer& renderer) {
   m_fill->setTint(resolveColorSpec(colorSpecFromRole(ColorRole::PrimaryContainer)));
   m_outline->setTint(resolveColorSpec(colorSpecFromRole(ColorRole::Primary)));
-  if (!visible())
+  if (!visible()) {
     return;
-  if (width() <= 2 || height() <= 2 || m_columns == 0)
+  }
+  if (width() <= 2 || height() <= 2 || m_columns == 0) {
     return;
+  }
   // Keep mask memory bounded even on unusually large or highly scaled surfaces.
   const float scale = std::min(renderer.renderScale(), 4096.0F / std::max(width(), height()));
   if (m_dirty || width() != m_rasterWidth || height() != m_rasterHeight || scale != m_rasterScale) {

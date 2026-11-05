@@ -18,29 +18,35 @@ namespace {
       std::error_code error;
       while (!directory.empty() && !std::filesystem::is_directory(directory, error)) {
         const auto parent = directory.parent_path();
-        if (parent == directory)
+        if (parent == directory) {
           return;
+        }
         directory = parent;
       }
-      if (directory.empty())
+      if (directory.empty()) {
         return;
+      }
       const auto relative = path.lexically_relative(directory);
-      if (relative.empty())
+      if (relative.empty()) {
         return;
+      }
       const WatchTarget target{directory, directory / *relative.begin()};
-      if (!std::ranges::contains(targets, target))
+      if (!std::ranges::contains(targets, target)) {
         targets.push_back(target);
+      }
     };
     for (const auto& path : {paths.base, paths.overrides}) {
       add(path);
       // Observe directory/symlink replacement as well as edits to the two files.
       for (auto parent = path.parent_path(); parent != parent.root_path() && !parent.empty();
-           parent = parent.parent_path())
+           parent = parent.parent_path()) {
         add(parent);
+      }
       std::error_code error;
       const auto resolved = std::filesystem::canonical(path, error);
-      if (!error && resolved != path)
+      if (!error && resolved != path) {
         add(resolved);
+      }
     }
     return targets;
   }
@@ -105,27 +111,31 @@ struct files::ViewPreferenceWriter::State : std::enable_shared_from_this<State> 
   }
 
   void watch(std::vector<WatchTarget> next) {
-    if (!watching || targets == next)
+    if (!watching || targets == next) {
       return;
+    }
     stopWatching();
     watching = true;
     targets = std::move(next);
     std::vector<std::filesystem::path> directories;
     for (const auto& [directory, target] : targets) {
-      if (std::ranges::contains(directories, directory))
+      if (std::ranges::contains(directories, directory)) {
         continue;
+      }
       directories.push_back(directory);
       const GioPtr<GFile> file(g_file_new_for_path(directory.c_str()));
       GioPtr<GFileMonitor> monitor(g_file_monitor_directory(file.get(), G_FILE_MONITOR_WATCH_MOVES, nullptr, nullptr));
-      if (!monitor)
+      if (!monitor) {
         continue;
+      }
       g_signal_connect(
           monitor.get(), "changed",
           G_CALLBACK(+[](GFileMonitor*, GFile* file, GFile* other, GFileMonitorEvent, gpointer data) {
             auto* owner = static_cast<State*>(data);
             for (auto* candidate : {file, other}) {
-              if (!candidate)
+              if (!candidate) {
                 continue;
+              }
               const GString path(g_file_get_path(candidate));
               if (path && std::ranges::any_of(owner->targets, [&](const auto& entry) {
                     return entry.second == path.get();
@@ -144,8 +154,9 @@ struct files::ViewPreferenceWriter::State : std::enable_shared_from_this<State> 
   }
 
   void pump() {
-    if (active || (pending.empty() && !reloadPending))
+    if (active || (pending.empty() && !reloadPending)) {
       return;
+    }
     auto edits = std::exchange(pending, {});
     reloadPending = false;
     active = true;
@@ -157,20 +168,24 @@ struct files::ViewPreferenceWriter::State : std::enable_shared_from_this<State> 
           const std::unique_ptr<Result> outcome(static_cast<Result*>(g_task_propagate_pointer(task, nullptr)));
           owner->active = false;
           owner->watch(outcome->targets);
-          if (!outcome->error.empty())
+          if (!outcome->error.empty()) {
             owner->pendingError = outcome->error;
+          }
           if (!owner->pending.empty() || owner->reloadPending) {
             owner->pump();
             return;
           }
-          if (outcome->settings)
+          if (outcome->settings) {
             owner->settings = outcome->settings;
-          if (outcome->inherited)
+          }
+          if (outcome->inherited) {
             owner->inherited = outcome->inherited;
+          }
           const auto changed = owner->changed;
           const auto error = std::exchange(owner->pendingError, {});
-          if (changed)
+          if (changed) {
             changed(error);
+          }
         },
         nullptr
     ));
@@ -184,17 +199,19 @@ struct files::ViewPreferenceWriter::State : std::enable_shared_from_this<State> 
         ConfigService service(request.owner->paths);
         if (!request.edits.empty()) {
           const auto result = service.saveOverrides(request.edits);
-          if (result == AtomicWriteState::NotCommitted || !service.issues().empty())
+          if (result == AtomicWriteState::NotCommitted || !service.issues().empty()) {
             outcome->error =
                 service.issues().empty() ? "Cannot save settings." : issueMessage(service.issues().front());
+          }
         }
         const auto loaded = loadSettings(request.owner->paths);
         const auto inherited = loadInheritedSettings(request.owner->paths);
         if (loaded && inherited) {
           outcome->settings = *loaded;
           outcome->inherited = *inherited;
-        } else if (outcome->error.empty())
+        } else if (outcome->error.empty()) {
           outcome->error = loaded ? issueMessage(inherited.error().front()) : issueMessage(loaded.error().front());
+        }
         outcome->targets = watchTargets(request.owner->paths);
       } catch (const std::exception& error) {
         outcome->error = error.what();
@@ -272,8 +289,9 @@ void files::ViewPreferenceWriter::submit(const std::vector<OverrideEdit>& edits)
 void files::ViewPreferenceWriter::resetAll() {
   std::vector<OverrideEdit> edits;
   edits.reserve(static_cast<std::size_t>(BrowserPreference::COUNT));
-  for (auto index = 0; index < static_cast<int>(BrowserPreference::COUNT); ++index)
+  for (auto index = 0; index < static_cast<int>(BrowserPreference::COUNT); ++index) {
     edits.push_back({static_cast<BrowserPreference>(index), std::monostate{}});
+  }
   submit(edits);
 }
 void files::ViewPreferenceWriter::reload() {

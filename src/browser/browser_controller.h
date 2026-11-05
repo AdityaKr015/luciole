@@ -29,10 +29,12 @@ namespace files {
     void setDefaultViewMode(ViewMode mode) {
       m_defaults.mode = mode;
       m_viewport.mode = mode;
-      if (!m_history.empty())
+      if (!m_history.empty()) {
         m_history[m_historyIndex].viewport.mode = mode;
-      if (m_restoredViewport)
+      }
+      if (m_restoredViewport) {
         m_restoredViewport->mode = mode;
+      }
     }
     void setDefaultIconSize(int size) {
       m_defaults.iconSize = size;

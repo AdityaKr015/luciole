@@ -16,8 +16,9 @@ namespace {
   using Error = std::unique_ptr<GError, ErrorFree>;
   std::optional<std::string> attribute(GFileInfo* info, const char* name, bool bytes = false) {
     if (g_file_info_get_attribute_type(info, name)
-        != (bytes ? G_FILE_ATTRIBUTE_TYPE_BYTE_STRING : G_FILE_ATTRIBUTE_TYPE_STRING))
+        != (bytes ? G_FILE_ATTRIBUTE_TYPE_BYTE_STRING : G_FILE_ATTRIBUTE_TYPE_STRING)) {
       return std::nullopt;
+    }
     const char* value =
         bytes ? g_file_info_get_attribute_byte_string(info, name) : g_file_info_get_attribute_string(info, name);
     return value != nullptr && *value != '\0' ? std::optional<std::string>(value) : std::nullopt;
@@ -32,8 +33,9 @@ namespace {
     const auto file = attribute(info, G_FILE_ATTRIBUTE_ID_FILE);
     const auto filesystem = attribute(info, G_FILE_ATTRIBUTE_ID_FILESYSTEM);
     const auto type = g_file_info_get_file_type(info);
-    if (!file || !filesystem || type == G_FILE_TYPE_UNKNOWN)
+    if (!file || !filesystem || type == G_FILE_TYPE_UNKNOWN) {
       throw std::runtime_error("The trash service cannot identify these items safely.");
+    }
     return {
         *file,
         *filesystem,
@@ -87,10 +89,11 @@ namespace {
         }
       } else if (g_file_info_get_attribute_type(info, G_FILE_ATTRIBUTE_STANDARD_SIZE) == G_FILE_ATTRIBUTE_TYPE_UINT64) {
         const auto size = g_file_info_get_attribute_uint64(info, G_FILE_ATTRIBUTE_STANDARD_SIZE);
-        if (size > std::numeric_limits<std::uint64_t>::max() - *reply.size)
+        if (size > std::numeric_limits<std::uint64_t>::max() - *reply.size) {
           reply.sizeIncomplete = true;
-        else
+        } else {
           *reply.size += size;
+        }
       } else {
         reply.sizeIncomplete = true;
       }
@@ -104,10 +107,11 @@ namespace {
       const files::GioPtr<GFileInfo> info(
           g_file_query_info(file.get(), attributes, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, cancellable, nullptr)
       );
-      if (info)
+      if (info) {
         inspect(file.get(), info.get(), 0);
-      else
+      } else {
         reply.sizeIncomplete = true;
+      }
     }
     while (!pending.empty()) {
       if (g_cancellable_is_cancelled(cancellable)) {
@@ -144,16 +148,18 @@ namespace {
         const files::GioPtr<GFile> child(g_file_get_child(file.get(), name));
         inspect(child.get(), info.get(), folder.depth + 1);
       }
-      if (!g_file_enumerator_close(enumerator.get(), cancellable, nullptr))
+      if (!g_file_enumerator_close(enumerator.get(), cancellable, nullptr)) {
         reply.sizeIncomplete = true;
+      }
     }
     return reply;
   }
   enum class WorkKind { PREPARE, MEASURE, EMPTY };
   files::EmptyTrashOutcome failedDelete(const GError* error) {
     using Outcome = files::EmptyTrashOutcome;
-    if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND))
+    if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND)) {
       return Outcome::SKIPPED;
+    }
     if (error != nullptr && error->domain == G_IO_ERROR) {
       switch (error->code) {
       case G_IO_ERROR_PERMISSION_DENIED:
@@ -181,8 +187,9 @@ struct files::EmptyTrashService::State {
   std::function<void()> changed;
   void notify() const {
     const auto callback = changed;
-    if (callback)
+    if (callback) {
       callback();
+    }
   }
   static void
   launch(const std::shared_ptr<State>& owner, std::function<Reply()> work, WorkKind kind = WorkKind::PREPARE) {
@@ -246,8 +253,9 @@ struct files::EmptyTrashService::State {
       auto& request = *static_cast<Request*>(data);
       auto reply = std::make_unique<Reply>();
       try {
-        if (!g_cancellable_is_cancelled(request.owner->cancellable.get()))
+        if (!g_cancellable_is_cancelled(request.owner->cancellable.get())) {
           *reply = request.work();
+        }
       } catch (const std::exception& error) {
         reply->error = error.what();
       }
@@ -276,12 +284,14 @@ void files::EmptyTrashService::cancel() {
   m_state->emptyRequested = false;
   g_cancellable_cancel(m_state->cancellable.get());
   m_state->targets.reset();
-  if (!busy() && m_state->snapshot.status != EmptyTrashStatus::FINISHED)
+  if (!busy() && m_state->snapshot.status != EmptyTrashStatus::FINISHED) {
     m_state->snapshot.status = EmptyTrashStatus::CANCELLED;
+  }
 }
 bool files::EmptyTrashService::prepare() {
-  if (busy())
+  if (busy()) {
     return false;
+  }
   m_state->targets.reset();
   m_state->cancellable.reset(g_cancellable_new());
   m_state->completed.store(0);
@@ -295,32 +305,37 @@ bool files::EmptyTrashService::prepare() {
         root.get(), kAttributes, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, owner->cancellable.get(), &raw
     ));
     const Error error(raw);
-    if (!enumerator)
+    if (!enumerator) {
       throw std::runtime_error(error ? error->message : "Could not read Trash.");
+    }
     auto targets = std::make_shared<Targets>();
     std::set<std::string> names;
     for (;;) {
       raw = nullptr;
       const GioPtr<GFileInfo> info(g_file_enumerator_next_file(enumerator.get(), owner->cancellable.get(), &raw));
       const Error nextError(raw);
-      if (nextError)
+      if (nextError) {
         throw std::runtime_error(nextError->message);
-      if (!info)
+      }
+      if (!info) {
         break;
+      }
       const char* name = g_file_info_get_name(info.get());
       if (name == nullptr
           || *name == '\0'
           || std::string_view(name).contains('/')
           || std::string_view(name) == "."
           || std::string_view(name) == ".."
-          || !names.insert(name).second)
+          || !names.insert(name).second) {
         throw std::runtime_error("The trash service returned an invalid item.");
+      }
       const GioPtr<GFile> child(g_file_get_child(root.get(), name));
       const GioPtr<GFile> parent(g_file_get_parent(child.get()));
       const GString uri(g_file_get_uri(child.get()));
       auto location = Location::fromUri(uri.get());
-      if (!location.isTrash() || !parent || !g_file_equal(parent.get(), root.get()))
+      if (!location.isTrash() || !parent || !g_file_equal(parent.get(), root.get())) {
         throw std::runtime_error("The trash service returned an item outside Trash.");
+      }
       const char* display = g_file_info_get_display_name(info.get());
       const GString valid(g_utf8_make_valid(display != nullptr ? display : name, -1));
       targets->push_back({std::move(location), valid.get(), identity(info.get())});
@@ -328,18 +343,21 @@ bool files::EmptyTrashService::prepare() {
     raw = nullptr;
     const bool closed = g_file_enumerator_close(enumerator.get(), owner->cancellable.get(), &raw);
     const Error closeError(raw);
-    if (!closed)
+    if (!closed) {
       throw std::runtime_error(closeError ? closeError->message : "Could not finish reading Trash.");
+    }
     Reply reply{.targets = std::move(targets), .results = {}, .error = {}, .finished = false};
-    for (const auto& target : *reply.targets)
+    for (const auto& target : *reply.targets) {
       reply.results.push_back({target.location, target.displayName, EmptyTrashOutcome::CANCELLED, {}});
+    }
     return reply;
   });
   return true;
 }
 bool files::EmptyTrashService::empty() {
-  if (!canEmpty())
+  if (!canEmpty()) {
     return false;
+  }
   m_state->snapshot.status = EmptyTrashStatus::EMPTYING;
   if (busy()) {
     m_state->emptyRequested = true;
@@ -356,11 +374,13 @@ void files::EmptyTrashService::State::startEmpty(const std::shared_ptr<State>& o
       owner,
       [owner, targets = owner->targets] {
         Reply reply{.targets = {}, .results = {}, .error = {}, .finished = true};
-        for (const auto& target : *targets)
+        for (const auto& target : *targets) {
           reply.results.push_back({target.location, target.displayName, EmptyTrashOutcome::CANCELLED, {}});
+        }
         for (std::size_t index = 0; index < targets->size(); ++index) {
-          if (g_cancellable_is_cancelled(owner->cancellable.get()))
+          if (g_cancellable_is_cancelled(owner->cancellable.get())) {
             break;
+          }
           const auto& target = (*targets)[index];
           auto& result = reply.results[index];
           try {
@@ -371,8 +391,9 @@ void files::EmptyTrashService::State::startEmpty(const std::shared_ptr<State>& o
             ));
             const Error error(raw);
             if (!info) {
-              if (g_error_matches(error.get(), G_IO_ERROR, G_IO_ERROR_CANCELLED))
+              if (g_error_matches(error.get(), G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
                 break;
+              }
               result.outcome = g_error_matches(error.get(), G_IO_ERROR, G_IO_ERROR_NOT_FOUND)
                   ? EmptyTrashOutcome::SKIPPED
                   : EmptyTrashOutcome::FAILED;
@@ -381,15 +402,17 @@ void files::EmptyTrashService::State::startEmpty(const std::shared_ptr<State>& o
               result.outcome = EmptyTrashOutcome::FAILED;
               result.error = "The item changed after confirmation was prepared. It was left in Trash.";
             } else {
-              if (g_cancellable_is_cancelled(owner->cancellable.get()))
+              if (g_cancellable_is_cancelled(owner->cancellable.get())) {
                 break;
+              }
               raw = nullptr;
               // Finish the current provider request before observing cancellation.
               const bool removed = g_file_delete(target.location.file().get(), nullptr, &raw);
               const Error deleteError(raw);
               result.outcome = removed ? EmptyTrashOutcome::DELETED : failedDelete(deleteError.get());
-              if (!removed)
+              if (!removed) {
                 result.error = deleteError ? deleteError->message : "Could not confirm deletion.";
+              }
             }
           } catch (const std::exception& error) {
             result.outcome = EmptyTrashOutcome::FAILED;

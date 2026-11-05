@@ -14,8 +14,9 @@
 namespace {
   namespace fs = std::filesystem;
   void require(bool value, const char* message) {
-    if (!value)
+    if (!value) {
       throw std::runtime_error(message);
+    }
   }
   files::Location location(const fs::path& path) { return files::Location::fromPath(path.native()); }
   struct Fixture {
@@ -142,8 +143,9 @@ namespace {
     pump.prepare(service, fixture.root);
     for (const auto& name : std::vector<std::string>{
              "", ".", "..", "nested/name", std::string("a\0b", 3), std::string(1, static_cast<char>(0xff))
-         })
+         }) {
       require(!service.create(name) && fs::is_empty(fixture.root), "invalid name created an item");
+    }
     pump.create(service, std::string(10000, 'a'));
     require(
         service.snapshot().status == files::CreateStatus::ERROR && fs::is_empty(fixture.root),

@@ -37,8 +37,9 @@ void files::PathCompletion::complete(
     std::string prefix = slash == std::string::npos ? text : text.substr(slash + 1);
     if (const GString scheme(g_uri_parse_scheme(text.c_str())); scheme) {
       const GString decoded(g_uri_unescape_string(prefix.c_str(), "/"));
-      if (!decoded)
+      if (!decoded) {
         throw std::invalid_argument("Invalid URI filename prefix.");
+      }
       prefix = decoded.get();
     }
     enumerate(parent, prefix, showHidden || prefix.starts_with('.'), std::move(completed));
@@ -69,8 +70,9 @@ void files::PathCompletion::enumerate(
       nullptr, m_state->cancellable.get(),
       [](GObject*, GAsyncResult* result, gpointer) {
         auto& request = *static_cast<Request*>(g_task_get_task_data(G_TASK(result)));
-        if (request.state->active && request.state->revision == request.revision)
+        if (request.state->active && request.state->revision == request.revision) {
           request.completed(std::move(request.result));
+        }
       },
       nullptr
   );
@@ -90,13 +92,15 @@ void files::PathCompletion::enumerate(
     constexpr std::size_t limit = 256;
     while (enumerator && !g_cancellable_is_cancelled(cancellable)) {
       const GioPtr<GFileInfo> info(g_file_enumerator_next_file(enumerator.get(), cancellable, &error));
-      if (!info)
+      if (!info) {
         break;
+      }
       const char* name = g_file_info_get_name(info.get());
       if (g_file_info_get_file_type(info.get()) != G_FILE_TYPE_DIRECTORY
           || (!request.showHidden && g_file_info_get_is_hidden(info.get()))
-          || !std::string_view(name).starts_with(request.prefix))
+          || !std::string_view(name).starts_with(request.prefix)) {
         continue;
+      }
       if (request.result.items.size() == limit) {
         request.result.truncated = true;
         break;
@@ -106,15 +110,18 @@ void files::PathCompletion::enumerate(
       auto location = Location::fromUri(uri.get());
       const char* display = g_file_info_get_display_name(info.get());
       auto text = locationEditText(location);
-      if (!text.ends_with('/'))
+      if (!text.ends_with('/')) {
         text += '/';
+      }
       request.result.items.push_back({std::move(location), display ? display : name, std::move(text)});
     }
-    if (error && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    if (error && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
       request.result.error = error->message;
+    }
     g_clear_error(&error);
-    if (enumerator)
+    if (enumerator) {
       g_file_enumerator_close(enumerator.get(), cancellable, nullptr);
+    }
     std::ranges::sort(request.result.items, [](const auto& a, const auto& b) {
       return g_utf8_collate(a.label.c_str(), b.label.c_str()) < 0;
     });

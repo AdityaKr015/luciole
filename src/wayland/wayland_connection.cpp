@@ -242,8 +242,9 @@ void WaylandConnection::cleanup() {
   if (m_seat != nullptr) {
     wl_seat_destroy(m_seat);
   }
-  if (m_dataDeviceManager != nullptr)
+  if (m_dataDeviceManager != nullptr) {
     wl_data_device_manager_destroy(m_dataDeviceManager);
+  }
   if (m_shm != nullptr) {
     wl_shm_destroy(m_shm);
   }

@@ -22,10 +22,12 @@ namespace {
     wl_surface* surface = nullptr;
     wl_buffer* buffer = nullptr;
     ~DragIcon() {
-      if (surface)
+      if (surface) {
         wl_surface_destroy(surface);
-      if (buffer)
+      }
+      if (buffer) {
         wl_buffer_destroy(buffer);
+      }
     }
     static std::unique_ptr<DragIcon> create(wl_compositor* compositor, wl_shm* shm, const LoadedImageFile* image) {
       if (!compositor
@@ -34,16 +36,19 @@ namespace {
           || image->width <= 0
           || image->height <= 0
           || image->width > 256
-          || image->height > 256)
+          || image->height > 256) {
         return {};
+      }
       const int width = image->width >= image->height ? 40 : std::max(1, 40 * image->width / image->height);
       const int height = image->height >= image->width ? 40 : std::max(1, 40 * image->height / image->width);
       const auto bytes = static_cast<std::size_t>(width) * height * 4;
-      if (image->rgba.size() != static_cast<std::size_t>(image->width) * image->height * 4)
+      if (image->rgba.size() != static_cast<std::size_t>(image->width) * image->height * 4) {
         return {};
+      }
       const int fd = memfd_create("noctalia-files-drag", MFD_CLOEXEC);
-      if (fd < 0)
+      if (fd < 0) {
         return {};
+      }
       if (ftruncate(fd, static_cast<off_t>(bytes)) != 0) {
         ::close(fd);
         return {};
@@ -83,8 +88,9 @@ namespace {
     bool sending;
     bool valid = true;
     ~PipeTransfer() {
-      if (fd >= 0)
+      if (fd >= 0) {
         ::close(fd);
+      }
     }
   };
 
@@ -98,44 +104,51 @@ namespace {
     sigpending(&pending);
     const bool pendingPipe = sigismember(&pending, SIGPIPE) == 1;
     const int flags = fcntl(pipe.fd, F_GETFL);
-    if (flags < 0 || fcntl(pipe.fd, F_SETFL, flags | O_NONBLOCK) < 0)
+    if (flags < 0 || fcntl(pipe.fd, F_SETFL, flags | O_NONBLOCK) < 0) {
       pipe.valid = false;
+    }
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     std::size_t offset = 0;
     std::array<char, 8192> buffer{};
     while (pipe.valid && !g_cancellable_is_cancelled(cancellable)) {
-      if (pipe.sending && offset == pipe.text.size())
+      if (pipe.sending && offset == pipe.text.size()) {
         break;
+      }
       if (std::chrono::steady_clock::now() >= deadline) {
         pipe.valid = false;
         break;
       }
       pollfd fd{pipe.fd, static_cast<short>(pipe.sending ? POLLOUT : POLLIN), 0};
       const int ready = ::poll(&fd, 1, 50);
-      if (ready < 0 && errno == EINTR)
+      if (ready < 0 && errno == EINTR) {
         continue;
+      }
       if (ready < 0) {
         pipe.valid = false;
         break;
       }
-      if (ready == 0)
+      if (ready == 0) {
         continue;
+      }
       const auto count = pipe.sending ? ::write(pipe.fd, pipe.text.data() + offset, pipe.text.size() - offset)
                                       : ::read(pipe.fd, buffer.data(), buffer.size());
-      if (count < 0 && (errno == EINTR || errno == EAGAIN))
+      if (count < 0 && (errno == EINTR || errno == EAGAIN)) {
         continue;
+      }
       if (count < 0) {
         pipe.valid = false;
         break;
       }
-      if (count == 0)
+      if (count == 0) {
         break;
-      if (pipe.sending)
+      }
+      if (pipe.sending) {
         offset += static_cast<std::size_t>(count);
-      else {
+      } else {
         pipe.text.append(buffer.data(), static_cast<std::size_t>(count));
-        if (pipe.text.size() > kTextLimit)
+        if (pipe.text.size() > kTextLimit) {
           pipe.valid = false;
+        }
       }
     }
     if (!pendingPipe) {
@@ -144,10 +157,11 @@ namespace {
     }
     pthread_sigmask(SIG_SETMASK, &previous, nullptr);
     pipe.valid = pipe.valid && !g_cancellable_is_cancelled(cancellable);
-    if (!pipe.sending)
+    if (!pipe.sending) {
       pipe.valid = pipe.valid
           && !pipe.text.contains('\0')
           && g_utf8_validate(pipe.text.data(), static_cast<gssize>(pipe.text.size()), nullptr);
+    }
     // Closing before notification also gives receiving clients their EOF promptly.
     ::close(std::exchange(pipe.fd, -1));
     g_task_return_boolean(task, pipe.valid);
@@ -205,24 +219,28 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
   std::vector<std::function<void(std::optional<std::string>)>> callbacks;
 
   void discard(wl_data_offer* offer) {
-    if (offer && offers.erase(offer))
+    if (offer && offers.erase(offer)) {
       wl_data_offer_destroy(offer);
+    }
   }
   void notify() const {
-    if (active && changed)
+    if (active && changed) {
       changed();
+    }
   }
   void received() {
     auto waiting = std::exchange(callbacks, {});
     const auto value = text;
-    for (const auto& callback : waiting)
+    for (const auto& callback : waiting) {
       callback(value);
+    }
   }
   void reset() {
     ++epoch;
     reconciliation.reset();
-    if (focusSync)
+    if (focusSync) {
       wl_callback_destroy(std::exchange(focusSync, nullptr));
+    }
     g_cancellable_cancel(reading.get());
     reading.reset(g_cancellable_new());
     pending = false;
@@ -260,26 +278,31 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
   }
   void selection(wl_data_offer* offer) {
     const auto retained = shared_from_this();
-    if (selected != offer)
+    if (selected != offer) {
       discard(selected);
+    }
     selected = offer;
     // Focus changes can re-offer our own immutable selection. Cancellation, not
     // focus, ends source ownership and its cut state.
-    if (owned)
+    if (owned) {
       return;
+    }
     reset();
-    if (!active || !offer || !offers.contains(offer))
+    if (!active || !offer || !offers.contains(offer)) {
       return;
+    }
     const auto& types = offers.at(offer).types;
     const char* mime = types.contains("text/plain;charset=utf-8") ? "text/plain;charset=utf-8"
         : types.contains("text/plain")                            ? "text/plain"
                                                                   : nullptr;
-    if (!mime)
+    if (!mime) {
       return;
+    }
     pending = true;
     read(offer, mime, reading.get(), [self = shared_from_this(), revision = epoch](auto value) {
-      if (!self->active || self->epoch != revision)
+      if (!self->active || self->epoch != revision) {
         return;
+      }
       self->pending = false;
       self->text = std::move(value);
       self->received();
@@ -315,8 +338,9 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
               auto finished = std::move(state.sources.at(source).finished);
               state.sources.erase(source);
               wl_data_source_destroy(source);
-              if (finished)
+              if (finished) {
                 finished();
+              }
             },
         .dnd_drop_performed =
             [](void* data, wl_data_source* source) {
@@ -325,8 +349,9 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
                 found->second.dropped = true;
                 found->second.icon.reset();
                 auto finished = std::exchange(found->second.finished, {});
-                if (finished)
+                if (finished) {
                   finished();
+                }
               }
             },
         .dnd_finished =
@@ -336,22 +361,25 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
               auto finished = std::move(state.sources.at(source).finished);
               state.sources.erase(source);
               wl_data_source_destroy(source);
-              if (finished)
+              if (finished) {
                 finished();
+              }
             },
         .action = [](void*, wl_data_source*, std::uint32_t) {}
     };
     wl_data_source_add_listener(source, &listener, this);
-    for (const auto& [mime, unused] : sources.at(source).data)
+    for (const auto& [mime, unused] : sources.at(source).data) {
       wl_data_source_offer(source, mime.c_str());
+    }
     return source;
   }
   bool publish(FilePayload payload) {
     Source value;
     for (const auto mime : {kUriListMime, kGnomeFilesMime, kKdeCutMime}) {
       auto bytes = encodeFilePayload(payload, mime);
-      if (!bytes)
+      if (!bytes) {
         return false;
+      }
       value.data.emplace(mime, std::move(*bytes));
     }
     value.data.emplace("text/plain;charset=utf-8", value.data.at(std::string(kUriListMime)));
@@ -367,8 +395,9 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
     return true;
   }
   void reconcile() {
-    if (!reconciliation)
+    if (!reconciliation) {
       return;
+    }
     if (reconciliation->revision != epoch
         || reconciliation->owner != owned
         || (!owned && reconciliation->offer != selected)) {
@@ -376,12 +405,14 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
       return;
     }
     const auto inputSerial = serial();
-    if (inputSerial == 0)
+    if (inputSerial == 0) {
       return;
+    }
     auto pending = std::move(*std::exchange(reconciliation, std::nullopt));
     if (!pending.remaining.locations.empty()) {
-      if (!publish(pending.remaining))
+      if (!publish(pending.remaining)) {
         reconciliation = std::move(pending);
+      }
     } else {
       owned = nullptr;
       discard(std::exchange(selected, nullptr));
@@ -390,10 +421,12 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
     }
   }
   void focusEntered() {
-    if (!reconciliation || serial() == 0)
+    if (!reconciliation || serial() == 0) {
       return;
-    if (focusSync)
+    }
+    if (focusSync) {
       wl_callback_destroy(std::exchange(focusSync, nullptr));
+    }
     // Drain ownership notifications already in flight before a deferred write.
     // This is an asynchronous barrier, never a nested dispatch or roundtrip.
     focusSync = wl_display_sync(display);
@@ -407,22 +440,26 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
   }
   void updateDrag() {
     target = {};
-    if (!active || !dragging || !offers.contains(dragging))
+    if (!active || !dragging || !offers.contains(dragging)) {
       return;
+    }
     auto& offer = offers.at(dragging);
-    if (offer.types.contains(std::string(kUriListMime)) && hover)
+    if (offer.types.contains(std::string(kUriListMime)) && hover) {
       target = hover(dragSurface, dragX, dragY);
+    }
     const bool modern = wl_data_offer_get_version(dragging) >= WL_DATA_OFFER_SET_ACTIONS_SINCE_VERSION;
     const auto supported =
         offer.actions & (WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY | WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE);
-    if (!supported)
+    if (!supported) {
       target = {};
+    }
     if (modern) {
       auto preferred = target.preferred == TransferAction::COPY ? WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY
                                                                 : WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE;
-      if ((preferred & supported) == 0)
+      if ((preferred & supported) == 0) {
         preferred = (supported & WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY) ? WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY
                                                                          : WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE;
+      }
       wl_data_offer_set_actions(dragging, target.receive ? supported : 0, target.receive ? preferred : 0);
     }
     wl_data_offer_accept(dragging, dragSerial, target.receive ? kUriListMime.data() : nullptr);
@@ -433,8 +470,9 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
     const auto found = offers.find(offer);
     const auto action = found == offers.end() ? 0 : found->second.action;
     const bool modern = offer && wl_data_offer_get_version(offer) >= WL_DATA_OFFER_FINISH_SINCE_VERSION;
-    if (leave)
+    if (leave) {
       leave();
+    }
     if (!receiver
         || (modern
             && action != WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY
@@ -445,8 +483,9 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
     read(
         offer, kUriListMime.data(), cancellable.get(),
         [self = shared_from_this(), offer, action, modern, receiver = std::move(receiver)](auto bytes) {
-          if (!self->active)
+          if (!self->active) {
             return;
+          }
           auto payload = bytes ? parseFilePayload(kUriListMime, *bytes)
                                : std::expected<FilePayload, std::string>(std::unexpected("Transfer failed."));
           if (!payload) {
@@ -455,8 +494,9 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
           }
           const auto finish = [self, offer, modern](bool success) {
             if (self->active && self->offers.contains(offer)) {
-              if (success && modern)
+              if (success && modern) {
                 wl_data_offer_finish(offer);
+              }
               self->discard(offer);
             }
           };
@@ -480,8 +520,9 @@ files::WaylandTextClipboard::WaylandTextClipboard(
   state.compositor = compositor;
   state.shm = shm;
   state.serial = std::move(serial);
-  if (!manager || !seat)
+  if (!manager || !seat) {
     return;
+  }
   state.device = wl_data_device_manager_get_data_device(manager, seat);
   static const wl_data_device_listener listener{
       .data_offer =
@@ -495,8 +536,9 @@ files::WaylandTextClipboard::WaylandTextClipboard(
                     [](void* data, wl_data_offer* offer, std::uint32_t actions) {
                       auto& state = *static_cast<State*>(data);
                       state.offers[offer].actions = actions;
-                      if (state.dragging == offer)
+                      if (state.dragging == offer) {
                         state.updateDrag();
+                      }
                     },
                 .action = [](void* data, wl_data_offer* offer,
                              std::uint32_t action) { static_cast<State*>(data)->offers[offer].action = action; }
@@ -519,8 +561,9 @@ files::WaylandTextClipboard::WaylandTextClipboard(
             auto& state = *static_cast<State*>(data);
             state.discard(std::exchange(state.dragging, nullptr));
             state.target = {};
-            if (state.leave)
+            if (state.leave) {
               state.leave();
+            }
           },
       .motion =
           [](void* data, wl_data_device*, std::uint32_t, wl_fixed_t x, wl_fixed_t y) {
@@ -538,41 +581,47 @@ files::WaylandTextClipboard::WaylandTextClipboard(
 files::WaylandTextClipboard::~WaylandTextClipboard() {
   auto& state = *m_state;
   state.active = false;
-  if (state.focusSync)
+  if (state.focusSync) {
     wl_callback_destroy(std::exchange(state.focusSync, nullptr));
+  }
   state.callbacks.clear();
   state.hover = {};
   state.leave = {};
   state.changed = {};
   g_cancellable_cancel(state.reading.get());
   g_cancellable_cancel(state.cancellable.get());
-  for (const auto& [offer, unused] : state.offers)
+  for (const auto& [offer, unused] : state.offers) {
     wl_data_offer_destroy(offer);
-  for (const auto& [source, unused] : state.sources)
+  }
+  for (const auto& [source, unused] : state.sources) {
     wl_data_source_destroy(source);
+  }
   state.offers.clear();
   state.sources.clear();
   if (state.device) {
-    if (wl_data_device_get_version(state.device) >= WL_DATA_DEVICE_RELEASE_SINCE_VERSION)
+    if (wl_data_device_get_version(state.device) >= WL_DATA_DEVICE_RELEASE_SINCE_VERSION) {
       wl_data_device_release(state.device);
-    else
+    } else {
       wl_data_device_destroy(state.device);
+    }
   }
 }
 bool files::WaylandTextClipboard::available() const { return m_state->device && m_state->serial() != 0; }
 std::optional<std::string> files::WaylandTextClipboard::clipboardText() { return m_state->text; }
 void files::WaylandTextClipboard::requestClipboardText(std::function<void(std::optional<std::string>)> callback) {
-  if (m_state->pending)
+  if (m_state->pending) {
     m_state->callbacks.push_back(std::move(callback));
-  else
+  } else {
     callback(m_state->text);
+  }
 }
 void files::WaylandTextClipboard::setClipboardText(std::string text) {
   if (!available()
       || text.size() > kTextLimit
       || text.contains('\0')
-      || !g_utf8_validate(text.data(), static_cast<gssize>(text.size()), nullptr))
+      || !g_utf8_validate(text.data(), static_cast<gssize>(text.size()), nullptr)) {
     return;
+  }
   auto& state = *m_state;
   auto* source =
       state.source({.data = {{"text/plain;charset=utf-8", text}, {"text/plain", text}}, .finished = {}, .files = {}});
@@ -588,13 +637,16 @@ bool files::WaylandTextClipboard::setFiles(FilePayload payload) {
 }
 bool files::WaylandTextClipboard::hasFiles() const {
   const auto& state = *m_state;
-  if (state.moving == state.epoch)
+  if (state.moving == state.epoch) {
     return false;
-  if (state.files)
+  }
+  if (state.files) {
     return !state.files->locations.empty();
-  if (const auto found = state.offers.find(state.selected); found != state.offers.end())
+  }
+  if (const auto found = state.offers.find(state.selected); found != state.offers.end()) {
     return found->second.types.contains(std::string(kGnomeFilesMime))
         || found->second.types.contains(std::string(kUriListMime));
+  }
   return false;
 }
 bool files::WaylandTextClipboard::isCut(const Location& location) const {
@@ -630,8 +682,9 @@ void files::WaylandTextClipboard::requestFiles(std::function<void(std::optional<
   read->flagDone = !kde;
   read->callback = std::move(callback);
   const auto finish = [self, read, revision] {
-    if (!read->flagDone || !read->dataDone || !read->callback)
+    if (!read->flagDone || !read->dataDone || !read->callback) {
       return;
+    }
     auto callback = std::exchange(read->callback, {});
     if (!self->active || self->epoch != revision || read->invalid || !read->payload) {
       callback(std::nullopt);
@@ -640,25 +693,30 @@ void files::WaylandTextClipboard::requestFiles(std::function<void(std::optional<
     read->payload->cut = read->payload->cut || read->flag == "1";
     callback(ClipboardFiles{std::move(*read->payload), revision});
   };
-  if (kde)
+  if (kde) {
     self->read(offer, kKdeCutMime.data(), self->reading.get(), [read, finish](auto bytes) {
       read->invalid = !bytes || (*bytes != "0" && *bytes != "1");
-      if (bytes)
+      if (bytes) {
         read->flag = std::move(*bytes);
+      }
       read->flagDone = true;
       finish();
     });
+  }
   self->read(offer, mime.data(), self->reading.get(), [read, finish, mime](auto bytes) {
-    if (bytes)
-      if (auto payload = parseFilePayload(mime, *bytes))
+    if (bytes) {
+      if (auto payload = parseFilePayload(mime, *bytes)) {
         read->payload = std::move(*payload);
+      }
+    }
     read->dataDone = true;
     finish();
   });
 }
 bool files::WaylandTextClipboard::claimMove(std::uint64_t revision) {
-  if (revision != m_state->epoch || m_state->moving == revision || m_state->reconciliation)
+  if (revision != m_state->epoch || m_state->moving == revision || m_state->reconciliation) {
     return false;
+  }
   m_state->moving = revision;
   m_state->notify();
   return true;
@@ -666,8 +724,9 @@ bool files::WaylandTextClipboard::claimMove(std::uint64_t revision) {
 void files::WaylandTextClipboard::finishMove(
     const ClipboardFiles& selection, const std::vector<TransferResult>& results
 ) {
-  if (m_state->moving != selection.revision)
+  if (m_state->moving != selection.revision) {
     return;
+  }
   m_state->moving.reset();
   if (m_state->epoch != selection.revision) {
     m_state->notify();
@@ -681,8 +740,9 @@ void files::WaylandTextClipboard::finishMove(
   // Keep outgoing sources immutable. Ownership cancellation or a fresh foreign
   // offer retires this receipt before a later focus event can publish it.
   m_state->reconciliation = State::Reconciliation{selection.revision, m_state->owned, m_state->selected, remaining};
-  if (m_state->owned)
+  if (m_state->owned) {
     m_state->files = std::move(remaining);
+  }
   m_state->reconcile();
   m_state->notify();
 }
@@ -700,11 +760,13 @@ bool files::WaylandTextClipboard::startDrag(
       || pressSerial == 0
       || std::ranges::any_of(m_state->sources, [](const auto& item) {
            return item.second.drag && !item.second.dropped;
-         }))
+         })) {
     return false;
+  }
   auto bytes = encodeFilePayload(payload, kUriListMime);
-  if (!bytes)
+  if (!bytes) {
     return false;
+  }
   auto icon = DragIcon::create(m_state->compositor, m_state->shm, image);
   auto* iconSurface = icon ? icon->surface : nullptr;
   auto* source = m_state->source(
@@ -720,28 +782,32 @@ bool files::WaylandTextClipboard::startDrag(
       : WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY | WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE;
   wl_data_source_set_actions(source, actions);
   wl_data_device_start_drag(m_state->device, source, origin, iconSurface, pressSerial);
-  if (iconSurface)
+  if (iconSurface) {
     m_state->sources.at(source).icon->commit();
+  }
   return true;
 }
 void files::WaylandTextClipboard::refreshDrag() { m_state->updateDrag(); }
 void files::WaylandTextClipboard::cancelDrag() {
-  for (auto it = m_state->sources.begin(); it != m_state->sources.end(); ++it)
+  for (auto it = m_state->sources.begin(); it != m_state->sources.end(); ++it) {
     if (it->second.drag && !it->second.dropped) {
       auto* source = it->first;
       auto finished = std::move(it->second.finished);
       m_state->sources.erase(it);
       wl_data_source_destroy(source);
-      if (finished)
+      if (finished) {
         finished();
+      }
       break;
     }
+  }
 }
 const files::FilePayload* files::WaylandTextClipboard::dragFiles() const {
   for (const auto& [source, value] : m_state->sources) {
     (void)source;
-    if (value.drag && !value.dropped && value.files)
+    if (value.drag && !value.dropped && value.files) {
       return &*value.files;
+    }
   }
   return nullptr;
 }

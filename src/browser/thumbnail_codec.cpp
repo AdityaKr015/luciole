@@ -25,15 +25,17 @@ namespace {
       std::array<std::uint32_t, 256> values{};
       for (std::uint32_t value = 0; value < values.size(); ++value) {
         auto crc = value;
-        for (int bit = 0; bit < 8; ++bit)
+        for (int bit = 0; bit < 8; ++bit) {
           crc = (crc >> 1) ^ (0xedb88320U & (0U - (crc & 1U)));
+        }
         values[value] = crc;
       }
       return values;
     }();
     std::uint32_t crc = 0xffffffffU;
-    for (auto byte : bytes)
+    for (auto byte : bytes) {
       crc = table[(crc ^ byte) & 255U] ^ (crc >> 8);
+    }
     return crc ^ 0xffffffffU;
   }
   struct DecodeSize {
@@ -60,10 +62,12 @@ std::expected<LoadedImageFile, std::string> files::decodeThumbnail(
     std::span<const std::uint8_t> bytes, int target, std::uint64_t maxPixels, GCancellable* cancellable,
     std::string_view contentType
 ) {
-  if (bytes.empty() || target < 1 || target > kMaxPreviewImageSide || !maxPixels || maxPixels > 64'000'000)
+  if (bytes.empty() || target < 1 || target > kMaxPreviewImageSide || !maxPixels || maxPixels > 64'000'000) {
     return std::unexpected("invalid thumbnail input");
-  if (g_cancellable_is_cancelled(cancellable))
+  }
+  if (g_cancellable_is_cancelled(cancellable)) {
     return std::unexpected("image decode cancelled");
+  }
   const GString guessed(
       contentType.empty()
           ? g_content_type_guess(nullptr, bytes.data(), std::min<std::size_t>(bytes.size(), 4096), nullptr)
@@ -71,8 +75,9 @@ std::expected<LoadedImageFile, std::string> files::decodeThumbnail(
   );
   const std::string mime(contentType.empty() ? (guessed ? guessed.get() : "") : contentType);
   // Select an explicit raster loader before handing it bytes. SVG resource loading stays excluded.
-  if (!mime.starts_with("image/") || mime.starts_with("image/svg"))
+  if (!mime.starts_with("image/") || mime.starts_with("image/svg")) {
     return std::unexpected("no supported raster decoder");
+  }
   GError* setupError = nullptr;
   const GioPtr<GdkPixbufLoader> loader(gdk_pixbuf_loader_new_with_mime_type(mime.c_str(), &setupError));
   if (!loader) {
@@ -107,25 +112,32 @@ std::expected<LoadedImageFile, std::string> files::decodeThumbnail(
     failure = error->message;
     g_clear_error(&error);
   }
-  if (!gdk_pixbuf_loader_close(loader.get(), &error))
+  if (!gdk_pixbuf_loader_close(loader.get(), &error)) {
     ok = false;
+  }
   if (error) {
-    if (failure.empty())
+    if (failure.empty()) {
       failure = error->message;
+    }
     g_clear_error(&error);
   }
   auto* pixbuf = gdk_pixbuf_loader_get_pixbuf(loader.get());
-  if (g_cancellable_is_cancelled(cancellable))
+  if (g_cancellable_is_cancelled(cancellable)) {
     return std::unexpected("image decode cancelled");
-  if (state.rejected)
+  }
+  if (state.rejected) {
     return std::unexpected("image exceeds source pixel limit");
-  if (!ok || !pixbuf)
+  }
+  if (!ok || !pixbuf) {
     return std::unexpected(failure.empty() ? "GdkPixbuf returned no pixels" : "GdkPixbuf: " + failure);
-  if (state.width < 1 || state.height < 1)
+  }
+  if (state.width < 1 || state.height < 1) {
     return std::unexpected("image decoder supplied no source dimensions");
+  }
   auto image = fitThumbnailPixels(pixbuf, target, maxPixels);
-  if (!image)
+  if (!image) {
     return image;
+  }
   image->sourceWidth = state.width;
   image->sourceHeight = state.height;
   auto orientation = exifOrientation(bytes.data(), bytes.size());
@@ -133,31 +145,36 @@ std::expected<LoadedImageFile, std::string> files::decodeThumbnail(
     const std::string_view value(option);
     unsigned parsed = 0;
     const auto result = std::from_chars(value.data(), value.data() + value.size(), parsed);
-    if (result.ec == std::errc{} && result.ptr == value.data() + value.size() && parsed >= 1 && parsed <= 8)
+    if (result.ec == std::errc{} && result.ptr == value.data() + value.size() && parsed >= 1 && parsed <= 8) {
       orientation = static_cast<ImageOrientation>(parsed);
+    }
   }
   applyImageOrientation(image->rgba, image->width, image->height, orientation);
   if (orientation == ImageOrientation::Transpose
       || orientation == ImageOrientation::Rotate90
       || orientation == ImageOrientation::Transverse
-      || orientation == ImageOrientation::Rotate270)
+      || orientation == ImageOrientation::Rotate270) {
     std::swap(image->sourceWidth, image->sourceHeight);
+  }
   return image;
 }
 
 std::expected<LoadedImageFile, std::string>
 files::fitThumbnailPixels(GdkPixbuf* pixbuf, int target, std::uint64_t maxPixels) {
-  if (!pixbuf || target < 1 || target > kMaxPreviewImageSide)
+  if (!pixbuf || target < 1 || target > kMaxPreviewImageSide) {
     return std::unexpected("invalid thumbnail pixels");
+  }
   const int width = gdk_pixbuf_get_width(pixbuf), height = gdk_pixbuf_get_height(pixbuf);
   if (width < 1
       || height < 1
       || static_cast<std::uint64_t>(width) * height > maxPixels
-      || gdk_pixbuf_get_bits_per_sample(pixbuf) != 8)
+      || gdk_pixbuf_get_bits_per_sample(pixbuf) != 8) {
     return std::unexpected("image exceeds decoded pixel limits");
+  }
   const int channels = gdk_pixbuf_get_n_channels(pixbuf), stride = gdk_pixbuf_get_rowstride(pixbuf);
-  if (channels != 3 && channels != 4)
+  if (channels != 3 && channels != 4) {
     return std::unexpected("unsupported image channels");
+  }
   const auto* pixels = gdk_pixbuf_read_pixels(pixbuf);
   const auto fitted = fitImageWithin(width, height, target, target);
   if (stride == width * channels && (fitted.width != width || fitted.height != height)) {
@@ -165,8 +182,9 @@ files::fitThumbnailPixels(GdkPixbuf* pixbuf, int target, std::uint64_t maxPixels
         pixels, width, height, channels == 4 ? ResizeSourceLayout::Rgba : ResizeSourceLayout::Rgb, fitted.width,
         fitted.height
     );
-    if (resized.empty())
+    if (resized.empty()) {
       return std::unexpected("cannot scale decoded image");
+    }
     return LoadedImageFile{
         .rgba = std::move(resized), .width = fitted.width, .height = fitted.height, .sourceWidth = 0, .sourceHeight = 0
     };
@@ -178,19 +196,22 @@ files::fitThumbnailPixels(GdkPixbuf* pixbuf, int target, std::uint64_t maxPixels
       .sourceWidth = 0,
       .sourceHeight = 0
   };
-  for (int y = 0; y < height; ++y)
+  for (int y = 0; y < height; ++y) {
     for (int x = 0; x < width; ++x) {
       const auto source = static_cast<std::size_t>(y) * stride + static_cast<std::size_t>(x) * channels;
       const auto dest = (static_cast<std::size_t>(y) * width + x) * 4;
-      for (int c = 0; c < 3; ++c)
+      for (int c = 0; c < 3; ++c) {
         image.rgba[dest + c] = pixels[source + c];
+      }
       image.rgba[dest + 3] = channels == 4 ? pixels[source + 3] : 255;
     }
+  }
   if (fitted.width != width || fitted.height != height) {
     auto resized =
         resizeToRgba(image.rgba.data(), width, height, ResizeSourceLayout::Rgba, fitted.width, fitted.height);
-    if (resized.empty())
+    if (resized.empty()) {
       return std::unexpected("cannot scale decoded image");
+    }
     image.rgba = std::move(resized);
     image.width = fitted.width;
     image.height = fitted.height;
@@ -205,8 +226,9 @@ files::readThumbnailPng(std::span<const std::uint8_t> bytes, int maxSide) {
       || maxSide > 1024
       || bytes.size() < 45
       || bytes.size() > 8U * 1024U * 1024U
-      || !std::ranges::equal(bytes.first(8), signature))
+      || !std::ranges::equal(bytes.first(8), signature)) {
     return std::unexpected("invalid thumbnail PNG");
+  }
   ThumbnailPng result;
   bool ended = false, filter = false;
   const auto pixelChunk = [](std::string_view type, std::uint32_t length) {
@@ -223,23 +245,29 @@ files::readThumbnailPng(std::span<const std::uint8_t> bytes, int maxSide) {
     const auto* p = bytes.data() + offset;
     const auto length = read32(p);
     if (length > bytes.size() - offset - 12
-        || read32(p + 8 + length) != pngCrc(bytes.subspan(offset + 4, static_cast<std::size_t>(length) + 4)))
+        || read32(p + 8 + length) != pngCrc(bytes.subspan(offset + 4, static_cast<std::size_t>(length) + 4))) {
       return std::unexpected("invalid PNG chunk");
+    }
     const std::string_view type(reinterpret_cast<const char*>(p + 4), 4);
-    if (offset == 8 && (type != "IHDR" || length != 13))
+    if (offset == 8 && (type != "IHDR" || length != 13)) {
       return std::unexpected("missing PNG header");
+    }
     if (type == "tEXt") {
-      if (length > 131072)
+      if (length > 131072) {
         return std::unexpected("oversized PNG metadata");
+      }
       const auto* begin = reinterpret_cast<const char*>(p + 8);
       const auto* split = static_cast<const char*>(std::memchr(begin, 0, length));
-      if (!split || split == begin || split - begin > 79 || result.text.size() >= 64)
+      if (!split || split == begin || split - begin > 79 || result.text.size() >= 64) {
         return std::unexpected("invalid PNG metadata");
-      if (!result.text.emplace(std::string(begin, split), std::string(split + 1, begin + length)).second)
+      }
+      if (!result.text.emplace(std::string(begin, split), std::string(split + 1, begin + length)).second) {
         return std::unexpected("duplicate PNG metadata");
+      }
     } else if (!pixelChunk(type, length)) {
-      if ((p[4] & 32U) == 0)
+      if ((p[4] & 32U) == 0) {
         return std::unexpected("unsupported critical PNG chunk");
+      }
       filter = true;
     }
     offset += static_cast<std::size_t>(length) + 12;
@@ -248,8 +276,9 @@ files::readThumbnailPng(std::span<const std::uint8_t> bytes, int maxSide) {
       break;
     }
   }
-  if (!ended)
+  if (!ended) {
     return std::unexpected("missing PNG end");
+  }
   // Ordinary shared-cache PNGs need no copy. Strip potentially compressed ancillary metadata only when present.
   std::vector<std::uint8_t> pixels;
   if (filter) {
@@ -259,11 +288,12 @@ files::readThumbnailPng(std::span<const std::uint8_t> bytes, int maxSide) {
       const auto length = read32(bytes.data() + offset);
       const std::string_view type(reinterpret_cast<const char*>(bytes.data() + offset + 4), 4);
       const auto end = offset + length + 12;
-      if (pixelChunk(type, length))
+      if (pixelChunk(type, length)) {
         pixels.insert(
             pixels.end(), bytes.begin() + static_cast<std::ptrdiff_t>(offset),
             bytes.begin() + static_cast<std::ptrdiff_t>(end)
         );
+      }
       offset = end;
     }
     bytes = pixels;
@@ -279,12 +309,13 @@ files::readThumbnailPng(std::span<const std::uint8_t> bytes, int maxSide) {
       && header.width <= static_cast<unsigned>(maxSide)
       && header.height <= static_cast<unsigned>(maxSide);
   header.format = PNG_FORMAT_RGBA;
-  if (valid)
+  if (valid) {
     result.image = {
         .rgba = std::vector<std::uint8_t>(PNG_IMAGE_SIZE(header)),
         .width = static_cast<int>(header.width),
         .height = static_cast<int>(header.height)
     };
+  }
   if (!valid || !png_image_finish_read(&header, nullptr, result.image.rgba.data(), 0, nullptr)) {
     png_image_free(&header);
     return std::unexpected("oversized or corrupt thumbnail PNG");
@@ -299,8 +330,9 @@ std::expected<std::vector<std::uint8_t>, std::string> files::writeThumbnailPng(c
       || image.height < 1
       || image.width > 1024
       || image.height > 1024
-      || image.rgba.size() != static_cast<std::size_t>(image.width) * image.height * 4)
+      || image.rgba.size() != static_cast<std::size_t>(image.width) * image.height * 4) {
     return std::unexpected("invalid thumbnail pixels");
+  }
   png_image output{};
   output.version = PNG_IMAGE_VERSION;
   output.width = image.width;
@@ -318,16 +350,19 @@ std::expected<std::vector<std::uint8_t>, std::string> files::writeThumbnailPng(c
   // Insert required standard tEXt keys directly before IEND, retaining ordinary RGBA PNG output.
   std::vector<std::uint8_t> metadata;
   const auto append32 = [&](std::uint32_t value) {
-    for (int shift = 24; shift >= 0; shift -= 8)
+    for (int shift = 24; shift >= 0; shift -= 8) {
       metadata.push_back(static_cast<std::uint8_t>(value >> shift));
+    }
   };
   for (const auto& [key, value] : thumbnail.text) {
-    if (key.empty() || key.size() > 79 || value.size() > 131072 || key.contains('\0') || value.contains('\0'))
+    if (key.empty() || key.size() > 79 || value.size() > 131072 || key.contains('\0') || value.contains('\0')) {
       continue;
+    }
     append32(static_cast<std::uint32_t>(key.size() + 1 + value.size()));
     const auto start = metadata.size();
-    for (char c : std::string_view("tEXt"))
+    for (char c : std::string_view("tEXt")) {
       metadata.push_back(static_cast<std::uint8_t>(c));
+    }
     metadata.insert(metadata.end(), key.begin(), key.end());
     metadata.push_back(0);
     metadata.insert(metadata.end(), value.begin(), value.end());

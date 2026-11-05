@@ -17,8 +17,9 @@
 namespace {
   namespace fs = std::filesystem;
   void require(bool condition, const std::string& message) {
-    if (!condition)
+    if (!condition) {
       throw std::runtime_error(message);
+    }
   }
   class Pump {
   public:
@@ -120,13 +121,15 @@ namespace {
           const auto nested = files::Location::fromUri("trash:///parallel%20folder/item%23.txt");
           const auto file = root.file();
           const files::GString uri(g_file_get_uri(file.get()));
-          if (!root.isTrash() || nested.nativePath() || !nested.isTrash() || root.uri() != uri.get())
+          if (!root.isTrash() || nested.nativePath() || !nested.isTrash() || root.uri() != uri.get()) {
             valid.store(false);
+          }
         }
       });
     }
-    for (auto& worker : workers)
+    for (auto& worker : workers) {
       worker.join();
+    }
     require(valid.load(), "concurrent Trash URI construction changed identity");
   }
   void providerBrowsing() {
@@ -221,11 +224,11 @@ namespace {
 int main(int argc, char** argv) {
   try {
     metadataAndPresentation();
-    if (argc == 2 && std::string_view(argv[1]) == "--uri-stress")
+    if (argc == 2 && std::string_view(argv[1]) == "--uri-stress") {
       concurrentTrashLocations();
-    else if (argc == 2 && std::string_view(argv[1]) == "--provider")
+    } else if (argc == 2 && std::string_view(argv[1]) == "--provider") {
       providerBrowsing();
-    else {
+    } else {
       require(argc == 1, "unexpected test arguments");
       unavailableProvider();
       concurrentTrashLocations();

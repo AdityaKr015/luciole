@@ -14,16 +14,18 @@
 
 namespace {
   void require(bool value, const char* message) {
-    if (!value)
+    if (!value) {
       throw std::runtime_error(message);
+    }
   }
   void wait(auto predicate) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (!predicate()) {
       while (g_main_context_iteration(nullptr, false)) {
       }
-      if (std::chrono::steady_clock::now() >= deadline)
+      if (std::chrono::steady_clock::now() >= deadline) {
         throw std::runtime_error("preview timed out");
+      }
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
   }
@@ -75,8 +77,9 @@ namespace {
             && preview.snapshot().text == "<b>literal</b>\n日本語\n",
         "literal Unicode text was changed"
     );
-    for (int i = 0; i < 100; ++i)
+    for (int i = 0; i < 100; ++i) {
       preview.show(entry(i % 2 ? a : b), 512, {});
+    }
     preview.show(entry(b), 512, {});
     finish();
     require(
@@ -233,14 +236,17 @@ namespace {
 } // namespace
 int main(int argc, char** argv) {
   std::vector<std::string_view> arguments;
-  for (int i = 1; i < argc; ++i)
+  for (int i = 1; i < argc; ++i) {
     arguments.emplace_back(argv[i]);
-  if (!arguments.empty() && arguments.front() == "--thumbnail-worker")
+  }
+  if (!arguments.empty() && arguments.front() == "--thumbnail-worker") {
     return files::runThumbnailWorker(std::span(arguments).subspan(1));
+  }
   initLogLevelFromEnvironment();
   const files::GString directory(g_dir_make_tmp("noctalia-preview-test-XXXXXX", nullptr));
-  if (!directory)
+  if (!directory) {
     return 1;
+  }
   const std::filesystem::path root(directory.get());
   g_setenv("XDG_CACHE_HOME", (root / "cache").c_str(), true);
   int status = 0;

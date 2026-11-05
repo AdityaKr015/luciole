@@ -17,17 +17,20 @@ MillerView::MillerView(files::MillerColumns& columns, files::FileIconCache& icon
   wheel->setAcceptedButtons(InputArea::buttonMask({BTN_LEFT, BTN_RIGHT}));
   m_wheel = wheel.get();
   wheel->setOnPress([this](const InputArea::PointerData& data) {
-    if (!data.pressed || !m_columns.enabled())
+    if (!data.pressed || !m_columns.enabled()) {
       return;
-    if (data.button == BTN_RIGHT && context)
+    }
+    if (data.button == BTN_RIGHT && context) {
       context(std::nullopt, data.sceneX, data.sceneY);
-    else if (data.button == BTN_LEFT)
+    } else if (data.button == BTN_LEFT) {
       m_columns.active().model().clearSelection();
+    }
   });
   wheel->setOnAxisHandler([this](const InputArea::PointerData& data) {
     if (data.axis != WL_POINTER_AXIS_HORIZONTAL_SCROLL
-        && (data.axis != WL_POINTER_AXIS_VERTICAL_SCROLL || !modifiers || modifiers() != KeyMod::Shift))
+        && (data.axis != WL_POINTER_AXIS_VERTICAL_SCROLL || !modifiers || modifiers() != KeyMod::Shift)) {
       return false;
+    }
     scroll(m_offset + data.scrollDelta(Style::scrollWheelStep));
     return true;
   });
@@ -42,8 +45,9 @@ MillerView::MillerView(files::MillerColumns& columns, files::FileIconCache& icon
   addChild(std::move(scrollbar));
 }
 MillerView::~MillerView() {
-  for (auto& [_, column] : m_views)
+  for (auto& [_, column] : m_views) {
     (void)m_viewport->removeChild(column.root);
+  }
   m_views.clear();
 }
 std::size_t MillerView::indexOf(std::uint64_t id) const {
@@ -52,18 +56,22 @@ std::size_t MillerView::indexOf(std::uint64_t id) const {
   return static_cast<std::size_t>(found - columns.begin());
 }
 VirtualGridView* MillerView::view(std::size_t index) const {
-  if (index >= m_columns.columns().size())
+  if (index >= m_columns.columns().size()) {
     return nullptr;
+  }
   const auto found = m_views.find(m_columns.columns()[index]->id);
   return found == m_views.end() ? nullptr : found->second.grid;
 }
 VirtualGridView* MillerView::focusedView() const { return view(m_columns.focused()); }
 std::optional<std::size_t> MillerView::columnAt(float x, float y) const {
-  if (!visible() || !m_viewport->containsScenePoint(x, y))
+  if (!visible() || !m_viewport->containsScenePoint(x, y)) {
     return std::nullopt;
-  for (std::size_t i = 0; i < m_columns.columns().size(); ++i)
-    if (const auto* grid = view(i); grid && grid->visible() && grid->containsScenePoint(x, y))
+  }
+  for (std::size_t i = 0; i < m_columns.columns().size(); ++i) {
+    if (const auto* grid = view(i); grid && grid->visible() && grid->containsScenePoint(x, y)) {
       return i;
+    }
+  }
   return std::nullopt;
 }
 void MillerView::scroll(float offset) {
@@ -76,26 +84,31 @@ void MillerView::revealFocused() {
   markLayoutDirty();
 }
 void MillerView::suspend() {
-  for (auto& [_, column] : m_views)
+  for (auto& [_, column] : m_views) {
     column.grid->setAdapter(nullptr);
+  }
 }
 void MillerView::loadVisible() {
-  for (const auto& [id, view] : m_views)
-    if (view.root->visible())
+  for (const auto& [id, view] : m_views) {
+    if (view.root->visible()) {
       m_columns.load(indexOf(id));
+    }
+  }
 }
 void MillerView::synchronize() {
   for (auto it = m_views.begin(); it != m_views.end();) {
     if (indexOf(it->first) == m_columns.columns().size()) {
       (void)m_viewport->removeChild(it->second.root);
       it = m_views.erase(it);
-    } else
+    } else {
       ++it;
+    }
   }
   for (const auto& source : m_columns.columns()) {
     const auto id = source->id;
-    if (m_views.contains(id))
+    if (m_views.contains(id)) {
       continue;
+    }
     auto adapter = std::make_unique<files::FileViewAdapter>(
         *source->browser, m_icons, m_thumbnails, files::ViewMode::MILLER,
         [this] { return modifiers ? modifiers() : 0U; },
@@ -103,25 +116,31 @@ void MillerView::synchronize() {
     );
     adapter->setCutPredicate([this](const files::Location& location) { return cut && cut(location); });
     adapter->setActivateCallback([this, id](files::EntryId entry) {
-      if (focus)
+      if (focus) {
         focus(indexOf(id));
-      if (activate)
+      }
+      if (activate) {
         activate(entry);
+      }
     });
     adapter->setContextCallback([this, id](std::optional<files::EntryId> entry, float x, float y) {
-      if (focus)
+      if (focus) {
         focus(indexOf(id));
-      if (context)
+      }
+      if (context) {
         context(entry, x, y);
+      }
     });
     adapter->setDragCallback(
         [this](const auto& ids) {
-          if (drag)
+          if (drag) {
             drag(ids);
+          }
         },
         [this] {
-          if (cancelDrag)
+          if (cancelDrag) {
             cancelDrag();
+          }
         }
     );
     VirtualGridView* grid = nullptr;
@@ -153,8 +172,9 @@ void MillerView::synchronize() {
     grid->focusArea()->setRetainsFocusOnPointerRelease(true);
     grid->focusArea()->setTextInputClient(textInputClient);
     grid->focusArea()->setOnFocusGain([this, id] {
-      if (focus)
+      if (focus) {
         focus(indexOf(id));
+      }
     });
     source->browser->setCaptureViewport([grid, controller = source->browser.get()] {
       const auto first = grid->firstVisibleIndex();
@@ -176,22 +196,25 @@ void MillerView::synchronize() {
     handle->setCursorShape(WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COL_RESIZE);
     handle->setOnPress([this, id](const InputArea::PointerData& data) {
       const auto index = indexOf(id);
-      if (data.button != BTN_LEFT || index >= m_columns.columns().size())
+      if (data.button != BTN_LEFT || index >= m_columns.columns().size()) {
         return;
+      }
       if (data.pressed) {
         m_resizing = id;
         m_resizeStart = data.sceneX;
         m_resizeWidth = m_columns.columns()[index]->width;
       } else if (m_resizing == id) {
         m_resizing.reset();
-        if (resized)
+        if (resized) {
           resized(static_cast<int>(std::lround(m_columns.columns()[index]->width)));
+        }
       }
     });
     handle->setOnMotion([this, id, handle](const InputArea::PointerData& data) {
       const auto index = indexOf(id);
-      if (m_resizing != id || index >= m_columns.columns().size())
+      if (m_resizing != id || index >= m_columns.columns().size()) {
         return;
+      }
       float x = 0, y = 0;
       Node::absolutePosition(handle, x, y);
       m_columns.columns()[index]->width =
@@ -200,24 +223,28 @@ void MillerView::synchronize() {
     });
     handle->setOnCancel([this, id] {
       const auto index = indexOf(id);
-      if (m_resizing == id && index < m_columns.columns().size())
+      if (m_resizing == id && index < m_columns.columns().size()) {
         m_columns.columns()[index]->width = m_resizeWidth;
+      }
       m_resizing.reset();
       markLayoutDirty();
     });
     handle->setOnKeyDown([this, id](const InputArea::KeyData& key) {
       const auto index = indexOf(id);
-      if (index >= m_columns.columns().size() || key.modifiers != 0)
+      if (index >= m_columns.columns().size() || key.modifiers != 0) {
         return;
+      }
       auto& value = m_columns.columns()[index]->width;
-      if (KeySymbol::isLeft(key.sym) || KeySymbol::isRight(key.sym))
+      if (KeySymbol::isLeft(key.sym) || KeySymbol::isRight(key.sym)) {
         value = std::clamp(value + ((KeySymbol::isRight(key.sym) != Style::rtl()) ? 16.0F : -16.0F), 180.0F, 800.0F);
-      else if (KeySymbol::isHome(key.sym))
+      } else if (KeySymbol::isHome(key.sym)) {
         value = 260;
-      else
+      } else {
         return;
-      if (resized)
+      }
+      if (resized) {
         resized(static_cast<int>(std::lround(value)));
+      }
       markLayoutDirty();
     });
     Box* line = nullptr;
@@ -237,16 +264,18 @@ void MillerView::synchronize() {
     std::optional<files::EntryId> path;
     if (i + 1 < m_columns.columns().size() && model.selection().selected.size() == 1) {
       const auto id = *model.selection().selected.begin();
-      if (model.entry(id) && model.entry(id)->location == m_columns.columns()[i + 1]->location)
+      if (model.entry(id) && model.entry(id)->location == m_columns.columns()[i + 1]->location) {
         path = id;
+      }
     }
     view.adapter->setPathEntry(path);
     if (view.path != path) {
       view.path = path;
       if (path) {
         const auto found = std::ranges::find(model.rows(), *path);
-        if (found != model.rows().end())
+        if (found != model.rows().end()) {
           view.grid->scrollToIndex(static_cast<std::size_t>(found - model.rows().begin()));
+        }
       }
     }
     view.grid->notifyDataChanged();
@@ -262,8 +291,9 @@ LayoutSize MillerView::doMeasure(Renderer&, const LayoutConstraints& constraints
 void MillerView::doArrange(Renderer& renderer, const LayoutRect& rect) { arrangeByLayout(renderer, rect); }
 void MillerView::doLayout(Renderer& renderer) {
   m_extent = 0;
-  for (const auto& column : m_columns.columns())
+  for (const auto& column : m_columns.columns()) {
     m_extent += column->width;
+  }
   const float spare = m_columns.enabled() ? std::max(0.0F, width() - m_extent) : 0;
   m_extent += spare;
   const float maximum = std::max(0.0F, m_extent - width());
@@ -273,16 +303,19 @@ void MillerView::doLayout(Renderer& renderer) {
   if (std::exchange(m_reveal, false) && m_columns.enabled()) {
     float left = 0;
     const auto target = std::min(m_revealColumn.value_or(m_columns.focused()), m_columns.columns().size() - 1);
-    for (std::size_t i = 0; i < target; ++i)
+    for (std::size_t i = 0; i < target; ++i) {
       left += m_columns.columns()[i]->width;
+    }
     const float span = m_columns.columns()[target]->width + (target + 1 == m_columns.columns().size() ? spare : 0);
     m_revealColumn.reset();
-    if (Style::rtl())
+    if (Style::rtl()) {
       left = m_extent - left - span;
-    if (left < m_offset)
+    }
+    if (left < m_offset) {
       m_offset = left;
-    else if (left + span > m_offset + width())
+    } else if (left + span > m_offset + width()) {
       m_offset = left + std::min(span, width()) - width();
+    }
     m_offset = std::clamp(m_offset, 0.0F, maximum);
   }
   m_viewport->setFrameSize(width(), h);
@@ -319,8 +352,9 @@ void MillerView::doLayout(Renderer& renderer) {
                              : "This folder is empty."
     );
     view.notice->setVisible(empty);
-    if (empty)
+    if (empty) {
       view.notice->arrange(renderer, {12, 28, std::max(0.0F, columnWidth - 24), 100});
+    }
     view.line->setFill(colorSpecFromRole(
         view.divider->hovered() || view.divider->focused() || m_resizing == column.id ? ColorRole::Primary
                                                                                       : ColorRole::OutlineVariant
@@ -333,6 +367,7 @@ void MillerView::doLayout(Renderer& renderer) {
   m_scrollbar->setVisible(maximum > 0);
   m_scrollbar->update(width(), m_extent, m_offset);
   m_scrollbar->arrange(renderer, {0, h + Style::scrollbarGap, width(), Style::scrollbarWidth});
-  if (loadPending && requestUpdate)
+  if (loadPending && requestUpdate) {
     requestUpdate();
+  }
 }

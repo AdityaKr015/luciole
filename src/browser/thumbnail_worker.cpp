@@ -15,8 +15,9 @@
 namespace {
   bool writeResult(std::string_view path, std::span<const std::uint8_t> header, std::span<const std::uint8_t> body) {
     const int output = ::open(std::string(path).c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
-    if (output < 0)
+    if (output < 0) {
       return false;
+    }
     for (const auto data : {header, body}) {
       std::size_t offset = 0;
       while (offset < data.size()) {
@@ -33,8 +34,9 @@ namespace {
 } // namespace
 
 int files::runThumbnailWorker(std::span<const std::string_view> arguments) {
-  if (arguments.size() != 5)
+  if (arguments.size() != 5) {
     return 2;
+  }
   const auto number = [](std::string_view input) -> std::optional<std::uint64_t> {
     std::uint64_t value = 0;
     const auto parsed = std::from_chars(input.data(), input.data() + input.size(), value);
@@ -48,21 +50,24 @@ int files::runThumbnailWorker(std::span<const std::string_view> arguments) {
       || *pixels < 1
       || *pixels > 64'000'000
       || !maximum
-      || *maximum > 1024U * 1024U * 1024U)
+      || *maximum > 1024U * 1024U * 1024U) {
     return 2;
+  }
   struct stat info{};
   if (::fstat(3, &info) < 0
       || !S_ISREG(info.st_mode)
       || info.st_size <= 0
-      || static_cast<std::uint64_t>(info.st_size) > *maximum)
+      || static_cast<std::uint64_t>(info.st_size) > *maximum) {
     return 2;
+  }
   try {
     std::vector<std::uint8_t> bytes(static_cast<std::size_t>(info.st_size));
     std::size_t offset = 0;
     while (offset < bytes.size()) {
       const auto count = ::read(3, bytes.data() + offset, bytes.size() - offset);
-      if (count <= 0)
+      if (count <= 0) {
         return 1;
+      }
       offset += static_cast<std::size_t>(count);
     }
     const GioPtr<GCancellable> cancel(g_cancellable_new());
@@ -95,20 +100,23 @@ files::readThumbnailWorkerResult(std::vector<std::uint8_t> bytes, int maxSide) {
       && bytes[1] == 'F'
       && bytes[2] == 'E'
       && bytes[3] == '1'
-      && std::all_of(bytes.begin() + 4, bytes.end(), [](auto c) { return c >= 32 && c <= 126; }))
+      && std::all_of(bytes.begin() + 4, bytes.end(), [](auto c) { return c >= 32 && c <= 126; })) {
     return std::unexpected(std::string(bytes.begin() + 4, bytes.end()));
+  }
   if (bytes.size() < 12
       || maxSide < 1
       || maxSide > kMaxPreviewImageSide
       || bytes[0] != 'N'
       || bytes[1] != 'F'
       || bytes[2] != 'R'
-      || bytes[3] != '1')
+      || bytes[3] != '1') {
     return std::unexpected("invalid thumbnail worker result");
+  }
   const auto dimension = [&](std::size_t offset) {
     std::uint32_t result = 0;
-    for (std::size_t i = offset; i < offset + 4; ++i)
+    for (std::size_t i = offset; i < offset + 4; ++i) {
       result = (result << 8) | bytes[i];
+    }
     return result;
   };
   const auto width = dimension(4), height = dimension(8);
@@ -116,8 +124,9 @@ files::readThumbnailWorkerResult(std::vector<std::uint8_t> bytes, int maxSide) {
       || !height
       || width > static_cast<unsigned>(maxSide)
       || height > static_cast<unsigned>(maxSide)
-      || bytes.size() != 12 + static_cast<std::size_t>(width) * height * 4)
+      || bytes.size() != 12 + static_cast<std::size_t>(width) * height * 4) {
     return std::unexpected("oversized or truncated thumbnail worker result");
+  }
   bytes.erase(bytes.begin(), bytes.begin() + 12);
   return LoadedImageFile{
       .rgba = std::move(bytes), .width = static_cast<int>(width), .height = static_cast<int>(height)

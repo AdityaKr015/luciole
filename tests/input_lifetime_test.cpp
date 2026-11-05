@@ -7,8 +7,9 @@
 
 namespace {
   void require(bool value, const char* message) {
-    if (!value)
+    if (!value) {
       throw std::runtime_error(message);
+    }
   }
   void sharedArea() {
     Node root;

@@ -121,10 +121,12 @@ bool files::DirectoryModel::less(EntryId left, EntryId right) const {
   if (m_sort.field == SortField::TYPE) {
     const auto& first = leftPresentation.typeSortKey;
     const auto& second = rightPresentation.typeSortKey;
-    if (first.has_value() != second.has_value())
+    if (first.has_value() != second.has_value()) {
       return first.has_value();
-    if (first && first != second)
+    }
+    if (first && first != second) {
       return m_sort.descending ? first > second : first < second;
+    }
   } else if (m_sort.field != SortField::NAME) {
     const auto& first = m_sort.field == SortField::SIZE ? a.size : a.modifiedSeconds;
     const auto& second = m_sort.field == SortField::SIZE ? b.size : b.modifiedSeconds;
@@ -194,8 +196,9 @@ files::SelectionSummary files::DirectoryModel::selectionSummary() const {
   SelectionSummary summary;
   for (const auto id : m_selection.selected) {
     const auto* item = entry(id);
-    if (item == nullptr)
+    if (item == nullptr) {
       continue;
+    }
     if (!item->symlink && item->type == G_FILE_TYPE_DIRECTORY) {
       ++summary.folders;
     } else if (!item->symlink && item->type == G_FILE_TYPE_REGULAR) {
@@ -255,47 +258,57 @@ void files::DirectoryModel::selectAll() {
 }
 
 bool files::DirectoryModel::invertSelection() {
-  if (!canSelect())
+  if (!canSelect()) {
     return false;
+  }
   std::unordered_set<EntryId> selected;
-  for (const auto id : m_rows)
-    if (!m_selection.selected.contains(id))
+  for (const auto id : m_rows) {
+    if (!m_selection.selected.contains(id)) {
       selected.insert(id);
+    }
+  }
   m_selection.selected = std::move(selected);
   notify();
   return true;
 }
 std::optional<std::string> files::DirectoryModel::selectPattern(const std::string& pattern) {
-  if (const auto error = selectionPatternProblem(pattern))
+  if (const auto error = selectionPatternProblem(pattern)) {
     return error;
-  if (!canSelect())
+  }
+  if (!canSelect()) {
     return "The listing is not available for selection.";
+  }
   const auto folded = foldedDisplayText(pattern);
   const std::unique_ptr<GPatternSpec, decltype(&g_pattern_spec_free)> spec(
       g_pattern_spec_new(folded.c_str()), g_pattern_spec_free
   );
   std::unordered_set<EntryId> selected;
-  for (const auto id : m_rows)
-    if (g_pattern_spec_match_string(spec.get(), m_presentations.at(id).filterKey.c_str()))
+  for (const auto id : m_rows) {
+    if (g_pattern_spec_match_string(spec.get(), m_presentations.at(id).filterKey.c_str())) {
       selected.insert(id);
+    }
+  }
   m_selection.selected = std::move(selected);
   notify();
   return std::nullopt;
 }
 std::optional<files::EntryId> files::DirectoryModel::prefixMatch(const std::string& prefix, bool cycle) const {
-  if (!canSelect() || prefix.empty() || m_rows.empty())
+  if (!canSelect() || prefix.empty() || m_rows.empty()) {
     return std::nullopt;
+  }
   const auto folded = foldedDisplayText(prefix);
   std::size_t start = 0;
   if (m_selection.focused) {
     const auto found = m_positions.find(*m_selection.focused);
-    if (found != m_positions.end())
+    if (found != m_positions.end()) {
       start = (found->second + (cycle ? 1 : 0)) % m_rows.size();
+    }
   }
   for (std::size_t offset = 0; offset < m_rows.size(); ++offset) {
     const auto id = m_rows[(start + offset) % m_rows.size()];
-    if (m_presentations.at(id).filterKey.starts_with(folded))
+    if (m_presentations.at(id).filterKey.starts_with(folded)) {
       return id;
+    }
   }
   return std::nullopt;
 }
@@ -349,16 +362,20 @@ void files::DirectoryModel::notify() const {
 }
 
 void files::DirectoryModel::restoreInteraction(SelectionState selection, std::optional<EntryId> scroll) {
-  if (!m_selectionAvailable)
+  if (!m_selectionAvailable) {
     return;
+  }
   const auto visible = [this](EntryId id) { return m_positions.contains(id); };
   std::erase_if(selection.selected, [&](EntryId id) { return !visible(id); });
-  if (selection.focused && !visible(*selection.focused))
+  if (selection.focused && !visible(*selection.focused)) {
     selection.focused.reset();
-  if (selection.anchor && !visible(*selection.anchor))
+  }
+  if (selection.anchor && !visible(*selection.anchor)) {
     selection.anchor.reset();
-  if (scroll && !visible(*scroll))
+  }
+  if (scroll && !visible(*scroll)) {
     scroll.reset();
+  }
   m_selection = std::move(selection);
   m_scrollAnchor = scroll;
   notify();

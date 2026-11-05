@@ -35,9 +35,11 @@ namespace {
         &files::ThumbnailOptions::cacheMiB}}
   );
   std::optional<std::size_t> thumbnailIntegerIndex(files::BrowserPreference preference) {
-    for (std::size_t i = 0; i < kThumbnailIntegers.size(); ++i)
-      if (kThumbnailIntegers[i].preference == preference)
+    for (std::size_t i = 0; i < kThumbnailIntegers.size(); ++i) {
+      if (kThumbnailIntegers[i].preference == preference) {
         return i;
+      }
+    }
     return std::nullopt;
   }
   struct Patch {
@@ -177,31 +179,34 @@ namespace {
           const auto* widthKey = std::ranges::find(files::kDetailsColumnWidthKeys, name.str());
           if (name == "activation_mode") {
             const auto* mode = value.as_string();
-            if (mode && (mode->get() == "single_click" || mode->get() == "double_click"))
+            if (mode && (mode->get() == "single_click" || mode->get() == "double_click")) {
               patch.activationMode = mode->get() == "single_click" ? files::ActivationMode::SingleClick
                                                                    : files::ActivationMode::DoubleClick;
-            else
+            } else {
               issue(issues, file, value, path, "expected 'single_click' or 'double_click'");
+            }
           } else if (name == "typing_mode") {
             const auto* mode = value.as_string();
-            if (mode && (mode->get() == "search" || mode->get() == "typeahead"))
+            if (mode && (mode->get() == "search" || mode->get() == "typeahead")) {
               patch.typingMode = mode->get() == "search" ? files::TypingMode::SEARCH : files::TypingMode::TYPEAHEAD;
-            else
+            } else {
               issue(issues, file, value, path, "expected 'search' or 'typeahead'");
+            }
           } else if (widthKey != files::kDetailsColumnWidthKeys.end()) {
             const auto index = static_cast<std::size_t>(widthKey - files::kDetailsColumnWidthKeys.begin());
             const auto* width = value.as_integer();
             if (width != nullptr
                 && width->get() <= files::maximumDetailsColumnWidth(index)
                 && width->get() >= 0
-                && files::validDetailsColumnWidth(index, static_cast<int>(width->get())))
+                && files::validDetailsColumnWidth(index, static_cast<int>(width->get()))) {
               patch.columnWidths[index] = static_cast<int>(width->get());
-            else
+            } else {
               issue(
                   issues, file, value, path,
                   index == 0 ? "expected 0 (automatic) or an integer width from 160 to 16384"
                              : "expected an integer width from 64 to 2048"
               );
+            }
           } else if (name == "column_order") {
             const auto* columns = value.as_array();
             files::DetailsColumnOrder order{};
@@ -217,12 +222,13 @@ namespace {
                 order[index] = *column;
               }
             }
-            if (valid && files::validDetailsColumnOrder(order))
+            if (valid && files::validDetailsColumnOrder(order)) {
               patch.columnOrder = order;
-            else
+            } else {
               issue(
                   issues, file, value, path, "expected an array containing 'type', 'size', and 'modified' exactly once"
               );
+            }
           } else if (name == "sort_by") {
             const auto* sort = value.as_string();
             if (sort != nullptr && sort->get() == "name") {
@@ -238,14 +244,15 @@ namespace {
             }
           } else if (name == "thumbnail_policy") {
             const auto* text = value.as_string();
-            if (text && text->get() == "never")
+            if (text && text->get() == "never") {
               patch.thumbnailPolicy = files::ThumbnailPolicy::NEVER;
-            else if (text && text->get() == "local")
+            } else if (text && text->get() == "local") {
               patch.thumbnailPolicy = files::ThumbnailPolicy::LOCAL;
-            else if (text && text->get() == "all")
+            } else if (text && text->get() == "all") {
               patch.thumbnailPolicy = files::ThumbnailPolicy::ALL;
-            else
+            } else {
               issue(issues, file, value, path, "expected 'never', 'local', or 'all'");
+            }
           } else if (
               const auto* const spec = std::ranges::find_if(
                   kThumbnailIntegers, [&](const auto& field) { return field.key.substr(8) == name; }
@@ -253,14 +260,15 @@ namespace {
               spec != kThumbnailIntegers.end()
           ) {
             const auto* number = value.as_integer();
-            if (number && number->get() >= spec->minimum && number->get() <= spec->maximum)
+            if (number && number->get() >= spec->minimum && number->get() <= spec->maximum) {
               patch.thumbnailIntegers[static_cast<std::size_t>(spec - kThumbnailIntegers.begin())] =
                   static_cast<int>(number->get());
-            else
+            } else {
               issue(
                   issues, file, value, path,
                   std::format("expected an integer from {} to {}", spec->minimum, spec->maximum)
               );
+            }
           } else if (name == "grid_icon_size") {
             const auto* size = value.as_integer();
             if (size != nullptr && std::ranges::contains(files::kGridIconSizes, size->get())) {
@@ -270,10 +278,11 @@ namespace {
             }
           } else if (name == "preview_width") {
             const auto* width = value.as_integer();
-            if (width && width->get() >= 208 && width->get() <= 800)
+            if (width && width->get() >= 208 && width->get() <= 800) {
               patch.previewWidth = static_cast<int>(width->get());
-            else
+            } else {
               issue(issues, file, value, path, "expected integer preview width from 208 to 800");
+            }
           } else if (name == "sidebar_width") {
             const auto* width = value.as_integer();
             if (width != nullptr
@@ -285,10 +294,11 @@ namespace {
             }
           } else if (name == "miller_column_width") {
             const auto* width = value.as_integer();
-            if (width && width->get() >= 180 && width->get() <= 800)
+            if (width && width->get() >= 180 && width->get() <= 800) {
               patch.millerColumnWidth = static_cast<int>(width->get());
-            else
+            } else {
               issue(issues, file, value, path, "expected integer column width from 180 to 800");
+            }
           } else if (name == "view_mode") {
             const auto* mode = value.as_string();
             if (mode != nullptr && mode->get() == "list") {
@@ -341,37 +351,52 @@ namespace {
   }
 
   void apply(files::Settings& settings, const Patch& patch) {
-    if (patch.thumbnailPolicy)
+    if (patch.thumbnailPolicy) {
       settings.browser.thumbnails.policy = *patch.thumbnailPolicy;
-    for (std::size_t i = 0; i < kThumbnailIntegers.size(); ++i)
-      if (patch.thumbnailIntegers[i])
+    }
+    for (std::size_t i = 0; i < kThumbnailIntegers.size(); ++i) {
+      if (patch.thumbnailIntegers[i]) {
         settings.browser.thumbnails.*kThumbnailIntegers[i].member = *patch.thumbnailIntegers[i];
-    if (patch.activationMode)
+      }
+    }
+    if (patch.activationMode) {
       settings.browser.activationMode = *patch.activationMode;
-    if (patch.typingMode)
+    }
+    if (patch.typingMode) {
       settings.browser.typingMode = *patch.typingMode;
-    for (std::size_t index = 0; index < patch.columnWidths.size(); ++index)
-      if (patch.columnWidths[index])
+    }
+    for (std::size_t index = 0; index < patch.columnWidths.size(); ++index) {
+      if (patch.columnWidths[index]) {
         settings.browser.columnWidths[index] = *patch.columnWidths[index];
-    if (patch.columnOrder)
+      }
+    }
+    if (patch.columnOrder) {
       settings.browser.columnOrder = *patch.columnOrder;
-    if (patch.showTypeColumn)
+    }
+    if (patch.showTypeColumn) {
       settings.browser.columns.type = *patch.showTypeColumn;
-    if (patch.showSizeColumn)
+    }
+    if (patch.showSizeColumn) {
       settings.browser.columns.size = *patch.showSizeColumn;
-    if (patch.showModifiedColumn)
+    }
+    if (patch.showModifiedColumn) {
       settings.browser.columns.modified = *patch.showModifiedColumn;
+    }
     if (patch.showSidebar) {
       settings.browser.showSidebar = *patch.showSidebar;
     }
-    if (patch.showPreview)
+    if (patch.showPreview) {
       settings.browser.showPreview = *patch.showPreview;
-    if (patch.previewWidth)
+    }
+    if (patch.previewWidth) {
       settings.browser.previewWidth = *patch.previewWidth;
-    if (patch.millerColumnWidth)
+    }
+    if (patch.millerColumnWidth) {
       settings.browser.millerColumnWidth = *patch.millerColumnWidth;
-    if (patch.millerShowParents)
+    }
+    if (patch.millerShowParents) {
       settings.browser.millerShowParents = *patch.millerShowParents;
+    }
     if (patch.sidebarWidth) {
       settings.browser.sidebarWidth = *patch.sidebarWidth;
     }
@@ -413,8 +438,9 @@ namespace {
 
   std::string_view preferenceKey(files::BrowserPreference preference) {
     using Preference = files::BrowserPreference;
-    if (const auto index = thumbnailIntegerIndex(preference))
+    if (const auto index = thumbnailIntegerIndex(preference)) {
       return kThumbnailIntegers[*index].key;
+    }
     switch (preference) {
     case Preference::ThumbnailPolicy:
       return "browser.thumbnail_policy";
@@ -599,49 +625,64 @@ namespace {
 
   std::string formatPatch(const Patch& patch) {
     toml::table browser;
-    if (patch.thumbnailPolicy)
+    if (patch.thumbnailPolicy) {
       browser.insert(
           "thumbnail_policy",
           *patch.thumbnailPolicy == files::ThumbnailPolicy::NEVER       ? "never"
               : *patch.thumbnailPolicy == files::ThumbnailPolicy::LOCAL ? "local"
                                                                         : "all"
       );
-    for (std::size_t i = 0; i < kThumbnailIntegers.size(); ++i)
-      if (patch.thumbnailIntegers[i])
+    }
+    for (std::size_t i = 0; i < kThumbnailIntegers.size(); ++i) {
+      if (patch.thumbnailIntegers[i]) {
         browser.insert(kThumbnailIntegers[i].key.substr(8), *patch.thumbnailIntegers[i]);
-    if (patch.activationMode)
+      }
+    }
+    if (patch.activationMode) {
       browser.insert(
           "activation_mode",
           *patch.activationMode == files::ActivationMode::SingleClick ? "single_click" : "double_click"
       );
-    if (patch.typingMode)
+    }
+    if (patch.typingMode) {
       browser.insert("typing_mode", *patch.typingMode == files::TypingMode::SEARCH ? "search" : "typeahead");
-    for (std::size_t index = 0; index < patch.columnWidths.size(); ++index)
-      if (patch.columnWidths[index])
+    }
+    for (std::size_t index = 0; index < patch.columnWidths.size(); ++index) {
+      if (patch.columnWidths[index]) {
         browser.insert(files::kDetailsColumnWidthKeys[index], *patch.columnWidths[index]);
+      }
+    }
     if (patch.columnOrder) {
       toml::array columns;
-      for (const auto column : *patch.columnOrder)
+      for (const auto column : *patch.columnOrder) {
         columns.push_back(files::detailsColumnName(column));
+      }
       browser.insert("column_order", std::move(columns));
     }
-    if (patch.showTypeColumn)
+    if (patch.showTypeColumn) {
       browser.insert("show_type_column", *patch.showTypeColumn);
-    if (patch.showSizeColumn)
+    }
+    if (patch.showSizeColumn) {
       browser.insert("show_size_column", *patch.showSizeColumn);
-    if (patch.showModifiedColumn)
+    }
+    if (patch.showModifiedColumn) {
       browser.insert("show_modified_column", *patch.showModifiedColumn);
+    }
     if (patch.showSidebar) {
       browser.insert("show_sidebar", *patch.showSidebar);
     }
-    if (patch.showPreview)
+    if (patch.showPreview) {
       browser.insert("show_preview", *patch.showPreview);
-    if (patch.previewWidth)
+    }
+    if (patch.previewWidth) {
       browser.insert("preview_width", *patch.previewWidth);
-    if (patch.millerColumnWidth)
+    }
+    if (patch.millerColumnWidth) {
       browser.insert("miller_column_width", *patch.millerColumnWidth);
-    if (patch.millerShowParents)
+    }
+    if (patch.millerShowParents) {
       browser.insert("miller_show_parents", *patch.millerShowParents);
+    }
     if (patch.sidebarWidth) {
       browser.insert("sidebar_width", *patch.sidebarWidth);
     }
@@ -719,8 +760,9 @@ static files::SettingsResult loadLayers(const files::ConfigPaths& paths, bool ov
   files::Settings settings;
   files::ConfigIssues issues;
   for (const auto* file : {&paths.base, &paths.overrides}) {
-    if (file == &paths.overrides && !overrides)
+    if (file == &paths.overrides && !overrides) {
       continue;
+    }
     auto text = readFile(*file, true);
     if (!text) {
       issues.push_back(std::move(text.error()));

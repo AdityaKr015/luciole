@@ -42,8 +42,9 @@ void files::TerminalLauncher::open(const Location& folder, std::function<void(st
               const bool ok = g_subprocess_wait_check_finish(G_SUBPROCESS(source), result, &error);
               std::string message = ok ? "" : error ? error->message : "The terminal exited unsuccessfully.";
               g_clear_error(&error);
-              if (request->state->active)
+              if (request->state->active) {
                 request->completed(std::move(message));
+              }
             },
             wait
         );
@@ -80,17 +81,19 @@ void files::TerminalLauncher::open(const Location& folder, std::function<void(st
       );
       return;
     }
-    if (g_task_return_error_if_cancelled(task))
+    if (g_task_return_error_if_cancelled(task)) {
       return;
+    }
     const GioPtr<GSubprocessLauncher> launcher(g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_NONE));
     g_subprocess_launcher_set_cwd(launcher.get(), path->c_str());
     const std::string directory = "--dir=" + *path;
     const char* arguments[]{request.state->helper.get(), directory.c_str(), nullptr};
     auto* process = g_subprocess_launcher_spawnv(launcher.get(), arguments, &error);
-    if (!process)
+    if (!process) {
       g_task_return_error(task, error);
-    else
+    } else {
       g_task_return_pointer(task, process, g_object_unref);
+    }
   });
   g_object_unref(task);
 }

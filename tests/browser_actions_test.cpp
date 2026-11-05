@@ -11,8 +11,9 @@ namespace {
   using A = files::BrowserAction;
   using R = files::ActionRegistry;
   void require(bool value, const char* message) {
-    if (!value)
+    if (!value) {
       throw std::runtime_error(message);
+    }
   }
   files::DirectoryEntry entry(files::EntryId id, const std::string& name, GFileType type = G_FILE_TYPE_REGULAR) {
     return {

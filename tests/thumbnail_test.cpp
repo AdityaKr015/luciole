@@ -26,8 +26,9 @@ namespace {
   using namespace std::chrono_literals;
   using files::GioPtr;
   void require(bool condition, const char* message) {
-    if (!condition)
+    if (!condition) {
       throw std::runtime_error(message);
+    }
   }
   class Pump {
   public:
@@ -75,7 +76,7 @@ namespace {
         .width = width,
         .height = height
     };
-    for (int y = 0; y < height; ++y)
+    for (int y = 0; y < height; ++y) {
       for (int x = 0; x < width; ++x) {
         const auto offset = (static_cast<std::size_t>(y) * width + x) * 4;
         image.rgba[offset] = x < width / 2 ? 240 : 20;
@@ -83,6 +84,7 @@ namespace {
         image.rgba[offset + 2] = 40;
         image.rgba[offset + 3] = y < height / 2 ? 128 : 255;
       }
+    }
     return image;
   }
   void write(const fs::path& path, std::span<const std::uint8_t> bytes) {
@@ -100,9 +102,11 @@ namespace {
     session.open(files::Location::fromPath(path.parent_path().native()));
     pump.until([&] { return session.snapshot().status != files::DirectoryStatus::LOADING; });
     require(session.snapshot().status == files::DirectoryStatus::READY, "cannot list thumbnail fixture");
-    for (const auto& entry : session.snapshot().entries)
-      if (entry.name == path.filename().native())
+    for (const auto& entry : session.snapshot().entries) {
+      if (entry.name == path.filename().native()) {
         return entry;
+      }
+    }
     throw std::runtime_error("missing thumbnail fixture");
   }
   void testCodecs() {
@@ -186,8 +190,9 @@ namespace {
     );
     std::vector<std::uint8_t> bmp(62);
     const auto put32 = [](auto& data, std::size_t offset, std::uint32_t value) {
-      for (std::size_t i = 0; i < 4; ++i)
+      for (std::size_t i = 0; i < 4; ++i) {
         data[offset + i] = static_cast<std::uint8_t>(value >> (i * 8));
+      }
     };
     bmp[0] = 'B';
     bmp[1] = 'M';
@@ -275,8 +280,9 @@ namespace {
           || entry.symlink;
     });
     std::ranges::sort(entries, {}, &files::DirectoryEntry::name);
-    if (entries.size() > limit)
+    if (entries.size() > limit) {
       entries.erase(entries.begin() + static_cast<std::ptrdiff_t>(limit), entries.end());
+    }
     require(!entries.empty(), videos ? "benchmark requires video files" : "benchmark requires image files");
     files::ThumbnailService service;
     const auto phase = [&](const char* name) {
@@ -284,17 +290,19 @@ namespace {
       assets.reserve(entries.size());
       std::vector<double> elapsed(entries.size(), -1);
       const auto started = std::chrono::steady_clock::now();
-      for (const auto& entry : entries)
+      for (const auto& entry : entries) {
         assets.push_back(service.request(entry, 128));
+      }
       pump.until([&] {
         bool done = true;
         const auto now = std::chrono::steady_clock::now();
         for (std::size_t i = 0; i < assets.size(); ++i) {
           require(assets[i] != nullptr, "benchmark request exceeded admission limits");
-          if (!assets[i]->ready)
+          if (!assets[i]->ready) {
             done = false;
-          else if (elapsed[i] < 0)
+          } else if (elapsed[i] < 0) {
             elapsed[i] = std::chrono::duration<double, std::milli>(now - started).count();
+          }
         }
         return done;
       });
@@ -462,8 +470,9 @@ namespace {
   void command(const std::vector<std::string>& args) {
     std::vector<const char*> argv;
     argv.reserve(args.size() + 1);
-    for (const auto& arg : args)
+    for (const auto& arg : args) {
       argv.push_back(arg.c_str());
+    }
     argv.push_back(nullptr);
     const GioPtr<GSubprocess> process(g_subprocess_newv(
         argv.data(),
@@ -644,8 +653,9 @@ namespace {
     };
     write(jxl, jxlBytes);
     auto richImage = render(jxl, "image/jxl");
-    if (!richImage)
+    if (!richImage) {
       std::println(stderr, "JPEG XL fixture error: {}", richImage.error());
+    }
     require(
         richImage
             && richImage->width == 4
@@ -821,8 +831,9 @@ namespace {
     int color = 0;
     for (int value = 1; value < 240; ++value) {
       auto changed = picture();
-      for (std::size_t offset = 0; offset < changed.rgba.size(); offset += 4)
+      for (std::size_t offset = 0; offset < changed.rgba.size(); offset += 4) {
         changed.rgba[offset] = static_cast<std::uint8_t>(value);
+      }
       auto candidate = png(changed);
       const auto found = sizes.find(candidate.size());
       if (found != sizes.end()) {
@@ -915,8 +926,9 @@ namespace {
     std::vector<std::shared_ptr<const files::FileIconImage>> held;
     for (std::uint64_t id = 1; id <= 1200; ++id) {
       entry.id = id;
-      if (auto image = thumbnails.request(entry, 48))
+      if (auto image = thumbnails.request(entry, 48)) {
         held.push_back(std::move(image));
+      }
     }
     require(
         thumbnails.reservedBytes() <= 64U * 1024U * 1024U && held.size() < 1200 && thumbnails.queuedJobs() <= 1024,
@@ -983,10 +995,12 @@ namespace {
 
 int main(int argc, char** argv) {
   std::vector<std::string_view> args;
-  for (int i = 1; i < argc; ++i)
+  for (int i = 1; i < argc; ++i) {
     args.emplace_back(argv[i]);
-  if (!args.empty() && args.front() == "--thumbnail-worker")
+  }
+  if (!args.empty() && args.front() == "--thumbnail-worker") {
     return files::runThumbnailWorker(std::span(args).subspan(1));
+  }
   initLogLevelFromEnvironment();
   try {
     Fixture fixture;

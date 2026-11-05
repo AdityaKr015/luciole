@@ -10,11 +10,14 @@ namespace {
 } // namespace
 
 std::optional<std::string> files::readFastContentType(GFileInfo* info) {
-  if (g_file_info_get_attribute_type(info, G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE) != G_FILE_ATTRIBUTE_TYPE_STRING)
+  if (g_file_info_get_attribute_type(info, G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE)
+      != G_FILE_ATTRIBUTE_TYPE_STRING) {
     return std::nullopt;
+  }
   const char* value = g_file_info_get_attribute_string(info, G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE);
-  if (value == nullptr || *value == '\0' || !g_utf8_validate(value, -1, nullptr))
+  if (value == nullptr || *value == '\0' || !g_utf8_validate(value, -1, nullptr)) {
     return std::nullopt;
+  }
   return value;
 }
 
@@ -46,11 +49,13 @@ files::FilesystemInfo files::readFilesystemInfo(GFileInfo* info) {
 
 std::optional<files::FileIdentity> files::readFileIdentity(GFileInfo* info) {
   if (g_file_info_get_attribute_type(info, G_FILE_ATTRIBUTE_ID_FILESYSTEM) != G_FILE_ATTRIBUTE_TYPE_STRING
-      || g_file_info_get_attribute_type(info, G_FILE_ATTRIBUTE_ID_FILE) != G_FILE_ATTRIBUTE_TYPE_STRING)
+      || g_file_info_get_attribute_type(info, G_FILE_ATTRIBUTE_ID_FILE) != G_FILE_ATTRIBUTE_TYPE_STRING) {
     return std::nullopt;
+  }
   const char* filesystem = g_file_info_get_attribute_string(info, G_FILE_ATTRIBUTE_ID_FILESYSTEM);
   const char* file = g_file_info_get_attribute_string(info, G_FILE_ATTRIBUTE_ID_FILE);
-  if (!filesystem || !*filesystem || !file || !*file)
+  if (!filesystem || !*filesystem || !file || !*file) {
     return std::nullopt;
+  }
   return FileIdentity{filesystem, file};
 }

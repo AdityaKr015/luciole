@@ -28,49 +28,59 @@ namespace {
   void childSetup(gpointer data) {
     const auto& limits = *static_cast<const ChildLimits*>(data);
     (void)::prctl(PR_SET_PDEATHSIG, SIGKILL);
-    if (::getppid() != limits.parent)
+    if (::getppid() != limits.parent) {
       ::_exit(1);
+    }
     (void)::setsid();
     errno = 0;
-    if (::nice(10) == -1 && errno != 0)
+    if (::nice(10) == -1 && errno != 0) {
       ::_exit(1);
+    }
     // Keep nested decoder thread pools within the image worker's address-space budget.
     if (limits.maxCpus) {
       cpu_set_t available, selected;
-      if (::sched_getaffinity(0, sizeof(available), &available) < 0)
+      if (::sched_getaffinity(0, sizeof(available), &available) < 0) {
         ::_exit(1);
+      }
       CPU_ZERO(&selected);
       unsigned count = 0;
-      for (int cpu = 0; cpu < CPU_SETSIZE && count < limits.maxCpus; ++cpu)
+      for (int cpu = 0; cpu < CPU_SETSIZE && count < limits.maxCpus; ++cpu) {
         if (CPU_ISSET(cpu, &available)) {
           CPU_SET(cpu, &selected);
           ++count;
         }
-      if (!count || ::sched_setaffinity(0, sizeof(selected), &selected) < 0)
+      }
+      if (!count || ::sched_setaffinity(0, sizeof(selected), &selected) < 0) {
         ::_exit(1);
+      }
     }
     const rlimit cpu{5, 5}, memory{768U * 1024U * 1024U, 768U * 1024U * 1024U},
         file{limits.fileBytes, limits.fileBytes};
-    if (::setrlimit(RLIMIT_CPU, &cpu) < 0)
+    if (::setrlimit(RLIMIT_CPU, &cpu) < 0) {
       ::_exit(1);
+    }
 #ifndef __SANITIZE_ADDRESS__
     // ASan reserves a large virtual shadow region before the helper enters main.
-    if (::setrlimit(RLIMIT_AS, &memory) < 0)
+    if (::setrlimit(RLIMIT_AS, &memory) < 0) {
       ::_exit(1);
+    }
 #else
     (void)memory;
 #endif
-    if (::setrlimit(RLIMIT_FSIZE, &file) < 0)
+    if (::setrlimit(RLIMIT_FSIZE, &file) < 0) {
       ::_exit(1);
+    }
   }
   std::expected<void, std::string>
   run(std::vector<std::string> args, int input, GCancellable* cancellable, rlim_t fileBytes = 8U * 1024U * 1024U,
       unsigned maxCpus = 0) {
-    if (g_cancellable_is_cancelled(cancellable))
+    if (g_cancellable_is_cancelled(cancellable)) {
       return std::unexpected("thumbnail request cancelled");
+    }
     const files::GString executable(g_find_program_in_path(args.front().c_str()));
-    if (!executable)
+    if (!executable) {
       return std::unexpected("thumbnail provider executable unavailable");
+    }
     args.front() = executable.get();
     const files::GioPtr<GSubprocessLauncher> launcher(g_subprocess_launcher_new(
         static_cast<GSubprocessFlags>(G_SUBPROCESS_FLAGS_STDOUT_SILENCE | G_SUBPROCESS_FLAGS_STDERR_SILENCE)
@@ -78,17 +88,20 @@ namespace {
     ChildLimits limits{::getpid(), fileBytes, maxCpus};
     g_subprocess_launcher_set_child_setup(launcher.get(), childSetup, &limits, nullptr);
     const int source = ::fcntl(input, F_DUPFD_CLOEXEC, 4);
-    if (source < 0)
+    if (source < 0) {
       return std::unexpected("cannot pass source descriptor to thumbnail provider");
+    }
     g_subprocess_launcher_take_fd(launcher.get(), source, 3);
     std::vector<const char*> argv;
     argv.reserve(args.size() + 1);
-    for (const auto& argument : args)
+    for (const auto& argument : args) {
       argv.push_back(argument.c_str());
+    }
     argv.push_back(nullptr);
     const files::GioPtr<GSubprocess> process(g_subprocess_launcher_spawnv(launcher.get(), argv.data(), nullptr));
-    if (!process)
+    if (!process) {
       return std::unexpected("cannot start thumbnail provider");
+    }
     // Waiting occurs only on a thumbnail worker. The child is also CPU/address-space/output bounded.
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
     struct Wait {
@@ -100,11 +113,12 @@ namespace {
       GCancellable* source;
       gulong id = 0;
       ~Disconnect() {
-        if (source)
+        if (source) {
           g_cancellable_disconnect(source, id);
+        }
       }
     } cancellation{cancellable};
-    if (cancellable)
+    if (cancellable) {
       cancellation.id = g_cancellable_connect(
           cancellable, G_CALLBACK(+[](GCancellable*, gpointer data) {
             auto& wait = *static_cast<Wait*>(data);
@@ -116,11 +130,13 @@ namespace {
           }),
           &wait, nullptr
       );
+    }
     std::thread watchdog([&] {
       std::unique_lock lock(wait.mutex);
       wait.condition.wait_until(lock, deadline, [&] { return wait.finished || wait.cancelled; });
-      if (wait.finished)
+      if (wait.finished) {
         return;
+      }
       lock.unlock();
       g_subprocess_force_exit(process.get());
     });
@@ -134,10 +150,12 @@ namespace {
     }
     wait.condition.notify_one();
     watchdog.join();
-    if (g_cancellable_is_cancelled(cancellable))
+    if (g_cancellable_is_cancelled(cancellable)) {
       return std::unexpected("thumbnail request cancelled");
-    if (!done)
+    }
+    if (!done) {
       return std::unexpected(failure);
+    }
     return {};
   }
 } // namespace
@@ -146,14 +164,16 @@ std::expected<LoadedImageFile, std::string> files::renderThumbnailProvider(
     int sourceFd, const std::string& mime, int side, const ThumbnailOptions& options, GCancellable* cancellable
 ) {
   const bool image = mime.starts_with("image/");
-  if (side < 1 || side > (image ? kMaxPreviewImageSide : 1024))
+  if (side < 1 || side > (image ? kMaxPreviewImageSide : 1024)) {
     return std::unexpected("invalid preview size");
+  }
   const std::size_t outputLimit = image
       ? std::max(std::size_t{8U * 1024U * 1024U}, 12 + static_cast<std::size_t>(side) * side * 4)
       : 8U * 1024U * 1024U;
   const GString temporary(g_dir_make_tmp("noctalia-thumbnail-XXXXXX", nullptr));
-  if (!temporary)
+  if (!temporary) {
     return std::unexpected("cannot prepare thumbnail provider");
+  }
   const std::filesystem::path directory(temporary.get());
   struct Cleanup {
     std::filesystem::path path;
@@ -200,8 +220,9 @@ std::expected<LoadedImageFile, std::string> files::renderThumbnailProvider(
     };
     // A tiny still needs one keyframe, not a full-resolution multi-frame histogram.
     // Starting at the beginning also works for very short and single-GOP clips.
-    if (video)
+    if (video) {
       arguments.insert(arguments.end(), {"-skip_frame:v", "nokey"});
+    }
     arguments.insert(
         arguments.end(),
         {"-i", "/proc/self/fd/3", "-map", video ? "0:V:0" : "0:v:0", "-frames:v", "1", "-an", "-sn", "-vf",
@@ -222,18 +243,22 @@ std::expected<LoadedImageFile, std::string> files::renderThumbnailProvider(
           && (*report)[0] == 'N'
           && (*report)[1] == 'F'
           && (*report)[2] == 'E'
-          && (*report)[3] == '1')
+          && (*report)[3] == '1') {
         return readThumbnailWorkerResult(std::move(*report), side);
+      }
     }
     return std::unexpected(success.error());
   }
   auto encoded = readThumbnailFile(output, outputLimit);
-  if (!encoded)
+  if (!encoded) {
     return std::unexpected("thumbnail provider exceeded output limits");
-  if (mime.starts_with("image/"))
+  }
+  if (mime.starts_with("image/")) {
     return readThumbnailWorkerResult(std::move(*encoded), side);
+  }
   auto decoded = readThumbnailPng(*encoded, side);
-  if (!decoded)
+  if (!decoded) {
     return std::unexpected(decoded.error());
+  }
   return std::move(decoded->image);
 }

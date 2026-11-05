@@ -20,8 +20,9 @@ namespace {
   namespace fs = std::filesystem;
   using namespace std::chrono_literals;
   void require(bool value, const char* message) {
-    if (!value)
+    if (!value) {
       throw std::runtime_error(message);
+    }
   }
   struct Fixture {
     fs::path root;
@@ -87,18 +88,20 @@ namespace {
           entry.get(), item.kind == AE_IFREG && item.link.empty() ? static_cast<la_int64_t>(item.data.size()) : 0
       );
       if (!item.link.empty()) {
-        if (item.kind == AE_IFLNK)
+        if (item.kind == AE_IFLNK) {
           archive_entry_set_symlink(entry.get(), item.link.c_str());
-        else
+        } else {
           archive_entry_set_hardlink(entry.get(), item.link.c_str());
+        }
       }
       require(archive_write_header(writer.get(), entry.get()) == ARCHIVE_OK, "cannot write hostile tar header");
-      if (item.kind == AE_IFREG && item.link.empty() && !item.data.empty())
+      if (item.kind == AE_IFREG && item.link.empty() && !item.data.empty()) {
         require(
             archive_write_data(writer.get(), item.data.data(), item.data.size())
                 == static_cast<la_ssize_t>(item.data.size()),
             "cannot write tar fixture data"
         );
+      }
     }
     require(archive_write_close(writer.get()) == ARCHIVE_OK, "cannot finish tar fixture");
   }
@@ -117,8 +120,9 @@ namespace {
       files::ArchiveService service;
       require(service.compress({location(src)}, location(archive), format.format), "compression was not accepted");
       wait(service, pump);
-      if (!service.error().empty())
+      if (!service.error().empty()) {
         throw std::runtime_error(service.error());
+      }
       require(service.error().empty() && fs::exists(archive), "compression failed");
       require(service.inspect(location(archive)), "inspection was not accepted");
       wait(service, pump);
@@ -174,10 +178,11 @@ namespace {
       const auto conflict = service.conflict();
       require(service.resolve(conflict->id, choice), "archive conflict decision rejected");
       wait(service, pump);
-      if (choice != files::TransferConflictChoice::REPLACE)
+      if (choice != files::TransferConflictChoice::REPLACE) {
         require(read(archive) == original, "unapproved conflict overwrote archive");
-      else
+      } else {
         require(service.error().empty() && read(archive) != original, "approved replacement failed");
+      }
     }
     require(fs::exists(fixture.root / "conflict (1).zip"), "keep-both naming was not reused");
   }
@@ -376,8 +381,9 @@ namespace {
 } // namespace
 int main(int argc, char** argv) {
   try {
-    if (argc == 2 && std::string_view(argv[1]) == "--bounded-write-failure")
+    if (argc == 2 && std::string_view(argv[1]) == "--bounded-write-failure") {
       return boundedWriteFailure();
+    }
     Fixture fixture;
     Pump pump;
     testRoundTrips(fixture, pump);

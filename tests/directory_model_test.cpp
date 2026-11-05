@@ -232,9 +232,11 @@ namespace {
     rows(model, {8, 5, 3, 4, 2, 10, 9, 7, 6});
     model.setSort({.field = SortField::TYPE, .descending = true});
     rows(model, {10, 8, 5, 3, 4, 2, 9, 7, 6});
-    for (auto& item : data.entries)
-      if (item.id == 3)
+    for (auto& item : data.entries) {
+      if (item.id == 3) {
         item.contentType = "image/png";
+      }
+    }
     model.applySnapshot(data);
     require(model.typeLabel(3) == model.typeLabel(5), "metadata update retained an obsolete type label");
     selected(model, {5, 3});

@@ -19,27 +19,30 @@ struct files::BrowserController::ActivationState {
 
 files::BrowserController::BrowserController(SortOptions sort, bool showHidden)
     : m_activation(std::make_shared<ActivationState>()) {
-  m_activation->resolved = [this](
-                               EntryId id, const Location& target, std::uint64_t context, GFileType type,
-                               const std::string& error
-                           ) {
-    const auto* entry = m_model.entry(id);
-    if (context != m_contextSerial || !entry || entry->location != target || !std::ranges::contains(m_model.rows(), id))
-      return;
-    if (!error.empty()) {
-      showMessage(error);
-      return;
-    }
-    if (type == G_FILE_TYPE_DIRECTORY) {
-      open(target);
-      return;
-    }
-    if (m_fileActivated) {
-      const auto callback = m_fileActivated;
-      callback(target);
-    } else
-      showMessage("Opening files is not available yet.");
-  };
+  m_activation->resolved =
+      [this](EntryId id, const Location& target, std::uint64_t context, GFileType type, const std::string& error) {
+        const auto* entry = m_model.entry(id);
+        if (context != m_contextSerial
+            || !entry
+            || entry->location != target
+            || !std::ranges::contains(m_model.rows(), id)) {
+          return;
+        }
+        if (!error.empty()) {
+          showMessage(error);
+          return;
+        }
+        if (type == G_FILE_TYPE_DIRECTORY) {
+          open(target);
+          return;
+        }
+        if (m_fileActivated) {
+          const auto callback = m_fileActivated;
+          callback(target);
+        } else {
+          showMessage("Opening files is not available yet.");
+        }
+      };
   m_model.setSort(sort);
   m_model.setFilter({.showHidden = showHidden, .text = {}});
   m_model.setChangedCallback([this] {
@@ -95,22 +98,27 @@ std::optional<files::BrowseViewport> files::BrowserController::takeRestoredViewp
 std::optional<files::BrowserController::Reference>
 files::BrowserController::reference(std::optional<EntryId> id) const {
   const auto* entry = id ? m_model.entry(*id) : nullptr;
-  if (!entry || !entry->identity)
+  if (!entry || !entry->identity) {
     return std::nullopt;
+  }
   return Reference{entry->location.uri(), *entry->identity};
 }
 void files::BrowserController::saveVisit() {
-  if (m_history.empty() || m_restoring)
+  if (m_history.empty() || m_restoring) {
     return;
+  }
   auto& visit = m_history[m_historyIndex];
   visit.query = m_query;
-  if (m_captureViewport)
+  if (m_captureViewport) {
     visit.viewport = m_captureViewport();
+  }
   visit.selected.clear();
   visit.selected.reserve(m_model.selection().selected.size());
-  for (const auto id : m_model.selectedIds())
-    if (auto item = reference(id))
+  for (const auto id : m_model.selectedIds()) {
+    if (auto item = reference(id)) {
       visit.selected.push_back(std::move(*item));
+    }
+  }
   visit.focus = reference(m_model.selection().focused);
   visit.anchor = reference(m_model.selection().anchor);
   visit.first = reference(visit.viewport.first);
@@ -156,11 +164,13 @@ void files::BrowserController::open(const Location& location) {
     return;
   }
   saveVisit();
-  if (!m_history.empty())
+  if (!m_history.empty()) {
     m_history.erase(m_history.begin() + static_cast<std::ptrdiff_t>(m_historyIndex + 1), m_history.end());
+  }
   m_history.push_back({destination, {}, m_defaults, {}, {}, {}, {}});
-  if (m_history.size() > 128)
+  if (m_history.size() > 128) {
     m_history.erase(m_history.begin());
+  }
   m_historyIndex = m_history.size() - 1;
   loadVisit();
 }
@@ -189,16 +199,18 @@ bool files::BrowserController::canForward() const {
 }
 
 bool files::BrowserController::back() {
-  if (!canBack())
+  if (!canBack()) {
     return false;
+  }
   saveVisit();
   --m_historyIndex;
   loadVisit();
   return true;
 }
 bool files::BrowserController::forward() {
-  if (!canForward())
+  if (!canForward()) {
     return false;
+  }
   saveVisit();
   ++m_historyIndex;
   loadVisit();
@@ -268,8 +280,9 @@ void files::BrowserController::cancelSearchTimeout() {
 }
 
 void files::BrowserController::scheduleSearch() {
-  if (!m_searchPending || m_searchComposing)
+  if (!m_searchPending || m_searchComposing) {
     return;
+  }
   if (m_searchTimeout) {
     g_source_destroy(m_searchTimeout);
     g_source_unref(m_searchTimeout);
@@ -292,8 +305,9 @@ void files::BrowserController::scheduleSearch() {
 
 void files::BrowserController::startSearch() {
   cancelSearchTimeout();
-  if (m_query.empty() || !m_session.snapshot().location)
+  if (m_query.empty() || !m_session.snapshot().location) {
     return;
+  }
   m_searchActive = true;
   m_search.start(*m_session.snapshot().location, m_query, m_model.filter().showHidden);
 }
@@ -310,8 +324,9 @@ void files::BrowserController::publishPendingSearch() {
 }
 
 void files::BrowserController::editSearchQuery(std::string text) {
-  if (m_query == text)
+  if (m_query == text) {
     return;
+  }
   m_restoring = false;
   m_restoredViewport.reset();
   advanceContext();
@@ -329,23 +344,27 @@ void files::BrowserController::editSearchQuery(std::string text) {
 }
 
 void files::BrowserController::submitSearchQuery() {
-  if (m_searchPending && !m_searchComposing)
+  if (m_searchPending && !m_searchComposing) {
     startSearch();
+  }
 }
 
 void files::BrowserController::setSearchComposing(bool composing) {
-  if (m_searchComposing == composing)
+  if (m_searchComposing == composing) {
     return;
+  }
   m_searchComposing = composing;
-  if (!m_searchPending)
+  if (!m_searchPending) {
     return;
+  }
   if (composing) {
     if (auto* source = std::exchange(m_searchTimeout, nullptr)) {
       g_source_destroy(source);
       g_source_unref(source);
     }
-  } else
+  } else {
     scheduleSearch();
+  }
 }
 
 void files::BrowserController::setSearchQuery(std::string text) {
@@ -362,8 +381,9 @@ void files::BrowserController::setSearchQuery(std::string text) {
   if (m_query.empty()) {
     m_search.cancel();
     publish(m_session.snapshot());
-  } else
+  } else {
     startSearch();
+  }
 }
 
 void files::BrowserController::publish(DirectorySnapshot snapshot) {
@@ -375,21 +395,26 @@ void files::BrowserController::publish(DirectorySnapshot snapshot) {
     const auto& visit = m_history[m_historyIndex];
     std::unordered_map<std::string, EntryId> visible;
     visible.reserve(m_model.rows().size());
-    for (const auto id : m_model.rows())
+    for (const auto id : m_model.rows()) {
       visible.emplace(m_model.entry(id)->location.uri(), id);
+    }
     const auto resolve = [&](const std::optional<Reference>& reference) -> std::optional<EntryId> {
-      if (!reference)
+      if (!reference) {
         return std::nullopt;
+      }
       const auto found = visible.find(reference->uri);
-      if (found == visible.end() || m_model.entry(found->second)->identity != reference->identity)
+      if (found == visible.end() || m_model.entry(found->second)->identity != reference->identity) {
         return std::nullopt;
+      }
       return found->second;
     };
     SelectionState selection;
     selection.selected.reserve(visit.selected.size());
-    for (const auto& item : visit.selected)
-      if (const auto id = resolve(item))
+    for (const auto& item : visit.selected) {
+      if (const auto id = resolve(item)) {
         selection.selected.insert(*id);
+      }
+    }
     selection.focused = resolve(visit.focus);
     selection.anchor = resolve(visit.anchor);
     auto viewport = visit.viewport;
@@ -408,10 +433,11 @@ void files::BrowserController::activate(EntryId id) {
     return;
   }
   if (entry->location.isTrash()) {
-    if (entry->type == G_FILE_TYPE_DIRECTORY && !entry->symlink)
+    if (entry->type == G_FILE_TYPE_DIRECTORY && !entry->symlink) {
       open(entry->location);
-    else
+    } else {
       showMessage("Restore this item before opening it.");
+    }
   } else if (entry->symlink) {
     struct Query {
       std::shared_ptr<ActivationState> state;
@@ -431,11 +457,12 @@ void files::BrowserController::activate(EntryId id) {
           const bool cancelled = error && g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
           g_clear_error(&error);
           const auto callback = query->state->resolved;
-          if (callback && !cancelled)
+          if (callback && !cancelled) {
             callback(
                 query->id, query->target, query->context,
                 info ? g_file_info_get_file_type(info.get()) : G_FILE_TYPE_UNKNOWN, message
             );
+          }
         },
         new Query{m_activation, id, entry->location, m_contextSerial}
     );
@@ -463,14 +490,16 @@ void files::BrowserController::notify() const {
 }
 
 void files::BrowserController::duplicateFrom(BrowserController& source) {
-  if (&source == this)
+  if (&source == this) {
     return;
+  }
   source.saveVisit();
   m_defaults = source.m_defaults;
   m_history = source.m_history;
   m_historyIndex = source.m_historyIndex;
   m_model.setSort(source.m_model.sort());
   m_model.setFilter({source.m_model.filter().showHidden, {}});
-  if (!m_history.empty())
+  if (!m_history.empty()) {
     loadVisit();
+  }
 }

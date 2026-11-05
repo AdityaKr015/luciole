@@ -233,8 +233,9 @@ namespace {
     require(service.bookmarks()[1] == home, "repinning a default lost its standard label");
     std::vector<files::Location> defaults;
     for (const auto& pin : service.bookmarks()) {
-      if (!pin.location.isTrash())
+      if (!pin.location.isTrash()) {
         defaults.push_back(pin.location);
+      }
     }
     require(service.removeMany(defaults), "cannot unpin every default place");
     pump.ready(service);
