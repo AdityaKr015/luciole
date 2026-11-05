@@ -160,8 +160,9 @@ void VirtualGridView::notifyItemChanged(std::size_t index) {
 }
 
 void VirtualGridView::setHorizontalOverflow(float width, float offset) {
-  if (m_horizontalWidth == width && m_horizontalOffset == offset)
+  if (m_horizontalWidth == width && m_horizontalOffset == offset) {
     return;
+  }
   m_horizontalWidth = std::max(0.0F, width);
   m_horizontalOffset = offset;
   cancelPointerGesture();
@@ -923,8 +924,9 @@ std::optional<std::size_t> VirtualGridView::itemAtScene(float x, float y) const 
     float scrollX = 0, scrollY = 0;
     Node::absolutePosition(m_scroll, scrollX, scrollY);
     const float left = scrollX + (Style::rtl() ? m_scroll->scrollbarGutter() : 0.0F);
-    if (x < left || x >= left + m_scroll->contentViewportWidth())
+    if (x < left || x >= left + m_scroll->contentViewportWidth()) {
       return std::nullopt;
+    }
   }
   if (!m_scroll->containsScenePoint(x, y) || !Node::mapFromScene(m_inputArea, x, y, localX, localY)) {
     return std::nullopt;

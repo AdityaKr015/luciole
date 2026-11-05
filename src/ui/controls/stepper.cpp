@@ -380,8 +380,9 @@ void Stepper::commitValueField() {
 }
 
 bool Stepper::swallowNonNumericKey(std::uint32_t sym, std::uint32_t modifiers) {
-  if ((modifiers & (KeyMod::Ctrl | KeyMod::Alt | KeyMod::Super)) != 0)
+  if ((modifiers & (KeyMod::Ctrl | KeyMod::Alt | KeyMod::Super)) != 0) {
     return false;
+  }
   if (sym >= XKB_KEY_0 && sym <= XKB_KEY_9) {
     return false;
   }

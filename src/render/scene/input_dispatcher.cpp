@@ -575,16 +575,18 @@ void InputDispatcher::setFocus(InputArea* area, bool preserveTextInput) {
       && area
       && m_textInputService->transferFocusedClient(m_textInputSurface, old->textInputClient(), area->textInputClient());
   if (m_focusedArea != nullptr) {
-    if (!transferred)
+    if (!transferred) {
       clearTextInputFocus(m_focusedArea);
+    }
     m_focusedArea->dispatchFocusLoss();
   }
   m_focusedArea = area;
   if (m_focusedArea != nullptr) {
     trackArea(m_focusedArea);
     m_focusedArea->dispatchFocusGain();
-    if (!transferred)
+    if (!transferred) {
       syncTextInputFocus();
+    }
   }
   if (m_focusChangeCallback) {
     m_focusChangeCallback(old, m_focusedArea);

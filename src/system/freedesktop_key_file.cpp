@@ -101,9 +101,9 @@ namespace freedesktop {
     if (!file.is_open()) {
       std::error_code error;
       if (!std::filesystem::exists(path, error) && !error) {
-        return std::unexpected(makeError(ParseFailure::NOT_FOUND, "file does not exist"));
+        return std::unexpected(makeError(ParseFailure::NotFound, "file does not exist"));
       }
-      return std::unexpected(makeError(ParseFailure::READ_ERROR, "cannot open file"));
+      return std::unexpected(makeError(ParseFailure::ReadError, "cannot open file"));
     }
 
     ParseResult result;
@@ -117,7 +117,7 @@ namespace freedesktop {
       }
       if (!validUtf8(line)) {
         return std::unexpected(
-            makeError(ParseFailure::INVALID_ENCODING, "invalid UTF-8 at line " + std::to_string(lineNumber))
+            makeError(ParseFailure::InvalidEncoding, "invalid UTF-8 at line " + std::to_string(lineNumber))
         );
       }
 
@@ -173,7 +173,7 @@ namespace freedesktop {
     }
 
     if (file.bad()) {
-      return std::unexpected(makeError(ParseFailure::READ_ERROR, "I/O error"));
+      return std::unexpected(makeError(ParseFailure::ReadError, "I/O error"));
     }
     return result;
   }

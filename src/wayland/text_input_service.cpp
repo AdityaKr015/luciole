@@ -199,8 +199,9 @@ void TextInputService::clearFocusedClient(TextInputClient* client) {
 }
 
 bool TextInputService::transferFocusedClient(wl_surface* surface, TextInputClient* from, TextInputClient* to) {
-  if (!m_applyingEdit || !m_enabled || !to || !from || from != m_activeClient || surface != m_activeSurface)
+  if (!m_applyingEdit || !m_enabled || !to || !from || from != m_activeClient || surface != m_activeSurface) {
     return false;
+  }
   // Keep the protocol conversation alive while a type-to-search edit moves into its editor.
   // Disabling/enabling here would reset the input method's composition.
   m_activeClient = to;

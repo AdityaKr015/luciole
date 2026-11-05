@@ -724,8 +724,9 @@ void Button::applyLabelMaxWidth(Renderer& renderer, bool honorAssignedBox) {
   float siblingWidth = 0.0F;
   if (direction() == FlexDirection::Horizontal) {
     for (const auto& child : children()) {
-      if (child.get() != m_label && child->visible() && child->participatesInLayout() && child->zIndex() >= 0)
+      if (child.get() != m_label && child->visible() && child->participatesInLayout() && child->zIndex() >= 0) {
         siblingWidth += child->measure(renderer, LayoutConstraints::unconstrained()).width + gap();
+      }
     }
   }
   // Ceil: Label ceils its own box, so a cap derived back out of that box can land a fraction

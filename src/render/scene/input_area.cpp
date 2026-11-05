@@ -48,8 +48,9 @@ InputArea::~InputArea() {
   const auto observers = std::move(m_destroyObservers);
   for (const auto& [key, observer] : observers) {
     (void)key;
-    if (!observer.owner.expired())
+    if (!observer.owner.expired()) {
       observer.callback(this);
+    }
   }
 }
 void InputArea::observeDestruction(const std::shared_ptr<void>& owner, DestroyCallback callback) {

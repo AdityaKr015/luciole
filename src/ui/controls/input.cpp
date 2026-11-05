@@ -834,13 +834,15 @@ void Input::textInputApplyEdit(const TextInputEdit& edit) {
   const auto onCompositionChange = m_onCompositionChange;
   if (wasComposing != composing() && onCompositionChange) {
     onCompositionChange(composing());
-    if (alive.expired())
+    if (alive.expired()) {
       return;
+    }
   }
   if (permanentValue.has_value() && onChange) {
     onChange(*permanentValue);
-    if (alive.expired())
+    if (alive.expired()) {
       return;
+    }
   }
   if (submitValue.has_value() && onSubmit) {
     onSubmit(*submitValue);
@@ -856,8 +858,9 @@ void Input::textInputResetPreedit() {
   updateInteractiveGeometry();
   revealCursor();
   markPaintDirty();
-  if (m_onCompositionChange)
+  if (m_onCompositionChange) {
     m_onCompositionChange(false);
+  }
 }
 
 void Input::textInputActivated(TextInputService& service) { m_textInputService = &service; }
@@ -1366,11 +1369,13 @@ void Input::handleKey(std::uint32_t sym, std::uint32_t utf32, std::uint32_t modi
     if (g_clipboard != nullptr) {
       const auto revision = ++m_editRevision;
       g_clipboard->requestClipboardText([this, alive, revision](std::optional<std::string> text) {
-        if (alive.expired() || revision != m_editRevision || !m_inputArea->focused() || composing() || !text)
+        if (alive.expired() || revision != m_editRevision || !m_inputArea->focused() || composing() || !text) {
           return;
+        }
         pushUndoSnapshot(EditCoalesceKind::Discrete);
-        if (hasSelection())
+        if (hasSelection()) {
           deleteSelection();
+        }
         m_value.insert(m_cursorPos, *text);
         m_cursorPos += text->size();
         m_selectionAnchor = m_cursorPos;
@@ -1378,8 +1383,9 @@ void Input::handleKey(std::uint32_t sym, std::uint32_t utf32, std::uint32_t modi
         markTextContentChanged();
         revealCursor();
         notifyTextInputStateChanged(TextInputChangeCause::Other);
-        if (m_onChange)
+        if (m_onChange) {
           m_onChange(m_value);
+        }
       });
       return;
     }
