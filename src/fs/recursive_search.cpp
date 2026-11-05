@@ -79,7 +79,7 @@ struct files::RecursiveSearch::State : std::enable_shared_from_this<State> {
     if (scan->pending.empty()) {
       scan->visited.clear();
       scan->current.reset();
-      snapshot.status = DirectoryStatus::READY;
+      snapshot.status = DirectoryStatus::Ready;
       notify();
       return;
     }
@@ -116,7 +116,7 @@ struct files::RecursiveSearch::State : std::enable_shared_from_this<State> {
       scan->enumerator.reset();
       scan->pending.clear();
       snapshot.error = fileError(error);
-      snapshot.status = DirectoryStatus::ERROR;
+      snapshot.status = DirectoryStatus::Error;
       notify();
     } else {
       ++skipped;
@@ -239,7 +239,7 @@ void files::RecursiveSearch::start(const Location& root, const std::string& quer
   state->snapshot = {
       .generation = state->snapshot.generation + 1,
       .location = destination,
-      .status = DirectoryStatus::LOADING,
+      .status = DirectoryStatus::Loading,
       .entries = {},
       .error = std::nullopt,
       .monitorError = std::nullopt,
@@ -251,6 +251,6 @@ void files::RecursiveSearch::start(const Location& root, const std::string& quer
 }
 void files::RecursiveSearch::cancel() {
   m_state->cancel();
-  m_state->snapshot.status = DirectoryStatus::CANCELLED;
+  m_state->snapshot.status = DirectoryStatus::Cancelled;
   m_state->notify();
 }

@@ -53,8 +53,8 @@ namespace {
       }
     }
     void ready(const BrowserController& browser) {
-      until([&] { return browser.model().snapshot().status != DirectoryStatus::LOADING; });
-      TEST_CHECK(browser.model().snapshot().status == DirectoryStatus::READY);
+      until([&] { return browser.model().snapshot().status != DirectoryStatus::Loading; });
+      TEST_CHECK(browser.model().snapshot().status == DirectoryStatus::Ready);
     }
     void drainFor(std::chrono::milliseconds duration) {
       const auto deadline = std::chrono::steady_clock::now() + duration;
@@ -131,7 +131,7 @@ namespace {
     pump.ready(original);
     original.model().select(id(original, "inside"));
     original.setCaptureViewport([] {
-      return files::BrowseViewport{.mode = files::ViewMode::LIST, .iconSize = 96, .vertical = 125};
+      return files::BrowseViewport{.mode = files::ViewMode::List, .iconSize = 96, .vertical = 125};
     });
     duplicate.open(Location::fromPath((fixture.path / "other").native()));
     duplicate.duplicateFrom(original);
@@ -142,7 +142,7 @@ namespace {
         && duplicate.model().entry(duplicate.model().selectedIds().front())->name == "inside"
     );
     const auto viewport = duplicate.takeRestoredViewport();
-    TEST_CHECK(viewport && viewport->mode == files::ViewMode::LIST && viewport->vertical == 125);
+    TEST_CHECK(viewport && viewport->mode == files::ViewMode::List && viewport->vertical == 125);
     duplicate.back();
     pump.ready(duplicate);
     TEST_CHECK(original.model().snapshot().location == Location::fromPath((fixture.path / "child").native()));
@@ -200,7 +200,7 @@ namespace {
     pump.ready(browser);
     TEST_CHECK(browser.model().snapshot().location == Location::fromPath((fixture.path / "folder-link").native()));
     browser.activate(id(browser, "inside"));
-    TEST_CHECK(!browser.message().empty() && browser.model().snapshot().status == DirectoryStatus::READY);
+    TEST_CHECK(!browser.message().empty() && browser.model().snapshot().status == DirectoryStatus::Ready);
   }
 
   void testFailureAndLiveUpdates() {
@@ -226,11 +226,11 @@ namespace {
     pump.until([&] { return browser.model().snapshot().entries.size() == 6; });
     TEST_CHECK(browser.model().selection().selected.contains(file));
     TEST_CHECK(browser.openText((fixture.path / "missing").native()));
-    pump.until([&] { return browser.model().snapshot().status == DirectoryStatus::ERROR; });
+    pump.until([&] { return browser.model().snapshot().status == DirectoryStatus::Error; });
     TEST_CHECK(browser.canBack() && browser.back());
     pump.ready(browser);
     browser.stop();
-    TEST_CHECK(browser.model().snapshot().status == DirectoryStatus::CANCELLED);
+    TEST_CHECK(browser.model().snapshot().status == DirectoryStatus::Cancelled);
     browser.refresh();
     pump.ready(browser);
   }
@@ -284,7 +284,7 @@ namespace {
     TEST_CHECK(browser.model().rows().size() == 1 && browser.searchQuery() == "STRASSE");
     browser.setSearchQuery("target");
     browser.stop();
-    TEST_CHECK(browser.model().snapshot().status == DirectoryStatus::CANCELLED);
+    TEST_CHECK(browser.model().snapshot().status == DirectoryStatus::Cancelled);
     browser.refresh();
     pump.ready(browser);
     TEST_CHECK(browser.model().rows().size() == 5 && browser.searchQuery() == "target");
@@ -321,7 +321,7 @@ namespace {
     bool selectable = false;
     browser.setChangedCallback([&] {
       if (!progressive
-          && browser.model().snapshot().status == DirectoryStatus::LOADING
+          && browser.model().snapshot().status == DirectoryStatus::Loading
           && !browser.model().rows().empty()) {
         progressive = true;
         selectable = browser.model().select(browser.model().rows().front());
@@ -347,11 +347,11 @@ namespace {
     pump.ready(browser);
     TEST_CHECK(browser.model().rows().size() == 1);
     TEST_CHECK(browser.openText((fixture.path / "missing").native()));
-    pump.until([&] { return browser.model().snapshot().status == DirectoryStatus::ERROR; });
+    pump.until([&] { return browser.model().snapshot().status == DirectoryStatus::Error; });
     browser.setSearchQuery("target");
-    pump.until([&] { return browser.model().snapshot().status == DirectoryStatus::ERROR; });
+    pump.until([&] { return browser.model().snapshot().status == DirectoryStatus::Error; });
     TEST_CHECK(
-        browser.model().snapshot().error && browser.model().snapshot().error->kind == files::FileErrorKind::MISSING
+        browser.model().snapshot().error && browser.model().snapshot().error->kind == files::FileErrorKind::Missing
     );
   }
 
@@ -400,9 +400,9 @@ namespace {
     Pump pump;
     BrowserController browser({}, false);
     files::BrowseViewport viewport{
-        .mode = files::ViewMode::LIST, .iconSize = 96, .vertical = 123.5F, .horizontal = 42.0F, .withinRow = 9.5F
+        .mode = files::ViewMode::List, .iconSize = 96, .vertical = 123.5F, .horizontal = 42.0F, .withinRow = 9.5F
     };
-    browser.setViewDefaults(files::ViewMode::GRID, 48);
+    browser.setViewDefaults(files::ViewMode::Grid, 48);
     browser.setCaptureViewport([&] { return viewport; });
     browser.open(Location::fromPath(fixture.path.native()));
     pump.ready(browser);
@@ -414,7 +414,7 @@ namespace {
     viewport.first = selected;
     browser.open(Location::fromPath((fixture.path / "child").native()));
     pump.ready(browser);
-    TEST_CHECK(browser.viewport().mode == files::ViewMode::GRID && browser.viewport().iconSize == 48);
+    TEST_CHECK(browser.viewport().mode == files::ViewMode::Grid && browser.viewport().iconSize == 48);
     TEST_CHECK(browser.back());
     pump.ready(browser);
     TEST_CHECK(browser.model().selectedIds() == std::vector{id(browser, "file")} && id(browser, "file") != selected);
@@ -425,7 +425,7 @@ namespace {
     auto restored = browser.takeRestoredViewport();
     TEST_CHECK(
         restored
-        && restored->mode == files::ViewMode::LIST
+        && restored->mode == files::ViewMode::List
         && restored->iconSize == 96
         && restored->first == id(browser, "file")
         && restored->withinRow == 9.5F
@@ -433,7 +433,7 @@ namespace {
         && restored->vertical == 123.5F
     );
     TEST_CHECK(!browser.takeRestoredViewport());
-    browser.model().setSort({.field = files::SortField::SIZE, .descending = true, .directoriesFirst = false});
+    browser.model().setSort({.field = files::SortField::Size, .descending = true, .directoriesFirst = false});
     browser.toggleHidden();
     browser.forward();
     pump.ready(browser);
@@ -443,7 +443,7 @@ namespace {
     browser.back();
     pump.ready(browser);
     TEST_CHECK(browser.model().selectedIds().empty());
-    TEST_CHECK(browser.model().sort().field == files::SortField::SIZE && browser.model().filter().showHidden);
+    TEST_CHECK(browser.model().sort().field == files::SortField::Size && browser.model().filter().showHidden);
     browser.setSearchQuery("inside");
     pump.ready(browser);
     browser.model().select(id(browser, "inside"));
@@ -475,7 +475,7 @@ namespace {
     TEST_CHECK(
         browser.searchPending()
         && browser.searchQuery() == "file"
-        && browser.model().snapshot().status == DirectoryStatus::LOADING
+        && browser.model().snapshot().status == DirectoryStatus::Loading
         && browser.model().rows().empty()
         && !browser.model().selectionAvailable()
         && browser.model().selectedIds().empty()
@@ -501,7 +501,7 @@ namespace {
     TEST_CHECK(
         !browser.searchPending()
         && browser.searchQuery().empty()
-        && browser.model().snapshot().status == DirectoryStatus::READY
+        && browser.model().snapshot().status == DirectoryStatus::Ready
         && browser.model().selectionAvailable()
         && browser.model().rows().size() == 4
     );
@@ -512,7 +512,7 @@ namespace {
     pump.drainFor(230ms);
     TEST_CHECK(
         !browser.searchPending()
-        && browser.model().snapshot().status == DirectoryStatus::CANCELLED
+        && browser.model().snapshot().status == DirectoryStatus::Cancelled
         && browser.model().rows().empty()
     );
     browser.refresh();

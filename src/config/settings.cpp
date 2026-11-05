@@ -188,7 +188,7 @@ namespace {
           } else if (name == "typing_mode") {
             const auto* mode = value.as_string();
             if (mode && (mode->get() == "search" || mode->get() == "typeahead")) {
-              patch.typingMode = mode->get() == "search" ? files::TypingMode::SEARCH : files::TypingMode::TYPEAHEAD;
+              patch.typingMode = mode->get() == "search" ? files::TypingMode::Search : files::TypingMode::Typeahead;
             } else {
               issue(issues, file, value, path, "expected 'search' or 'typeahead'");
             }
@@ -232,24 +232,24 @@ namespace {
           } else if (name == "sort_by") {
             const auto* sort = value.as_string();
             if (sort != nullptr && sort->get() == "name") {
-              patch.sortBy = files::SortField::NAME;
+              patch.sortBy = files::SortField::Name;
             } else if (sort != nullptr && sort->get() == "size") {
-              patch.sortBy = files::SortField::SIZE;
+              patch.sortBy = files::SortField::Size;
             } else if (sort != nullptr && sort->get() == "modified") {
-              patch.sortBy = files::SortField::MODIFIED;
+              patch.sortBy = files::SortField::Modified;
             } else if (sort != nullptr && sort->get() == "type") {
-              patch.sortBy = files::SortField::TYPE;
+              patch.sortBy = files::SortField::Type;
             } else {
               issue(issues, file, value, path, "expected 'name', 'size', 'modified', or 'type'");
             }
           } else if (name == "thumbnail_policy") {
             const auto* text = value.as_string();
             if (text && text->get() == "never") {
-              patch.thumbnailPolicy = files::ThumbnailPolicy::NEVER;
+              patch.thumbnailPolicy = files::ThumbnailPolicy::Never;
             } else if (text && text->get() == "local") {
-              patch.thumbnailPolicy = files::ThumbnailPolicy::LOCAL;
+              patch.thumbnailPolicy = files::ThumbnailPolicy::Local;
             } else if (text && text->get() == "all") {
-              patch.thumbnailPolicy = files::ThumbnailPolicy::ALL;
+              patch.thumbnailPolicy = files::ThumbnailPolicy::All;
             } else {
               issue(issues, file, value, path, "expected 'never', 'local', or 'all'");
             }
@@ -302,11 +302,11 @@ namespace {
           } else if (name == "view_mode") {
             const auto* mode = value.as_string();
             if (mode != nullptr && mode->get() == "list") {
-              patch.viewMode = files::ViewMode::LIST;
+              patch.viewMode = files::ViewMode::List;
             } else if (mode != nullptr && mode->get() == "grid") {
-              patch.viewMode = files::ViewMode::GRID;
+              patch.viewMode = files::ViewMode::Grid;
             } else if (mode != nullptr && mode->get() == "miller") {
-              patch.viewMode = files::ViewMode::MILLER;
+              patch.viewMode = files::ViewMode::Miller;
             } else {
               issue(issues, file, value, path, "expected 'list', 'grid' or 'miller'");
             }
@@ -447,7 +447,7 @@ namespace {
     case Preference::ThumbnailMaxFileMib:
     case Preference::ThumbnailMaxMegapixels:
     case Preference::ThumbnailCacheMib:
-    case Preference::COUNT:
+    case Preference::Count:
       return {};
     case Preference::ActivationMode:
       return "browser.activation_mode";
@@ -618,7 +618,7 @@ namespace {
     case Preference::ThumbnailMaxFileMib:
     case Preference::ThumbnailMaxMegapixels:
     case Preference::ThumbnailCacheMib:
-    case Preference::COUNT:
+    case Preference::Count:
       break;
     }
   }
@@ -628,8 +628,8 @@ namespace {
     if (patch.thumbnailPolicy) {
       browser.insert(
           "thumbnail_policy",
-          *patch.thumbnailPolicy == files::ThumbnailPolicy::NEVER       ? "never"
-              : *patch.thumbnailPolicy == files::ThumbnailPolicy::LOCAL ? "local"
+          *patch.thumbnailPolicy == files::ThumbnailPolicy::Never       ? "never"
+              : *patch.thumbnailPolicy == files::ThumbnailPolicy::Local ? "local"
                                                                         : "all"
       );
     }
@@ -645,7 +645,7 @@ namespace {
       );
     }
     if (patch.typingMode) {
-      browser.insert("typing_mode", *patch.typingMode == files::TypingMode::SEARCH ? "search" : "typeahead");
+      browser.insert("typing_mode", *patch.typingMode == files::TypingMode::Search ? "search" : "typeahead");
     }
     for (std::size_t index = 0; index < patch.columnWidths.size(); ++index) {
       if (patch.columnWidths[index]) {
@@ -692,8 +692,8 @@ namespace {
     if (patch.viewMode) {
       browser.insert(
           "view_mode",
-          *patch.viewMode == files::ViewMode::LIST       ? "list"
-              : *patch.viewMode == files::ViewMode::GRID ? "grid"
+          *patch.viewMode == files::ViewMode::List       ? "list"
+              : *patch.viewMode == files::ViewMode::Grid ? "grid"
                                                          : "miller"
       );
     }
@@ -701,9 +701,9 @@ namespace {
       browser.insert("show_hidden", *patch.showHidden);
     }
     if (patch.sortBy) {
-      const auto* name = *patch.sortBy == files::SortField::NAME ? "name"
-          : *patch.sortBy == files::SortField::SIZE              ? "size"
-          : *patch.sortBy == files::SortField::TYPE              ? "type"
+      const auto* name = *patch.sortBy == files::SortField::Name ? "name"
+          : *patch.sortBy == files::SortField::Size              ? "size"
+          : *patch.sortBy == files::SortField::Type              ? "type"
                                                                  : "modified";
       browser.insert("sort_by", name);
     }
@@ -803,7 +803,7 @@ bool files::ConfigService::reload() {
 
 files::AtomicWriteState files::ConfigService::saveOverrides(std::span<const OverrideEdit> edits) {
   if (edits.empty()) {
-    return AtomicWriteState::UNCHANGED;
+    return AtomicWriteState::Unchanged;
   }
   m_issues.clear();
   if (!m_paths.base.is_absolute()
@@ -823,7 +823,7 @@ files::AtomicWriteState files::ConfigService::saveOverrides(std::span<const Over
       if (edit.preference == BrowserPreference::ThumbnailPolicy) {
         const auto* mode = std::get_if<ThumbnailPolicy>(&edit.value);
         valid = mode
-            && (*mode == ThumbnailPolicy::NEVER || *mode == ThumbnailPolicy::LOCAL || *mode == ThumbnailPolicy::ALL);
+            && (*mode == ThumbnailPolicy::Never || *mode == ThumbnailPolicy::Local || *mode == ThumbnailPolicy::All);
       } else if (const auto index = thumbnailIntegerIndex(edit.preference)) {
         const auto* number = std::get_if<int>(&edit.value);
         valid =
@@ -833,7 +833,7 @@ files::AtomicWriteState files::ConfigService::saveOverrides(std::span<const Over
         valid = mode && (*mode == ActivationMode::SingleClick || *mode == ActivationMode::DoubleClick);
       } else if (edit.preference == BrowserPreference::TypingMode) {
         const auto* mode = std::get_if<TypingMode>(&edit.value);
-        valid = mode && (*mode == TypingMode::SEARCH || *mode == TypingMode::TYPEAHEAD);
+        valid = mode && (*mode == TypingMode::Search || *mode == TypingMode::Typeahead);
       } else if (const auto index = columnWidthIndex(edit.preference)) {
         const auto* width = std::get_if<int>(&edit.value);
         valid = width != nullptr && validDetailsColumnWidth(*index, *width);
@@ -843,10 +843,10 @@ files::AtomicWriteState files::ConfigService::saveOverrides(std::span<const Over
       } else if (edit.preference == BrowserPreference::SortBy) {
         const auto* sort = std::get_if<SortField>(&edit.value);
         valid = sort != nullptr
-            && (*sort == SortField::NAME
-                || *sort == SortField::SIZE
-                || *sort == SortField::MODIFIED
-                || *sort == SortField::TYPE);
+            && (*sort == SortField::Name
+                || *sort == SortField::Size
+                || *sort == SortField::Modified
+                || *sort == SortField::Type);
       } else if (edit.preference == BrowserPreference::GridIconSize) {
         const auto* size = std::get_if<int>(&edit.value);
         valid = size != nullptr && std::ranges::contains(kGridIconSizes, *size);
@@ -861,7 +861,7 @@ files::AtomicWriteState files::ConfigService::saveOverrides(std::span<const Over
         valid = width != nullptr && *width >= kMinSidebarWidth && *width <= kMaxSidebarWidth;
       } else if (edit.preference == BrowserPreference::ViewMode) {
         const auto* mode = std::get_if<ViewMode>(&edit.value);
-        valid = mode != nullptr && (*mode == ViewMode::LIST || *mode == ViewMode::GRID || *mode == ViewMode::MILLER);
+        valid = mode != nullptr && (*mode == ViewMode::List || *mode == ViewMode::Grid || *mode == ViewMode::Miller);
       } else {
         valid = valid && std::holds_alternative<bool>(edit.value);
       }

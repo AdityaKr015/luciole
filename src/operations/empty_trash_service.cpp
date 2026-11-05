@@ -154,11 +154,11 @@ namespace {
     }
     return reply;
   }
-  enum class WorkKind { PREPARE, MEASURE, EMPTY };
+  enum class WorkKind { Prepare, Measure, Empty };
   files::EmptyTrashOutcome failedDelete(const GError* error) {
     using Outcome = files::EmptyTrashOutcome;
     if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND)) {
-      return Outcome::SKIPPED;
+      return Outcome::Skipped;
     }
     if (error != nullptr && error->domain == G_IO_ERROR) {
       switch (error->code) {
@@ -167,12 +167,12 @@ namespace {
       case G_IO_ERROR_READ_ONLY:
       case G_IO_ERROR_NOT_EMPTY:
       case G_IO_ERROR_INVALID_ARGUMENT:
-        return Outcome::FAILED;
+        return Outcome::Failed;
       default:
         break;
       }
     }
-    return Outcome::UNCONFIRMED;
+    return Outcome::Unconfirmed;
   }
 } // namespace
 
@@ -192,7 +192,7 @@ struct files::EmptyTrashService::State {
     }
   }
   static void
-  launch(const std::shared_ptr<State>& owner, std::function<Reply()> work, WorkKind kind = WorkKind::PREPARE) {
+  launch(const std::shared_ptr<State>& owner, std::function<Reply()> work, WorkKind kind = WorkKind::Prepare) {
     struct Request {
       std::shared_ptr<State> owner;
       std::function<Reply()> work;
@@ -206,7 +206,7 @@ struct files::EmptyTrashService::State {
           const auto owner = request->owner;
           std::unique_ptr<Reply> reply(static_cast<Reply*>(g_task_propagate_pointer(G_TASK(result), nullptr)));
           owner->active = false;
-          if (request->kind == WorkKind::MEASURE) {
+          if (request->kind == WorkKind::Measure) {
             owner->snapshot.size = reply->size;
             owner->snapshot.sizeIncomplete = reply->sizeIncomplete || !reply->error.empty();
             if (std::exchange(owner->emptyRequested, false)) {
@@ -215,7 +215,7 @@ struct files::EmptyTrashService::State {
               return;
             }
             if (g_cancellable_is_cancelled(owner->cancellable.get())) {
-              owner->snapshot.status = EmptyTrashStatus::CANCELLED;
+              owner->snapshot.status = EmptyTrashStatus::Cancelled;
               owner->targets.reset();
             }
             owner->notify();
@@ -224,21 +224,21 @@ struct files::EmptyTrashService::State {
           owner->snapshot.error = std::move(reply->error);
           if (reply->finished) {
             owner->snapshot.results = std::move(reply->results);
-            owner->snapshot.status = EmptyTrashStatus::FINISHED;
+            owner->snapshot.status = EmptyTrashStatus::Finished;
             owner->targets.reset();
           } else if (g_cancellable_is_cancelled(owner->cancellable.get())) {
-            owner->snapshot.status = EmptyTrashStatus::CANCELLED;
+            owner->snapshot.status = EmptyTrashStatus::Cancelled;
             owner->targets.reset();
           } else if (!owner->snapshot.error.empty()) {
-            owner->snapshot.status = EmptyTrashStatus::ERROR;
+            owner->snapshot.status = EmptyTrashStatus::Error;
             owner->targets.reset();
           } else {
             owner->targets = std::move(reply->targets);
             owner->snapshot.results = std::move(reply->results);
-            owner->snapshot.status = EmptyTrashStatus::READY;
+            owner->snapshot.status = EmptyTrashStatus::Ready;
             launch(
                 owner, [owner, targets = owner->targets] { return measureSize(*targets, owner->cancellable.get()); },
-                WorkKind::MEASURE
+                WorkKind::Measure
             );
             return;
           }
@@ -274,9 +274,9 @@ void files::EmptyTrashService::setChangedCallback(std::function<void()> callback
   m_state->changed = std::move(callback);
 }
 bool files::EmptyTrashService::busy() const { return m_state->active; }
-bool files::EmptyTrashService::pending() const { return busy() || m_state->snapshot.status == EmptyTrashStatus::READY; }
+bool files::EmptyTrashService::pending() const { return busy() || m_state->snapshot.status == EmptyTrashStatus::Ready; }
 bool files::EmptyTrashService::canEmpty() const {
-  return m_state->snapshot.status == EmptyTrashStatus::READY && m_state->targets && !m_state->targets->empty();
+  return m_state->snapshot.status == EmptyTrashStatus::Ready && m_state->targets && !m_state->targets->empty();
 }
 std::size_t files::EmptyTrashService::completed() const { return m_state->completed.load(); }
 const files::EmptyTrashSnapshot& files::EmptyTrashService::snapshot() const { return m_state->snapshot; }
@@ -284,8 +284,8 @@ void files::EmptyTrashService::cancel() {
   m_state->emptyRequested = false;
   g_cancellable_cancel(m_state->cancellable.get());
   m_state->targets.reset();
-  if (!busy() && m_state->snapshot.status != EmptyTrashStatus::FINISHED) {
-    m_state->snapshot.status = EmptyTrashStatus::CANCELLED;
+  if (!busy() && m_state->snapshot.status != EmptyTrashStatus::Finished) {
+    m_state->snapshot.status = EmptyTrashStatus::Cancelled;
   }
 }
 bool files::EmptyTrashService::prepare() {
@@ -296,7 +296,7 @@ bool files::EmptyTrashService::prepare() {
   m_state->cancellable.reset(g_cancellable_new());
   m_state->completed.store(0);
   m_state->snapshot = {
-      .status = EmptyTrashStatus::PREPARING, .results = {}, .error = {}, .size = std::nullopt, .sizeIncomplete = false
+      .status = EmptyTrashStatus::Preparing, .results = {}, .error = {}, .size = std::nullopt, .sizeIncomplete = false
   };
   State::launch(m_state, [owner = m_state] {
     const auto root = Location::trash().file();
@@ -348,7 +348,7 @@ bool files::EmptyTrashService::prepare() {
     }
     Reply reply{.targets = std::move(targets), .results = {}, .error = {}, .finished = false};
     for (const auto& target : *reply.targets) {
-      reply.results.push_back({target.location, target.displayName, EmptyTrashOutcome::CANCELLED, {}});
+      reply.results.push_back({target.location, target.displayName, EmptyTrashOutcome::Cancelled, {}});
     }
     return reply;
   });
@@ -358,7 +358,7 @@ bool files::EmptyTrashService::empty() {
   if (!canEmpty()) {
     return false;
   }
-  m_state->snapshot.status = EmptyTrashStatus::EMPTYING;
+  m_state->snapshot.status = EmptyTrashStatus::Emptying;
   if (busy()) {
     m_state->emptyRequested = true;
     g_cancellable_cancel(m_state->cancellable.get());
@@ -375,7 +375,7 @@ void files::EmptyTrashService::State::startEmpty(const std::shared_ptr<State>& o
       [owner, targets = owner->targets] {
         Reply reply{.targets = {}, .results = {}, .error = {}, .finished = true};
         for (const auto& target : *targets) {
-          reply.results.push_back({target.location, target.displayName, EmptyTrashOutcome::CANCELLED, {}});
+          reply.results.push_back({target.location, target.displayName, EmptyTrashOutcome::Cancelled, {}});
         }
         for (std::size_t index = 0; index < targets->size(); ++index) {
           if (g_cancellable_is_cancelled(owner->cancellable.get())) {
@@ -395,11 +395,11 @@ void files::EmptyTrashService::State::startEmpty(const std::shared_ptr<State>& o
                 break;
               }
               result.outcome = g_error_matches(error.get(), G_IO_ERROR, G_IO_ERROR_NOT_FOUND)
-                  ? EmptyTrashOutcome::SKIPPED
-                  : EmptyTrashOutcome::FAILED;
+                  ? EmptyTrashOutcome::Skipped
+                  : EmptyTrashOutcome::Failed;
               result.error = error ? error->message : "Could not check the item.";
             } else if (!sameIdentity(target.identity, identity(info.get()))) {
-              result.outcome = EmptyTrashOutcome::FAILED;
+              result.outcome = EmptyTrashOutcome::Failed;
               result.error = "The item changed after confirmation was prepared. It was left in Trash.";
             } else {
               if (g_cancellable_is_cancelled(owner->cancellable.get())) {
@@ -409,19 +409,19 @@ void files::EmptyTrashService::State::startEmpty(const std::shared_ptr<State>& o
               // Finish the current provider request before observing cancellation.
               const bool removed = g_file_delete(target.location.file().get(), nullptr, &raw);
               const Error deleteError(raw);
-              result.outcome = removed ? EmptyTrashOutcome::DELETED : failedDelete(deleteError.get());
+              result.outcome = removed ? EmptyTrashOutcome::Deleted : failedDelete(deleteError.get());
               if (!removed) {
                 result.error = deleteError ? deleteError->message : "Could not confirm deletion.";
               }
             }
           } catch (const std::exception& error) {
-            result.outcome = EmptyTrashOutcome::FAILED;
+            result.outcome = EmptyTrashOutcome::Failed;
             result.error = error.what();
           }
           owner->completed.fetch_add(1);
         }
         return reply;
       },
-      WorkKind::EMPTY
+      WorkKind::Empty
   );
 }

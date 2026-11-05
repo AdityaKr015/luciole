@@ -9,7 +9,7 @@ namespace files {
   // Cells hold prepared images, upload during Layout and release them on rebinding.
   class ThumbnailService {
   public:
-    explicit ThumbnailService(ThumbnailPurpose purpose = ThumbnailPurpose::THUMBNAIL);
+    explicit ThumbnailService(ThumbnailPurpose purpose = ThumbnailPurpose::Thumbnail);
     ~ThumbnailService();
     ThumbnailService(const ThumbnailService&) = delete;
     ThumbnailService& operator=(const ThumbnailService&) = delete;

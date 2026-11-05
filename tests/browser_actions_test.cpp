@@ -28,7 +28,7 @@ namespace {
     return {
         .generation = 1,
         .location = files::Location::fromPath("/tmp/action-fixture"),
-        .status = files::DirectoryStatus::READY,
+        .status = files::DirectoryStatus::Ready,
         .entries =
             {entry(1, "alpha.txt"), entry(2, "Beta.txt"), entry(3, "boulder.png"), entry(4, "café.txt"),
              entry(5, "[literal].txt"), entry(6, "folder", G_FILE_TYPE_DIRECTORY)},
@@ -100,13 +100,13 @@ namespace {
     files::ActionContext c{.model = model, .context = 9, .query = {}, .pinned = {}};
     const auto request = R::capture(c);
     TEST_CHECK(
-        R::state(A::COMPRESS, c, request).enabled
+        R::state(A::Compress, c, request).enabled
         && R::state(A::ExtractHere, c, request).enabled
         && R::state(A::ExtractTo, c, request).enabled
         && R::state(A::BrowseArchive, c, request).enabled
     );
     c.operationsBusy = true;
-    TEST_CHECK(!R::state(A::BrowseArchive, c, request).enabled && !R::state(A::COMPRESS, c, request).enabled);
+    TEST_CHECK(!R::state(A::BrowseArchive, c, request).enabled && !R::state(A::Compress, c, request).enabled);
     c.operationsBusy = false;
     data.entries.back().symlink = true;
     ++data.generation;
@@ -116,18 +116,18 @@ namespace {
     data.entries.back().access.read = false;
     ++data.generation;
     model.applySnapshot(data);
-    TEST_CHECK(!R::state(A::COMPRESS, c, request).enabled);
+    TEST_CHECK(!R::state(A::Compress, c, request).enabled);
     model.select(1);
     const auto plain = R::capture(c);
-    TEST_CHECK(R::state(A::COMPRESS, c, plain).enabled && !R::state(A::BrowseArchive, c, plain).enabled);
+    TEST_CHECK(R::state(A::Compress, c, plain).enabled && !R::state(A::BrowseArchive, c, plain).enabled);
     model.select(6);
-    TEST_CHECK(R::state(A::COMPRESS, c, R::capture(c)).enabled);
+    TEST_CHECK(R::state(A::Compress, c, R::capture(c)).enabled);
     data.entries.back().location = files::Location::fromUri("sftp://example.invalid/sample.tar.gz");
     data.entries.back().access.read = true;
     ++data.generation;
     model.applySnapshot(data);
     model.select(7);
-    TEST_CHECK(!R::state(A::COMPRESS, c, R::capture(c)).enabled);
+    TEST_CHECK(!R::state(A::Compress, c, R::capture(c)).enabled);
   }
   void testCapabilitiesAndTargets() {
     files::DirectoryModel model;
@@ -141,22 +141,22 @@ namespace {
     };
     const auto request = R::capture(c);
     TEST_CHECK(
-        R::state(A::OPEN, c, request).enabled
-        && R::state(A::RENAME, c, request).enabled
-        && R::state(A::TRASH, c, request).enabled
+        R::state(A::Open, c, request).enabled
+        && R::state(A::Rename, c, request).enabled
+        && R::state(A::Trash, c, request).enabled
     );
     model.select(3);
-    TEST_CHECK(R::state(A::RENAME, c, request).enabled && request.targets.front().id == 2);
-    model.setSort({files::SortField::NAME, true, false});
-    TEST_CHECK(R::state(A::OPEN, c, request).enabled);
+    TEST_CHECK(R::state(A::Rename, c, request).enabled && request.targets.front().id == 2);
+    model.setSort({files::SortField::Name, true, false});
+    TEST_CHECK(R::state(A::Open, c, request).enabled);
     c.operationsBusy = true;
-    const auto busy = R::state(A::RENAME, c, request);
-    TEST_CHECK(!busy.enabled && !busy.reason.empty() && R::state(A::PROPERTIES, c, request).enabled);
+    const auto busy = R::state(A::Rename, c, request);
+    TEST_CHECK(!busy.enabled && !busy.reason.empty() && R::state(A::Properties, c, request).enabled);
     c.operationsBusy = false;
     data.metadata.filesystem.readOnly = true;
     ++data.generation;
     model.applySnapshot(data);
-    TEST_CHECK(!R::state(A::RENAME, c, request).enabled && !R::state(A::CreateFile, c, request).enabled);
+    TEST_CHECK(!R::state(A::Rename, c, request).enabled && !R::state(A::CreateFile, c, request).enabled);
     data.metadata.filesystem.readOnly = false;
     data.entries[1].access.rename = false;
     data.entries[1].access.trash = false;
@@ -164,9 +164,9 @@ namespace {
     ++data.generation;
     model.applySnapshot(data);
     TEST_CHECK(
-        !R::state(A::RENAME, c, request).enabled
-        && !R::state(A::TRASH, c, request).enabled
-        && !R::state(A::OPEN, c, request).enabled
+        !R::state(A::Rename, c, request).enabled
+        && !R::state(A::Trash, c, request).enabled
+        && !R::state(A::Open, c, request).enabled
     );
     data.entries[1].access = {};
     data.metadata.access.write = false;
@@ -174,39 +174,39 @@ namespace {
     model.applySnapshot(data);
     TEST_CHECK(!R::state(A::CreateFolder, c, request).enabled);
     c.query = "txt";
-    TEST_CHECK(!R::state(A::OPEN, c, request).enabled);
+    TEST_CHECK(!R::state(A::Open, c, request).enabled);
     auto search = R::capture(c);
     search.targets = request.targets;
-    TEST_CHECK(!R::state(A::TRASH, c, search).enabled && R::state(A::RENAME, c, search).enabled);
+    TEST_CHECK(!R::state(A::Trash, c, search).enabled && R::state(A::Rename, c, search).enabled);
     c.query = {};
     ++c.context;
-    TEST_CHECK(!R::state(A::OPEN, c, request).enabled);
+    TEST_CHECK(!R::state(A::Open, c, request).enabled);
     c.context = request.context;
     data.entries[1].location = files::Location::fromPath("/tmp/action-fixture/renamed.txt");
     ++data.generation;
     model.applySnapshot(data);
-    TEST_CHECK(!R::state(A::OPEN, c, request).enabled);
+    TEST_CHECK(!R::state(A::Open, c, request).enabled);
     data.entries.erase(data.entries.begin() + 1);
     ++data.generation;
     model.applySnapshot(data);
-    TEST_CHECK(!R::state(A::PROPERTIES, c, request).enabled);
+    TEST_CHECK(!R::state(A::Properties, c, request).enabled);
     data.entries.push_back(entry(20, "Beta.txt"));
     ++data.generation;
     model.applySnapshot(data);
-    TEST_CHECK(!R::state(A::OPEN, c, request).enabled);
+    TEST_CHECK(!R::state(A::Open, c, request).enabled);
     model.select(6);
     const auto folder = R::capture(c);
-    TEST_CHECK(R::state(A::PIN, c, folder).enabled && !R::state(A::UNPIN, c, folder).enabled);
+    TEST_CHECK(R::state(A::Pin, c, folder).enabled && !R::state(A::Unpin, c, folder).enabled);
     c.pinned = [](const files::Location&) { return true; };
-    TEST_CHECK(!R::state(A::PIN, c, folder).enabled && R::state(A::UNPIN, c, folder).enabled);
+    TEST_CHECK(!R::state(A::Pin, c, folder).enabled && R::state(A::Unpin, c, folder).enabled);
     model.selectAll();
     const auto multiple = R::capture(c);
     TEST_CHECK(
-        !R::state(A::OPEN, c, multiple).enabled
-        && !R::state(A::RENAME, c, multiple).enabled
-        && R::state(A::PROPERTIES, c, multiple).enabled
+        !R::state(A::Open, c, multiple).enabled
+        && !R::state(A::Rename, c, multiple).enabled
+        && R::state(A::Properties, c, multiple).enabled
     );
-    data.status = files::DirectoryStatus::CANCELLED;
+    data.status = files::DirectoryStatus::Cancelled;
     ++data.generation;
     model.applySnapshot(data);
     TEST_CHECK(!R::state(A::SelectAll, c, R::capture(c)).enabled);
@@ -217,7 +217,7 @@ namespace {
     remote.generation = ++data.generation;
     model.applySnapshot(remote);
     model.select(90);
-    TEST_CHECK(!R::state(A::RENAME, c, R::capture(c)).enabled && R::state(A::OPEN, c, R::capture(c)).enabled);
+    TEST_CHECK(!R::state(A::Rename, c, R::capture(c)).enabled && R::state(A::Open, c, R::capture(c)).enabled);
   }
   void testBulkSelection() {
     files::DirectoryModel model;

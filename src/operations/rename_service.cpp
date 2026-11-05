@@ -100,16 +100,16 @@ struct files::RenameService::State {
           owner->snapshot.error = reply->error;
           if (reply->destination) {
             owner->snapshot.destination = std::move(reply->destination);
-            owner->snapshot.status = RenameStatus::SUCCEEDED;
+            owner->snapshot.status = RenameStatus::Succeeded;
             owner->target.reset();
           } else if (owner->cancelled.load()) {
-            owner->snapshot.status = RenameStatus::CANCELLED;
+            owner->snapshot.status = RenameStatus::Cancelled;
             owner->target.reset();
           } else if (!reply->error.empty()) {
-            owner->snapshot.status = RenameStatus::ERROR;
+            owner->snapshot.status = RenameStatus::Error;
           } else {
             owner->target = std::move(reply->target);
-            owner->snapshot.status = RenameStatus::READY;
+            owner->snapshot.status = RenameStatus::Ready;
           }
           owner->notify();
         },
@@ -147,8 +147,8 @@ const files::RenameSnapshot& files::RenameService::snapshot() const { return m_s
 void files::RenameService::cancel() {
   m_state->cancelled.store(true);
   m_state->target.reset();
-  if (!busy() && m_state->snapshot.status != RenameStatus::SUCCEEDED) {
-    m_state->snapshot.status = RenameStatus::CANCELLED;
+  if (!busy() && m_state->snapshot.status != RenameStatus::Succeeded) {
+    m_state->snapshot.status = RenameStatus::Cancelled;
   }
 }
 bool files::RenameService::prepare(const Location& source) {
@@ -156,7 +156,7 @@ bool files::RenameService::prepare(const Location& source) {
     return false;
   }
   m_state->target.reset();
-  m_state->snapshot = {.status = RenameStatus::PREPARING, .source = source, .destination = std::nullopt, .error = {}};
+  m_state->snapshot = {.status = RenameStatus::Preparing, .source = source, .destination = std::nullopt, .error = {}};
   State::launch(m_state, [source] {
     const auto path = source.nativePath();
     if (!path) {
@@ -175,12 +175,12 @@ bool files::RenameService::rename(std::string name) {
     return false;
   }
   if (const auto error = filenameProblem(name)) {
-    m_state->snapshot.status = RenameStatus::ERROR;
+    m_state->snapshot.status = RenameStatus::Error;
     m_state->snapshot.error = *error;
     m_state->notify();
     return false;
   }
-  m_state->snapshot.status = RenameStatus::RENAMING;
+  m_state->snapshot.status = RenameStatus::Renaming;
   m_state->snapshot.error.clear();
   State::launch(m_state, [owner = m_state, target = m_state->target, name = std::move(name)] {
     auto destination = Location::fromPath((std::filesystem::path(target->parentPath) / name).native());

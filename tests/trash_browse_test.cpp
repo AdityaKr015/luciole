@@ -30,9 +30,9 @@ namespace {
       }
     }
     void ready(const files::BrowserController& browser) {
-      until([&] { return browser.model().snapshot().status != files::DirectoryStatus::LOADING; });
+      until([&] { return browser.model().snapshot().status != files::DirectoryStatus::Loading; });
       const auto& snapshot = browser.model().snapshot();
-      TEST_CHECK(snapshot.status == files::DirectoryStatus::READY);
+      TEST_CHECK(snapshot.status == files::DirectoryStatus::Ready);
     }
 
   private:
@@ -82,17 +82,17 @@ namespace {
     Pump pump;
     files::BrowserController browser({}, false);
     browser.open(files::Location::trash());
-    pump.until([&] { return browser.model().snapshot().status == files::DirectoryStatus::ERROR; });
+    pump.until([&] { return browser.model().snapshot().status == files::DirectoryStatus::Error; });
     TEST_CHECK(
-        browser.model().snapshot().error->kind == files::FileErrorKind::UNSUPPORTED && browser.model().rows().empty()
+        browser.model().snapshot().error->kind == files::FileErrorKind::Unsupported && browser.model().rows().empty()
     );
     browser.refresh();
-    pump.until([&] { return browser.model().snapshot().status == files::DirectoryStatus::ERROR; });
+    pump.until([&] { return browser.model().snapshot().status == files::DirectoryStatus::Error; });
     Fixture fixture;
     browser.open(files::Location::fromPath(fixture.root.native()));
     pump.ready(browser);
     TEST_CHECK(browser.back());
-    pump.until([&] { return browser.model().snapshot().status == files::DirectoryStatus::ERROR; });
+    pump.until([&] { return browser.model().snapshot().status == files::DirectoryStatus::Error; });
   }
   void concurrentTrashLocations() {
     std::barrier gate(4);

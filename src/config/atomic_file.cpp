@@ -242,7 +242,7 @@ files::updateTextFileAtomic(const std::filesystem::path& path, const AtomicTrans
     return {.error = std::move(transformed.error())};
   }
   if (!*transformed || *transformed == current->content) {
-    return {.state = AtomicWriteState::UNCHANGED, .error = {}};
+    return {.state = AtomicWriteState::Unchanged, .error = {}};
   }
   const auto& content = **transformed;
   if (content.size() > kMaxBytes) {
@@ -285,9 +285,9 @@ files::updateTextFileAtomic(const std::filesystem::path& path, const AtomicTrans
   }
   temporary.name.clear();
   if (!sync(parent->fd)) {
-    return {.state = AtomicWriteState::COMMITTED, .error = failure("private file replaced but directory sync failed")};
+    return {.state = AtomicWriteState::Committed, .error = failure("private file replaced but directory sync failed")};
   }
-  return {.state = AtomicWriteState::DURABLE, .error = {}};
+  return {.state = AtomicWriteState::Durable, .error = {}};
 }
 
 std::expected<std::optional<std::string>, std::string> files::readPrivateTextFile(const std::filesystem::path& path) {

@@ -15,8 +15,8 @@ namespace files {
   struct BrowserSettings {
     SortOptions sort;
     ActivationMode activationMode = ActivationMode::DoubleClick;
-    TypingMode typingMode = TypingMode::SEARCH;
-    ViewMode viewMode = ViewMode::LIST;
+    TypingMode typingMode = TypingMode::Search;
+    ViewMode viewMode = ViewMode::List;
     bool showHidden = false;
     int gridIconSize = kDefaultGridIconSize;
     int sidebarWidth = kDefaultSidebarWidth;
@@ -72,7 +72,7 @@ namespace files {
     ThumbnailMaxFileMib,
     ThumbnailMaxMegapixels,
     ThumbnailCacheMib,
-    COUNT
+    Count
   };
   struct OverrideEdit {
     BrowserPreference preference;

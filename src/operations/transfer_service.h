@@ -8,9 +8,9 @@
 #include <vector>
 
 namespace files {
-  enum class TransferAction { MOVE, COPY };
-  enum class TransferOutcome { MOVED, COPIED, SKIPPED, FAILED, CANCELLED, PARTIAL };
-  enum class TransferConflictChoice { REPLACE, SKIP, KeepBoth, CANCEL };
+  enum class TransferAction { Move, Copy };
+  enum class TransferOutcome { Moved, Copied, Skipped, Failed, Cancelled, Partial };
+  enum class TransferConflictChoice { Replace, Skip, KeepBoth, Cancel };
   struct TransferConflict {
     std::uint64_t id;
     Location source;
@@ -26,11 +26,11 @@ namespace files {
   struct TransferRequest {
     std::vector<Location> sources;
     Location destination;
-    TransferAction action = TransferAction::MOVE;
+    TransferAction action = TransferAction::Move;
   };
   struct TransferResult {
     Location source;
-    TransferOutcome outcome = TransferOutcome::FAILED;
+    TransferOutcome outcome = TransferOutcome::Failed;
     std::string error;
   };
 

@@ -65,7 +65,7 @@ namespace {
     const std::vector<files::SavedWindow> windows{
         {.tabs = {{.primary = fixture.location("home"), .secondary = std::nullopt}}}
     };
-    TEST_CHECK(state.saveWindows(windows) == files::AtomicWriteState::DURABLE);
+    TEST_CHECK(state.saveWindows(windows) == files::AtomicWriteState::Durable);
     files::PinService service(path);
     service.reload();
     pump.ready(service);
@@ -161,7 +161,7 @@ namespace {
     TEST_CHECK(!existing.rename(project, "recreated"));
     auto externalLabels = existing.bookmarks();
     std::ranges::find(externalLabels, filesystem.location, &files::Bookmark::location)->label = "Another writer";
-    TEST_CHECK(observed.load() && observed.saveBookmarks(externalLabels) == files::AtomicWriteState::DURABLE);
+    TEST_CHECK(observed.load() && observed.saveBookmarks(externalLabels) == files::AtomicWriteState::Durable);
     TEST_CHECK(existing.rename(renamed, "My root"));
     pump.ready(existing);
     TEST_CHECK(!existing.error().empty() && existing.bookmarks() == externalLabels);
@@ -233,7 +233,7 @@ namespace {
     TEST_CHECK(foreign.load());
     auto external = foreign.state().bookmarks;
     external.push_back(fixture.pin("external"));
-    TEST_CHECK(foreign.saveBookmarks(external) == files::AtomicWriteState::DURABLE);
+    TEST_CHECK(foreign.saveBookmarks(external) == files::AtomicWriteState::Durable);
     TEST_CHECK(service.add({fixture.pin("not-committed")}, 0));
     pump.ready(service);
     TEST_CHECK(

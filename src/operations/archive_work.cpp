@@ -433,7 +433,7 @@ namespace {
       }
       const files::GString display(g_filename_display_name(entry.name.c_str()));
       entry.displayName = display.get();
-      if (entry.kind == ArchiveEntryKind::DIRECTORY) {
+      if (entry.kind == ArchiveEntryKind::Directory) {
         entry.icon.names = {"folder"};
       } else {
         const files::GString mime(g_content_type_guess(entry.name.c_str(), nullptr, 0, nullptr));
@@ -474,24 +474,24 @@ namespace {
       };
       const auto type = archive_entry_filetype(header);
       if (const char* target = archive_entry_hardlink(header)) {
-        entry.kind = ArchiveEntryKind::HARDLINK;
+        entry.kind = ArchiveEntryKind::Hardlink;
         entry.link = safePath(bounded(target), reader.work);
         if (entry.link.empty()) {
           throw std::runtime_error("Archive has an invalid hard-link target.");
         }
       } else if (type == AE_IFREG) {
-        entry.kind = ArchiveEntryKind::FILE;
+        entry.kind = ArchiveEntryKind::File;
       } else if (type == AE_IFDIR) {
-        entry.kind = ArchiveEntryKind::DIRECTORY;
+        entry.kind = ArchiveEntryKind::Directory;
       } else if (type == AE_IFLNK) {
-        entry.kind = ArchiveEntryKind::SYMLINK;
+        entry.kind = ArchiveEntryKind::Symlink;
         entry.link = bounded(archive_entry_symlink(header));
         (void)linkTarget(path, entry.link, reader.work);
       } else {
         throw std::runtime_error("Archive contains an unsupported special file.");
       }
       entry.mode = static_cast<unsigned>(archive_entry_perm(header)) & 0777U;
-      if (entry.kind == ArchiveEntryKind::FILE && archive_entry_size_is_set(header)) {
+      if (entry.kind == ArchiveEntryKind::File && archive_entry_size_is_set(header)) {
         const auto size = archive_entry_size(header);
         if (size < 0) {
           throw std::runtime_error("Archive contains a negative file size.");
@@ -499,7 +499,7 @@ namespace {
         entry.size = static_cast<std::uint64_t>(size);
         reader.work.account(*entry.size);
       }
-      if (explicitNames.contains(path) && entry.kind != ArchiveEntryKind::DIRECTORY) {
+      if (explicitNames.contains(path) && entry.kind != ArchiveEntryKind::Directory) {
         throw std::runtime_error("Archive contains duplicate file names.");
       }
       explicitNames.insert(path);
@@ -511,7 +511,7 @@ namespace {
         }
         prefix += component;
         const auto found = known.find(prefix);
-        if (found != known.end() && result->entries[found->second].kind != ArchiveEntryKind::DIRECTORY) {
+        if (found != known.end() && result->entries[found->second].kind != ArchiveEntryKind::Directory) {
           throw std::runtime_error("Archive entry traverses a file or link.");
         }
         if (found == known.end()) {
@@ -520,15 +520,15 @@ namespace {
                .parent = parentName(prefix),
                .name = component,
                .displayName = {},
-               .kind = ArchiveEntryKind::DIRECTORY,
+               .kind = ArchiveEntryKind::Directory,
                .size = std::nullopt,
                .link = {}}
           );
         }
       }
       if (const auto found = known.find(path); found != known.end()) {
-        if (entry.kind != ArchiveEntryKind::DIRECTORY
-            || result->entries[found->second].kind != ArchiveEntryKind::DIRECTORY) {
+        if (entry.kind != ArchiveEntryKind::Directory
+            || result->entries[found->second].kind != ArchiveEntryKind::Directory) {
           throw std::runtime_error("Archive entries have conflicting types.");
         }
         result->entries[found->second].mode = entry.mode;
@@ -539,7 +539,7 @@ namespace {
     }
     std::map<std::string, std::string> links;
     for (const auto& entry : result->entries) {
-      if (entry.kind == ArchiveEntryKind::SYMLINK) {
+      if (entry.kind == ArchiveEntryKind::Symlink) {
         links.emplace(entry.path, entry.link);
       }
     }
@@ -644,7 +644,7 @@ namespace {
     Writer(const std::string& filename, ArchiveFormat format, Work& request)
         : work(request),
           output(opened(::open(filename.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600))) {
-      if (format == ArchiveFormat::ZIP) {
+      if (format == ArchiveFormat::Zip) {
         requireArchive(archive_write_set_format_zip(value.get()), value.get(), work);
       } else {
         requireArchive(archive_write_set_format_pax_restricted(value.get()), value.get(), work);
@@ -797,13 +797,13 @@ std::span<const files::ArchiveFormatInfo> files::archiveFormats() {
   static const auto formats = [] {
     std::vector<ArchiveFormatInfo> result;
     for (const auto& item : std::array{
-             ArchiveFormatInfo{ArchiveFormat::ZIP, "ZIP", ".zip"}, ArchiveFormatInfo{ArchiveFormat::TAR, "TAR", ".tar"},
+             ArchiveFormatInfo{ArchiveFormat::Zip, "ZIP", ".zip"}, ArchiveFormatInfo{ArchiveFormat::Tar, "TAR", ".tar"},
              ArchiveFormatInfo{ArchiveFormat::TarGzip, "TAR gzip", ".tar.gz"}
          }) {
       const std::unique_ptr<struct archive, decltype(&archive_write_free)> writer(
           archive_write_new(), &archive_write_free
       );
-      const auto format = item.format == ArchiveFormat::ZIP ? archive_write_set_format_zip(writer.get())
+      const auto format = item.format == ArchiveFormat::Zip ? archive_write_set_format_zip(writer.get())
                                                             : archive_write_set_format_pax_restricted(writer.get());
       const auto filter = item.format == ArchiveFormat::TarGzip ? archive_write_add_filter_gzip(writer.get())
                                                                 : archive_write_add_filter_none(writer.get());
@@ -905,8 +905,8 @@ files::archive_work::Prepared files::archive_work::extract(
   }
   if (open
       && (wanted.size() != 1
-          || contents->entries[entries.at(*wanted.begin())].kind == ArchiveEntryKind::DIRECTORY
-          || contents->entries[entries.at(*wanted.begin())].kind == ArchiveEntryKind::SYMLINK)) {
+          || contents->entries[entries.at(*wanted.begin())].kind == ArchiveEntryKind::Directory
+          || contents->entries[entries.at(*wanted.begin())].kind == ArchiveEntryKind::Symlink)) {
     throw std::runtime_error("Select one regular archive member to open.");
   }
   const auto body = [&](const std::string& path) {
@@ -918,10 +918,10 @@ files::archive_work::Prepared files::archive_work::extract(
         throw std::runtime_error("Archive has a missing or cyclic hard-link target.");
       }
       const auto& entry = contents->entries[entries.at(current)];
-      if (entry.kind == ArchiveEntryKind::FILE) {
+      if (entry.kind == ArchiveEntryKind::File) {
         return current;
       }
-      if (entry.kind != ArchiveEntryKind::HARDLINK) {
+      if (entry.kind != ArchiveEntryKind::Hardlink) {
         throw std::runtime_error("Archive hard link does not target a regular file.");
       }
       current = entry.link;
@@ -931,7 +931,7 @@ files::archive_work::Prepared files::archive_work::extract(
   std::set<std::string> bodies;
   for (const auto& path : wanted) {
     const auto& entry = contents->entries[entries.at(path)];
-    if (entry.kind == ArchiveEntryKind::FILE || entry.kind == ArchiveEntryKind::HARDLINK) {
+    if (entry.kind == ArchiveEntryKind::File || entry.kind == ArchiveEntryKind::Hardlink) {
       bodies.insert(body(path));
     }
   }
@@ -967,7 +967,7 @@ files::archive_work::Prepared files::archive_work::extract(
   for (const auto& path : wanted) {
     work.check();
     const auto& entry = contents->entries[entries.at(path)];
-    if (entry.kind == ArchiveEntryKind::FILE || entry.kind == ArchiveEntryKind::HARDLINK) {
+    if (entry.kind == ArchiveEntryKind::File || entry.kind == ArchiveEntryKind::Hardlink) {
       const auto bytes = bodySizes.at(body(path));
       if (bytes > work.limits.maxExpandedBytes - logicalBytes) {
         throw std::runtime_error("Archive hard links exceed the expanded-size limit.");
@@ -979,12 +979,12 @@ files::archive_work::Prepared files::archive_work::extract(
     work.check();
     const auto& entry = contents->entries[entries.at(path)];
     auto parent = directoryAt(payload.get(), entry.parent);
-    if (entry.kind == ArchiveEntryKind::DIRECTORY) {
+    if (entry.kind == ArchiveEntryKind::Directory) {
       auto folder = directoryAt(payload.get(), path);
       if (::fchmod(folder.get(), static_cast<mode_t>(0700U | (entry.mode & 0055U))) != 0) {
         systemError("Could not set folder permissions");
       }
-    } else if (entry.kind == ArchiveEntryKind::FILE || entry.kind == ArchiveEntryKind::HARDLINK) {
+    } else if (entry.kind == ArchiveEntryKind::File || entry.kind == ArchiveEntryKind::Hardlink) {
       const auto id = std::to_string(entries.at(body(path)));
       if (::linkat(data.get(), id.c_str(), parent.get(), entry.name.c_str(), 0) != 0) {
         systemError("Could not publish extracted file");
@@ -993,7 +993,7 @@ files::archive_work::Prepared files::archive_work::extract(
   }
   for (const auto& path : wanted) {
     const auto& entry = contents->entries[entries.at(path)];
-    if (entry.kind == ArchiveEntryKind::SYMLINK) {
+    if (entry.kind == ArchiveEntryKind::Symlink) {
       (void)linkTarget(path, entry.link, work);
       auto parent = directoryAt(payload.get(), entry.parent);
       if (::symlinkat(entry.link.c_str(), parent.get(), entry.name.c_str()) != 0) {

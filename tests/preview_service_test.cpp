@@ -67,7 +67,7 @@ namespace {
     preview.show(entry(a), 512, {});
     finish();
     TEST_CHECK(
-        preview.snapshot().status == files::PreviewStatus::READY
+        preview.snapshot().status == files::PreviewStatus::Ready
         && preview.snapshot().text == "<b>literal</b>\n日本語\n"
     );
     for (int i = 0; i < 100; ++i) {
@@ -80,19 +80,19 @@ namespace {
     preview.show(entry(a), 512, {});
     finish();
     TEST_CHECK(
-        preview.snapshot().status == files::PreviewStatus::READY
+        preview.snapshot().status == files::PreviewStatus::Ready
         && preview.snapshot().text.size() < 9000
         && preview.snapshot().message == "Preview truncated"
     );
     write(b, std::string("binary\0text", 11));
     preview.show(entry(b), 512, {});
     finish();
-    TEST_CHECK(preview.snapshot().status == files::PreviewStatus::UNAVAILABLE);
+    TEST_CHECK(preview.snapshot().status == files::PreviewStatus::Unavailable);
     auto stale = entry(a);
     stale.size = 3;
     preview.show(stale, 512, {});
     finish();
-    TEST_CHECK(preview.snapshot().status == files::PreviewStatus::ERROR);
+    TEST_CHECK(preview.snapshot().status == files::PreviewStatus::Error);
     const auto link = root / "link.txt";
     std::filesystem::create_symlink(a, link);
     preview.show(entry(link), 512, {});
@@ -102,17 +102,17 @@ namespace {
     TEST_CHECK(::mkfifo(fifo.c_str(), 0600) == 0);
     preview.show(entry(fifo), 512, {});
     finish();
-    TEST_CHECK(preview.snapshot().status == files::PreviewStatus::UNAVAILABLE);
+    TEST_CHECK(preview.snapshot().status == files::PreviewStatus::Unavailable);
     auto remote = entry(b);
     remote.location = files::Location::fromUri("sftp://example.invalid/file.txt");
     preview.show(remote, 512, {});
     finish();
-    TEST_CHECK(preview.snapshot().status == files::PreviewStatus::UNAVAILABLE);
+    TEST_CHECK(preview.snapshot().status == files::PreviewStatus::Unavailable);
     preview.show(entry(a), 512, {});
     preview.clear();
     finish();
     TEST_CHECK(
-        preview.snapshot().status == files::PreviewStatus::EMPTY
+        preview.snapshot().status == files::PreviewStatus::Empty
         && !preview.snapshot().entry
         && preview.snapshot().text.empty()
     );
@@ -120,8 +120,8 @@ namespace {
     write(corrupt, "not an image");
     auto image = entry(corrupt, "image/png");
     preview.show(image, 512, {});
-    wait([&] { return preview.snapshot().status != files::PreviewStatus::LOADING; });
-    TEST_CHECK(preview.snapshot().status == files::PreviewStatus::UNAVAILABLE);
+    wait([&] { return preview.snapshot().status != files::PreviewStatus::Loading; });
+    TEST_CHECK(preview.snapshot().status == files::PreviewStatus::Unavailable);
     preview.clear();
     finish();
     const auto good = root / "good.png";
@@ -129,9 +129,9 @@ namespace {
     gdk_pixbuf_fill(pixels.get(), 0xff2244ffU);
     TEST_CHECK(gdk_pixbuf_save(pixels.get(), good.c_str(), "png", nullptr, nullptr));
     preview.show(entry(good, "image/png"), 1024, {});
-    wait([&] { return preview.snapshot().status != files::PreviewStatus::LOADING; });
+    wait([&] { return preview.snapshot().status != files::PreviewStatus::Loading; });
     TEST_CHECK(
-        preview.snapshot().status == files::PreviewStatus::READY
+        preview.snapshot().status == files::PreviewStatus::Ready
         && preview.snapshot().image
         && preview.snapshot().image->pixels
     );
@@ -144,7 +144,7 @@ namespace {
     const auto seed = grid.prepared(source);
     TEST_CHECK(seed && seed->pixels);
     preview.show(source, 1024, {}, seed);
-    TEST_CHECK(preview.snapshot().status == files::PreviewStatus::READY && preview.snapshot().image == seed);
+    TEST_CHECK(preview.snapshot().status == files::PreviewStatus::Ready && preview.snapshot().image == seed);
     auto obsolete = source;
     obsolete.contentRevision = "changed";
     TEST_CHECK(!grid.prepared(obsolete));
@@ -196,7 +196,7 @@ namespace {
     preview.show(limitedSource, 512, limited, fallback);
     finish();
     TEST_CHECK(
-        preview.snapshot().status == files::PreviewStatus::READY
+        preview.snapshot().status == files::PreviewStatus::Ready
         && preview.snapshot().image == fallback
         && preview.snapshot().image->pixels
         && preview.snapshot().image->pixels->width == 128

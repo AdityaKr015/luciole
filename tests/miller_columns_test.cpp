@@ -51,8 +51,8 @@ namespace {
       }
     }
     void ready(const BrowserController& browser) {
-      until([&] { return browser.model().snapshot().status != DirectoryStatus::LOADING; });
-      TEST_CHECK(browser.model().snapshot().status == DirectoryStatus::READY);
+      until([&] { return browser.model().snapshot().status != DirectoryStatus::Loading; });
+      TEST_CHECK(browser.model().snapshot().status == DirectoryStatus::Ready);
     }
     void loaded(MillerColumns& columns) {
       const auto count = columns.columns().size();
@@ -62,7 +62,7 @@ namespace {
       until([&] {
         columns.synchronize();
         return std::ranges::all_of(columns.columns(), [](const auto& column) {
-          return column->browser->model().snapshot().status != DirectoryStatus::LOADING;
+          return column->browser->model().snapshot().status != DirectoryStatus::Loading;
         });
       });
       columns.synchronize();
@@ -101,11 +101,11 @@ namespace {
     pump.ready(source);
     source.model().select(entry(source, "kept.txt"));
     source.setCaptureViewport([] {
-      return files::BrowseViewport{.mode = files::ViewMode::LIST, .iconSize = 160, .vertical = 45};
+      return files::BrowseViewport{.mode = files::ViewMode::List, .iconSize = 160, .vertical = 45};
     });
     MillerColumns columns;
     columns.start(source);
-    TEST_CHECK(columns.columns().front()->browser->model().snapshot().status == DirectoryStatus::IDLE);
+    TEST_CHECK(columns.columns().front()->browser->model().snapshot().status == DirectoryStatus::Idle);
     pump.loaded(columns);
     TEST_CHECK(
         columns.focused() + 1 == columns.columns().size() && columns.active().model().snapshot().location == current
@@ -159,11 +159,11 @@ namespace {
     const auto& parent = *columns.columns()[linkParent]->browser;
     TEST_CHECK(parent.model().selection().selected.contains(entry(parent, "link")));
     source.open(Location::fromPath((fixture.path / "missing" / "leaf").native()));
-    pump.until([&] { return source.model().snapshot().status == DirectoryStatus::ERROR; });
+    pump.until([&] { return source.model().snapshot().status == DirectoryStatus::Error; });
     columns.start(source);
     pump.loaded(columns);
     TEST_CHECK(
-        columns.active().model().snapshot().status == DirectoryStatus::ERROR
+        columns.active().model().snapshot().status == DirectoryStatus::Error
         && columns.active().model().snapshot().location == source.model().snapshot().location
     );
     if (::getuid() != 0) {
@@ -174,9 +174,9 @@ namespace {
       columns.start(source);
       pump.loaded(columns);
       TEST_CHECK(
-          columns.active().model().snapshot().status == DirectoryStatus::READY
+          columns.active().model().snapshot().status == DirectoryStatus::Ready
           && columns.columns()[columnAt(columns, fixture.path / "locked")]->browser->model().snapshot().status
-              == DirectoryStatus::ERROR
+              == DirectoryStatus::Error
       );
     }
   }
@@ -223,7 +223,7 @@ namespace {
     BrowserController source({}, false);
     source.open(Location::fromPath(fixture.path.native()));
     pump.ready(source);
-    source.setCaptureViewport([] { return files::BrowseViewport{.mode = files::ViewMode::MILLER, .iconSize = 192}; });
+    source.setCaptureViewport([] { return files::BrowseViewport{.mode = files::ViewMode::Miller, .iconSize = 192}; });
     MillerColumns columns;
     columns.start(source, false);
     pump.ready(columns.active());
@@ -247,8 +247,8 @@ namespace {
     TEST_CHECK(columns.columns().size() == 2);
     TEST_CHECK(columns.columns()[1]->location == Location::fromPath((fixture.path / "b").native()));
     TEST_CHECK(columns.columns()[0]->width == 345);
-    TEST_CHECK(old->model().snapshot().status == DirectoryStatus::CANCELLED);
-    parent.model().select(entry(parent, "a"), files::SelectionMode::TOGGLE);
+    TEST_CHECK(old->model().snapshot().status == DirectoryStatus::Cancelled);
+    parent.model().select(entry(parent, "a"), files::SelectionMode::Toggle);
     columns.synchronize();
     TEST_CHECK(columns.columns().size() == 1);
     columns.collectRetired();

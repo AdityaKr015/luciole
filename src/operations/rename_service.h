@@ -8,9 +8,9 @@
 #include <string>
 
 namespace files {
-  enum class RenameStatus { IDLE, PREPARING, READY, RENAMING, SUCCEEDED, ERROR, CANCELLED };
+  enum class RenameStatus { Idle, Preparing, Ready, Renaming, Succeeded, Error, Cancelled };
   struct RenameSnapshot {
-    RenameStatus status = RenameStatus::IDLE;
+    RenameStatus status = RenameStatus::Idle;
     std::optional<Location> source;
     std::optional<Location> destination;
     std::string error;

@@ -10,9 +10,9 @@
 #include <string_view>
 
 namespace files {
-  enum class ArchiveFormat { ZIP, TAR, TarGzip };
-  enum class ArchiveEntryKind { FILE, DIRECTORY, SYMLINK, HARDLINK };
-  enum class ArchivePhase { IDLE, READING, COMPRESSING, EXTRACTING, TRANSFERRING, CLEANING };
+  enum class ArchiveFormat { Zip, Tar, TarGzip };
+  enum class ArchiveEntryKind { File, Directory, Symlink, Hardlink };
+  enum class ArchivePhase { Idle, Reading, Compressing, Extracting, Transferring, Cleaning };
   struct ArchiveFormatInfo {
     ArchiveFormat format;
     std::string_view label;
@@ -20,7 +20,7 @@ namespace files {
   };
   struct ArchiveEntry {
     std::string path, parent, name, displayName;
-    ArchiveEntryKind kind = ArchiveEntryKind::FILE;
+    ArchiveEntryKind kind = ArchiveEntryKind::File;
     std::optional<std::uint64_t> size;
     std::string link;
     unsigned mode = 0644;

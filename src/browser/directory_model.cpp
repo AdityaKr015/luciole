@@ -16,11 +16,11 @@ bool files::DirectoryModel::applySnapshot(DirectorySnapshot snapshot) {
     m_scrollAnchor.reset();
     m_selectionAvailable = false;
   }
-  if (snapshot.status == DirectoryStatus::IDLE || snapshot.status == DirectoryStatus::CANCELLED) {
+  if (snapshot.status == DirectoryStatus::Idle || snapshot.status == DirectoryStatus::Cancelled) {
     m_selectionAvailable = false;
-  } else if (snapshot.status == DirectoryStatus::LOADING && snapshot.incrementalResults) {
+  } else if (snapshot.status == DirectoryStatus::Loading && snapshot.incrementalResults) {
     m_selectionAvailable = !snapshot.entries.empty();
-  } else if (snapshot.status == DirectoryStatus::READY || snapshot.status == DirectoryStatus::ERROR) {
+  } else if (snapshot.status == DirectoryStatus::Ready || snapshot.status == DirectoryStatus::Error) {
     m_selectionAvailable = true;
   }
   m_snapshot = std::move(snapshot);
@@ -118,7 +118,7 @@ bool files::DirectoryModel::less(EntryId left, EntryId right) const {
   if (m_sort.directoriesFirst && (a.type == G_FILE_TYPE_DIRECTORY) != (b.type == G_FILE_TYPE_DIRECTORY)) {
     return a.type == G_FILE_TYPE_DIRECTORY;
   }
-  if (m_sort.field == SortField::TYPE) {
+  if (m_sort.field == SortField::Type) {
     const auto& first = leftPresentation.typeSortKey;
     const auto& second = rightPresentation.typeSortKey;
     if (first.has_value() != second.has_value()) {
@@ -127,9 +127,9 @@ bool files::DirectoryModel::less(EntryId left, EntryId right) const {
     if (first && first != second) {
       return m_sort.descending ? first > second : first < second;
     }
-  } else if (m_sort.field != SortField::NAME) {
-    const auto& first = m_sort.field == SortField::SIZE ? a.size : a.modifiedSeconds;
-    const auto& second = m_sort.field == SortField::SIZE ? b.size : b.modifiedSeconds;
+  } else if (m_sort.field != SortField::Name) {
+    const auto& first = m_sort.field == SortField::Size ? a.size : a.modifiedSeconds;
+    const auto& second = m_sort.field == SortField::Size ? b.size : b.modifiedSeconds;
     // Unknown metadata stays last in both directions; zero is a real value.
     if (first.has_value() != second.has_value()) {
       return first.has_value();
@@ -222,10 +222,10 @@ bool files::DirectoryModel::select(EntryId id, SelectionMode mode) {
   if (!canSelect() || !m_positions.contains(id)) {
     return false;
   }
-  if (mode == SelectionMode::REPLACE) {
+  if (mode == SelectionMode::Replace) {
     m_selection.selected = {id};
     m_selection.anchor = id;
-  } else if (mode == SelectionMode::TOGGLE) {
+  } else if (mode == SelectionMode::Toggle) {
     if (m_selection.selected.contains(id)) {
       m_selection.selected.erase(id);
     } else {
@@ -235,7 +235,7 @@ bool files::DirectoryModel::select(EntryId id, SelectionMode mode) {
   } else {
     const auto anchor = m_selection.anchor.value_or(m_selection.focused.value_or(id));
     m_selection.anchor = anchor;
-    if (mode == SelectionMode::RANGE) {
+    if (mode == SelectionMode::Range) {
       m_selection.selected.clear();
     }
     const auto [first, last] = std::minmax(m_positions.at(anchor), m_positions.at(id));

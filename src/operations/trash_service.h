@@ -8,15 +8,15 @@
 #include <vector>
 
 namespace files {
-  enum class TrashStatus { IDLE, PREPARING, READY, TRASHING, FINISHED, ERROR, CANCELLED };
-  enum class TrashOutcome { TRASHED, FAILED, CANCELLED };
+  enum class TrashStatus { Idle, Preparing, Ready, Trashing, Finished, Error, Cancelled };
+  enum class TrashOutcome { Trashed, Failed, Cancelled };
   struct TrashResult {
     Location source;
-    TrashOutcome outcome = TrashOutcome::CANCELLED;
+    TrashOutcome outcome = TrashOutcome::Cancelled;
     std::string error;
   };
   struct TrashSnapshot {
-    TrashStatus status = TrashStatus::IDLE;
+    TrashStatus status = TrashStatus::Idle;
     std::vector<TrashResult> results;
     std::string error;
   };

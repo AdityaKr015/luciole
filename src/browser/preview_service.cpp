@@ -165,7 +165,7 @@ namespace {
 
 struct files::PreviewService::State : std::enable_shared_from_this<State> {
   PreviewSnapshot view;
-  ThumbnailService thumbnails{ThumbnailPurpose::PREVIEW};
+  ThumbnailService thumbnails{ThumbnailPurpose::Preview};
   std::shared_ptr<const FileIconImage> pendingImage;
   GioPtr<GCancellable> cancel;
   std::function<void()> changed;
@@ -191,7 +191,7 @@ struct files::PreviewService::State : std::enable_shared_from_this<State> {
       view.image = pendingImage;
     }
     view.imageUpgradeFailed = !pendingImage->pixels;
-    view.status = view.image && view.image->pixels ? PreviewStatus::READY : PreviewStatus::UNAVAILABLE;
+    view.status = view.image && view.image->pixels ? PreviewStatus::Ready : PreviewStatus::Unavailable;
     view.message = pendingImage->pixels ? ""
         : view.image                    ? "Larger preview unavailable."
                                         : "No preview available for this file.";
@@ -226,9 +226,9 @@ struct files::PreviewService::State : std::enable_shared_from_this<State> {
           if (state->alive && work.serial == state->serial && text) {
             state->view.text = text->text;
             state->view.message = text->message;
-            state->view.status = text->error                             ? PreviewStatus::ERROR
-                : (!text->text.empty() || text->message == "Empty file") ? PreviewStatus::READY
-                                                                         : PreviewStatus::UNAVAILABLE;
+            state->view.status = text->error                             ? PreviewStatus::Error
+                : (!text->text.empty() || text->message == "Empty file") ? PreviewStatus::Ready
+                                                                         : PreviewStatus::Unavailable;
             state->notify();
           }
           state->start();
@@ -271,8 +271,8 @@ void files::PreviewService::show(
 ) {
   pixels = ThumbnailService::pixelSizeClass(
       pixels,
-      entry && entry->contentType && entry->contentType->starts_with("image/") ? ThumbnailPurpose::PREVIEW
-                                                                               : ThumbnailPurpose::THUMBNAIL
+      entry && entry->contentType && entry->contentType->starts_with("image/") ? ThumbnailPurpose::Preview
+                                                                               : ThumbnailPurpose::Thumbnail
   );
   if (!entry) {
     if (m_state->view.entry) {
@@ -288,7 +288,7 @@ void files::PreviewService::show(
           || textType(entry->contentType.value_or("")))) {
     if (prepared && prepared->pixels && (!m_state->view.image || !m_state->view.image->pixels)) {
       m_state->view.image = std::move(prepared);
-      m_state->view.status = PreviewStatus::READY;
+      m_state->view.status = PreviewStatus::Ready;
       m_state->view.message = m_state->view.imageUpgradeFailed ? "Larger preview unavailable." : "";
       m_state->notify();
     }
@@ -302,26 +302,26 @@ void files::PreviewService::show(
   state.pixels = pixels;
   state.options = options;
   state.view.entry = *entry;
-  state.view.status = PreviewStatus::UNAVAILABLE;
+  state.view.status = PreviewStatus::Unavailable;
   state.view.message = entry->type == G_FILE_TYPE_DIRECTORY ? "Folder" : "No preview available for this file.";
   if (entry->type == G_FILE_TYPE_REGULAR && !entry->symlink && entry->access.read != false) {
-    state.view.status = PreviewStatus::LOADING;
+    state.view.status = PreviewStatus::Loading;
     state.view.message = "Loading preview…";
     if (textType(entry->contentType.value_or(""))) {
       state.pending = true;
       state.start();
     } else {
-      options.policy = ThumbnailPolicy::ALL;
+      options.policy = ThumbnailPolicy::All;
       state.thumbnails.setOptions(options);
       if (prepared && prepared->pixels) {
         state.view.image = std::move(prepared);
-        state.view.status = PreviewStatus::READY;
+        state.view.status = PreviewStatus::Ready;
         state.view.message.clear();
       }
       state.pendingImage = state.thumbnails.request(*entry, pixels);
       state.imageChanged();
       if (!state.pendingImage && !state.view.image) {
-        state.view.status = PreviewStatus::UNAVAILABLE;
+        state.view.status = PreviewStatus::Unavailable;
         state.view.message = "No preview available for this file.";
       }
     }

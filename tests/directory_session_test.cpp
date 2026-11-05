@@ -83,8 +83,8 @@ namespace {
   }
 
   void ready(Pump& pump, const DirectorySession& session) {
-    pump.until([&session] { return session.snapshot().status != DirectoryStatus::LOADING; });
-    TEST_CHECK(session.snapshot().status == DirectoryStatus::READY);
+    pump.until([&session] { return session.snapshot().status != DirectoryStatus::Loading; });
+    TEST_CHECK(session.snapshot().status == DirectoryStatus::Ready);
   }
 
   void testLocations() {
@@ -121,7 +121,7 @@ namespace {
     fs::create_hard_link(fixture.path / "0", fixture.path / "hard-link");
     DirectorySession session;
     session.open(fixture.location());
-    TEST_CHECK(session.snapshot().status == DirectoryStatus::LOADING);
+    TEST_CHECK(session.snapshot().status == DirectoryStatus::Loading);
     ready(pump, session);
     TEST_CHECK(session.snapshot().entries.size() == 155);
     TEST_CHECK(!session.snapshot().monitorError);
@@ -138,7 +138,7 @@ namespace {
     TEST_CHECK(entry(session, unusual).id == id);
     fs::rename(fixture.path / unusual, fixture.path / "renamed");
     pump.until([&session] {
-      return session.snapshot().status == DirectoryStatus::READY && hasEntry(session, "renamed");
+      return session.snapshot().status == DirectoryStatus::Ready && hasEntry(session, "renamed");
     });
     TEST_CHECK(entry(session, "renamed").id == id);
     fixture.write("renamed", "longer contents");
@@ -174,7 +174,7 @@ namespace {
         &drained
     );
     pump.until([&drained] { return drained; });
-    TEST_CHECK(session.snapshot().status == DirectoryStatus::CANCELLED);
+    TEST_CHECK(session.snapshot().status == DirectoryStatus::Cancelled);
     session.refresh();
     ready(pump, session);
     first.write("after-resume");
@@ -215,7 +215,7 @@ namespace {
     const auto originalId = entry(session, "original").id;
     bool changed = false;
     session.setChangedCallback([&] {
-      if (!changed && session.snapshot().status == DirectoryStatus::LOADING) {
+      if (!changed && session.snapshot().status == DirectoryStatus::Loading) {
         changed = true;
         fs::rename(fixture.path / "original", fixture.path / "moved");
         fixture.write("during-load");
@@ -223,7 +223,7 @@ namespace {
     });
     session.refresh();
     pump.until([&session] {
-      return session.snapshot().status == DirectoryStatus::READY
+      return session.snapshot().status == DirectoryStatus::Ready
           && hasEntry(session, "moved")
           && hasEntry(session, "during-load")
           && !hasEntry(session, "original");
@@ -239,8 +239,8 @@ namespace {
     });
     session.setChangedCallback({});
     fs::remove_all(fixture.path);
-    pump.until([&session] { return session.snapshot().status == DirectoryStatus::ERROR; });
-    TEST_CHECK(session.snapshot().error->kind == files::FileErrorKind::MISSING);
+    pump.until([&session] { return session.snapshot().status == DirectoryStatus::Error; });
+    TEST_CHECK(session.snapshot().error->kind == files::FileErrorKind::Missing);
     TEST_CHECK(session.snapshot().entries.empty());
   }
 
@@ -251,11 +251,11 @@ namespace {
     ready(pump, session);
     TEST_CHECK(session.snapshot().entries.empty());
     session.open(Location::fromPath((fixture.path / "missing").native()));
-    pump.until([&session] { return session.snapshot().status == DirectoryStatus::ERROR; });
-    TEST_CHECK(session.snapshot().error->kind == files::FileErrorKind::MISSING);
+    pump.until([&session] { return session.snapshot().status == DirectoryStatus::Error; });
+    TEST_CHECK(session.snapshot().error->kind == files::FileErrorKind::Missing);
     fixture.write("plain-file");
     session.open(Location::fromPath((fixture.path / "plain-file").native()));
-    pump.until([&session] { return session.snapshot().status == DirectoryStatus::ERROR; });
+    pump.until([&session] { return session.snapshot().status == DirectoryStatus::Error; });
     TEST_CHECK(session.snapshot().error->kind == files::FileErrorKind::NotDirectory);
   }
 
@@ -339,7 +339,7 @@ namespace {
     fs::permissions(file, fs::perms::owner_all);
     pump.until([&] {
       return session.snapshot().generation > generation
-          && session.snapshot().status == DirectoryStatus::READY
+          && session.snapshot().status == DirectoryStatus::Ready
           && !session.snapshot().metadataLoading;
     });
     TEST_CHECK(invalidated && entry(session, "plain").id == id);
@@ -365,7 +365,7 @@ namespace {
     );
 
     session.open(Location::fromPath(file.native()));
-    pump.until([&session] { return session.snapshot().status == DirectoryStatus::ERROR; });
+    pump.until([&session] { return session.snapshot().status == DirectoryStatus::Error; });
     TEST_CHECK(
         !session.snapshot().metadataLoading
         && unknown(session.snapshot().metadata.access)

@@ -139,7 +139,7 @@ void FilePreviewView::sync(
   m_metadata->setText(metadata);
   m_status->setText(snapshot.message);
   m_status->setColor(
-      colorSpecFromRole(snapshot.status == files::PreviewStatus::ERROR ? ColorRole::Error : ColorRole::OnSurfaceVariant)
+      colorSpecFromRole(snapshot.status == files::PreviewStatus::Error ? ColorRole::Error : ColorRole::OnSurfaceVariant)
   );
   m_text->setText(snapshot.text);
   m_text->setVisible(!snapshot.text.empty());

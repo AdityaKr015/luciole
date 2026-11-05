@@ -9,13 +9,13 @@
 #include <utility>
 
 struct files::ArchiveService::State : std::enable_shared_from_this<State> {
-  enum class Operation { INSPECT, COMPRESS, EXTRACT, OPEN };
+  enum class Operation { Inspect, Compress, Extract, Open };
   struct Request {
     std::shared_ptr<State> owner;
     Operation operation;
     std::vector<Location> sources;
     std::optional<Location> destination;
-    ArchiveFormat format = ArchiveFormat::ZIP;
+    ArchiveFormat format = ArchiveFormat::Zip;
     std::vector<std::string> selected;
     std::shared_ptr<const ArchiveCatalog> expected;
   };
@@ -25,7 +25,7 @@ struct files::ArchiveService::State : std::enable_shared_from_this<State> {
   };
   ArchiveLimits limits;
   archive_work::Progress progress;
-  ArchivePhase phase = ArchivePhase::IDLE;
+  ArchivePhase phase = ArchivePhase::Idle;
   std::function<void()> changed;
   GioPtr<GCancellable> cancel{g_cancellable_new()};
   std::shared_ptr<const ArchiveCatalog> catalog;
@@ -80,11 +80,11 @@ struct files::ArchiveService::State : std::enable_shared_from_this<State> {
       openBytes = 0;
     }
     if (paths.empty()) {
-      phase = ArchivePhase::IDLE;
+      phase = ArchivePhase::Idle;
       notify();
       return;
     }
-    phase = ArchivePhase::CLEANING;
+    phase = ArchivePhase::Cleaning;
     struct Cleanup {
       std::shared_ptr<State> owner;
       std::vector<std::string> paths;
@@ -100,7 +100,7 @@ struct files::ArchiveService::State : std::enable_shared_from_this<State> {
           if (owner->closing && !owner->openStages.empty()) {
             owner->clean({});
           } else {
-            owner->phase = ArchivePhase::IDLE;
+            owner->phase = ArchivePhase::Idle;
             owner->notify();
           }
         },
@@ -127,9 +127,9 @@ struct files::ArchiveService::State : std::enable_shared_from_this<State> {
         error = result.error;
         break;
       }
-      if (result.outcome == TransferOutcome::CANCELLED) {
+      if (result.outcome == TransferOutcome::Cancelled) {
         error = "Archive operation cancelled.";
-      } else if (result.outcome == TransferOutcome::SKIPPED) {
+      } else if (result.outcome == TransferOutcome::Skipped) {
         error = "Archive operation skipped.";
       }
     }
@@ -144,10 +144,10 @@ struct files::ArchiveService::State : std::enable_shared_from_this<State> {
       Operation operation, std::vector<Location> sources, std::optional<Location> destination, ArchiveFormat format,
       std::vector<std::string> selected
   ) {
-    if (phase != ArchivePhase::IDLE || closing || sources.empty()) {
+    if (phase != ArchivePhase::Idle || closing || sources.empty()) {
       return false;
     }
-    if (operation == Operation::OPEN && (openStages.size() >= 32 || openBytes >= 512U * 1024U * 1024U)) {
+    if (operation == Operation::Open && (openStages.size() >= 32 || openBytes >= 512U * 1024U * 1024U)) {
       error = "Temporary archive preview storage is full. Extract the member instead.";
       notify();
       return false;
@@ -159,11 +159,11 @@ struct files::ArchiveService::State : std::enable_shared_from_this<State> {
     progress.items.store(0);
     cancel.reset(g_cancellable_new());
     auto expected = (catalog && catalog->source == sources.front()) ? catalog : nullptr;
-    if (operation == Operation::INSPECT) {
+    if (operation == Operation::Inspect) {
       catalog.reset();
-      phase = ArchivePhase::READING;
+      phase = ArchivePhase::Reading;
     } else {
-      phase = operation == Operation::COMPRESS ? ArchivePhase::COMPRESSING : ArchivePhase::EXTRACTING;
+      phase = operation == Operation::Compress ? ArchivePhase::Compressing : ArchivePhase::Extracting;
     }
     const GioPtr<GTask> task(g_task_new(
         nullptr, cancel.get(),
@@ -189,13 +189,13 @@ struct files::ArchiveService::State : std::enable_shared_from_this<State> {
             owner->clean({});
             return;
           }
-          if (request->operation == Operation::INSPECT) {
+          if (request->operation == Operation::Inspect) {
             owner->catalog = std::move(outcome->prepared.catalog);
-            owner->phase = ArchivePhase::IDLE;
+            owner->phase = ArchivePhase::Idle;
             owner->notify();
             return;
           }
-          if (request->operation == Operation::OPEN) {
+          if (request->operation == Operation::Open) {
             if (outcome->prepared.expandedBytes > 512U * 1024U * 1024U - owner->openBytes) {
               owner->error = "Temporary archive preview storage is full. Extract the member instead.";
               owner->clean({outcome->prepared.stage});
@@ -204,16 +204,16 @@ struct files::ArchiveService::State : std::enable_shared_from_this<State> {
             owner->openStages.push_back(outcome->prepared.stage);
             owner->openBytes += outcome->prepared.expandedBytes;
             owner->opened = outcome->prepared.output;
-            owner->phase = ArchivePhase::IDLE;
+            owner->phase = ArchivePhase::Idle;
             owner->notify();
             return;
           }
           owner->stage = std::move(outcome->prepared.stage);
           const std::filesystem::path target(*request->destination->nativePath());
-          owner->phase = ArchivePhase::TRANSFERRING;
+          owner->phase = ArchivePhase::Transferring;
           owner->transferLifetime = owner;
           if (!owner->transfers.start(
-                  {{*outcome->prepared.output}, Location::fromPath(target.parent_path().native()), TransferAction::MOVE}
+                  {{*outcome->prepared.output}, Location::fromPath(target.parent_path().native()), TransferAction::Move}
               )) {
             owner->error = "Could not start the archive publication.";
             owner->clean({std::exchange(owner->stage, {})});
@@ -237,16 +237,16 @@ struct files::ArchiveService::State : std::enable_shared_from_this<State> {
       auto result = std::make_unique<Result>();
       try {
         auto& owner = *request.owner;
-        if (request.operation == Operation::INSPECT) {
+        if (request.operation == Operation::Inspect) {
           result->prepared = archive_work::inspect(request.sources.front(), owner.limits, cancel, owner.progress);
-        } else if (request.operation == Operation::COMPRESS) {
+        } else if (request.operation == Operation::Compress) {
           result->prepared = archive_work::compress(
               request.sources, *request.destination, request.format, owner.limits, cancel, owner.progress
           );
         } else {
           result->prepared = archive_work::extract(
               request.sources.front(), *request.destination, request.selected, request.expected,
-              request.operation == Operation::OPEN, owner.limits, cancel, owner.progress
+              request.operation == Operation::Open, owner.limits, cancel, owner.progress
           );
         }
       } catch (const std::exception& error) {
@@ -272,14 +272,14 @@ files::ArchiveService::~ArchiveService() {
   shutdown();
 }
 bool files::ArchiveService::inspect(Location source) {
-  return m_state->start(State::Operation::INSPECT, {std::move(source)}, std::nullopt, ArchiveFormat::ZIP, {});
+  return m_state->start(State::Operation::Inspect, {std::move(source)}, std::nullopt, ArchiveFormat::Zip, {});
 }
 bool files::ArchiveService::compress(std::vector<Location> sources, Location destination, ArchiveFormat format) {
-  return m_state->start(State::Operation::COMPRESS, std::move(sources), std::move(destination), format, {});
+  return m_state->start(State::Operation::Compress, std::move(sources), std::move(destination), format, {});
 }
 bool files::ArchiveService::extract(Location source, Location destination, std::vector<std::string> selected) {
   return m_state->start(
-      State::Operation::EXTRACT, {std::move(source)}, std::move(destination), ArchiveFormat::ZIP, std::move(selected)
+      State::Operation::Extract, {std::move(source)}, std::move(destination), ArchiveFormat::Zip, std::move(selected)
   );
 }
 bool files::ArchiveService::openMember(const std::string& path) {
@@ -287,7 +287,7 @@ bool files::ArchiveService::openMember(const std::string& path) {
     return false;
   }
   return m_state->start(
-      State::Operation::OPEN, {m_state->catalog->source}, m_state->catalog->source, ArchiveFormat::ZIP, {path}
+      State::Operation::Open, {m_state->catalog->source}, m_state->catalog->source, ArchiveFormat::Zip, {path}
   );
 }
 void files::ArchiveService::cancel() {
@@ -304,10 +304,10 @@ void files::ArchiveService::shutdown() {
     m_state->clean({});
   }
 }
-bool files::ArchiveService::busy() const { return m_state->phase != ArchivePhase::IDLE; }
+bool files::ArchiveService::busy() const { return m_state->phase != ArchivePhase::Idle; }
 files::ArchivePhase files::ArchiveService::phase() const { return m_state->phase; }
 std::uint64_t files::ArchiveService::bytes() const {
-  return m_state->phase == ArchivePhase::TRANSFERRING ? m_state->transfers.bytes() : m_state->progress.bytes.load();
+  return m_state->phase == ArchivePhase::Transferring ? m_state->transfers.bytes() : m_state->progress.bytes.load();
 }
 std::size_t files::ArchiveService::items() const { return m_state->progress.items.load(); }
 const std::string& files::ArchiveService::error() const { return m_state->error; }

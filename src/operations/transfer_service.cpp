@@ -45,8 +45,8 @@ namespace {
   private:
     int m_fd;
   };
-  struct Cancelled : std::runtime_error {
-    Cancelled() : std::runtime_error("Transfer cancelled.") {}
+  struct TransferCancelled : std::runtime_error {
+    TransferCancelled() : std::runtime_error("Transfer cancelled.") {}
   };
   [[noreturn]] void fail(const char* operation) {
     throw std::runtime_error(std::string(operation) + ": " + std::strerror(errno));
@@ -169,7 +169,7 @@ namespace {
     void note(const struct stat& value) { changedLinks[{value.st_dev, value.st_ino}] = value; }
     void check() const {
       if (cancelled.load()) {
-        throw Cancelled();
+        throw TransferCancelled();
       }
     }
   };
@@ -481,15 +481,15 @@ namespace {
       }
       replace.reset();
       switch (work.choose(source, target, existing)) {
-      case files::TransferConflictChoice::SKIP:
+      case files::TransferConflictChoice::Skip:
         return false;
-      case files::TransferConflictChoice::CANCEL:
+      case files::TransferConflictChoice::Cancel:
         work.cancelled.store(true);
-        throw Cancelled();
+        throw TransferCancelled();
       case files::TransferConflictChoice::KeepBoth:
         keepBoth = true;
         break;
-      case files::TransferConflictChoice::REPLACE:
+      case files::TransferConflictChoice::Replace:
         replace = existing;
         return true;
       }
@@ -503,8 +503,8 @@ namespace {
       source.metadata = work.expected(source.metadata);
       requireUnchanged(source.metadata, info(source.parent.get(), source.name));
       const bool sameFolder = sameIdentity(info(source.parent.get()), info(destination));
-      if (sameFolder && action == files::TransferAction::MOVE) {
-        result.outcome = SKIPPED;
+      if (sameFolder && action == files::TransferAction::Move) {
+        result.outcome = Skipped;
         return result;
       }
       if (S_ISDIR(source.metadata.st_mode) && hasAncestor(destination, source.metadata)) {
@@ -519,10 +519,10 @@ namespace {
       std::optional<struct stat> replace;
       for (;;) {
         if (!chooseTarget(source, destination, work, target, keepBoth, number, replace)) {
-          result.outcome = SKIPPED;
+          result.outcome = Skipped;
           return result;
         }
-        if (action == files::TransferAction::COPY || replace) {
+        if (action == files::TransferAction::Copy || replace) {
           break;
         }
         work.check();
@@ -532,7 +532,7 @@ namespace {
             )
             == 0) {
           work.note(info(destination, target));
-          result.outcome = MOVED;
+          result.outcome = Moved;
           return result;
         }
         if (errno == EXDEV) {
@@ -557,7 +557,7 @@ namespace {
                 || !unchanged(*replace, current)) {
               replace.reset();
               if (!chooseTarget(source, destination, work, target, keepBoth, number, replace)) {
-                result.outcome = SKIPPED;
+                result.outcome = Skipped;
                 break;
               }
               continue;
@@ -568,7 +568,7 @@ namespace {
             if (errno == EEXIST || (replace && errno == ENOENT)) {
               replace.reset();
               if (!chooseTarget(source, destination, work, target, keepBoth, number, replace)) {
-                result.outcome = SKIPPED;
+                result.outcome = Skipped;
                 break;
               }
               continue;
@@ -583,20 +583,20 @@ namespace {
           if (replace) {
             work.note(info(stage.fd(), "item"));
           }
-          result.outcome = COPIED;
-          if (action == files::TransferAction::MOVE) {
+          result.outcome = Copied;
+          if (action == files::TransferAction::Move) {
             verifyTree(source.parent.get(), tree, work);
             removeSource(source.parent.get(), tree, work);
-            result.outcome = MOVED;
+            result.outcome = Moved;
           }
           break;
         }
-      } catch (const Cancelled&) {
-        result.outcome = published ? PARTIAL : CANCELLED;
+      } catch (const TransferCancelled&) {
+        result.outcome = published ? Partial : Cancelled;
         result.error =
             published ? "The copy completed; cancellation left source items in place." : "Transfer cancelled.";
       } catch (const std::exception& error) {
-        result.outcome = published ? PARTIAL : FAILED;
+        result.outcome = published ? Partial : Failed;
         result.error = published
             ? "The destination was created, but transfer cleanup is incomplete: " + std::string(error.what())
             : error.what();
@@ -607,8 +607,8 @@ namespace {
       if (work.metadataIncomplete && published) {
         result.error += " The destination does not support some extended attributes.";
       }
-    } catch (const Cancelled&) {
-      result.outcome = CANCELLED;
+    } catch (const TransferCancelled&) {
+      result.outcome = Cancelled;
       result.error = "Transfer cancelled.";
     } catch (const std::exception& error) {
       result.error = error.what();
@@ -621,7 +621,7 @@ namespace {
 struct files::TransferService::State {
   std::function<void()> changed;
   bool active = false;
-  TransferAction action = TransferAction::MOVE;
+  TransferAction action = TransferAction::Move;
   std::size_t total = 0;
   std::atomic<std::size_t> completed{0};
   std::atomic<std::uint64_t> bytes{0};
@@ -682,7 +682,7 @@ bool files::TransferService::resolve(std::uint64_t id, TransferConflictChoice ch
       return false;
     }
     m_state->choice = choice;
-    if (choice == TransferConflictChoice::CANCEL) {
+    if (choice == TransferConflictChoice::Cancel) {
       m_state->cancelled.store(true);
     }
   }
@@ -729,7 +729,7 @@ bool files::TransferService::start(TransferRequest request) {
     auto& request = *static_cast<Request*>(data);
     auto outcomes = std::make_unique<std::vector<TransferResult>>();
     for (const auto& source : request.transfer.sources) {
-      outcomes->push_back({source, TransferOutcome::FAILED, {}});
+      outcomes->push_back({source, TransferOutcome::Failed, {}});
     }
     std::vector<bool> processed(outcomes->size(), false);
     Work work{
@@ -765,7 +765,7 @@ bool files::TransferService::start(TransferRequest request) {
           State::notify(owner);
           lock.lock();
           owner->decision.wait(lock, [&] { return owner->cancelled.load() || owner->choice.has_value(); });
-          const auto choice = owner->cancelled.load() ? TransferConflictChoice::CANCEL : *owner->choice;
+          const auto choice = owner->cancelled.load() ? TransferConflictChoice::Cancel : *owner->choice;
           owner->conflict.reset();
           owner->choice.reset();
           return choice;
@@ -794,12 +794,12 @@ bool files::TransferService::start(TransferRequest request) {
           auto parent = opened(::open(source.parent_path().c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
           const auto metadata = info(parent.get(), name);
           sources.push_back({index, location, Fd{}, name, metadata, source.parent_path().native(), info(parent.get())});
-        } catch (const Cancelled&) {
-          (*outcomes)[index] = {location, TransferOutcome::CANCELLED, "Transfer cancelled."};
+        } catch (const TransferCancelled&) {
+          (*outcomes)[index] = {location, TransferOutcome::Cancelled, "Transfer cancelled."};
           processed[index] = true;
           request.owner->completed.fetch_add(1);
         } catch (const std::exception& error) {
-          (*outcomes)[index] = {location, TransferOutcome::FAILED, error.what()};
+          (*outcomes)[index] = {location, TransferOutcome::Failed, error.what()};
           processed[index] = true;
           request.owner->completed.fetch_add(1);
         }
@@ -837,12 +837,12 @@ bool files::TransferService::start(TransferRequest request) {
             }
             current = std::move(parent);
           }
-        } catch (const Cancelled&) {
-          (*outcomes)[source.index] = {source.location, TransferOutcome::CANCELLED, "Transfer cancelled."};
+        } catch (const TransferCancelled&) {
+          (*outcomes)[source.index] = {source.location, TransferOutcome::Cancelled, "Transfer cancelled."};
           processed[source.index] = true;
           request.owner->completed.fetch_add(1);
         } catch (const std::exception& error) {
-          (*outcomes)[source.index] = {source.location, TransferOutcome::FAILED, error.what()};
+          (*outcomes)[source.index] = {source.location, TransferOutcome::Failed, error.what()};
           processed[source.index] = true;
           request.owner->completed.fetch_add(1);
         }
@@ -856,7 +856,7 @@ bool files::TransferService::start(TransferRequest request) {
         }
         try {
           if (included[i]) {
-            (*outcomes)[source.index].outcome = TransferOutcome::SKIPPED;
+            (*outcomes)[source.index].outcome = TransferOutcome::Skipped;
           } else {
             source.parent = openSourceParent(source);
             (*outcomes)[source.index] = transfer(source, destination.get(), request.transfer.action, work);

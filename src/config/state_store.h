@@ -16,11 +16,11 @@ namespace files {
     bool operator==(const Bookmark&) const = default;
   };
 
-  enum class ActivePane : std::uint8_t { PRIMARY, SECONDARY };
+  enum class ActivePane : std::uint8_t { Primary, Secondary };
   struct SavedTab {
     Location primary;
     std::optional<Location> secondary;
-    ActivePane activePane = ActivePane::PRIMARY;
+    ActivePane activePane = ActivePane::Primary;
     bool operator==(const SavedTab&) const = default;
   };
 

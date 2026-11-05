@@ -8,11 +8,11 @@
 #include <string>
 
 namespace files {
-  enum class CreateKind { FOLDER, EmptyFile };
-  enum class CreateStatus { IDLE, PREPARING, READY, CREATING, SUCCEEDED, PARTIAL, ERROR, CANCELLED };
+  enum class CreateKind { Folder, EmptyFile };
+  enum class CreateStatus { Idle, Preparing, Ready, Creating, Succeeded, Partial, Error, Cancelled };
   struct CreateSnapshot {
-    CreateStatus status = CreateStatus::IDLE;
-    CreateKind kind = CreateKind::FOLDER;
+    CreateStatus status = CreateStatus::Idle;
+    CreateKind kind = CreateKind::Folder;
     std::optional<Location> parent;
     std::optional<Location> destination;
     std::string error;

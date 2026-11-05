@@ -146,19 +146,19 @@ namespace {
     const auto source = fixture.root / "conflict.txt", archive = fixture.root / "conflict.zip";
     write(source, "first");
     files::ArchiveService service;
-    TEST_CHECK(service.compress({location(source)}, location(archive), files::ArchiveFormat::ZIP));
+    TEST_CHECK(service.compress({location(source)}, location(archive), files::ArchiveFormat::Zip));
     wait(service, pump);
     const auto original = read(archive);
     write(source, "second content");
     for (const auto choice :
-         {files::TransferConflictChoice::SKIP, files::TransferConflictChoice::KeepBoth,
-          files::TransferConflictChoice::REPLACE}) {
-      TEST_CHECK(service.compress({location(source)}, location(archive), files::ArchiveFormat::ZIP));
+         {files::TransferConflictChoice::Skip, files::TransferConflictChoice::KeepBoth,
+          files::TransferConflictChoice::Replace}) {
+      TEST_CHECK(service.compress({location(source)}, location(archive), files::ArchiveFormat::Zip));
       pump.until([&] { return service.conflict().has_value(); });
       const auto conflict = service.conflict();
       TEST_CHECK(service.resolve(conflict->id, choice));
       wait(service, pump);
-      if (choice != files::TransferConflictChoice::REPLACE) {
+      if (choice != files::TransferConflictChoice::Replace) {
         TEST_CHECK(read(archive) == original);
       } else {
         TEST_CHECK(service.error().empty() && read(archive) != original);
@@ -283,7 +283,7 @@ namespace {
     TEST_CHECK(!service.error().empty() && !fs::exists(fixture.root / "encrypted-output"));
     const auto file = fixture.root / "not-a-folder";
     write(file, "untouched");
-    TEST_CHECK(service.compress({location(file)}, location(file / "failure.tar"), files::ArchiveFormat::TAR));
+    TEST_CHECK(service.compress({location(file)}, location(file / "failure.tar"), files::ArchiveFormat::Tar));
     wait(service, pump);
     TEST_CHECK(!service.error().empty() && read(file) == "untouched");
   }
@@ -299,7 +299,7 @@ namespace {
     bool failed = false;
     try {
       auto prepared = files::archive_work::compress(
-          {location(source)}, location(fixture.root / "out.tar"), files::ArchiveFormat::TAR, {}, cancel.get(), progress
+          {location(source)}, location(fixture.root / "out.tar"), files::ArchiveFormat::Tar, {}, cancel.get(), progress
       );
       (void)files::archive_work::cleanup({prepared.stage});
     } catch (const std::exception&) {
@@ -312,13 +312,13 @@ namespace {
     const auto source = fixture.root / "cancel.txt", output = fixture.root / "cancel.zip";
     write(source, std::string(1024 * 1024, 'x'));
     files::ArchiveService service;
-    TEST_CHECK(service.compress({location(source)}, location(output), files::ArchiveFormat::ZIP));
+    TEST_CHECK(service.compress({location(source)}, location(output), files::ArchiveFormat::Zip));
     service.cancel();
     wait(service, pump);
     TEST_CHECK(!fs::exists(output) && !service.error().empty());
     write(output, "keep me");
     auto owner = std::make_unique<files::ArchiveService>();
-    TEST_CHECK(owner->compress({location(source)}, location(output), files::ArchiveFormat::ZIP));
+    TEST_CHECK(owner->compress({location(source)}, location(output), files::ArchiveFormat::Zip));
     pump.until([&] { return owner->conflict().has_value(); });
     owner.reset();
     pump.until([&] { return fs::is_empty(fixture.root / "tmp"); });

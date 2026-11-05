@@ -12,7 +12,7 @@
 namespace files {
   using EntryId = std::uint64_t;
 
-  enum class SelectionMode : std::uint8_t { REPLACE, TOGGLE, RANGE, AddRange };
+  enum class SelectionMode : std::uint8_t { Replace, Toggle, Range, AddRange };
   struct SelectionState {
     std::unordered_set<EntryId> selected;
     std::optional<EntryId> focused;
@@ -57,7 +57,7 @@ namespace files {
     SelectionSummary selectionSummary() const;
 
     // Reject invisible or unknown IDs without changing focus or selection.
-    bool select(EntryId id, SelectionMode mode = SelectionMode::REPLACE);
+    bool select(EntryId id, SelectionMode mode = SelectionMode::Replace);
     bool selectionAvailable() const { return m_selectionAvailable; }
     void selectAll();
     bool invertSelection();

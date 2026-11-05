@@ -88,7 +88,7 @@ namespace {
     void trash(files::TrashService& service) {
       TEST_CHECK(service.trash());
       until([&] { return !service.busy(); });
-      TEST_CHECK(service.snapshot().status == files::TrashStatus::FINISHED);
+      TEST_CHECK(service.snapshot().status == files::TrashStatus::Finished);
     }
 
   private:
@@ -112,7 +112,7 @@ namespace {
     pump.trash(service);
     TEST_CHECK(service.snapshot().results.size() == 5 && service.completed() == 5);
     TEST_CHECK(std::ranges::all_of(service.snapshot().results, [](const auto& item) {
-      return item.outcome == files::TrashOutcome::TRASHED;
+      return item.outcome == files::TrashOutcome::Trashed;
     }));
     TEST_CHECK(fs::is_empty(parent));
     const auto files = fixture.archived(file);
@@ -160,9 +160,9 @@ namespace {
     pump.trash(service);
     const auto& results = service.snapshot().results;
     TEST_CHECK(
-        results[0].outcome == files::TrashOutcome::FAILED
-        && results[1].outcome == files::TrashOutcome::TRASHED
-        && results[2].outcome == files::TrashOutcome::FAILED
+        results[0].outcome == files::TrashOutcome::Failed
+        && results[1].outcome == files::TrashOutcome::Trashed
+        && results[2].outcome == files::TrashOutcome::Failed
     );
     TEST_CHECK(read(parent / "replaced") == "replacement" && read(parent / "original") == "replaced");
     const auto stale = fixture.folder("stale");
@@ -173,7 +173,7 @@ namespace {
     write(stale / "item", "replacement");
     pump.trash(service);
     TEST_CHECK(
-        service.snapshot().results.front().outcome == files::TrashOutcome::FAILED
+        service.snapshot().results.front().outcome == files::TrashOutcome::Failed
         && read(stale / "item") == "replacement"
         && read(fixture.home / "old-stale/item") == "original"
     );
@@ -184,7 +184,7 @@ namespace {
     fs::create_directory_symlink(fixture.home / "old-stale", alias);
     pump.trash(service);
     TEST_CHECK(
-        service.snapshot().results.front().outcome == files::TrashOutcome::FAILED
+        service.snapshot().results.front().outcome == files::TrashOutcome::Failed
         && fs::exists(stale / "item")
         && fs::exists(alias / "item")
     );
@@ -202,12 +202,12 @@ namespace {
          }) {
       TEST_CHECK(service.prepare(location(parent), sources));
       pump.until([&] { return !service.busy(); });
-      TEST_CHECK(service.snapshot().status == files::TrashStatus::ERROR && !service.canTrash());
+      TEST_CHECK(service.snapshot().status == files::TrashStatus::Error && !service.canTrash());
       TEST_CHECK(read(parent / "keep") == "keep");
     }
     TEST_CHECK(service.prepare(files::Location::fromUri("sftp://example.invalid/"), {location(parent / "keep")}));
     pump.until([&] { return !service.busy(); });
-    TEST_CHECK(service.snapshot().status == files::TrashStatus::ERROR);
+    TEST_CHECK(service.snapshot().status == files::TrashStatus::Error);
   }
   void cancellationAndLifetime(const Fixture& fixture, Pump& pump) {
     const auto parent = fixture.folder("cancelled");
@@ -233,13 +233,13 @@ namespace {
     pump.until([&] { return !service.busy(); });
     for (const auto& result : service.snapshot().results) {
       const auto path = fs::path(*result.source.nativePath());
-      TEST_CHECK((result.outcome == files::TrashOutcome::TRASHED) == !fs::exists(path));
-      if (result.outcome == files::TrashOutcome::TRASHED) {
+      TEST_CHECK((result.outcome == files::TrashOutcome::Trashed) == !fs::exists(path));
+      if (result.outcome == files::TrashOutcome::Trashed) {
         TEST_CHECK(fixture.archived(path).size() == 1);
       }
     }
     service.cancel();
-    TEST_CHECK(service.snapshot().status == files::TrashStatus::FINISHED);
+    TEST_CHECK(service.snapshot().status == files::TrashStatus::Finished);
     auto destroyed = std::make_unique<files::TrashService>();
     bool notified = false;
     destroyed->setChangedCallback([&] { notified = true; });
@@ -263,7 +263,7 @@ namespace {
     pump.trash(service);
     fs::permissions(parent, fs::perms::owner_all);
     TEST_CHECK(
-        service.snapshot().results.front().outcome == files::TrashOutcome::FAILED
+        service.snapshot().results.front().outcome == files::TrashOutcome::Failed
         && read(parent / "keep") == "keep"
         && fixture.archived(parent / "keep").empty()
     );
@@ -276,7 +276,7 @@ namespace {
     files::DirectoryModel model;
     session.setChangedCallback([&] { model.applySnapshot(session.snapshot()); });
     session.open(location(parent));
-    pump.until([&] { return model.snapshot().status == files::DirectoryStatus::READY && model.rows().size() == 2; });
+    pump.until([&] { return model.snapshot().status == files::DirectoryStatus::Ready && model.rows().size() == 2; });
     const auto selected = std::ranges::find(model.snapshot().entries, "selected", &files::DirectoryEntry::name);
     TEST_CHECK(selected != model.snapshot().entries.end());
     const auto id = selected->id;

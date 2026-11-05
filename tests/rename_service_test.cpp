@@ -64,14 +64,14 @@ namespace {
     pump.prepare(service, fixture.root / "source.txt");
     pump.rename(service, "résumé 文.txt");
     TEST_CHECK(
-        service.snapshot().status == files::RenameStatus::SUCCEEDED
+        service.snapshot().status == files::RenameStatus::Succeeded
         && read(fixture.root / "résumé 文.txt") == "content"
         && !fs::exists(fixture.root / "source.txt")
     );
     TEST_CHECK(service.snapshot().destination == location(fixture.root / "résumé 文.txt"));
     pump.prepare(service, fixture.root / "résumé 文.txt");
     pump.rename(service, "résumé 文.txt");
-    TEST_CHECK(service.snapshot().status == files::RenameStatus::SUCCEEDED);
+    TEST_CHECK(service.snapshot().status == files::RenameStatus::Succeeded);
     pump.prepare(service, fixture.root / "résumé 文.txt");
     pump.rename(service, "RÉSUMÉ 文.txt");
     TEST_CHECK(read(fixture.root / "RÉSUMÉ 文.txt") == "content");
@@ -98,32 +98,32 @@ namespace {
     pump.prepare(service, fixture.root / "source");
     pump.rename(service, "existing");
     TEST_CHECK(
-        service.snapshot().status == files::RenameStatus::ERROR
+        service.snapshot().status == files::RenameStatus::Error
         && service.canRename()
         && read(fixture.root / "existing") == "existing"
         && read(fixture.root / "source") == "source"
     );
     fs::create_directory(fixture.root / "directory");
     pump.rename(service, "directory");
-    TEST_CHECK(service.snapshot().status == files::RenameStatus::ERROR && fs::is_directory(fixture.root / "directory"));
+    TEST_CHECK(service.snapshot().status == files::RenameStatus::Error && fs::is_directory(fixture.root / "directory"));
     fs::create_symlink("absent", fixture.root / "symlink");
     pump.rename(service, "symlink");
-    TEST_CHECK(service.snapshot().status == files::RenameStatus::ERROR && fs::is_symlink(fixture.root / "symlink"));
+    TEST_CHECK(service.snapshot().status == files::RenameStatus::Error && fs::is_symlink(fixture.root / "symlink"));
     fs::create_hard_link(fixture.root / "source", fixture.root / "hard-link");
     pump.rename(service, "hard-link");
     TEST_CHECK(
-        service.snapshot().status == files::RenameStatus::ERROR
+        service.snapshot().status == files::RenameStatus::Error
         && fs::equivalent(fixture.root / "source", fixture.root / "hard-link")
     );
     pump.rename(service, "available");
-    TEST_CHECK(service.snapshot().status == files::RenameStatus::SUCCEEDED);
+    TEST_CHECK(service.snapshot().status == files::RenameStatus::Succeeded);
     write(fixture.root / "source", "original");
     pump.prepare(service, fixture.root / "source");
     fs::rename(fixture.root / "source", fixture.root / "original");
     write(fixture.root / "source", "replacement");
     pump.rename(service, "renamed");
     TEST_CHECK(
-        service.snapshot().status == files::RenameStatus::ERROR
+        service.snapshot().status == files::RenameStatus::Error
         && read(fixture.root / "source") == "replacement"
         && read(fixture.root / "original") == "original"
         && !fs::exists(fixture.root / "renamed")
@@ -136,7 +136,7 @@ namespace {
     write(fixture.root / "parent/item", "replacement");
     pump.rename(service, "renamed");
     TEST_CHECK(
-        service.snapshot().status == files::RenameStatus::ERROR
+        service.snapshot().status == files::RenameStatus::Error
         && read(fixture.root / "old-parent/item") == "original"
         && read(fixture.root / "parent/item") == "replacement"
     );
@@ -152,7 +152,7 @@ namespace {
       TEST_CHECK(!service.rename(name) && fs::exists(fixture.root / "source"));
     }
     pump.rename(service, std::string(10000, 'a'));
-    TEST_CHECK(service.snapshot().status == files::RenameStatus::ERROR && fs::exists(fixture.root / "source"));
+    TEST_CHECK(service.snapshot().status == files::RenameStatus::Error && fs::exists(fixture.root / "source"));
     service.cancel();
     TEST_CHECK(!service.canRename());
     write(fixture.root / "editable", "before");
@@ -160,16 +160,16 @@ namespace {
     write(fixture.root / "editable", "updated while editing");
     pump.rename(service, "edited");
     TEST_CHECK(
-        service.snapshot().status == files::RenameStatus::SUCCEEDED
+        service.snapshot().status == files::RenameStatus::Succeeded
         && read(fixture.root / "edited") == "updated while editing"
     );
     pump.prepare(service, fixture.root / "source");
     TEST_CHECK(service.rename("cancel-result"));
     service.cancel();
     pump.until([&] { return !service.busy(); });
-    const bool committed = service.snapshot().status == files::RenameStatus::SUCCEEDED;
+    const bool committed = service.snapshot().status == files::RenameStatus::Succeeded;
     TEST_CHECK(
-        (committed || service.snapshot().status == files::RenameStatus::CANCELLED)
+        (committed || service.snapshot().status == files::RenameStatus::Cancelled)
         && fs::exists(fixture.root / "cancel-result") == committed
         && fs::exists(fixture.root / "source") != committed
     );
@@ -180,13 +180,13 @@ namespace {
     TEST_CHECK(!service.prepare(location(fixture.root / "source")) && !service.rename("other"));
     service.cancel();
     pump.until([&] { return !service.busy(); });
-    TEST_CHECK(service.snapshot().status == files::RenameStatus::CANCELLED && fs::exists(fixture.root / "source"));
+    TEST_CHECK(service.snapshot().status == files::RenameStatus::Cancelled && fs::exists(fixture.root / "source"));
     TEST_CHECK(service.prepare(files::Location::fromUri("sftp://example.invalid/file")));
     pump.until([&] { return !service.busy(); });
-    TEST_CHECK(service.snapshot().status == files::RenameStatus::ERROR && !service.canRename());
+    TEST_CHECK(service.snapshot().status == files::RenameStatus::Error && !service.canRename());
     TEST_CHECK(service.prepare(location(fixture.root / "missing")));
     pump.until([&] { return !service.busy(); });
-    TEST_CHECK(service.snapshot().status == files::RenameStatus::ERROR);
+    TEST_CHECK(service.snapshot().status == files::RenameStatus::Error);
     TEST_CHECK(
         files::filenameStemLength("archive.tar.gz", false) == 11
         && files::filenameStemLength(".bashrc", false) == 7
@@ -198,7 +198,7 @@ namespace {
       fs::permissions(fixture.root, fs::perms::owner_read | fs::perms::owner_exec);
       pump.rename(service, "denied");
       fs::permissions(fixture.root, fs::perms::owner_all);
-      TEST_CHECK(service.snapshot().status == files::RenameStatus::ERROR && fs::exists(fixture.root / "source"));
+      TEST_CHECK(service.snapshot().status == files::RenameStatus::Error && fs::exists(fixture.root / "source"));
     }
   }
   void selectionSurvives(Pump& pump) {
@@ -208,7 +208,7 @@ namespace {
     files::DirectorySession session;
     session.setChangedCallback([&] { model.applySnapshot(session.snapshot()); });
     session.open(location(fixture.root));
-    pump.until([&] { return model.snapshot().status == files::DirectoryStatus::READY && model.rows().size() == 1; });
+    pump.until([&] { return model.snapshot().status == files::DirectoryStatus::Ready && model.rows().size() == 1; });
     const auto id = model.rows().front();
     TEST_CHECK(model.select(id));
     files::RenameService service;

@@ -257,7 +257,7 @@ void files::BrowserController::stop() {
     m_searchActive = false;
     m_search.cancel();
     auto snapshot = m_model.snapshot();
-    snapshot.status = DirectoryStatus::CANCELLED;
+    snapshot.status = DirectoryStatus::Cancelled;
     publish(std::move(snapshot));
   }
 }
@@ -315,7 +315,7 @@ void files::BrowserController::startSearch() {
 void files::BrowserController::publishPendingSearch() {
   publish(
       {.location = m_session.snapshot().location,
-       .status = DirectoryStatus::LOADING,
+       .status = DirectoryStatus::Loading,
        .entries = {},
        .error = std::nullopt,
        .monitorError = std::nullopt,
@@ -391,7 +391,7 @@ void files::BrowserController::publish(DirectorySnapshot snapshot) {
   m_publishing = true;
   m_model.applySnapshot(std::move(snapshot));
   const auto status = m_model.snapshot().status;
-  if (m_restoring && (status == DirectoryStatus::READY || status == DirectoryStatus::ERROR)) {
+  if (m_restoring && (status == DirectoryStatus::Ready || status == DirectoryStatus::Error)) {
     const auto& visit = m_history[m_historyIndex];
     std::unordered_map<std::string, EntryId> visible;
     visible.reserve(m_model.rows().size());

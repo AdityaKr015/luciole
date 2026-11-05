@@ -14,9 +14,9 @@ namespace files {
   inline constexpr int kMinSidebarWidth = 160;
   inline constexpr int kMaxSidebarWidth = 400;
   inline constexpr int kDefaultSidebarWidth = 206;
-  enum class ViewMode : std::uint8_t { LIST, GRID, MILLER };
+  enum class ViewMode : std::uint8_t { List, Grid, Miller };
   enum class ActivationMode : std::uint8_t { SingleClick, DoubleClick };
-  enum class TypingMode : std::uint8_t { SEARCH, TYPEAHEAD };
+  enum class TypingMode : std::uint8_t { Search, Typeahead };
   // Complete column allocations, including the gap after their contents. Zero
   // is the automatic Name width; metadata always has an explicit allocation.
   using DetailsColumnWidths = std::array<int, 4>;
@@ -37,10 +37,10 @@ namespace files {
     bool modified = true;
     bool operator==(const DetailsColumnVisibility&) const = default;
   };
-  enum class DetailsColumn : std::uint8_t { TYPE, SIZE, MODIFIED };
+  enum class DetailsColumn : std::uint8_t { Type, Size, Modified };
   using DetailsColumnOrder = std::array<DetailsColumn, 3>;
   inline constexpr DetailsColumnOrder kDefaultDetailsColumnOrder{
-      DetailsColumn::TYPE, DetailsColumn::SIZE, DetailsColumn::MODIFIED
+      DetailsColumn::Type, DetailsColumn::Size, DetailsColumn::Modified
   };
   inline bool validDetailsColumnOrder(DetailsColumnOrder order) {
     std::ranges::sort(order);
@@ -48,11 +48,11 @@ namespace files {
   }
   inline std::string_view detailsColumnName(DetailsColumn column) {
     switch (column) {
-    case DetailsColumn::TYPE:
+    case DetailsColumn::Type:
       return "type";
-    case DetailsColumn::SIZE:
+    case DetailsColumn::Size:
       return "size";
-    case DetailsColumn::MODIFIED:
+    case DetailsColumn::Modified:
       return "modified";
     }
     return {};
@@ -67,11 +67,11 @@ namespace files {
   }
   inline bool detailsColumnVisible(DetailsColumnVisibility visibility, DetailsColumn column) {
     switch (column) {
-    case DetailsColumn::TYPE:
+    case DetailsColumn::Type:
       return visibility.type;
-    case DetailsColumn::SIZE:
+    case DetailsColumn::Size:
       return visibility.size;
-    case DetailsColumn::MODIFIED:
+    case DetailsColumn::Modified:
       return visibility.modified;
     }
     return false;
@@ -123,9 +123,9 @@ namespace files {
     }
     return result;
   }
-  enum class SortField : std::uint8_t { NAME, SIZE, MODIFIED, TYPE };
+  enum class SortField : std::uint8_t { Name, Size, Modified, Type };
   struct SortOptions {
-    SortField field = SortField::NAME;
+    SortField field = SortField::Name;
     bool descending = false;
     bool directoriesFirst = true;
     bool operator==(const SortOptions&) const = default;

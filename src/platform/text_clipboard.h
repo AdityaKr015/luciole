@@ -18,7 +18,7 @@ namespace files {
   using FileDropHandler = std::function<void(FilePayload, TransferAction, DropCompletion)>;
   struct FileDropTarget {
     FileDropHandler receive;
-    TransferAction preferred = TransferAction::MOVE;
+    TransferAction preferred = TransferAction::Move;
   };
 
   // Text, file selection and drag/drop share the ordinary application data device.

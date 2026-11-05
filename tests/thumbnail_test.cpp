@@ -96,8 +96,8 @@ namespace {
   files::DirectoryEntry source(const fs::path& path, Pump& pump) {
     files::DirectorySession session;
     session.open(files::Location::fromPath(path.parent_path().native()));
-    pump.until([&] { return session.snapshot().status != files::DirectoryStatus::LOADING; });
-    TEST_CHECK(session.snapshot().status == files::DirectoryStatus::READY);
+    pump.until([&] { return session.snapshot().status != files::DirectoryStatus::Loading; });
+    TEST_CHECK(session.snapshot().status == files::DirectoryStatus::Ready);
     for (const auto& entry : session.snapshot().entries) {
       if (entry.name == path.filename().native()) {
         return entry;
@@ -240,8 +240,8 @@ namespace {
     Pump pump;
     files::DirectorySession session;
     session.open(files::Location::fromPath(fs::absolute(directory).native()));
-    pump.until([&] { return session.snapshot().status != files::DirectoryStatus::LOADING; });
-    TEST_CHECK(session.snapshot().status == files::DirectoryStatus::READY);
+    pump.until([&] { return session.snapshot().status != files::DirectoryStatus::Loading; });
+    TEST_CHECK(session.snapshot().status == files::DirectoryStatus::Ready);
     auto entries = session.snapshot().entries;
     std::erase_if(entries, [videos](const auto& entry) {
       return entry.type != G_FILE_TYPE_REGULAR
@@ -771,7 +771,7 @@ namespace {
     files::DirectorySnapshot snapshot;
     snapshot.generation = 100;
     snapshot.location = files::Location::fromPath(fixture.root.native());
-    snapshot.status = files::DirectoryStatus::READY;
+    snapshot.status = files::DirectoryStatus::Ready;
     snapshot.entries.push_back(entry);
     service.synchronizeSources(snapshot);
     ++snapshot.generation;
@@ -818,10 +818,10 @@ namespace {
     pump.until([&] { return asset->ready; });
     TEST_CHECK(asset->pixels && asset->pixels->rgba.front() == 255);
     auto options = files::ThumbnailOptions{};
-    options.policy = files::ThumbnailPolicy::NEVER;
+    options.policy = files::ThumbnailPolicy::Never;
     thumbnails.setOptions(options);
     TEST_CHECK(!thumbnails.request(entry, 48));
-    options.policy = files::ThumbnailPolicy::LOCAL;
+    options.policy = files::ThumbnailPolicy::Local;
     thumbnails.setOptions(options);
     std::vector<std::shared_ptr<const files::FileIconImage>> held;
     for (std::uint64_t id = 1; id <= 1200; ++id) {
@@ -875,7 +875,7 @@ namespace {
         .contentType = "image/png"
     };
     TEST_CHECK(!thumbnails.request(remoteEntry, 48));
-    options.policy = files::ThumbnailPolicy::ALL;
+    options.policy = files::ThumbnailPolicy::All;
     thumbnails.setOptions(options);
     auto remoteAsset = thumbnails.request(remoteEntry, 48);
     pump.until([&] { return remoteAsset->ready; });

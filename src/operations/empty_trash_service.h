@@ -9,16 +9,16 @@
 #include <vector>
 
 namespace files {
-  enum class EmptyTrashStatus { IDLE, PREPARING, READY, EMPTYING, FINISHED, ERROR, CANCELLED };
-  enum class EmptyTrashOutcome { DELETED, SKIPPED, FAILED, CANCELLED, UNCONFIRMED };
+  enum class EmptyTrashStatus { Idle, Preparing, Ready, Emptying, Finished, Error, Cancelled };
+  enum class EmptyTrashOutcome { Deleted, Skipped, Failed, Cancelled, Unconfirmed };
   struct EmptyTrashResult {
     Location location;
     std::string displayName;
-    EmptyTrashOutcome outcome = EmptyTrashOutcome::CANCELLED;
+    EmptyTrashOutcome outcome = EmptyTrashOutcome::Cancelled;
     std::string error;
   };
   struct EmptyTrashSnapshot {
-    EmptyTrashStatus status = EmptyTrashStatus::IDLE;
+    EmptyTrashStatus status = EmptyTrashStatus::Idle;
     std::vector<EmptyTrashResult> results;
     std::string error;
     std::optional<std::uint64_t> size = std::nullopt;

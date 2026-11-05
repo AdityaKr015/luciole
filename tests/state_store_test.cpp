@@ -46,7 +46,7 @@ namespace {
 
   SavedWindow window(const std::string& path) {
     return {
-        .tabs = {{.primary = Location::fromPath(path), .secondary = std::nullopt, .activePane = ActivePane::PRIMARY}},
+        .tabs = {{.primary = Location::fromPath(path), .secondary = std::nullopt, .activePane = ActivePane::Primary}},
         .activeTab = 0
     };
   }
@@ -72,13 +72,13 @@ namespace {
         {.label = "共享", .location = remote},
         {.label = "Deep native path", .location = deepLocation}
     };
-    TEST_CHECK(store.saveBookmarks(bookmarks) == AtomicWriteState::DURABLE);
+    TEST_CHECK(store.saveBookmarks(bookmarks) == AtomicWriteState::Durable);
     std::vector<SavedWindow> windows{window("/tmp/second-tab"), window("/tmp/other-window")};
     windows[0].tabs.insert(
-        windows[0].tabs.begin(), {.primary = local, .secondary = remote, .activePane = ActivePane::SECONDARY}
+        windows[0].tabs.begin(), {.primary = local, .secondary = remote, .activePane = ActivePane::Secondary}
     );
     windows[0].activeTab = 1;
-    TEST_CHECK(store.saveWindows(windows) == AtomicWriteState::DURABLE);
+    TEST_CHECK(store.saveWindows(windows) == AtomicWriteState::Durable);
     StateStore restored(path);
     TEST_CHECK(restored.load() && restored.state().bookmarks == bookmarks && restored.state().windows == windows);
     TEST_CHECK(restored.state().bookmarks.front().location.nativePath() == native);
@@ -86,7 +86,7 @@ namespace {
     const auto bytes = read(path);
     struct stat before{};
     TEST_CHECK(::stat(path.c_str(), &before) == 0 && (before.st_mode & 0777) == 0600);
-    TEST_CHECK(restored.saveWindows(windows) == AtomicWriteState::UNCHANGED && read(path) == bytes);
+    TEST_CHECK(restored.saveWindows(windows) == AtomicWriteState::Unchanged && read(path) == bytes);
     struct stat after{};
     TEST_CHECK(::stat(path.c_str(), &after) == 0 && before.st_ino == after.st_ino);
   }
@@ -99,11 +99,11 @@ namespace {
     const std::vector<Bookmark> a{{.label = "A", .location = Location::fromPath("/tmp/a")}};
     const std::vector<Bookmark> b{{.label = "B", .location = Location::fromPath("/tmp/b")}};
     const std::vector<Bookmark> c{{.label = "C", .location = Location::fromPath("/tmp/c")}};
-    TEST_CHECK(first.saveBookmarks(a) == AtomicWriteState::DURABLE);
+    TEST_CHECK(first.saveBookmarks(a) == AtomicWriteState::Durable);
     TEST_CHECK(
-        second.saveWindows({window("/tmp/session-one")}) == AtomicWriteState::DURABLE && second.state().bookmarks == a
+        second.saveWindows({window("/tmp/session-one")}) == AtomicWriteState::Durable && second.state().bookmarks == a
     );
-    TEST_CHECK(first.saveBookmarks(b) == AtomicWriteState::DURABLE && first.state().windows == second.state().windows);
+    TEST_CHECK(first.saveBookmarks(b) == AtomicWriteState::Durable && first.state().windows == second.state().windows);
     const auto before = read(fixture.path());
     const auto lastGood = second.state();
     TEST_CHECK(
@@ -112,40 +112,40 @@ namespace {
         && second.state() == lastGood
         && !second.issues().empty()
     );
-    TEST_CHECK(second.load() && second.saveBookmarks(c) == AtomicWriteState::DURABLE);
+    TEST_CHECK(second.load() && second.saveBookmarks(c) == AtomicWriteState::Durable);
     TEST_CHECK(
-        first.saveWindows({window("/tmp/session-two")}) == AtomicWriteState::DURABLE && first.state().bookmarks == c
+        first.saveWindows({window("/tmp/session-two")}) == AtomicWriteState::Durable && first.state().bookmarks == c
     );
     const auto currentBytes = read(fixture.path());
     TEST_CHECK(
         second.saveWindows({window("/tmp/stale-session")}) == AtomicWriteState::NotCommitted
         && read(fixture.path()) == currentBytes
     );
-    TEST_CHECK(second.saveBookmarks(c) == AtomicWriteState::UNCHANGED && second.state() == first.state());
+    TEST_CHECK(second.saveBookmarks(c) == AtomicWriteState::Unchanged && second.state() == first.state());
   }
 
   void testEmptyPlacesSnapshot() {
     Fixture fixture;
     StateStore first(fixture.path());
     TEST_CHECK(first.load() && !first.state().placesCustomized);
-    TEST_CHECK(first.saveWindows({window("/tmp/initial")}) == AtomicWriteState::DURABLE);
+    TEST_CHECK(first.saveWindows({window("/tmp/initial")}) == AtomicWriteState::Durable);
     StateStore stale(fixture.path());
     TEST_CHECK(stale.load() && !stale.state().placesCustomized);
-    TEST_CHECK(first.saveBookmarks({}) == AtomicWriteState::DURABLE);
+    TEST_CHECK(first.saveBookmarks({}) == AtomicWriteState::Durable);
     TEST_CHECK(
         stale.saveBookmarks({{.label = "Stale", .location = Location::fromPath("/tmp/stale")}})
         == AtomicWriteState::NotCommitted
     );
-    TEST_CHECK(stale.saveWindows({window("/tmp/updated")}) == AtomicWriteState::DURABLE);
+    TEST_CHECK(stale.saveWindows({window("/tmp/updated")}) == AtomicWriteState::Durable);
     TEST_CHECK(first.load() && first.state().placesCustomized && first.state().bookmarks.empty());
     const auto bytes = read(fixture.path());
-    TEST_CHECK(first.saveBookmarks({}) == AtomicWriteState::UNCHANGED && read(fixture.path()) == bytes);
+    TEST_CHECK(first.saveBookmarks({}) == AtomicWriteState::Unchanged && read(fixture.path()) == bytes);
   }
 
   void testInvalidStateAndRecovery() {
     Fixture fixture;
     StateStore store(fixture.path());
-    TEST_CHECK(store.load() && store.saveWindows({window("/tmp/valid")}) == AtomicWriteState::DURABLE);
+    TEST_CHECK(store.load() && store.saveWindows({window("/tmp/valid")}) == AtomicWriteState::Durable);
     const auto lastGood = store.state();
     for (const auto& invalid : {
              "",
@@ -184,7 +184,7 @@ namespace {
   void testPrivacyAndBounds() {
     Fixture fixture;
     StateStore store(fixture.path());
-    TEST_CHECK(store.load() && store.saveWindows({window("/tmp/valid")}) == AtomicWriteState::DURABLE);
+    TEST_CHECK(store.load() && store.saveWindows({window("/tmp/valid")}) == AtomicWriteState::Durable);
     const auto original = read(fixture.path());
     for (const std::string uri :
          {"sftp://alice:super-secret@example.test/path", "sftp://alice;token=super-secret@example.test/path",
@@ -219,7 +219,7 @@ namespace {
   void testPrivateReaderAndPaths() {
     Fixture fixture;
     StateStore store(fixture.path());
-    TEST_CHECK(store.load() && store.saveWindows({window("/tmp/valid")}) == AtomicWriteState::DURABLE);
+    TEST_CHECK(store.load() && store.saveWindows({window("/tmp/valid")}) == AtomicWriteState::Durable);
     const auto original = read(fixture.path());
     TEST_CHECK(::chmod(fixture.path().c_str(), 0444) == 0 && store.load());
     TEST_CHECK(

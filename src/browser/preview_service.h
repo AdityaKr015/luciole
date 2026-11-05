@@ -3,10 +3,10 @@
 #include "browser/thumbnail_service.h"
 
 namespace files {
-  enum class PreviewStatus { EMPTY, LOADING, READY, UNAVAILABLE, ERROR };
+  enum class PreviewStatus { Empty, Loading, Ready, Unavailable, Error };
   struct PreviewSnapshot {
     std::optional<DirectoryEntry> entry;
-    PreviewStatus status = PreviewStatus::EMPTY;
+    PreviewStatus status = PreviewStatus::Empty;
     std::string text, message;
     std::shared_ptr<const FileIconImage> image;
     bool imageUpgradeFailed = false;

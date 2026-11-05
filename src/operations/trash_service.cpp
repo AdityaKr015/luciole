@@ -88,17 +88,17 @@ struct files::TrashService::State {
           owner->snapshot.error = std::move(reply->error);
           if (reply->finished) {
             owner->snapshot.results = std::move(reply->results);
-            owner->snapshot.status = TrashStatus::FINISHED;
+            owner->snapshot.status = TrashStatus::Finished;
             owner->prepared.reset();
           } else if (g_cancellable_is_cancelled(owner->cancellable.get())) {
-            owner->snapshot.status = TrashStatus::CANCELLED;
+            owner->snapshot.status = TrashStatus::Cancelled;
             owner->prepared.reset();
           } else if (!owner->snapshot.error.empty()) {
-            owner->snapshot.status = TrashStatus::ERROR;
+            owner->snapshot.status = TrashStatus::Error;
             owner->prepared.reset();
           } else {
             owner->prepared = std::move(reply->prepared);
-            owner->snapshot.status = TrashStatus::READY;
+            owner->snapshot.status = TrashStatus::Ready;
           }
           owner->notify();
         },
@@ -136,8 +136,8 @@ const files::TrashSnapshot& files::TrashService::snapshot() const { return m_sta
 void files::TrashService::cancel() {
   g_cancellable_cancel(m_state->cancellable.get());
   m_state->prepared.reset();
-  if (!busy() && m_state->snapshot.status != TrashStatus::FINISHED) {
-    m_state->snapshot.status = TrashStatus::CANCELLED;
+  if (!busy() && m_state->snapshot.status != TrashStatus::Finished) {
+    m_state->snapshot.status = TrashStatus::Cancelled;
   }
 }
 bool files::TrashService::prepare(const Location& parent, std::vector<Location> sources) {
@@ -147,9 +147,9 @@ bool files::TrashService::prepare(const Location& parent, std::vector<Location> 
   m_state->prepared.reset();
   m_state->cancellable.reset(g_cancellable_new());
   m_state->completed.store(0);
-  m_state->snapshot = {.status = TrashStatus::PREPARING, .results = {}, .error = {}};
+  m_state->snapshot = {.status = TrashStatus::Preparing, .results = {}, .error = {}};
   for (const auto& source : sources) {
-    m_state->snapshot.results.push_back({source, TrashOutcome::CANCELLED, {}});
+    m_state->snapshot.results.push_back({source, TrashOutcome::Cancelled, {}});
   }
   State::launch(m_state, [owner = m_state, parent, sources = std::move(sources)] {
     const auto path = parent.nativePath();
@@ -180,11 +180,11 @@ bool files::TrashService::trash() {
   if (!canTrash()) {
     return false;
   }
-  m_state->snapshot.status = TrashStatus::TRASHING;
+  m_state->snapshot.status = TrashStatus::Trashing;
   State::launch(m_state, [owner = m_state, prepared = m_state->prepared] {
     Reply reply{.prepared = {}, .results = {}, .error = {}, .finished = true};
     for (const auto& target : prepared->targets) {
-      reply.results.push_back({target->location, TrashOutcome::CANCELLED, {}});
+      reply.results.push_back({target->location, TrashOutcome::Cancelled, {}});
     }
     for (std::size_t index = 0; index < prepared->targets.size(); ++index) {
       if (g_cancellable_is_cancelled(owner->cancellable.get())) {
@@ -209,15 +209,15 @@ bool files::TrashService::trash() {
         }
         GError* error = nullptr;
         if (g_file_trash(target.location.file().get(), owner->cancellable.get(), &error)) {
-          result.outcome = TrashOutcome::TRASHED;
+          result.outcome = TrashOutcome::Trashed;
         } else {
           result.outcome =
-              g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED) ? TrashOutcome::CANCELLED : TrashOutcome::FAILED;
+              g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED) ? TrashOutcome::Cancelled : TrashOutcome::Failed;
           result.error = error != nullptr ? error->message : "Could not move the item to Trash.";
         }
         g_clear_error(&error);
       } catch (const std::exception& error) {
-        result.outcome = TrashOutcome::FAILED;
+        result.outcome = TrashOutcome::Failed;
         result.error = error.what();
       }
       owner->completed.fetch_add(1);

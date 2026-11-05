@@ -141,8 +141,8 @@ namespace {
     void doLayout(Renderer& renderer) override {
       if (m_columnOrder != m_appliedColumnOrder) {
         for (const auto column : m_columnOrder) {
-          Node* label = column == files::DetailsColumn::TYPE ? m_kind
-              : column == files::DetailsColumn::SIZE         ? m_size
+          Node* label = column == files::DetailsColumn::Type ? m_kind
+              : column == files::DetailsColumn::Size         ? m_size
                                                              : m_modified;
           m_row->addChild(m_row->removeChild(label));
         }
@@ -291,10 +291,10 @@ files::FileViewAdapter::FileViewAdapter(
 
 std::size_t files::FileViewAdapter::itemCount() const { return m_browser.model().rows().size(); }
 std::unique_ptr<Node> files::FileViewAdapter::createTile() {
-  if (m_mode == ViewMode::GRID) {
+  if (m_mode == ViewMode::Grid) {
     return std::make_unique<FileTile>(m_icons, m_thumbnails);
   }
-  return std::make_unique<FileRow>(m_icons, m_thumbnails, m_mode == ViewMode::MILLER);
+  return std::make_unique<FileRow>(m_icons, m_thumbnails, m_mode == ViewMode::Miller);
 }
 
 std::unique_ptr<Node> files::FileViewAdapter::createDecoration() { return std::make_unique<SelectionSurface>(); }
@@ -316,7 +316,7 @@ void files::FileViewAdapter::bindDecoration(Node& decoration, const VirtualGridD
 
 std::string files::FileViewAdapter::itemTooltip(std::size_t index) const {
   const auto& model = m_browser.model();
-  if (m_mode == ViewMode::GRID || index >= model.rows().size()) {
+  if (m_mode == ViewMode::Grid || index >= model.rows().size()) {
     return {};
   }
   const auto id = model.rows()[index];
@@ -325,14 +325,14 @@ std::string files::FileViewAdapter::itemTooltip(std::size_t index) const {
 }
 
 void files::FileViewAdapter::setTileVisible(Node& tile, bool visible) {
-  if (m_mode == ViewMode::GRID) {
+  if (m_mode == ViewMode::Grid) {
     static_cast<FileTile&>(tile).setThumbnailVisible(visible);
   } else {
     static_cast<FileRow&>(tile).setThumbnailVisible(visible);
   }
 }
 void files::FileViewAdapter::releaseTile(Node& tile, Renderer& renderer) {
-  if (m_mode == ViewMode::GRID) {
+  if (m_mode == ViewMode::Grid) {
     static_cast<FileTile&>(tile).releaseFile(renderer);
   } else {
     static_cast<FileRow&>(tile).releaseFile(renderer);
@@ -348,7 +348,7 @@ void files::FileViewAdapter::bindTile(Node& tile, std::size_t index, bool, bool 
   if (entry != nullptr) {
     const bool selected = m_columnActive && model.selection().selected.contains(id);
     const bool focused = selected || (m_focused() && model.selection().focused == id);
-    if (m_mode == ViewMode::GRID) {
+    if (m_mode == ViewMode::Grid) {
       static_cast<FileTile&>(tile).bind(
           *entry, selected, focused, hovered, m_gridIconSize, m_cut && m_cut(entry->location)
       );
@@ -372,8 +372,8 @@ bool files::FileViewAdapter::onPointerPress(std::size_t index, float, float, flo
   m_collapseSelectionOnClick = m_plainClick && m_browser.model().selection().selected.contains(*m_pressed);
   m_toggleSelectionOnClick = modifiers == KeyMod::Ctrl && m_browser.model().selection().selected.contains(*m_pressed);
   const auto mode = (modifiers & KeyMod::Shift) != 0
-      ? ((modifiers & KeyMod::Ctrl) != 0 ? SelectionMode::AddRange : SelectionMode::RANGE)
-      : ((modifiers & KeyMod::Ctrl) != 0 ? SelectionMode::TOGGLE : SelectionMode::REPLACE);
+      ? ((modifiers & KeyMod::Ctrl) != 0 ? SelectionMode::AddRange : SelectionMode::Range)
+      : ((modifiers & KeyMod::Ctrl) != 0 ? SelectionMode::Toggle : SelectionMode::Replace);
   if (!m_collapseSelectionOnClick && !m_toggleSelectionOnClick) {
     (void)m_browser.model().select(*m_pressed, mode);
   }
@@ -401,7 +401,7 @@ VirtualGridAdapter::PointerReleaseResult files::FileViewAdapter::onPointerReleas
   }
   if (m_toggleSelectionOnClick) {
     m_lastClick.reset();
-    (void)m_browser.model().select(*pressed, SelectionMode::TOGGLE);
+    (void)m_browser.model().select(*pressed, SelectionMode::Toggle);
     return {.rebind = true, .activateIndex = std::nullopt};
   }
   if (!m_plainClick) {
@@ -416,7 +416,7 @@ VirtualGridAdapter::PointerReleaseResult files::FileViewAdapter::onPointerReleas
   m_lastClick = twice ? std::nullopt : pressed;
   m_lastClickTime = now;
   const auto* entry = m_browser.model().entry(*pressed);
-  const bool columnFolder = m_mode == ViewMode::MILLER && entry && entry->type == G_FILE_TYPE_DIRECTORY;
+  const bool columnFolder = m_mode == ViewMode::Miller && entry && entry->type == G_FILE_TYPE_DIRECTORY;
   return {
       .rebind = true,
       .activateIndex =
@@ -513,7 +513,7 @@ bool files::FileViewAdapter::areaSelectionCurrent() const {
 }
 
 bool files::FileViewAdapter::itemHitTest(std::size_t, float x, float y, float width, float height) const {
-  if (m_mode != ViewMode::GRID) {
+  if (m_mode != ViewMode::Grid) {
     return true;
   }
   const float iconLeft = (width - m_gridIconSize) * 0.5F;

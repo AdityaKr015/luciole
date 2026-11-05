@@ -311,8 +311,8 @@ namespace {
     TEST_CHECK(clipboard.claimMove(selection.revision));
     peer.blur();
     const std::vector<TransferResult> results{
-        {original.locations[0], TransferOutcome::MOVED, {}},
-        {original.locations[1], partial ? TransferOutcome::SKIPPED : TransferOutcome::MOVED, {}}
+        {original.locations[0], TransferOutcome::Moved, {}},
+        {original.locations[1], partial ? TransferOutcome::Skipped : TransferOutcome::Moved, {}}
     };
     clipboard.finishMove(selection, results);
     peer.pump();
@@ -348,7 +348,7 @@ namespace {
     const auto selection = peer.capture();
     clipboard.claimMove(selection.revision);
     peer.blur();
-    clipboard.finishMove(selection, {{original.locations[0], TransferOutcome::MOVED, {}}});
+    clipboard.finishMove(selection, {{original.locations[0], TransferOutcome::Moved, {}}});
     if (duringEnter) {
       peer.replaceDuringEnter({{"text/plain", "new external selection"}});
     } else {
@@ -368,7 +368,7 @@ namespace {
     const auto selection = peer.capture();
     TEST_CHECK(clipboard.claimMove(selection.revision));
     peer.blur();
-    clipboard.finishMove(selection, {{original.locations[0], TransferOutcome::MOVED, {}}});
+    clipboard.finishMove(selection, {{original.locations[0], TransferOutcome::Moved, {}}});
     // Equal bytes do not establish identity: this is a fresh external intent.
     peer.replace(bytes);
     peer.enter();

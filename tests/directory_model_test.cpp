@@ -42,7 +42,7 @@ namespace {
     DirectorySnapshot result;
     result.generation = generation;
     result.location = Location::fromPath("/tmp/noctalia-model-fixture");
-    result.status = DirectoryStatus::READY;
+    result.status = DirectoryStatus::Ready;
     result.entries = std::move(entries);
     return result;
   }
@@ -72,7 +72,7 @@ namespace {
     data.entries[1].size = 5;
     data.entries[1].modifiedSeconds = 20;
     model.applySnapshot(data);
-    for (const auto field : {SortField::SIZE, SortField::MODIFIED}) {
+    for (const auto field : {SortField::Size, SortField::Modified}) {
       model.setSort({.field = field});
       rows(model, {1, 2, 3});
       model.setSort({.field = field, .descending = true});
@@ -116,26 +116,26 @@ namespace {
     using Column = files::DetailsColumn;
     const auto defaults = files::kDefaultDetailsColumnOrder;
     TEST_CHECK(
-        !files::moveDetailsColumn(defaults, Column::TYPE, -1, {})
-        && !files::moveDetailsColumn(defaults, Column::MODIFIED, 1, {})
+        !files::moveDetailsColumn(defaults, Column::Type, -1, {})
+        && !files::moveDetailsColumn(defaults, Column::Modified, 1, {})
     );
     TEST_CHECK(
-        (files::moveDetailsColumn(defaults, Column::TYPE, 1, {})
-         == files::DetailsColumnOrder{Column::SIZE, Column::TYPE, Column::MODIFIED})
+        (files::moveDetailsColumn(defaults, Column::Type, 1, {})
+         == files::DetailsColumnOrder{Column::Size, Column::Type, Column::Modified})
     );
     TEST_CHECK(
-        (files::moveDetailsColumn(defaults, Column::MODIFIED, -1, {})
-         == files::DetailsColumnOrder{Column::TYPE, Column::MODIFIED, Column::SIZE})
+        (files::moveDetailsColumn(defaults, Column::Modified, -1, {})
+         == files::DetailsColumnOrder{Column::Type, Column::Modified, Column::Size})
     );
     TEST_CHECK(
-        (files::moveDetailsColumn(defaults, Column::TYPE, 1, {.size = false})
-         == files::DetailsColumnOrder{Column::MODIFIED, Column::SIZE, Column::TYPE})
+        (files::moveDetailsColumn(defaults, Column::Type, 1, {.size = false})
+         == files::DetailsColumnOrder{Column::Modified, Column::Size, Column::Type})
     );
     TEST_CHECK(
-        !files::moveDetailsColumn(defaults, Column::TYPE, -1, {.type = false})
-        && !files::moveDetailsColumn(defaults, Column::TYPE, 1, {.size = false, .modified = false})
-        && !files::moveDetailsColumn(defaults, Column::TYPE, 0, {})
-        && !files::moveDetailsColumn({Column::TYPE, Column::TYPE, Column::SIZE}, Column::TYPE, 1, {})
+        !files::moveDetailsColumn(defaults, Column::Type, -1, {.type = false})
+        && !files::moveDetailsColumn(defaults, Column::Type, 1, {.size = false, .modified = false})
+        && !files::moveDetailsColumn(defaults, Column::Type, 0, {})
+        && !files::moveDetailsColumn({Column::Type, Column::Type, Column::Size}, Column::Type, 1, {})
     );
   }
 
@@ -143,21 +143,21 @@ namespace {
     using Column = files::DetailsColumn;
     const auto defaults = files::kDefaultDetailsColumnOrder;
     TEST_CHECK(
-        (files::insertDetailsColumnBefore(defaults, Column::TYPE, std::nullopt)
-         == files::DetailsColumnOrder{Column::SIZE, Column::MODIFIED, Column::TYPE})
+        (files::insertDetailsColumnBefore(defaults, Column::Type, std::nullopt)
+         == files::DetailsColumnOrder{Column::Size, Column::Modified, Column::Type})
     );
     TEST_CHECK(
-        (files::insertDetailsColumnBefore(defaults, Column::MODIFIED, Column::TYPE)
-         == files::DetailsColumnOrder{Column::MODIFIED, Column::TYPE, Column::SIZE})
+        (files::insertDetailsColumnBefore(defaults, Column::Modified, Column::Type)
+         == files::DetailsColumnOrder{Column::Modified, Column::Type, Column::Size})
     );
     TEST_CHECK(
-        files::insertDetailsColumnBefore(defaults, Column::TYPE, Column::TYPE) == defaults
-        && files::insertDetailsColumnBefore(defaults, Column::SIZE, Column::MODIFIED) == defaults
+        files::insertDetailsColumnBefore(defaults, Column::Type, Column::Type) == defaults
+        && files::insertDetailsColumnBefore(defaults, Column::Size, Column::Modified) == defaults
     );
     TEST_CHECK(
         !files::insertDetailsColumnBefore(defaults, static_cast<Column>(99), std::nullopt)
-        && !files::insertDetailsColumnBefore(defaults, Column::TYPE, static_cast<Column>(99))
-        && !files::insertDetailsColumnBefore({Column::TYPE, Column::TYPE, Column::SIZE}, Column::TYPE, std::nullopt)
+        && !files::insertDetailsColumnBefore(defaults, Column::Type, static_cast<Column>(99))
+        && !files::insertDetailsColumnBefore({Column::Type, Column::Type, Column::Size}, Column::Type, std::nullopt)
     );
   }
 
@@ -176,9 +176,9 @@ namespace {
     data.entries[5].contentType = "application/octet-stream";
     model.applySnapshot(data);
     model.select(3);
-    model.select(5, SelectionMode::TOGGLE);
+    model.select(5, SelectionMode::Toggle);
     model.setScrollAnchor(3);
-    model.setSort({.field = SortField::TYPE, .directoriesFirst = false});
+    model.setSort({.field = SortField::Type, .directoriesFirst = false});
     rows(model, {10, 2, 4, 3, 5, 8, 6, 7, 9});
     TEST_CHECK(
         model.typeLabel(10) == "Folder"
@@ -188,14 +188,14 @@ namespace {
         && model.typeLabel(6) == "File"
         && model.typeLabel(9) == "Unknown"
     );
-    model.setSort({.field = SortField::TYPE, .descending = true, .directoriesFirst = false});
+    model.setSort({.field = SortField::Type, .descending = true, .directoriesFirst = false});
     rows(model, {8, 5, 3, 4, 2, 10, 9, 7, 6});
     selected(model, {5, 3});
     TEST_CHECK(model.selection().focused == 5 && model.selection().anchor == 5 && model.scrollAnchor() == 3);
     std::ranges::reverse(data.entries);
     model.applySnapshot(data);
     rows(model, {8, 5, 3, 4, 2, 10, 9, 7, 6});
-    model.setSort({.field = SortField::TYPE, .descending = true});
+    model.setSort({.field = SortField::Type, .descending = true});
     rows(model, {10, 8, 5, 3, 4, 2, 9, 7, 6});
     for (auto& item : data.entries) {
       if (item.id == 3) {
@@ -235,7 +235,7 @@ namespace {
     TEST_CHECK(model.selectionSummary().bytes == 10);
     TEST_CHECK(model.replaceSelection(std::array<EntryId, 2>{1, 2}));
     TEST_CHECK((model.selectionSummary() == files::SelectionSummary{.files = 2, .bytes = 10}));
-    data.status = DirectoryStatus::CANCELLED;
+    data.status = DirectoryStatus::Cancelled;
     model.applySnapshot(data);
     TEST_CHECK(model.selectionSummary() == files::SelectionSummary{});
     auto huge = snapshot({entry(10, "large"), entry(11, "one")}, 2);
@@ -269,7 +269,7 @@ namespace {
     TEST_CHECK(model.snapshot().entries.size() == 4);
     model.setFilter({.text = "absent"});
     rows(model, {});
-    TEST_CHECK(model.snapshot().status == DirectoryStatus::READY);
+    TEST_CHECK(model.snapshot().status == DirectoryStatus::Ready);
   }
 
   void testSelectionAndAnchors() {
@@ -280,14 +280,14 @@ namespace {
     model.setSort({.descending = true});
     selected(model, {2});
     TEST_CHECK(model.selection().focused == 2 && model.selection().anchor == 2 && model.scrollAnchor() == 2);
-    model.select(4, SelectionMode::RANGE);
+    model.select(4, SelectionMode::Range);
     selected(model, {4, 3, 2});
     TEST_CHECK(model.selection().anchor == 2 && model.selection().focused == 4);
-    model.select(3, SelectionMode::RANGE);
+    model.select(3, SelectionMode::Range);
     selected(model, {3, 2});
-    model.select(1, SelectionMode::TOGGLE);
+    model.select(1, SelectionMode::Toggle);
     selected(model, {3, 2, 1});
-    model.select(1, SelectionMode::TOGGLE);
+    model.select(1, SelectionMode::Toggle);
     selected(model, {3, 2});
     TEST_CHECK(model.selection().anchor == 1 && model.selection().focused == 1);
     model.select(4, SelectionMode::AddRange);
@@ -295,7 +295,7 @@ namespace {
     model.clearSelection();
     TEST_CHECK(model.selection().focused == 4 && !model.selection().anchor);
     model.setFocus(3);
-    model.select(1, SelectionMode::RANGE);
+    model.select(1, SelectionMode::Range);
     selected(model, {3, 2, 1});
     TEST_CHECK(model.selection().anchor == 3);
     TEST_CHECK(!model.select(999) && !model.setFocus(999) && !model.setScrollAnchor(999));
@@ -336,7 +336,7 @@ namespace {
     TEST_CHECK(model.replaceSelection({}) && !model.selection().anchor);
     selected(model, {});
     auto stopped = model.snapshot();
-    stopped.status = DirectoryStatus::CANCELLED;
+    stopped.status = DirectoryStatus::Cancelled;
     model.applySnapshot(stopped);
     TEST_CHECK(!model.replaceSelection(reduced));
   }
@@ -349,11 +349,11 @@ namespace {
     model.setScrollAnchor(1);
     auto loading = data;
     loading.generation = 11;
-    loading.status = DirectoryStatus::LOADING;
+    loading.status = DirectoryStatus::Loading;
     model.applySnapshot(loading);
     selected(model, {1});
     TEST_CHECK(!model.applySnapshot(data));
-    TEST_CHECK(model.snapshot().status == DirectoryStatus::LOADING);
+    TEST_CHECK(model.snapshot().status == DirectoryStatus::Loading);
     data.generation = 11;
     data.entries[0] = entry(1, "z-renamed");
     model.applySnapshot(data);
@@ -367,16 +367,16 @@ namespace {
     model.select(2);
     auto cancelled = data;
     cancelled.generation = 13;
-    cancelled.status = DirectoryStatus::CANCELLED;
+    cancelled.status = DirectoryStatus::Cancelled;
     model.applySnapshot(cancelled);
     selected(model, {});
     TEST_CHECK(!model.select(2));
     cancelled.generation = 14;
-    cancelled.status = DirectoryStatus::LOADING;
+    cancelled.status = DirectoryStatus::Loading;
     model.applySnapshot(cancelled);
     TEST_CHECK(!model.select(2));
-    cancelled.status = DirectoryStatus::ERROR;
-    cancelled.error = files::FileError{.kind = files::FileErrorKind::DENIED, .message = "partial fixture"};
+    cancelled.status = DirectoryStatus::Error;
+    cancelled.error = files::FileError{.kind = files::FileErrorKind::Denied, .message = "partial fixture"};
     model.applySnapshot(cancelled);
     TEST_CHECK(model.snapshot().error && model.select(2));
     auto other = snapshot({entry(2, "other")}, 15);
@@ -438,7 +438,7 @@ namespace {
     files::DirectorySession session;
     session.setChangedCallback([&] { model.applySnapshot(session.snapshot()); });
     session.open(Location::fromPath(fixture.path.native()));
-    pump.until([&] { return model.snapshot().status == DirectoryStatus::READY; });
+    pump.until([&] { return model.snapshot().status == DirectoryStatus::Ready; });
     TEST_CHECK(model.rows().size() == 2);
     const auto id = model.rows().front();
     const auto otherId = model.rows().back();
@@ -452,7 +452,7 @@ namespace {
     TEST_CHECK(model.selection().focused == id && model.scrollAnchor() == id);
     session.refresh();
     selected(model, {id});
-    pump.until([&] { return model.snapshot().status == DirectoryStatus::READY; });
+    pump.until([&] { return model.snapshot().status == DirectoryStatus::Ready; });
     selected(model, {id});
     std::filesystem::remove(fixture.path / "item20");
     pump.until([&] { return model.entry(id) == nullptr; });

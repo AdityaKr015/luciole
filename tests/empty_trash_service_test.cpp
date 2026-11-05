@@ -46,12 +46,12 @@ namespace {
     void prepare(files::EmptyTrashService& service) {
       TEST_CHECK(service.prepare());
       until([&] { return !service.busy(); });
-      TEST_CHECK(service.snapshot().status == Status::READY);
+      TEST_CHECK(service.snapshot().status == Status::Ready);
     }
     void empty(files::EmptyTrashService& service) {
       TEST_CHECK(service.empty());
       until([&] { return !service.busy(); });
-      TEST_CHECK(service.snapshot().status == Status::FINISHED);
+      TEST_CHECK(service.snapshot().status == Status::Finished);
     }
 
   private:
@@ -75,14 +75,14 @@ namespace {
     TEST_CHECK(!service.prepare() && !service.empty());
     pump.until([&] { return !service.busy(); });
     TEST_CHECK(
-        service.snapshot().status == Status::ERROR
+        service.snapshot().status == Status::Error
         && !service.canEmpty()
         && read(fixture.root / "keep") == "native content"
     );
     TEST_CHECK(service.prepare());
     service.cancel();
     pump.until([&] { return !service.busy(); });
-    TEST_CHECK(service.snapshot().status == Status::CANCELLED && !service.empty());
+    TEST_CHECK(service.snapshot().status == Status::Cancelled && !service.empty());
     auto destroyed = std::make_unique<files::EmptyTrashService>();
     bool notified = false;
     destroyed->setChangedCallback([&] { notified = true; });
@@ -131,7 +131,7 @@ namespace {
         service.snapshot().results.size() == 7
         && service.completed() == 7
         && std::ranges::all_of(service.snapshot().results, [](const auto& item) {
-             return item.outcome == Outcome::DELETED;
+             return item.outcome == Outcome::Deleted;
            })
     );
     TEST_CHECK(read(fixture.root / "outside") == "untouched" && fs::is_directory(fixture.root / "second"));
@@ -162,9 +162,9 @@ namespace {
     fs::remove(trashInfo() / "restored.trashinfo");
     pump.empty(service);
     TEST_CHECK(
-        std::ranges::count(service.snapshot().results, Outcome::DELETED, &files::EmptyTrashResult::outcome) == 1
-        && std::ranges::count(service.snapshot().results, Outcome::FAILED, &files::EmptyTrashResult::outcome) == 1
-        && std::ranges::count(service.snapshot().results, Outcome::SKIPPED, &files::EmptyTrashResult::outcome) == 1
+        std::ranges::count(service.snapshot().results, Outcome::Deleted, &files::EmptyTrashResult::outcome) == 1
+        && std::ranges::count(service.snapshot().results, Outcome::Failed, &files::EmptyTrashResult::outcome) == 1
+        && std::ranges::count(service.snapshot().results, Outcome::Skipped, &files::EmptyTrashResult::outcome) == 1
     );
     TEST_CHECK(
         read(trashFiles() / "replaced") == "replacement"
@@ -187,14 +187,14 @@ namespace {
     pump.until([&] { return service.completed() != 0 || !service.busy(); });
     service.cancel();
     pump.until([&] { return !service.busy(); });
-    TEST_CHECK(service.snapshot().status == Status::FINISHED);
+    TEST_CHECK(service.snapshot().status == Status::Finished);
     for (const auto& result : service.snapshot().results) {
       const files::GString name(g_file_get_basename(result.location.file().get()));
       const bool exists = fs::exists(trashFiles() / name.get());
-      TEST_CHECK((result.outcome == Outcome::DELETED) == !exists);
+      TEST_CHECK((result.outcome == Outcome::Deleted) == !exists);
     }
     service.cancel();
-    TEST_CHECK(service.snapshot().status == Status::FINISHED);
+    TEST_CHECK(service.snapshot().status == Status::Finished);
     pump.prepare(service);
     if (service.canEmpty()) {
       pump.empty(service);
@@ -212,7 +212,7 @@ namespace {
     files::EmptyTrashService service;
     bool requested = false, accepted = false, measuring = false;
     service.setChangedCallback([&] {
-      if (!requested && service.snapshot().status == Status::READY) {
+      if (!requested && service.snapshot().status == Status::Ready) {
         requested = true;
         measuring = service.busy() && !service.snapshot().size;
         accepted = service.empty();
@@ -220,13 +220,13 @@ namespace {
     });
     TEST_CHECK(service.prepare());
     pump.until([&] {
-      return service.snapshot().status == Status::FINISHED || service.snapshot().status == Status::ERROR;
+      return service.snapshot().status == Status::Finished || service.snapshot().status == Status::Error;
     });
     TEST_CHECK(
         requested
         && measuring
         && accepted
-        && service.snapshot().results.front().outcome == Outcome::DELETED
+        && service.snapshot().results.front().outcome == Outcome::Deleted
         && !fs::exists(trashFiles() / "large-folder")
     );
     service.setChangedCallback({});

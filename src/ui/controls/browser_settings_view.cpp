@@ -70,7 +70,7 @@ BrowserSettingsView::BrowserSettingsView(
   section("Browsing");
   addChoice(
       P::ViewMode, "View", [](const auto& s) { return s.viewMode; },
-      {{"Grid", files::ViewMode::GRID}, {"List", files::ViewMode::LIST}, {"Columns", files::ViewMode::MILLER}}
+      {{"Grid", files::ViewMode::Grid}, {"List", files::ViewMode::List}, {"Columns", files::ViewMode::Miller}}
   );
   addNumber(
       P::GridIconSize, "Icon size", [](const auto& s) { return s.gridIconSize; },
@@ -83,10 +83,10 @@ BrowserSettingsView::BrowserSettingsView(
   addBool(P::MillerShowParents, "Show parent folders in Columns", [](const auto& s) { return s.millerShowParents; });
   addChoice(
       P::SortBy, "Sort by", [](const auto& s) { return s.sort.field; },
-      {{"Name", files::SortField::NAME},
-       {"Type", files::SortField::TYPE},
-       {"Size", files::SortField::SIZE},
-       {"Modified", files::SortField::MODIFIED}}
+      {{"Name", files::SortField::Name},
+       {"Type", files::SortField::Type},
+       {"Size", files::SortField::Size},
+       {"Modified", files::SortField::Modified}}
   );
   addBool(P::SortDescending, "Reverse order", [](const auto& s) { return s.sort.descending; });
   addBool(P::DirectoriesFirst, "Folders first", [](const auto& s) { return s.sort.directoriesFirst; });
@@ -98,7 +98,7 @@ BrowserSettingsView::BrowserSettingsView(
   );
   addChoice(
       P::TypingMode, "When typing", [](const auto& s) { return s.typingMode; },
-      {{"Search subfolders", files::TypingMode::SEARCH}, {"Select names", files::TypingMode::TYPEAHEAD}}
+      {{"Search subfolders", files::TypingMode::Search}, {"Select names", files::TypingMode::Typeahead}}
   );
   section("Sidebar");
   addBool(P::ShowSidebar, "Show sidebar", [](const auto& s) { return s.showSidebar; });
@@ -130,8 +130,8 @@ BrowserSettingsView::BrowserSettingsView(
       if (!label.empty()) {
         label += " / ";
       }
-      label += column == files::DetailsColumn::TYPE ? "Type"
-          : column == files::DetailsColumn::SIZE    ? "Size"
+      label += column == files::DetailsColumn::Type ? "Type"
+          : column == files::DetailsColumn::Size    ? "Size"
                                                     : "Modified";
     }
     orders.emplace_back(label, order);
@@ -140,9 +140,9 @@ BrowserSettingsView::BrowserSettingsView(
   section("Thumbnails");
   addChoice(
       P::ThumbnailPolicy, "Show thumbnails", [](const auto& value) { return value.thumbnails.policy; },
-      {{"Never", files::ThumbnailPolicy::NEVER},
-       {"Local files", files::ThumbnailPolicy::LOCAL},
-       {"All locations", files::ThumbnailPolicy::ALL}}
+      {{"Never", files::ThumbnailPolicy::Never},
+       {"Local files", files::ThumbnailPolicy::Local},
+       {"All locations", files::ThumbnailPolicy::All}}
   );
   m_section->addChild(
       ui::label(

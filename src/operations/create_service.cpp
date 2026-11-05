@@ -106,16 +106,16 @@ struct files::CreateService::State {
           owner->snapshot.error = reply->error;
           if (reply->destination) {
             owner->snapshot.destination = std::move(reply->destination);
-            owner->snapshot.status = reply->error.empty() ? CreateStatus::SUCCEEDED : CreateStatus::PARTIAL;
+            owner->snapshot.status = reply->error.empty() ? CreateStatus::Succeeded : CreateStatus::Partial;
             owner->target.reset();
           } else if (owner->cancelled.load()) {
-            owner->snapshot.status = CreateStatus::CANCELLED;
+            owner->snapshot.status = CreateStatus::Cancelled;
             owner->target.reset();
           } else if (!reply->error.empty()) {
-            owner->snapshot.status = CreateStatus::ERROR;
+            owner->snapshot.status = CreateStatus::Error;
           } else {
             owner->target = std::move(reply->target);
-            owner->snapshot.status = CreateStatus::READY;
+            owner->snapshot.status = CreateStatus::Ready;
           }
           owner->notify();
         },
@@ -154,18 +154,18 @@ void files::CreateService::cancel() {
   m_state->cancelled.store(true);
   m_state->target.reset();
   if (!busy()
-      && m_state->snapshot.status != CreateStatus::SUCCEEDED
-      && m_state->snapshot.status != CreateStatus::PARTIAL) {
-    m_state->snapshot.status = CreateStatus::CANCELLED;
+      && m_state->snapshot.status != CreateStatus::Succeeded
+      && m_state->snapshot.status != CreateStatus::Partial) {
+    m_state->snapshot.status = CreateStatus::Cancelled;
   }
 }
 bool files::CreateService::prepare(const Location& parent, CreateKind kind) {
-  if (busy() || (kind != CreateKind::FOLDER && kind != CreateKind::EmptyFile)) {
+  if (busy() || (kind != CreateKind::Folder && kind != CreateKind::EmptyFile)) {
     return false;
   }
   m_state->target.reset();
   m_state->snapshot = {
-      .status = CreateStatus::PREPARING, .kind = kind, .parent = parent, .destination = std::nullopt, .error = {}
+      .status = CreateStatus::Preparing, .kind = kind, .parent = parent, .destination = std::nullopt, .error = {}
   };
   State::launch(m_state, [parent] {
     const auto path = parent.nativePath();
@@ -181,12 +181,12 @@ bool files::CreateService::create(std::string name) {
     return false;
   }
   if (const auto error = filenameProblem(name)) {
-    m_state->snapshot.status = CreateStatus::ERROR;
+    m_state->snapshot.status = CreateStatus::Error;
     m_state->snapshot.error = *error;
     m_state->notify();
     return false;
   }
-  m_state->snapshot.status = CreateStatus::CREATING;
+  m_state->snapshot.status = CreateStatus::Creating;
   m_state->snapshot.error.clear();
   State::launch(
       m_state, [owner = m_state, target = m_state->target, kind = m_state->snapshot.kind, name = std::move(name)] {
@@ -204,7 +204,7 @@ bool files::CreateService::create(std::string name) {
         if (owner->cancelled.load()) {
           return Reply{};
         }
-        if (kind == CreateKind::FOLDER) {
+        if (kind == CreateKind::Folder) {
           if (::mkdirat(target->directory.get(), name.c_str(), 0777) != 0) {
             throw std::runtime_error(creationError(errno));
           }

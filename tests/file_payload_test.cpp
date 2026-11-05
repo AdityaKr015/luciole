@@ -51,12 +51,12 @@ namespace {
       selection.locations.push_back(Location::fromPath("/tmp/source/" + std::to_string(i)));
     }
     const std::vector<TransferResult> results{
-        {selection.locations[0], TransferOutcome::MOVED, {}},
-        {selection.locations[1], TransferOutcome::SKIPPED, {}},
-        {selection.locations[2], TransferOutcome::FAILED, "fixture failure"},
-        {selection.locations[3], TransferOutcome::PARTIAL, "source removal incomplete"},
-        {selection.locations[4], TransferOutcome::CANCELLED, {}},
-        {selection.locations[5], TransferOutcome::COPIED, {}},
+        {selection.locations[0], TransferOutcome::Moved, {}},
+        {selection.locations[1], TransferOutcome::Skipped, {}},
+        {selection.locations[2], TransferOutcome::Failed, "fixture failure"},
+        {selection.locations[3], TransferOutcome::Partial, "source removal incomplete"},
+        {selection.locations[4], TransferOutcome::Cancelled, {}},
+        {selection.locations[5], TransferOutcome::Copied, {}},
     };
     const auto remaining = remainingCutFiles(selection, results);
     TEST_CHECK(remaining.cut && remaining.locations.size() == 6);

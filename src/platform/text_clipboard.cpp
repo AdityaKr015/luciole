@@ -454,7 +454,7 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
       target = {};
     }
     if (modern) {
-      auto preferred = target.preferred == TransferAction::COPY ? WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY
+      auto preferred = target.preferred == TransferAction::Copy ? WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY
                                                                 : WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE;
       if ((preferred & supported) == 0) {
         preferred = (supported & WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY) ? WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY
@@ -502,7 +502,7 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
           };
           receiver(
               std::move(*payload),
-              action == WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE ? TransferAction::MOVE : TransferAction::COPY, finish
+              action == WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE ? TransferAction::Move : TransferAction::Copy, finish
           );
         }
     );
@@ -776,8 +776,8 @@ bool files::WaylandTextClipboard::startDrag(
        .finished = std::move(finished),
        .files = std::move(payload)}
   );
-  const auto actions = forcedAction == TransferAction::COPY ? WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY
-      : forcedAction == TransferAction::MOVE
+  const auto actions = forcedAction == TransferAction::Copy ? WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY
+      : forcedAction == TransferAction::Move
       ? WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE
       : WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY | WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE;
   wl_data_source_set_actions(source, actions);

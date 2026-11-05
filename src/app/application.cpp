@@ -129,14 +129,14 @@ namespace {
   enum class WorkspaceCommand {
     ClosePane,
     NewTab,
-    DUPLICATE,
-    CLOSE,
-    REOPEN,
-    SPLIT,
+    Duplicate,
+    Close,
+    Reopen,
+    Split,
     SwitchArea,
-    SWAP,
+    Swap,
     NewWindow,
-    DETACH,
+    Detach,
     MoveWindow,
     OpenOther,
     CopyOther,
@@ -154,12 +154,12 @@ namespace {
         : m_connection(connection), m_renderer(renderer), m_textInput(textInput), m_animations(animations),
           m_surface(&surface), m_browser(settings.sort, settings.showHidden), m_icons(icons),
           m_listAdapter(
-              m_browser, m_icons, m_thumbnails, files::ViewMode::LIST,
+              m_browser, m_icons, m_thumbnails, files::ViewMode::List,
               [this] { return m_connection.input().keyboardModifiers(); },
               [this] { return m_fileKeyboardFocus && m_list != nullptr && m_list->focusArea()->focused(); }
           ),
           m_gridAdapter(
-              m_browser, m_icons, m_thumbnails, files::ViewMode::GRID,
+              m_browser, m_icons, m_thumbnails, files::ViewMode::Grid,
               [this] { return m_connection.input().keyboardModifiers(); },
               [this] { return m_fileKeyboardFocus && m_list != nullptr && m_list->focusArea()->focused(); }
           ),
@@ -217,7 +217,7 @@ namespace {
         if (m_list != nullptr && focused != m_list->focusArea()) {
           clearTypeahead();
         }
-        if (m_nameHeader == nullptr || m_viewMode != files::ViewMode::LIST) {
+        if (m_nameHeader == nullptr || m_viewMode != files::ViewMode::List) {
           return;
         }
         for (std::size_t index = 0; index < 4; ++index) {
@@ -272,11 +272,11 @@ namespace {
         if (!m_archives.busy() && !m_transfers.busy()) {
           const auto& results = m_transfers.results();
           const auto done = std::ranges::count_if(results, [](const auto& item) {
-            return item.outcome == files::TransferOutcome::MOVED || item.outcome == files::TransferOutcome::COPIED;
+            return item.outcome == files::TransferOutcome::Moved || item.outcome == files::TransferOutcome::Copied;
           });
           m_actionError = std::format(
               "{} item{} {}", done, done == 1 ? "" : "s",
-              m_transfers.action() == files::TransferAction::COPY ? "copied" : "moved"
+              m_transfers.action() == files::TransferAction::Copy ? "copied" : "moved"
           );
           if (const auto error = std::ranges::find_if(results, [](const auto& item) { return !item.error.empty(); });
               error != results.end()) {
@@ -289,7 +289,7 @@ namespace {
           }
           if (auto finish = std::exchange(m_dropCompletion, {})) {
             finish(!results.empty() && std::ranges::all_of(results, [](const auto& item) {
-              return item.outcome == files::TransferOutcome::MOVED || item.outcome == files::TransferOutcome::COPIED;
+              return item.outcome == files::TransferOutcome::Moved || item.outcome == files::TransferOutcome::Copied;
             }));
           }
           browser().refresh();
@@ -327,7 +327,7 @@ namespace {
           if (const auto* entry = browser().model().entry(id)) {
             request.targets.push_back({id, entry->location});
           }
-          dispatchAction(Action::OPEN, request);
+          dispatchAction(Action::Open, request);
         });
         adapter->setContextCallback([this](std::optional<files::EntryId> id, float x, float y) {
           openFileMenu(id, x, y);
@@ -521,7 +521,7 @@ namespace {
                     }
                     finish(m_pins.add(bookmarks, slot));
                   },
-              .preferred = files::TransferAction::COPY
+              .preferred = files::TransferAction::Copy
           };
         }
       }
@@ -559,8 +559,8 @@ namespace {
                   std::exchange(m_dropCompletion, {})(false);
                 }
               },
-          .preferred = (m_connection.input().keyboardModifiers() & KeyMod::Ctrl) != 0 ? files::TransferAction::COPY
-                                                                                      : files::TransferAction::MOVE
+          .preferred = (m_connection.input().keyboardModifiers() & KeyMod::Ctrl) != 0 ? files::TransferAction::Copy
+                                                                                      : files::TransferAction::Move
       };
     }
     void iconsReady() {
@@ -636,7 +636,7 @@ namespace {
       m_cachePaused = pause;
       auto options = m_savedSettings.thumbnails;
       if (pause) {
-        options.policy = files::ThumbnailPolicy::NEVER;
+        options.policy = files::ThumbnailPolicy::Never;
       }
       m_thumbnails.setOptions(options);
       m_surface->requestLayout();
@@ -852,7 +852,7 @@ namespace {
     }
     void transferTo(const files::Location& destination, bool copy) {
       const auto request = std::exchange(m_pendingWorkspaceRequest, std::nullopt);
-      if (!request || !files::ActionRegistry::current(actionContext(), *request, files::ActionScope::TARGETS)) {
+      if (!request || !files::ActionRegistry::current(actionContext(), *request, files::ActionScope::Targets)) {
         return;
       }
       std::vector<files::Location> sources;
@@ -862,7 +862,7 @@ namespace {
       }
       if (!sources.empty() && !m_transfers.busy()) {
         (void)m_transfers.start(
-            {std::move(sources), destination, copy ? files::TransferAction::COPY : files::TransferAction::MOVE}
+            {std::move(sources), destination, copy ? files::TransferAction::Copy : files::TransferAction::Move}
         );
       }
     }
@@ -1168,7 +1168,7 @@ namespace {
         break;
       case PointerEvent::Type::Axis:
         if (dispatcher == &m_dispatcher
-            && m_viewMode == files::ViewMode::LIST
+            && m_viewMode == files::ViewMode::List
             && m_filePane->containsScenePoint(x, y)
             && (event.axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL
                 || (event.axis == WL_POINTER_AXIS_VERTICAL_SCROLL
@@ -1377,7 +1377,7 @@ namespace {
           return;
         }
         if (event.sym == XKB_KEY_comma && event.modifiers == KeyMod::Ctrl) {
-          dispatchAction(Action::SETTINGS);
+          dispatchAction(Action::Settings);
           return;
         }
         if (event.sym == XKB_KEY_l && event.modifiers == KeyMod::Ctrl && m_location != nullptr) {
@@ -1387,7 +1387,7 @@ namespace {
         if ((event.sym == XKB_KEY_k || event.sym == XKB_KEY_f)
             && event.modifiers == KeyMod::Ctrl
             && m_filterInput != nullptr) {
-          dispatchAction(Action::SEARCH);
+          dispatchAction(Action::Search);
           return;
         }
         if (m_editingLocation && event.modifiers == 0 && KeySymbol::isEscape(event.sym)) {
@@ -1399,27 +1399,27 @@ namespace {
           return;
         }
         if (!editing && event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Left) {
-          dispatchAction(Action::BACK);
+          dispatchAction(Action::Back);
           return;
         }
         if (!editing && event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Right) {
-          dispatchAction(Action::FORWARD);
+          dispatchAction(Action::Forward);
           return;
         }
         if (!editing && event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Up) {
-          dispatchAction(Action::UP);
+          dispatchAction(Action::Up);
           return;
         }
         if (!editing && event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Home) {
-          dispatchAction(Action::HOME);
+          dispatchAction(Action::Home);
           return;
         }
         if (!editing && event.sym == XKB_KEY_F5 && event.modifiers == 0) {
-          dispatchAction(Action::REFRESH);
+          dispatchAction(Action::Refresh);
           return;
         }
         if (!editing
-            && m_viewMode == files::ViewMode::LIST
+            && m_viewMode == files::ViewMode::List
             && event.modifiers == KeyMod::Ctrl
             && (event.sym == XKB_KEY_Left || event.sym == XKB_KEY_Right)) {
           for (std::size_t index = 0; index < 4; ++index) {
@@ -1498,15 +1498,15 @@ namespace {
         }
         if (!editing && m_list != nullptr && m_dispatcher.focusedArea() == m_list->focusArea() && !event.repeat) {
           if (event.sym == XKB_KEY_Delete && event.modifiers == 0) {
-            dispatchAction(Action::TRASH);
+            dispatchAction(Action::Trash);
             return;
           }
           if (event.sym == XKB_KEY_F2 && event.modifiers == 0) {
-            dispatchAction(Action::RENAME);
+            dispatchAction(Action::Rename);
             return;
           }
           if (event.sym == XKB_KEY_Return && event.modifiers == KeyMod::Alt) {
-            dispatchAction(Action::PROPERTIES);
+            dispatchAction(Action::Properties);
             return;
           }
         }
@@ -1514,9 +1514,9 @@ namespace {
             && event.modifiers == KeyMod::Ctrl
             && (event.sym == XKB_KEY_1 || event.sym == XKB_KEY_2 || event.sym == XKB_KEY_3)) {
           dispatchAction(
-              event.sym == XKB_KEY_1       ? Action::GRID
-                  : event.sym == XKB_KEY_2 ? Action::LIST
-                                           : Action::MILLER
+              event.sym == XKB_KEY_1       ? Action::Grid
+                  : event.sym == XKB_KEY_2 ? Action::List
+                                           : Action::Miller
           );
           return;
         }
@@ -1533,7 +1533,7 @@ namespace {
       }
       if (event.pressed
           && !event.preedit
-          && m_typingMode == files::TypingMode::TYPEAHEAD
+          && m_typingMode == files::TypingMode::Typeahead
           && m_list != nullptr
           && m_dispatcher.focusedArea() == m_list->focusArea()
           && (event.modifiers & (KeyMod::Ctrl | KeyMod::Alt | KeyMod::Super)) == 0) {
@@ -1555,7 +1555,7 @@ namespace {
       }
       if (event.pressed
           && !event.preedit
-          && m_typingMode == files::TypingMode::SEARCH
+          && m_typingMode == files::TypingMode::Search
           && m_list != nullptr
           && m_dispatcher.focusedArea() == m_list->focusArea()
           && (event.modifiers & (KeyMod::Ctrl | KeyMod::Alt | KeyMod::Super)) == 0
@@ -1644,11 +1644,11 @@ namespace {
     }
     void dispatchAction(Action action) {
       dispatchAction(
-          action, actionRequest(files::ActionRegistry::definition(action).scope == files::ActionScope::TARGETS)
+          action, actionRequest(files::ActionRegistry::definition(action).scope == files::ActionScope::Targets)
       );
     }
     void dispatchAction(Action action, const files::ActionRequest& request) {
-      if (action == Action::OPEN) {
+      if (action == Action::Open) {
         Logger("file-launch").debug("Open action dispatch ({} targets)", request.targets.size());
       }
       const auto state = actionState(action, request);
@@ -1658,7 +1658,7 @@ namespace {
       }
       m_actionError.clear();
       clearTypeahead();
-      const bool selectionAction = files::ActionRegistry::definition(action).scope == files::ActionScope::SELECTION;
+      const bool selectionAction = files::ActionRegistry::definition(action).scope == files::ActionScope::Selection;
       if (selectionAction) {
         if (m_miller.enabled()) {
           m_miller.interact(m_miller.focused());
@@ -1694,7 +1694,7 @@ namespace {
           const bool pending = std::exchange(m_pendingFilePaste, false);
           if (!pending
               || !m_visible
-              || !files::ActionRegistry::current(actionContext(), request, files::ActionScope::LOCATION)) {
+              || !files::ActionRegistry::current(actionContext(), request, files::ActionScope::Location)) {
             return;
           }
           if (!selection) {
@@ -1712,7 +1712,7 @@ namespace {
           }
           if (!startPayloadTransfer(
                   selection->payload, *request.folder,
-                  selection->payload.cut ? files::TransferAction::MOVE : files::TransferAction::COPY
+                  selection->payload.cut ? files::TransferAction::Move : files::TransferAction::Copy
               )) {
             if (const auto claimed = std::exchange(m_clipboardTransfer, std::nullopt)) {
               m_clipboard.finishMove(*claimed, {});
@@ -1732,7 +1732,7 @@ namespace {
       case Action::OpenWith:
         showApplications(targets.front());
         break;
-      case Action::COMPRESS: {
+      case Action::Compress: {
         std::vector<files::Location> sources;
         sources.reserve(targets.size());
         for (const auto& target : targets) {
@@ -1784,9 +1784,9 @@ namespace {
         }
         break;
       }
-      case Action::TERMINAL:
+      case Action::Terminal:
       case Action::TargetTerminal: {
-        const auto target = action == Action::TERMINAL ? *request.folder : targets.front().location;
+        const auto target = action == Action::Terminal ? *request.folder : targets.front().location;
         const auto context = browser().contextSerial();
         const std::weak_ptr<int> lifetime = m_lifetime;
         m_terminal.open(target, [this, lifetime, context](std::string error) {
@@ -1796,41 +1796,41 @@ namespace {
         });
         break;
       }
-      case Action::BACK:
+      case Action::Back:
         (void)browser().back();
         break;
-      case Action::FORWARD:
+      case Action::Forward:
         (void)browser().forward();
         break;
-      case Action::UP:
+      case Action::Up:
         (void)browser().up();
         break;
-      case Action::HOME:
+      case Action::Home:
         browser().home();
         break;
-      case Action::ROOT:
+      case Action::Root:
         browser().open(files::Location::fromPath("/"));
         break;
-      case Action::REFRESH:
+      case Action::Refresh:
         browser().refresh();
         break;
-      case Action::STOP:
+      case Action::Stop:
         browser().stop();
         break;
       case Action::EditLocation:
         beginLocationEdit();
         break;
-      case Action::SEARCH:
+      case Action::Search:
         openFilter();
         break;
-      case Action::GRID:
-        setViewMode(files::ViewMode::GRID);
+      case Action::Grid:
+        setViewMode(files::ViewMode::Grid);
         break;
-      case Action::LIST:
-        setViewMode(files::ViewMode::LIST);
+      case Action::List:
+        setViewMode(files::ViewMode::List);
         break;
-      case Action::MILLER:
-        setViewMode(files::ViewMode::MILLER);
+      case Action::Miller:
+        setViewMode(files::ViewMode::Miller);
         break;
       case Action::ShowHidden:
         toggleHidden();
@@ -1842,16 +1842,16 @@ namespace {
       case Action::SortType:
       case Action::SortSize:
       case Action::SortModified:
-      case Action::ASCENDING:
-      case Action::DESCENDING:
+      case Action::Ascending:
+      case Action::Descending:
       case Action::FoldersFirst: {
         auto options = browser().model().sort();
-        const auto field = action == Action::SortName ? files::SortField::NAME
-            : action == Action::SortType              ? files::SortField::TYPE
-            : action == Action::SortSize              ? files::SortField::SIZE
-                                                      : files::SortField::MODIFIED;
-        if (action == Action::ASCENDING || action == Action::DESCENDING) {
-          options.descending = action == Action::DESCENDING;
+        const auto field = action == Action::SortName ? files::SortField::Name
+            : action == Action::SortType              ? files::SortField::Type
+            : action == Action::SortSize              ? files::SortField::Size
+                                                      : files::SortField::Modified;
+        if (action == Action::Ascending || action == Action::Descending) {
+          options.descending = action == Action::Descending;
         } else if (action == Action::FoldersFirst) {
           options.directoriesFirst = !options.directoriesFirst;
         } else if (options.field != field) {
@@ -1861,7 +1861,7 @@ namespace {
         changeSort(options);
         break;
       }
-      case Action::OPEN:
+      case Action::Open:
         if (m_miller.enabled()
             && targets.size() == 1
             && targets.front().type == G_FILE_TYPE_DIRECTORY
@@ -1883,7 +1883,7 @@ namespace {
       case Action::OriginalLocation:
         showContaining(*targets.front().trash.original);
         break;
-      case Action::PIN: {
+      case Action::Pin: {
         std::vector<files::Bookmark> pins;
         for (const auto& target : targets) {
           if (!m_pins.contains(target.location)) {
@@ -1893,7 +1893,7 @@ namespace {
         pinFolders(std::move(pins), m_pins.bookmarks().size());
         break;
       }
-      case Action::UNPIN: {
+      case Action::Unpin: {
         std::vector<files::Location> locations;
         locations.reserve(targets.size());
         for (const auto& target : targets) {
@@ -1916,19 +1916,19 @@ namespace {
       case Action::EmptyTrash:
         openEmptyTrash();
         break;
-      case Action::RENAME:
+      case Action::Rename:
         openFileRename(targets.front());
         break;
-      case Action::TRASH:
+      case Action::Trash:
         trashItems(targets);
         break;
-      case Action::PROPERTIES:
+      case Action::Properties:
         showProperties(targets);
         break;
       case Action::CreateFolder:
       case Action::CreateFile:
         openCreateItem(
-            *request.folder, action == Action::CreateFolder ? files::CreateKind::FOLDER : files::CreateKind::EmptyFile
+            *request.folder, action == Action::CreateFolder ? files::CreateKind::Folder : files::CreateKind::EmptyFile
         );
         break;
       case Action::SelectAll:
@@ -1947,12 +1947,12 @@ namespace {
       case Action::SingleClick:
       case Action::DoubleClick:
       case Action::TypeToSearch:
-      case Action::TYPEAHEAD:
+      case Action::Typeahead:
         if (action == Action::SingleClick || action == Action::DoubleClick) {
           m_activationMode =
               action == Action::SingleClick ? files::ActivationMode::SingleClick : files::ActivationMode::DoubleClick;
         } else {
-          m_typingMode = action == Action::TYPEAHEAD ? files::TypingMode::TYPEAHEAD : files::TypingMode::SEARCH;
+          m_typingMode = action == Action::Typeahead ? files::TypingMode::Typeahead : files::TypingMode::Search;
         }
         for (auto* adapter : {&m_listAdapter, &m_gridAdapter}) {
           adapter->onPointerCancel();
@@ -1962,10 +1962,10 @@ namespace {
           m_preferences.saveInteraction(m_activationMode, m_typingMode);
         }
         break;
-      case Action::SETTINGS:
+      case Action::Settings:
         openSettings();
         break;
-      case Action::ABOUT:
+      case Action::About:
         openAbout();
         break;
       case Action::ViewMenu:
@@ -1986,7 +1986,7 @@ namespace {
               || action == Action::SingleClick
               || action == Action::DoubleClick
               || action == Action::TypeToSearch
-              || action == Action::TYPEAHEAD)) {
+              || action == Action::Typeahead)) {
         m_dispatcher.setFocus(m_list->focusArea());
       }
       m_browserDirty = true;
@@ -2076,7 +2076,7 @@ namespace {
         add(Action::InvertSelection);
         add(Action::SelectPattern);
         separator();
-        add(Action::REFRESH);
+        add(Action::Refresh);
         if (request.folder && !request.folder->isTrash()) {
           add(m_pins.contains(*request.folder) ? Action::UnpinCurrent : Action::PinCurrent);
         }
@@ -2084,12 +2084,12 @@ namespace {
         separator();
         add(Action::CopyPath);
         add(Action::CopyUri);
-        add(Action::TERMINAL);
+        add(Action::Terminal);
       } else {
         if (request.targets.empty()) {
           return;
         }
-        add(Action::OPEN);
+        add(Action::Open);
         if (request.targets.size() == 1) {
           add(Action::OpenWith);
           add(Action::QuickPreview);
@@ -2138,22 +2138,22 @@ namespace {
           if (std::ranges::any_of(request.targets, [this](const auto& target) {
                 return !m_pins.contains(target.location);
               })) {
-            add(Action::PIN);
+            add(Action::Pin);
           }
           if (std::ranges::any_of(request.targets, [this](const auto& target) {
                 return m_pins.contains(target.location);
               })) {
-            add(Action::UNPIN);
+            add(Action::Unpin);
           }
         }
         separator();
         const bool trash = request.targets.front().location.isTrash();
         if (request.targets.size() == 1 && !trash) {
-          add(Action::RENAME);
+          add(Action::Rename);
         }
         if (!trash) {
-          add(Action::COMPRESS);
-          add(Action::TRASH);
+          add(Action::Compress);
+          add(Action::Trash);
         }
         separator();
         add(Action::CopyTargetPath);
@@ -2162,7 +2162,7 @@ namespace {
           add(Action::TargetTerminal);
         }
         separator();
-        add(Action::PROPERTIES);
+        add(Action::Properties);
       }
       showContextMenu(
           std::move(entries),
@@ -2174,7 +2174,7 @@ namespace {
               return;
             }
             if (action >= 9000) {
-              if (!files::ActionRegistry::current(actionContext(), request, files::ActionScope::TARGETS)
+              if (!files::ActionRegistry::current(actionContext(), request, files::ActionScope::Targets)
                   || !m_workspaceRequest) {
                 return;
               }
@@ -2351,7 +2351,7 @@ namespace {
     void syncEmptyTrash() {
       const auto& snapshot = m_emptyTrash.snapshot();
       if (m_emptyTrashDialog && m_emptyTrashMessage != nullptr) {
-        if (snapshot.status == files::EmptyTrashStatus::READY) {
+        if (snapshot.status == files::EmptyTrashStatus::Ready) {
           const auto count = snapshot.results.size();
           m_emptyTrashMessage->setText(
               count == 0 ? "Trash is already empty."
@@ -2361,7 +2361,7 @@ namespace {
                            )
           );
           m_emptyTrashConfirm->setEnabled(m_emptyTrash.canEmpty());
-        } else if (snapshot.status == files::EmptyTrashStatus::ERROR) {
+        } else if (snapshot.status == files::EmptyTrashStatus::Error) {
           m_emptyTrashMessage->setText("Could not read Trash: " + snapshot.error);
           m_emptyTrashConfirm->setEnabled(false);
         }
@@ -2374,17 +2374,17 @@ namespace {
         }
         m_emptyTrashSize->setText(sizeText);
         m_menuSurface->requestLayout();
-      } else if (snapshot.status == files::EmptyTrashStatus::FINISHED) {
+      } else if (snapshot.status == files::EmptyTrashStatus::Finished) {
         const auto count = [&](files::EmptyTrashOutcome outcome) {
           return std::ranges::count(snapshot.results, outcome, &files::EmptyTrashResult::outcome);
         };
-        const auto done = count(files::EmptyTrashOutcome::DELETED);
+        const auto done = count(files::EmptyTrashOutcome::Deleted);
         std::string message = std::format("{} item{} permanently deleted", done, done == 1 ? "" : "s");
         for (const auto& [outcome, label] :
-             {std::pair{files::EmptyTrashOutcome::SKIPPED, "skipped"},
-              std::pair{files::EmptyTrashOutcome::FAILED, "failed"},
-              std::pair{files::EmptyTrashOutcome::CANCELLED, "cancelled"},
-              std::pair{files::EmptyTrashOutcome::UNCONFIRMED, "could not be confirmed"}}) {
+             {std::pair{files::EmptyTrashOutcome::Skipped, "skipped"},
+              std::pair{files::EmptyTrashOutcome::Failed, "failed"},
+              std::pair{files::EmptyTrashOutcome::Cancelled, "cancelled"},
+              std::pair{files::EmptyTrashOutcome::Unconfirmed, "could not be confirmed"}}) {
           if (const auto amount = count(outcome); amount != 0) {
             message += std::format(" · {} {}", amount, label);
           }
@@ -2397,7 +2397,7 @@ namespace {
         if (const auto& location = browser().model().snapshot().location; location && location->isTrash()) {
           browser().open(files::Location::trash());
         }
-      } else if (snapshot.status == files::EmptyTrashStatus::ERROR) {
+      } else if (snapshot.status == files::EmptyTrashStatus::Error) {
         actionError("Could not empty Trash: " + snapshot.error);
       }
     }
@@ -2413,7 +2413,7 @@ namespace {
       }
     }
     bool canTrashItems(const std::vector<files::DirectoryEntry>& targets) const {
-      return actionState(Action::TRASH, requestFor(targets)).enabled;
+      return actionState(Action::Trash, requestFor(targets)).enabled;
     }
     void trashItems(const std::vector<files::DirectoryEntry>& targets) {
       if (!canTrashItems(targets) || !targetsCurrent(targets)) {
@@ -2432,19 +2432,19 @@ namespace {
     }
     void syncTrash() {
       const auto& snapshot = m_trash.snapshot();
-      if (snapshot.status == files::TrashStatus::READY) {
+      if (snapshot.status == files::TrashStatus::Ready) {
         (void)m_trash.trash();
-      } else if (snapshot.status == files::TrashStatus::ERROR) {
+      } else if (snapshot.status == files::TrashStatus::Error) {
         actionError("Could not move to Trash: " + snapshot.error);
-      } else if (snapshot.status == files::TrashStatus::CANCELLED) {
+      } else if (snapshot.status == files::TrashStatus::Cancelled) {
         actionError("Move to Trash cancelled.");
-      } else if (snapshot.status == files::TrashStatus::FINISHED) {
+      } else if (snapshot.status == files::TrashStatus::Finished) {
         const auto done =
-            std::ranges::count(snapshot.results, files::TrashOutcome::TRASHED, &files::TrashResult::outcome);
+            std::ranges::count(snapshot.results, files::TrashOutcome::Trashed, &files::TrashResult::outcome);
         const auto failed =
-            std::ranges::count(snapshot.results, files::TrashOutcome::FAILED, &files::TrashResult::outcome);
+            std::ranges::count(snapshot.results, files::TrashOutcome::Failed, &files::TrashResult::outcome);
         const auto cancelled =
-            std::ranges::count(snapshot.results, files::TrashOutcome::CANCELLED, &files::TrashResult::outcome);
+            std::ranges::count(snapshot.results, files::TrashOutcome::Cancelled, &files::TrashResult::outcome);
         std::string message = std::format("{} item{} moved to Trash", done, done == 1 ? "" : "s");
         if (failed != 0) {
           message += std::format(" · {} failed", failed);
@@ -2472,8 +2472,8 @@ namespace {
       }
       const float width = std::min(420.0F, static_cast<float>(m_surface->width()) - 32.0F);
       auto editor = std::make_unique<NameEditor>(
-          width, kind == files::CreateKind::FOLDER ? "New folder" : "New file",
-          kind == files::CreateKind::FOLDER ? "New Folder" : "New File", "", files::filenameProblem,
+          width, kind == files::CreateKind::Folder ? "New folder" : "New file",
+          kind == files::CreateKind::Folder ? "New Folder" : "New File", "", files::filenameProblem,
           [this](std::string name) { submitCreateItem(std::move(name)); }, [this] { dismissMenu(); }, "Create",
           "Creating…"
       );
@@ -2518,7 +2518,7 @@ namespace {
         return;
       }
       const auto& snapshot = m_creator.snapshot();
-      if (snapshot.status == files::CreateStatus::SUCCEEDED || snapshot.status == files::CreateStatus::PARTIAL) {
+      if (snapshot.status == files::CreateStatus::Succeeded || snapshot.status == files::CreateStatus::Partial) {
         m_actionError = snapshot.error;
         if (browser().model().snapshot().location == snapshot.parent) {
           m_revealTarget = snapshot.destination;
@@ -2529,10 +2529,10 @@ namespace {
           dismissMenu();
         }
       } else if (m_createEditor == nullptr) {
-        if (snapshot.status == files::CreateStatus::ERROR) {
+        if (snapshot.status == files::CreateStatus::Error) {
           actionError("Could not create: " + snapshot.error);
         }
-      } else if (snapshot.status == files::CreateStatus::READY || snapshot.status == files::CreateStatus::ERROR) {
+      } else if (snapshot.status == files::CreateStatus::Ready || snapshot.status == files::CreateStatus::Error) {
         m_createEditor->setSaving(false);
         m_createEditor->showError(snapshot.error);
         if (std::exchange(m_creationPreparing, false)) {
@@ -2544,7 +2544,7 @@ namespace {
     }
 
     bool canFileRename(const files::DirectoryEntry& entry) const {
-      return actionState(Action::RENAME, requestFor({entry})).enabled;
+      return actionState(Action::Rename, requestFor({entry})).enabled;
     }
     void openFileRename(files::DirectoryEntry target) {
       if (!canFileRename(target) || !targetsCurrent({target})) {
@@ -2597,7 +2597,7 @@ namespace {
       if (m_renamer.busy()) {
         return;
       }
-      if (snapshot.status == files::RenameStatus::SUCCEEDED) {
+      if (snapshot.status == files::RenameStatus::Succeeded) {
         m_actionError.clear();
         const auto& current = browser().model().snapshot().location;
         if (current && snapshot.source && g_file_has_prefix(snapshot.source->file().get(), current->file().get())) {
@@ -2609,10 +2609,10 @@ namespace {
           dismissMenu();
         }
       } else if (m_fileRenameEditor == nullptr) {
-        if (snapshot.status == files::RenameStatus::ERROR) {
+        if (snapshot.status == files::RenameStatus::Error) {
           actionError("Could not rename: " + snapshot.error);
         }
-      } else if (snapshot.status == files::RenameStatus::READY || snapshot.status == files::RenameStatus::ERROR) {
+      } else if (snapshot.status == files::RenameStatus::Ready || snapshot.status == files::RenameStatus::Error) {
         m_fileRenameEditor->setSaving(false);
         m_fileRenameEditor->showError(snapshot.error);
         if (std::exchange(m_fileRenamePreparing, false)) {
@@ -3177,7 +3177,7 @@ namespace {
         if (lifetime.expired() || !m_active) {
           return;
         }
-        if (!actionState(with ? Action::OpenWith : Action::OPEN, request).enabled) {
+        if (!actionState(with ? Action::OpenWith : Action::Open, request).enabled) {
           actionError("The previewed item changed. Select it again.");
           return;
         }
@@ -3185,7 +3185,7 @@ namespace {
           showApplications(*entry);
         } else {
           dismissMenu();
-          dispatchAction(Action::OPEN, request);
+          dispatchAction(Action::Open, request);
         }
       });
     }
@@ -3493,12 +3493,12 @@ namespace {
               ui::button(
                   {.text = "Cancel",
                    .variant = ButtonVariant::Ghost,
-                   .onClick = [choose] { choose(files::TransferConflictChoice::CANCEL); }}
+                   .onClick = [choose] { choose(files::TransferConflictChoice::Cancel); }}
               ),
               ui::button(
                   {.text = "Skip",
                    .variant = ButtonVariant::Ghost,
-                   .onClick = [choose] { choose(files::TransferConflictChoice::SKIP); }}
+                   .onClick = [choose] { choose(files::TransferConflictChoice::Skip); }}
               ),
               ui::button(
                   {.out = &keepBoth,
@@ -3507,7 +3507,7 @@ namespace {
                    .onClick = [choose] { choose(files::TransferConflictChoice::KeepBoth); }}
               ),
               ui::button({.text = "Replace", .variant = ButtonVariant::Destructive, .onClick = [choose] {
-                            choose(files::TransferConflictChoice::REPLACE);
+                            choose(files::TransferConflictChoice::Replace);
                           }})
           )
       );
@@ -3527,8 +3527,8 @@ namespace {
         m_transferConflictArchive = archive;
         m_menuDispatcher.setFocus(keepBoth->inputArea());
       } else {
-        (void)(archive ? m_archives.resolve(conflict->id, files::TransferConflictChoice::CANCEL)
-                       : m_transfers.resolve(conflict->id, files::TransferConflictChoice::CANCEL));
+        (void)(archive ? m_archives.resolve(conflict->id, files::TransferConflictChoice::Cancel)
+                       : m_transfers.resolve(conflict->id, files::TransferConflictChoice::Cancel));
       }
     }
 
@@ -3736,7 +3736,7 @@ namespace {
           m_dragArtwork = m_icons.request(
               entry->icon,
               static_cast<int>(std::ceil(
-                  (m_viewMode == files::ViewMode::GRID ? gridIconSize() : 24) * m_surface->effectiveBufferScale()
+                  (m_viewMode == files::ViewMode::Grid ? gridIconSize() : 24) * m_surface->effectiveBufferScale()
               ))
           );
         }
@@ -3756,9 +3756,9 @@ namespace {
               cancelDrag();
             }
           },
-          (m_connection.input().keyboardModifiers() & KeyMod::Ctrl) != 0 ? std::optional(files::TransferAction::COPY)
+          (m_connection.input().keyboardModifiers() & KeyMod::Ctrl) != 0 ? std::optional(files::TransferAction::Copy)
               : (m_connection.input().keyboardModifiers() & KeyMod::Shift) != 0
-              ? std::optional(files::TransferAction::MOVE)
+              ? std::optional(files::TransferAction::Move)
               : std::nullopt
       );
       if (m_systemDrag) {
@@ -3962,7 +3962,7 @@ namespace {
         }
         m_actionError.clear();
         (void)m_transfers.start(
-            {std::move(sources), target->location, copy ? files::TransferAction::COPY : files::TransferAction::MOVE}
+            {std::move(sources), target->location, copy ? files::TransferAction::Copy : files::TransferAction::Move}
         );
       } else if (slot) {
         pinFolders(drag.bookmarks, *slot);
@@ -4005,7 +4005,7 @@ namespace {
       );
     }
     TextInputState textInputState() const override {
-      if (m_typingMode == files::TypingMode::SEARCH) {
+      if (m_typingMode == files::TypingMode::Search) {
         return m_filterInput->textInputState();
       }
       const auto bounds = m_status ? sceneRect(*m_status) : LayoutRect{};
@@ -4019,7 +4019,7 @@ namespace {
       };
     }
     void textInputApplyEdit(const TextInputEdit& edit) override {
-      if (m_typingMode == files::TypingMode::TYPEAHEAD) {
+      if (m_typingMode == files::TypingMode::Typeahead) {
         const auto now = files::TypeaheadSelection::Clock::now();
         if (edit.hasDelete
             && edit.deleteBeforeLength != 0
@@ -4261,10 +4261,10 @@ namespace {
       }
       entries.push_back({.label = "", .separator = true});
       const auto request = actionRequest(false);
-      for (const auto action : {Action::CopyPath, Action::CopyUri, Action::TERMINAL}) {
+      for (const auto action : {Action::CopyPath, Action::CopyUri, Action::Terminal}) {
         auto entry = actionEntry(action, request);
         entry.id = -1 - static_cast<int>(action);
-        if (action == Action::TERMINAL) {
+        if (action == Action::Terminal) {
           entry.enabled = target.nativePath().has_value() && m_terminal.available();
         }
         entries.push_back(std::move(entry));
@@ -4283,7 +4283,7 @@ namespace {
           return;
         }
         const auto action = static_cast<Action>(-1 - id);
-        if (action == Action::TERMINAL) {
+        if (action == Action::Terminal) {
           if (!target.nativePath() || !m_terminal.available()) {
             return;
           }
@@ -4644,7 +4644,7 @@ namespace {
     }
 
     void scrollDetails(float offset) {
-      if (m_viewMode != files::ViewMode::LIST || m_columnResize || m_columnDrag) {
+      if (m_viewMode != files::ViewMode::List || m_columnResize || m_columnDrag) {
         return;
       }
       const float maximum = std::max(0.0F, m_detailsColumns.contentWidth - m_detailsHeaderViewport->width());
@@ -4664,7 +4664,7 @@ namespace {
         m_detailsScrollHost->setParticipatesInLayout(false);
         return;
       }
-      const bool list = m_viewMode == files::ViewMode::LIST;
+      const bool list = m_viewMode == files::ViewMode::List;
       // The header remains laid out when the file grid is hidden for an empty
       // folder or an error. Do not derive its width from that stale grid.
       const float viewport = list ? m_detailsHeaderViewport->width() : m_list->scrollView().contentViewportWidth(true);
@@ -4854,11 +4854,11 @@ namespace {
 
     Button* columnHeader(files::DetailsColumn column) const {
       switch (column) {
-      case files::DetailsColumn::TYPE:
+      case files::DetailsColumn::Type:
         return m_typeHeader;
-      case files::DetailsColumn::SIZE:
+      case files::DetailsColumn::Size:
         return m_sizeHeader;
-      case files::DetailsColumn::MODIFIED:
+      case files::DetailsColumn::Modified:
         return m_modifiedHeader;
       }
       return nullptr;
@@ -4904,12 +4904,12 @@ namespace {
       auto options = browser().model().sort();
       options.descending = options.field == field && !options.descending;
       options.field = field;
-      const auto action = field == files::SortField::NAME ? Action::SortName
-          : field == files::SortField::TYPE               ? Action::SortType
-          : field == files::SortField::SIZE               ? Action::SortSize
+      const auto action = field == files::SortField::Name ? Action::SortName
+          : field == files::SortField::Type               ? Action::SortType
+          : field == files::SortField::Size               ? Action::SortSize
                                                           : Action::SortModified;
       if (browser().model().sort().field == field) {
-        dispatchAction(options.descending ? Action::DESCENDING : Action::ASCENDING);
+        dispatchAction(options.descending ? Action::Descending : Action::Ascending);
       } else {
         dispatchAction(action);
       }
@@ -4946,7 +4946,7 @@ namespace {
       m_list = m_regularList;
       m_millerView->setVisible(false);
       m_millerView->setParticipatesInLayout(false);
-      const bool grid = m_viewMode == files::ViewMode::GRID;
+      const bool grid = m_viewMode == files::ViewMode::Grid;
       m_list->setAdapter(grid ? &m_gridAdapter : &m_listAdapter);
       m_list->setColumns(grid ? 0 : 1);
       m_list->setMinCellWidth(std::max(88.0F, gridIconSize() + 56.0F));
@@ -4959,7 +4959,7 @@ namespace {
     float gridHeight() const {
       const auto& location = browser().model().snapshot().location;
       const bool context = !browser().searchQuery().empty() || (location && location->isTrash());
-      return m_viewMode == files::ViewMode::GRID ? gridIconSize() + (context ? 72.0F : 52.0F)
+      return m_viewMode == files::ViewMode::Grid ? gridIconSize() + (context ? 72.0F : 52.0F)
                                                  : (context ? 52.0F : 36.0F);
     }
 
@@ -4982,7 +4982,7 @@ namespace {
     }
 
     bool zoomFromKey(const KeyboardEvent& event) {
-      if (m_viewMode != files::ViewMode::GRID || m_list == nullptr) {
+      if (m_viewMode != files::ViewMode::Grid || m_list == nullptr) {
         return false;
       }
       int zoom = static_cast<int>(m_gridZoom);
@@ -5008,7 +5008,7 @@ namespace {
     }
 
     bool zoomFromScroll(const PointerEvent& event) {
-      if (m_viewMode != files::ViewMode::GRID
+      if (m_viewMode != files::ViewMode::Grid
           || m_list == nullptr
           || !m_list->visible()
           || m_connection.input().keyboardModifiers() != KeyMod::Ctrl
@@ -5084,7 +5084,7 @@ namespace {
               request.targets.push_back({entry->id, entry->location});
             }
           }
-          dispatchAction(Action::OPEN, request);
+          dispatchAction(Action::Open, request);
         }
         return true;
       }
@@ -5104,9 +5104,9 @@ namespace {
         index += hasFocus ? columns : 0;
       } else if (event.sym == XKB_KEY_Up) {
         index += hasFocus ? -columns : 0;
-      } else if (m_viewMode == files::ViewMode::GRID && event.sym == XKB_KEY_Right) {
+      } else if (m_viewMode == files::ViewMode::Grid && event.sym == XKB_KEY_Right) {
         index += hasFocus ? (Style::rtl() ? -1 : 1) : 0;
-      } else if (m_viewMode == files::ViewMode::GRID && event.sym == XKB_KEY_Left) {
+      } else if (m_viewMode == files::ViewMode::Grid && event.sym == XKB_KEY_Left) {
         index += hasFocus ? (Style::rtl() ? 1 : -1) : 0;
       } else if (event.sym == XKB_KEY_Home) {
         index = 0;
@@ -5133,8 +5133,8 @@ namespace {
         }
         (void)model.select(
             id,
-            shift ? (ctrl ? files::SelectionMode::AddRange : files::SelectionMode::RANGE)
-                  : files::SelectionMode::REPLACE
+            shift ? (ctrl ? files::SelectionMode::AddRange : files::SelectionMode::Range)
+                  : files::SelectionMode::Replace
         );
       }
       m_keyboardReveal = id;
@@ -5150,7 +5150,7 @@ namespace {
       if (m_visitSerial != browser().visitSerial()) {
         m_visitSerial = browser().visitSerial();
         const auto& viewport = browser().viewport();
-        m_viewMode = m_miller.enabled() ? files::ViewMode::MILLER : viewport.mode;
+        m_viewMode = m_miller.enabled() ? files::ViewMode::Miller : viewport.mode;
         m_gridZoom = static_cast<std::size_t>(
             std::ranges::find(files::kGridIconSizes, viewport.iconSize) - files::kGridIconSizes.begin()
         );
@@ -5209,32 +5209,32 @@ namespace {
       m_sizeHeader->setGlyph(indicator);
       m_modifiedHeader->setGlyph(indicator);
       m_typeHeader->setGlyph(indicator);
-      m_nameHeader->glyph()->setVisible(sort.field == files::SortField::NAME);
-      m_nameHeader->glyph()->setParticipatesInLayout(sort.field == files::SortField::NAME);
-      m_sizeHeader->glyph()->setVisible(sort.field == files::SortField::SIZE);
-      m_sizeHeader->glyph()->setParticipatesInLayout(sort.field == files::SortField::SIZE);
-      m_modifiedHeader->glyph()->setVisible(sort.field == files::SortField::MODIFIED);
-      m_modifiedHeader->glyph()->setParticipatesInLayout(sort.field == files::SortField::MODIFIED);
-      m_typeHeader->glyph()->setVisible(sort.field == files::SortField::TYPE);
-      m_typeHeader->glyph()->setParticipatesInLayout(sort.field == files::SortField::TYPE);
-      const char* field = sort.field == files::SortField::NAME ? "Name"
-          : sort.field == files::SortField::SIZE               ? "Size"
-          : sort.field == files::SortField::TYPE               ? "Type"
+      m_nameHeader->glyph()->setVisible(sort.field == files::SortField::Name);
+      m_nameHeader->glyph()->setParticipatesInLayout(sort.field == files::SortField::Name);
+      m_sizeHeader->glyph()->setVisible(sort.field == files::SortField::Size);
+      m_sizeHeader->glyph()->setParticipatesInLayout(sort.field == files::SortField::Size);
+      m_modifiedHeader->glyph()->setVisible(sort.field == files::SortField::Modified);
+      m_modifiedHeader->glyph()->setParticipatesInLayout(sort.field == files::SortField::Modified);
+      m_typeHeader->glyph()->setVisible(sort.field == files::SortField::Type);
+      m_typeHeader->glyph()->setParticipatesInLayout(sort.field == files::SortField::Type);
+      const char* field = sort.field == files::SortField::Name ? "Name"
+          : sort.field == files::SortField::Size               ? "Size"
+          : sort.field == files::SortField::Type               ? "Type"
                                                                : "Modified";
-      const char* direction = sort.field == files::SortField::MODIFIED
+      const char* direction = sort.field == files::SortField::Modified
           ? (sort.descending ? "newest first" : "oldest first")
-          : sort.field == files::SortField::SIZE ? (sort.descending ? "largest first" : "smallest first")
+          : sort.field == files::SortField::Size ? (sort.descending ? "largest first" : "smallest first")
                                                  : (sort.descending ? "Z to A" : "A to Z");
       m_menuButton->setTooltip(
           std::format("View options: {}, {}{}", field, direction, sort.directoriesFirst ? " · Folders first" : "")
       );
-      const bool grid = m_viewMode == files::ViewMode::GRID;
-      m_viewSwitch->setSelectedIndex(grid ? 0 : m_viewMode == files::ViewMode::LIST ? 1 : 2);
-      m_listHeader->setVisible(m_viewMode == files::ViewMode::LIST);
-      m_listHeader->setParticipatesInLayout(m_viewMode == files::ViewMode::LIST);
+      const bool grid = m_viewMode == files::ViewMode::Grid;
+      m_viewSwitch->setSelectedIndex(grid ? 0 : m_viewMode == files::ViewMode::List ? 1 : 2);
+      m_listHeader->setVisible(m_viewMode == files::ViewMode::List);
+      m_listHeader->setParticipatesInLayout(m_viewMode == files::ViewMode::List);
       const auto request = actionRequest(false);
       for (const auto& [button, action] : std::array{
-               std::pair{m_back, Action::BACK}, std::pair{m_forward, Action::FORWARD}, std::pair{m_up, Action::UP}
+               std::pair{m_back, Action::Back}, std::pair{m_forward, Action::Forward}, std::pair{m_up, Action::Up}
            }) {
         const auto state = actionState(action, request);
         button->setEnabled(state.enabled);
@@ -5248,40 +5248,40 @@ namespace {
         );
       }
       m_places->sync(snapshot.location);
-      const bool loading = snapshot.status == files::DirectoryStatus::LOADING;
+      const bool loading = snapshot.status == files::DirectoryStatus::Loading;
       m_refresh->setGlyph(loading ? "square" : "refresh");
       m_refresh->setTooltip(loading ? "Stop loading" : "Refresh (F5)");
       std::string status;
       if (m_creator.busy()) {
-        const char* kind = m_creator.snapshot().kind == files::CreateKind::FOLDER ? "folder" : "file";
-        status = m_creator.snapshot().status == files::CreateStatus::CREATING
+        const char* kind = m_creator.snapshot().kind == files::CreateKind::Folder ? "folder" : "file";
+        status = m_creator.snapshot().status == files::CreateStatus::Creating
             ? std::format("Creating {}…", kind)
             : std::format("Preparing {} creation…", kind);
       } else if (m_renamer.busy()) {
-        status = m_renamer.snapshot().status == files::RenameStatus::RENAMING ? "Renaming…" : "Preparing rename…";
+        status = m_renamer.snapshot().status == files::RenameStatus::Renaming ? "Renaming…" : "Preparing rename…";
       } else if (m_emptyTrash.busy()) {
-        status = m_emptyTrash.snapshot().status == files::EmptyTrashStatus::PREPARING ? "Reading Trash…"
-            : m_emptyTrash.snapshot().status == files::EmptyTrashStatus::READY
+        status = m_emptyTrash.snapshot().status == files::EmptyTrashStatus::Preparing ? "Reading Trash…"
+            : m_emptyTrash.snapshot().status == files::EmptyTrashStatus::Ready
             ? "Calculating Trash size…"
             : std::format(
                   "Emptying Trash… · {} of {} items", m_emptyTrash.completed(), m_emptyTrash.snapshot().results.size()
               );
       } else if (m_trash.busy()) {
-        status = m_trash.snapshot().status == files::TrashStatus::PREPARING
+        status = m_trash.snapshot().status == files::TrashStatus::Preparing
             ? "Preparing move to Trash…"
             : std::format("Moving to Trash… · {} of {} items", m_trash.completed(), m_trash.snapshot().results.size());
       } else if (m_archives.busy()) {
         const files::GString size(g_format_size_full(m_archives.bytes(), G_FORMAT_SIZE_IEC_UNITS));
-        const char* phase = m_archives.phase() == files::ArchivePhase::READING ? "Reading archive"
-            : m_archives.phase() == files::ArchivePhase::COMPRESSING           ? "Compressing"
-            : m_archives.phase() == files::ArchivePhase::CLEANING              ? "Cleaning temporary files"
-            : m_archives.phase() == files::ArchivePhase::TRANSFERRING          ? "Publishing archive output"
+        const char* phase = m_archives.phase() == files::ArchivePhase::Reading ? "Reading archive"
+            : m_archives.phase() == files::ArchivePhase::Compressing           ? "Compressing"
+            : m_archives.phase() == files::ArchivePhase::Cleaning              ? "Cleaning temporary files"
+            : m_archives.phase() == files::ArchivePhase::Transferring          ? "Publishing archive output"
                                                                                : "Extracting archive";
         status = std::format("{}… · {} entries · {}", phase, m_archives.items(), size.get());
       } else if (m_transfers.busy()) {
         const files::GString size(g_format_size(m_transfers.bytes()));
         status = std::format(
-            "{} {} of {} items · {}", m_transfers.action() == files::TransferAction::COPY ? "Copying" : "Moving",
+            "{} {} of {} items · {}", m_transfers.action() == files::TransferAction::Copy ? "Copying" : "Moving",
             m_transfers.completed(), m_transfers.total(), size.get()
         );
       } else if (!m_actionError.empty()) {
@@ -5298,7 +5298,7 @@ namespace {
         status = std::format(
             "{}{} results",
             loading                                                    ? "Searching… · "
-                : snapshot.status == files::DirectoryStatus::CANCELLED ? "Search stopped · "
+                : snapshot.status == files::DirectoryStatus::Cancelled ? "Search stopped · "
                                                                        : "",
             model.rows().size()
         );
@@ -5307,7 +5307,7 @@ namespace {
         }
       } else if (loading) {
         status = "Loading folder…";
-      } else if (snapshot.status == files::DirectoryStatus::CANCELLED) {
+      } else if (snapshot.status == files::DirectoryStatus::Cancelled) {
         status = "Loading stopped.";
       } else {
         const auto hidden = model.filter().showHidden
@@ -5364,7 +5364,7 @@ namespace {
       m_notice->setText(
           snapshot.error
                   || loading
-                  || snapshot.status == files::DirectoryStatus::CANCELLED
+                  || snapshot.status == files::DirectoryStatus::Cancelled
                   || !browser().message().empty()
                   || !m_preferenceError.empty()
               ? status
@@ -5396,7 +5396,7 @@ namespace {
           m_list->scrollToIndex(static_cast<std::size_t>(found - model.rows().begin()));
         }
       }
-      if (m_revealTarget && snapshot.status != files::DirectoryStatus::LOADING) {
+      if (m_revealTarget && snapshot.status != files::DirectoryStatus::Loading) {
         const auto target = *std::exchange(m_revealTarget, std::nullopt);
         const auto found = std::ranges::find_if(model.rows(), [&](files::EntryId id) {
           const auto* entry = model.entry(id);
@@ -5443,12 +5443,12 @@ namespace {
         m_miller.clear();
         m_list = m_regularList;
       }
-      if (m_viewMode == files::ViewMode::MILLER && !m_miller.enabled()) {
+      if (m_viewMode == files::ViewMode::Miller && !m_miller.enabled()) {
         m_miller.start(m_browser, m_savedSettings.millerShowParents);
         if (m_miller.enabled()) {
           m_browser.stop();
         }
-      } else if (m_viewMode != files::ViewMode::MILLER && m_miller.enabled()) {
+      } else if (m_viewMode != files::ViewMode::Miller && m_miller.enabled()) {
         m_browser.duplicateFrom(m_miller.active());
         m_browser.setDefaultViewMode(m_viewMode);
         m_miller.clear();
@@ -5818,21 +5818,21 @@ namespace {
                    .glyph = "arrow-left",
                    .variant = ButtonVariant::Ghost,
                    .tooltip = "Back (Alt+Left)",
-                   .onClick = [this] { dispatchAction(Action::BACK); }}
+                   .onClick = [this] { dispatchAction(Action::Back); }}
               ),
               ui::button(
                   {.out = &m_forward,
                    .glyph = "arrow-right",
                    .variant = ButtonVariant::Ghost,
                    .tooltip = "Forward (Alt+Right)",
-                   .onClick = [this] { dispatchAction(Action::FORWARD); }}
+                   .onClick = [this] { dispatchAction(Action::Forward); }}
               ),
               ui::button(
                   {.out = &m_up,
                    .glyph = "arrow-up",
                    .variant = ButtonVariant::Ghost,
                    .tooltip = "Parent folder (Alt+Up)",
-                   .onClick = [this] { dispatchAction(Action::UP); }}
+                   .onClick = [this] { dispatchAction(Action::Up); }}
               )
           ),
           std::move(locationArea), std::move(searchArea),
@@ -5844,10 +5844,10 @@ namespace {
                    .variant = ButtonVariant::Ghost,
                    .onClick =
                        [this] {
-                         if (browser().model().snapshot().status == files::DirectoryStatus::LOADING) {
-                           dispatchAction(Action::STOP);
+                         if (browser().model().snapshot().status == files::DirectoryStatus::Loading) {
+                           dispatchAction(Action::Stop);
                          } else {
-                           dispatchAction(Action::REFRESH);
+                           dispatchAction(Action::Refresh);
                          }
                        }}
               ),
@@ -5859,9 +5859,9 @@ namespace {
                            {.label = "", .glyph = "list", .tooltip = "List view (Ctrl+2)"},
                            {.label = "", .glyph = "columns-3", .tooltip = "Column view (Ctrl+3)"}
                        },
-                   .selectedIndex = m_viewMode == files::ViewMode::GRID ? 0U : m_viewMode == files::ViewMode::LIST ? 1U : 2U,
+                   .selectedIndex = m_viewMode == files::ViewMode::Grid ? 0U : m_viewMode == files::ViewMode::List ? 1U : 2U,
                    .compact = true,
-                   .onChange = [this](std::size_t index) { dispatchAction(index == 0 ? Action::GRID : index == 1 ? Action::LIST : Action::MILLER); }}
+                   .onChange = [this](std::size_t index) { dispatchAction(index == 0 ? Action::Grid : index == 1 ? Action::List : Action::Miller); }}
               ),
               ui::button(
                   {.out = &m_menuButton, .glyph = "dots-vertical", .variant = ButtonVariant::Ghost, .onClick = [this] {
@@ -5966,7 +5966,7 @@ namespace {
                                .variant = ButtonVariant::Ghost,
                                .tooltip = "Sort by name; click again to reverse",
                                .paddingH = Style::spaceXs,
-                               .onClick = [this] { sortBy(files::SortField::NAME); }}
+                               .onClick = [this] { sortBy(files::SortField::Name); }}
                           ),
                           ui::button(
                               {.out = &m_typeHeader,
@@ -5979,7 +5979,7 @@ namespace {
                                .minWidth = 144.0F + 2 * Style::spaceXs,
                                .maxWidth = 144.0F + 2 * Style::spaceXs,
                                .paddingH = Style::spaceXs,
-                               .onClick = [this] { sortBy(files::SortField::TYPE); }}
+                               .onClick = [this] { sortBy(files::SortField::Type); }}
                           ),
                           ui::button(
                               {.out = &m_sizeHeader,
@@ -5992,7 +5992,7 @@ namespace {
                                .minWidth = 110.0F + 2 * Style::spaceXs,
                                .maxWidth = 110.0F + 2 * Style::spaceXs,
                                .paddingH = Style::spaceXs,
-                               .onClick = [this] { sortBy(files::SortField::SIZE); }}
+                               .onClick = [this] { sortBy(files::SortField::Size); }}
                           ),
                           ui::button(
                               {.out = &m_modifiedHeader,
@@ -6005,7 +6005,7 @@ namespace {
                                .minWidth = 148.0F + 2 * Style::spaceXs,
                                .maxWidth = 148.0F + 2 * Style::spaceXs,
                                .paddingH = Style::spaceXs,
-                               .onClick = [this] { sortBy(files::SortField::MODIFIED); }}
+                               .onClick = [this] { sortBy(files::SortField::Modified); }}
                           )
                       )
                   ),
@@ -6055,7 +6055,7 @@ namespace {
         if (const auto* entry = browser().model().entry(id)) {
           request.targets.push_back({id, entry->location});
         }
-        dispatchAction(Action::OPEN, request);
+        dispatchAction(Action::Open, request);
       };
       miller->context = [this](std::optional<files::EntryId> entry, float x, float y) { openFileMenu(entry, x, y); };
       miller->drag = [this](const std::vector<files::EntryId>& ids) { startFileDrag(ids); };
@@ -6357,8 +6357,8 @@ namespace {
       m_emptyTrashSize = nullptr;
       m_emptyTrashConfirm = nullptr;
       if (const auto id = std::exchange(m_activeTransferConflict, std::nullopt)) {
-        (void)(m_transferConflictArchive ? m_archives.resolve(*id, files::TransferConflictChoice::CANCEL)
-                                         : m_transfers.resolve(*id, files::TransferConflictChoice::CANCEL));
+        (void)(m_transferConflictArchive ? m_archives.resolve(*id, files::TransferConflictChoice::Cancel)
+                                         : m_transfers.resolve(*id, files::TransferConflictChoice::Cancel));
       }
       if (m_placeRenameTarget) {
         m_restorePlaceFocus = m_placeRenameTarget->location;
@@ -6579,8 +6579,8 @@ namespace {
           {.label = "Name", .enabled = false, .checkmark = true, .toggleState = 1},
       };
       for (const auto candidate : m_columnOrder) {
-        const char* label = candidate == files::DetailsColumn::TYPE ? "Type"
-            : candidate == files::DetailsColumn::SIZE               ? "Size"
+        const char* label = candidate == files::DetailsColumn::Type ? "Type"
+            : candidate == files::DetailsColumn::Size               ? "Size"
                                                                     : "Modified";
         entries.push_back(
             {.id = static_cast<int>(candidate) + 1,
@@ -6677,7 +6677,7 @@ namespace {
           [this, request](int id) {
             const auto action = static_cast<Action>(id);
             dispatchAction(action, request);
-            if (!m_menuSurface && action != Action::SEARCH && action != Action::EditLocation) {
+            if (!m_menuSurface && action != Action::Search && action != Action::EditLocation) {
               m_dispatcher.setFocus(m_list->focusArea());
             }
           },
@@ -6686,8 +6686,8 @@ namespace {
     }
     void openSortMenu() {
       showActionMenu(
-          {Action::SortName, Action::SortType, Action::SortSize, Action::SortModified, Action::ASCENDING,
-           Action::DESCENDING, Action::FoldersFirst},
+          {Action::SortName, Action::SortType, Action::SortSize, Action::SortModified, Action::Ascending,
+           Action::Descending, Action::FoldersFirst},
           true, true
       );
     }
@@ -6705,7 +6705,7 @@ namespace {
           actionEntry(Action::DoubleClick, request, true),
           {.label = "Typing in the file view", .header = true},
           actionEntry(Action::TypeToSearch, request, true),
-          actionEntry(Action::TYPEAHEAD, request, true)
+          actionEntry(Action::Typeahead, request, true)
       };
       showContextMenu(
           std::move(entries), [this, request](int id) { dispatchAction(static_cast<Action>(id), request); },
@@ -6724,13 +6724,13 @@ namespace {
           {.label = "", .separator = true}
       };
       const auto request = actionRequest();
-      for (const auto action : {Action::GRID, Action::LIST, Action::MILLER}) {
+      for (const auto action : {Action::Grid, Action::List, Action::Miller}) {
         entries.push_back(actionEntry(action, request, true));
       }
       entries.push_back({.label = "", .separator = true});
       for (auto action :
            {Action::SortMenu, Action::SelectionMenu, Action::InteractionMenu, Action::ShowHidden, Action::ShowSidebar,
-            Action::ShowPreview, Action::SEARCH, Action::SETTINGS, Action::ABOUT}) {
+            Action::ShowPreview, Action::Search, Action::Settings, Action::About}) {
         entries.push_back(actionEntry(action, request));
       }
       showContextMenu(
@@ -6741,7 +6741,7 @@ namespace {
                 m_workspaceRequest(
                     id == 9000       ? WorkspaceCommand::NewTab
                         : id == 9001 ? WorkspaceCommand::NewWindow
-                                     : WorkspaceCommand::SPLIT,
+                                     : WorkspaceCommand::Split,
                     std::nullopt
                 );
               }
@@ -6766,7 +6766,7 @@ namespace {
     bool m_restartMiller = false;
     const files::BrowserController* m_lastBrowser = nullptr;
     files::ActivationMode m_activationMode = files::ActivationMode::DoubleClick;
-    files::TypingMode m_typingMode = files::TypingMode::SEARCH;
+    files::TypingMode m_typingMode = files::TypingMode::Search;
     files::TypeaheadSelection m_typeahead;
     std::string m_typeaheadPreedit;
     Timer m_typeaheadTimer;
@@ -7324,22 +7324,22 @@ namespace {
           command = WorkspaceCommand::NewTab;
         }
         if (ctrlShift && (event.sym == XKB_KEY_t || event.sym == XKB_KEY_T)) {
-          command = WorkspaceCommand::REOPEN;
+          command = WorkspaceCommand::Reopen;
         }
         if (ctrl && event.sym == XKB_KEY_w) {
-          command = WorkspaceCommand::CLOSE;
+          command = WorkspaceCommand::Close;
         }
         if (ctrl && event.sym == XKB_KEY_n) {
           command = WorkspaceCommand::NewWindow;
         }
         if (event.modifiers == 0 && event.sym == XKB_KEY_F3) {
-          command = WorkspaceCommand::SPLIT;
+          command = WorkspaceCommand::Split;
         }
         if (event.modifiers == 0 && event.sym == XKB_KEY_F6) {
           command = WorkspaceCommand::SwitchArea;
         }
         if (ctrlShift && (event.sym == XKB_KEY_d || event.sym == XKB_KEY_D)) {
-          command = WorkspaceCommand::DUPLICATE;
+          command = WorkspaceCommand::Duplicate;
         }
         if (command) {
           defer(host.id, record->second.active, *command);
@@ -7492,7 +7492,7 @@ namespace {
           const auto tab = *std::exchange(host->pressedTab, std::nullopt);
           if (host->tabDrag) {
             if (y > 90) {
-              defer(host->id, tab, WorkspaceCommand::DETACH);
+              defer(host->id, tab, WorkspaceCommand::Detach);
             } else {
               std::size_t index = 0;
               for (const auto& [id, button] : host->buttons) {
@@ -7525,7 +7525,7 @@ namespace {
               && event.type == PointerEvent::Type::Button
               && event.pressed) {
             if (event.button == BTN_MIDDLE) {
-              defer(host->id, tab, WorkspaceCommand::CLOSE);
+              defer(host->id, tab, WorkspaceCommand::Close);
               return;
             }
             if (event.button == BTN_RIGHT) {
@@ -7794,9 +7794,9 @@ namespace {
       const auto source = (logical && *logical == tab && layout) ? layout->active : tab;
       auto& page = *m_pages.at(source);
       if (logical
-          && (command == WorkspaceCommand::DUPLICATE
-              || command == WorkspaceCommand::SPLIT
-              || command == WorkspaceCommand::SWAP)) {
+          && (command == WorkspaceCommand::Duplicate
+              || command == WorkspaceCommand::Split
+              || command == WorkspaceCommand::Swap)) {
         m_model.select(window, *logical);
       }
       switch (command) {
@@ -7808,7 +7808,7 @@ namespace {
           page.workspaceError("Close a tab before opening another.");
         }
         break;
-      case WorkspaceCommand::DUPLICATE: {
+      case WorkspaceCommand::Duplicate: {
         const auto record = m_model.windows().at(window);
         const auto cloned = newTab(window, m_pages.at(record.primary)->location(), record.primary);
         if (cloned && record.secondary) {
@@ -7822,10 +7822,10 @@ namespace {
         }
         break;
       }
-      case WorkspaceCommand::CLOSE:
+      case WorkspaceCommand::Close:
         m_model.close(tab);
         break;
-      case WorkspaceCommand::REOPEN:
+      case WorkspaceCommand::Reopen:
         if (m_model.reopen(window)) {
           for (auto& [pageId, value] : m_pages) {
             if (m_model.tabFor(pageId) == m_model.windows().at(window).selected) {
@@ -7845,10 +7845,10 @@ namespace {
         }
         break;
       }
-      case WorkspaceCommand::DETACH:
+      case WorkspaceCommand::Detach:
       case WorkspaceCommand::MoveWindow: {
         files::WindowId destinationWindow = 0;
-        if (command == WorkspaceCommand::DETACH) {
+        if (command == WorkspaceCommand::Detach) {
           destinationWindow = newWindow();
         } else {
           for (const auto& [id, target] : m_hosts) {
@@ -7888,7 +7888,7 @@ namespace {
         }
         break;
       }
-      case WorkspaceCommand::SPLIT:
+      case WorkspaceCommand::Split:
         if (m_model.windows().at(window).secondary) {
           m_model.unsplit(window);
         } else if (!newPane(window, page.location(), source)) {
@@ -7900,7 +7900,7 @@ namespace {
           m_model.focus(window, *other);
         }
         break;
-      case WorkspaceCommand::SWAP:
+      case WorkspaceCommand::Swap:
         m_model.swap(window);
         break;
       case WorkspaceCommand::OpenOther:
@@ -7955,9 +7955,9 @@ namespace {
       page.workspaceMenu(
           std::move(entries),
           [this, window, tab](int id) {
-            const std::array commands{WorkspaceCommand::NewTab, WorkspaceCommand::DUPLICATE, WorkspaceCommand::CLOSE,
-                                      WorkspaceCommand::REOPEN, WorkspaceCommand::SPLIT,     WorkspaceCommand::SWAP,
-                                      WorkspaceCommand::DETACH, WorkspaceCommand::MoveWindow};
+            const std::array commands{WorkspaceCommand::NewTab, WorkspaceCommand::Duplicate, WorkspaceCommand::Close,
+                                      WorkspaceCommand::Reopen, WorkspaceCommand::Split,     WorkspaceCommand::Swap,
+                                      WorkspaceCommand::Detach, WorkspaceCommand::MoveWindow};
             if (id >= 0 && static_cast<std::size_t>(id) < commands.size()) {
               defer(window, tab, commands[static_cast<std::size_t>(id)]);
             }
@@ -8043,7 +8043,7 @@ namespace {
                  .variant = ButtonVariant::Ghost,
                  .customPalette = closeTabPalette(foreground),
                  .tooltip = "Close tab",
-                 .onClick = [this, windowId, id] { defer(windowId, id, WorkspaceCommand::CLOSE); },
+                 .onClick = [this, windowId, id] { defer(windowId, id, WorkspaceCommand::Close); },
                  .configure = [](Button& button) { button.setZIndex(2); }}
             )
         );
@@ -8079,7 +8079,7 @@ namespace {
                .variant = ButtonVariant::Ghost,
                .tooltip = "Split view (F3)",
                .onClick = [this, windowId] {
-                 defer(windowId, m_model.windows().at(windowId).active, WorkspaceCommand::SPLIT);
+                 defer(windowId, m_model.windows().at(windowId).active, WorkspaceCommand::Split);
                }}
           )
       );

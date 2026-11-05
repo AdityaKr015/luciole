@@ -8,18 +8,18 @@
 
 namespace files {
   enum class BrowserAction : std::uint8_t {
-    BACK,
-    FORWARD,
-    UP,
-    HOME,
-    ROOT,
-    REFRESH,
-    STOP,
+    Back,
+    Forward,
+    Up,
+    Home,
+    Root,
+    Refresh,
+    Stop,
     EditLocation,
-    SEARCH,
-    GRID,
-    LIST,
-    MILLER,
+    Search,
+    Grid,
+    List,
+    Miller,
     ShowHidden,
     ShowSidebar,
     ShowPreview,
@@ -29,21 +29,21 @@ namespace files {
     SortType,
     SortSize,
     SortModified,
-    ASCENDING,
-    DESCENDING,
+    Ascending,
+    Descending,
     FoldersFirst,
-    OPEN,
+    Open,
     ContainingFolder,
     OriginalLocation,
-    PIN,
-    UNPIN,
+    Pin,
+    Unpin,
     CutFiles,
     CopyFiles,
     PasteFiles,
-    RENAME,
-    TRASH,
-    PROPERTIES,
-    COMPRESS,
+    Rename,
+    Trash,
+    Properties,
+    Compress,
     ExtractHere,
     ExtractTo,
     BrowseArchive,
@@ -60,26 +60,26 @@ namespace files {
     SingleClick,
     DoubleClick,
     TypeToSearch,
-    TYPEAHEAD,
-    SETTINGS,
-    ABOUT,
+    Typeahead,
+    Settings,
+    About,
     ViewMenu,
     SortMenu,
     SelectionMenu,
     InteractionMenu,
     CopyPath,
     CopyUri,
-    TERMINAL,
+    Terminal,
     CopyTargetPath,
     CopyTargetUri,
     TargetTerminal
   };
-  enum class ActionScope : std::uint8_t { GLOBAL, LOCATION, TARGETS, SELECTION };
+  enum class ActionScope : std::uint8_t { Global, Location, Targets, Selection };
   struct ActionDefinition {
     BrowserAction action;
     std::string_view label;
     std::string_view shortcut;
-    ActionScope scope = ActionScope::GLOBAL;
+    ActionScope scope = ActionScope::Global;
     bool destructive = false;
   };
   struct ActionTarget {
@@ -101,14 +101,14 @@ namespace files {
     bool operationsBusy = false;
     bool pinsEditable = false, pinsBusy = false, canEmptyTrash = false;
     std::function<bool(const Location&)> pinned;
-    ViewMode viewMode = ViewMode::LIST;
+    ViewMode viewMode = ViewMode::List;
     bool showSidebar = true;
     bool showPreview = false;
     bool clipboardAvailable = false;
     bool clipboardHasFiles = false;
     bool terminalAvailable = false;
     ActivationMode activationMode = ActivationMode::DoubleClick;
-    TypingMode typingMode = TypingMode::SEARCH;
+    TypingMode typingMode = TypingMode::Search;
   };
   struct ActionState {
     bool enabled = true;

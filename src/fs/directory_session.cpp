@@ -112,7 +112,7 @@ struct files::DirectorySession::State : std::enable_shared_from_this<State> {
   }
 
   void metadataCompleted() {
-    if (!dirty && !scan->enumerating && snapshot.status == DirectoryStatus::READY) {
+    if (!dirty && !scan->enumerating && snapshot.status == DirectoryStatus::Ready) {
       publishMetadata();
       notify();
     }
@@ -212,7 +212,7 @@ struct files::DirectorySession::State : std::enable_shared_from_this<State> {
     const auto file = snapshot.location->file();
     if (!g_file_is_native(file.get())) {
       snapshot.monitorError = FileError{
-          .kind = FileErrorKind::UNSUPPORTED,
+          .kind = FileErrorKind::Unsupported,
           .message = snapshot.location->isTrash() ? "Refresh to update the Trash view."
                                                   : "Remote change monitoring is not implemented yet."
       };
@@ -239,7 +239,7 @@ struct files::DirectorySession::State : std::enable_shared_from_this<State> {
   void begin() {
     stopScan();
     ++snapshot.generation;
-    snapshot.status = DirectoryStatus::LOADING;
+    snapshot.status = DirectoryStatus::Loading;
     snapshot.error.reset();
     invalidateMetadata(true);
     scan = std::make_shared<Scan>();
@@ -360,10 +360,10 @@ struct files::DirectorySession::State : std::enable_shared_from_this<State> {
     }
     identities = std::move(retained);
     snapshot.error = std::move(error);
-    if (snapshot.location->isTrash() && snapshot.error && snapshot.error->kind == FileErrorKind::UNSUPPORTED) {
+    if (snapshot.location->isTrash() && snapshot.error && snapshot.error->kind == FileErrorKind::Unsupported) {
       snapshot.error->message = "Trash browsing is unavailable. The desktop trash service is not accessible.";
     }
-    snapshot.status = snapshot.error ? DirectoryStatus::ERROR : DirectoryStatus::READY;
+    snapshot.status = snapshot.error ? DirectoryStatus::Error : DirectoryStatus::Ready;
     if (snapshot.error) {
       g_cancellable_cancel(scan->cancellable.get());
       invalidateMetadata(false);
@@ -410,7 +410,7 @@ void files::DirectorySession::cancel() {
   state->stop();
   state->identities.clear();
   ++state->snapshot.generation;
-  state->snapshot.status = DirectoryStatus::CANCELLED;
+  state->snapshot.status = DirectoryStatus::Cancelled;
   state->snapshot.error.reset();
   state->invalidateMetadata(false);
   state->notify();

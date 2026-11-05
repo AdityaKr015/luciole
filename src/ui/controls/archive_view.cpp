@@ -44,9 +44,9 @@ namespace {
       m_name->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurface));
       m_icon->bind(entry.icon, colorSpecFromRole(ColorRole::OnSurface));
       std::string size;
-      if (entry.kind == files::ArchiveEntryKind::DIRECTORY) {
+      if (entry.kind == files::ArchiveEntryKind::Directory) {
         size = "Folder";
-      } else if (entry.kind == files::ArchiveEntryKind::SYMLINK || entry.kind == files::ArchiveEntryKind::HARDLINK) {
+      } else if (entry.kind == files::ArchiveEntryKind::Symlink || entry.kind == files::ArchiveEntryKind::Hardlink) {
         size = "Link";
       } else if (entry.size) {
         const files::GString value(g_format_size_full(*entry.size, G_FORMAT_SIZE_IEC_UNITS));
@@ -231,7 +231,7 @@ void ArchiveView::sync(
     std::shared_ptr<const files::ArchiveCatalog> catalog, files::ArchivePhase phase, std::size_t items,
     std::uint64_t bytes, const std::string& error
 ) {
-  m_busy = phase != files::ArchivePhase::IDLE;
+  m_busy = phase != files::ArchivePhase::Idle;
   if (catalog != m_catalog) {
     m_catalog = std::move(catalog);
     m_parent.clear();
@@ -272,8 +272,8 @@ void ArchiveView::rebuild() {
     std::ranges::sort(m_rows, [this](auto left, auto right) {
       const auto& a = m_catalog->entries[left];
       const auto& b = m_catalog->entries[right];
-      if ((a.kind == files::ArchiveEntryKind::DIRECTORY) != (b.kind == files::ArchiveEntryKind::DIRECTORY)) {
-        return a.kind == files::ArchiveEntryKind::DIRECTORY;
+      if ((a.kind == files::ArchiveEntryKind::Directory) != (b.kind == files::ArchiveEntryKind::Directory)) {
+        return a.kind == files::ArchiveEntryKind::Directory;
       }
       const int order = g_utf8_collate(a.displayName.c_str(), b.displayName.c_str());
       return order == 0 ? a.path < b.path : order < 0;
@@ -292,7 +292,7 @@ void ArchiveView::selectionChanged() {
   bool canOpen = false;
   if (m_catalog && m_selection.size() == 1) {
     const auto found = std::ranges::find(m_catalog->entries, *m_selection.begin(), &files::ArchiveEntry::path);
-    canOpen = found != m_catalog->entries.end() && found->kind != files::ArchiveEntryKind::SYMLINK;
+    canOpen = found != m_catalog->entries.end() && found->kind != files::ArchiveEntryKind::Symlink;
   }
   m_openButton->setEnabled(canOpen && !m_busy);
   m_grid->notifyDataChanged();
@@ -328,13 +328,13 @@ void ArchiveView::activate(std::size_t index) {
     return;
   }
   const auto& entry = m_catalog->entries[m_rows[index]];
-  if (entry.kind == files::ArchiveEntryKind::DIRECTORY) {
+  if (entry.kind == files::ArchiveEntryKind::Directory) {
     m_parent = entry.path;
     m_selection.clear();
     m_focus.reset();
     m_anchor.reset();
     rebuild();
-  } else if (entry.kind != files::ArchiveEntryKind::SYMLINK) {
+  } else if (entry.kind != files::ArchiveEntryKind::Symlink) {
     m_open(entry.path);
   }
 }
@@ -462,7 +462,7 @@ ArchiveDialog::ArchiveDialog(
 void ArchiveDialog::submit() {
   m_error->setText(m_submit(
       m_name ? m_name->value() : "", m_destination->value(),
-      files::archiveFormats().empty() ? files::ArchiveFormat::ZIP : files::archiveFormats()[m_format].format
+      files::archiveFormats().empty() ? files::ArchiveFormat::Zip : files::archiveFormats()[m_format].format
   ));
   markLayoutDirty();
 }

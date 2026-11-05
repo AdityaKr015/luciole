@@ -37,15 +37,15 @@ namespace {
         source.dispatch(fds, start);
       }
     };
-    writer.save(files::ViewMode::GRID);
-    writer.save(files::ViewMode::LIST);
-    writer.save(files::ViewMode::GRID);
+    writer.save(files::ViewMode::Grid);
+    writer.save(files::ViewMode::List);
+    writer.save(files::ViewMode::Grid);
     writer.submit(
-        {{files::BrowserPreference::ThumbnailPolicy, files::ThumbnailPolicy::NEVER},
+        {{files::BrowserPreference::ThumbnailPolicy, files::ThumbnailPolicy::Never},
          {files::BrowserPreference::ThumbnailCacheMib, 256}}
     );
     writer.submit(
-        {{files::BrowserPreference::ThumbnailPolicy, files::ThumbnailPolicy::ALL},
+        {{files::BrowserPreference::ThumbnailPolicy, files::ThumbnailPolicy::All},
          {files::BrowserPreference::ThumbnailCacheMib, 64}}
     );
     writer.saveGridIconSize(96);
@@ -58,34 +58,34 @@ namespace {
     writer.saveShowHidden(false);
     writer.saveShowHidden(true);
     writer.saveShowHidden(false);
-    writer.saveSort({files::SortField::NAME, true, true});
-    writer.saveSort({files::SortField::SIZE, false, true});
-    const files::SortOptions finalSort{files::SortField::TYPE, true, false};
+    writer.saveSort({files::SortField::Name, true, true});
+    writer.saveSort({files::SortField::Size, false, true});
+    const files::SortOptions finalSort{files::SortField::Type, true, false};
     writer.saveSort(finalSort);
     writer.saveDetailsColumns({true, false, true});
     writer.saveDetailsColumns({false, true, false});
     const files::DetailsColumnVisibility hiddenColumns{false, false, false};
     writer.saveDetailsColumns(hiddenColumns);
-    writer.saveColumnOrder({files::DetailsColumn::SIZE, files::DetailsColumn::TYPE, files::DetailsColumn::MODIFIED});
+    writer.saveColumnOrder({files::DetailsColumn::Size, files::DetailsColumn::Type, files::DetailsColumn::Modified});
     const files::DetailsColumnOrder finalOrder{
-        files::DetailsColumn::MODIFIED, files::DetailsColumn::SIZE, files::DetailsColumn::TYPE
+        files::DetailsColumn::Modified, files::DetailsColumn::Size, files::DetailsColumn::Type
     };
     writer.saveColumnOrder(finalOrder);
     writer.saveColumnWidths({400, 200, 100, 180});
     const files::DetailsColumnWidths finalWidths{640, 192, 96, 224};
     writer.saveColumnWidths(finalWidths);
-    writer.saveInteraction(files::ActivationMode::SingleClick, files::TypingMode::SEARCH);
-    writer.saveInteraction(files::ActivationMode::DoubleClick, files::TypingMode::TYPEAHEAD);
-    writer.saveInteraction(files::ActivationMode::SingleClick, files::TypingMode::TYPEAHEAD);
+    writer.saveInteraction(files::ActivationMode::SingleClick, files::TypingMode::Search);
+    writer.saveInteraction(files::ActivationMode::DoubleClick, files::TypingMode::Typeahead);
+    writer.saveInteraction(files::ActivationMode::SingleClick, files::TypingMode::Typeahead);
     wait();
     const auto loaded = files::loadSettings(paths);
     TEST_CHECK(
         error.empty()
         && loaded
-        && loaded->browser.viewMode == files::ViewMode::GRID
+        && loaded->browser.viewMode == files::ViewMode::Grid
         && !loaded->browser.showHidden
         && loaded->browser.gridIconSize == 64
-        && loaded->browser.thumbnails.policy == files::ThumbnailPolicy::ALL
+        && loaded->browser.thumbnails.policy == files::ThumbnailPolicy::All
         && loaded->browser.thumbnails.cacheMiB == 64
         && loaded->browser.sidebarWidth == 280
         && !loaded->browser.showSidebar
@@ -94,7 +94,7 @@ namespace {
         && loaded->browser.columnOrder == finalOrder
         && loaded->browser.columnWidths == finalWidths
         && loaded->browser.activationMode == files::ActivationMode::SingleClick
-        && loaded->browser.typingMode == files::TypingMode::TYPEAHEAD
+        && loaded->browser.typingMode == files::TypingMode::Typeahead
     );
     std::ifstream base(paths.base);
     const std::string content((std::istreambuf_iterator<char>(base)), {});
@@ -113,14 +113,14 @@ namespace {
         && shown->browser.columnOrder == finalOrder
         && shown->browser.columnWidths == finalWidths
         && shown->browser.activationMode == files::ActivationMode::SingleClick
-        && shown->browser.typingMode == files::TypingMode::TYPEAHEAD
+        && shown->browser.typingMode == files::TypingMode::Typeahead
     );
     const files::SortOptions defaultSort;
     writer.saveSort(defaultSort);
     writer.saveDetailsColumns({});
     writer.saveColumnOrder(files::kDefaultDetailsColumnOrder);
     writer.saveColumnWidths(files::kDefaultDetailsColumnWidths);
-    writer.saveInteraction(files::ActivationMode::DoubleClick, files::TypingMode::SEARCH);
+    writer.saveInteraction(files::ActivationMode::DoubleClick, files::TypingMode::Search);
     wait();
     const auto reset = files::loadSettings(paths);
     TEST_CHECK(
@@ -133,10 +133,10 @@ namespace {
         && reset->browser.columnOrder == files::kDefaultDetailsColumnOrder
         && reset->browser.columnWidths == files::kDefaultDetailsColumnWidths
         && reset->browser.activationMode == files::ActivationMode::DoubleClick
-        && reset->browser.typingMode == files::TypingMode::SEARCH
+        && reset->browser.typingMode == files::TypingMode::Search
     );
     std::ofstream(paths.overrides) << "[broken\n";
-    writer.save(files::ViewMode::LIST);
+    writer.save(files::ViewMode::List);
     wait();
     TEST_CHECK(!error.empty());
     std::ifstream invalid(paths.overrides);
@@ -192,7 +192,7 @@ namespace {
     fs::permissions(root / "declarative.toml", fs::perms::owner_read);
     until([&] { return writer->settings()->browser.showHidden && !writer->busy(); });
     TEST_CHECK(writer->inheritedSettings()->browser.sidebarWidth == 240);
-    writer->submit({{P::ShowHidden, false}, {P::ViewMode, files::ViewMode::LIST}});
+    writer->submit({{P::ShowHidden, false}, {P::ViewMode, files::ViewMode::List}});
     writer->saveGridIconSize(128);
     writer->reload();
     until([&] { return !writer->busy(); });
@@ -200,7 +200,7 @@ namespace {
         error.empty()
         && !writer->settings()->browser.showHidden
         && writer->settings()->browser.gridIconSize == 128
-        && writer->settings()->browser.viewMode == files::ViewMode::LIST
+        && writer->settings()->browser.viewMode == files::ViewMode::List
         && writer->inheritedSettings()->browser.showHidden
     );
     writer->submit({{P::ShowHidden, std::monostate{}}});
@@ -239,11 +239,11 @@ namespace {
     fs::remove(paths.overrides);
     until([&] { return writer->settings() == files::Settings{} && !writer->busy(); });
     write(paths.overrides, "[browser]\nview_mode = 'grid'\n");
-    until([&] { return writer->settings()->browser.viewMode == files::ViewMode::GRID && !writer->busy(); });
+    until([&] { return writer->settings()->browser.viewMode == files::ViewMode::Grid && !writer->busy(); });
     fs::rename(paths.base.parent_path(), root / "old-directory");
     until([&] { return writer->settings() == files::Settings{} && !writer->busy(); });
     fs::rename(root / "old-directory", paths.base.parent_path());
-    until([&] { return writer->settings()->browser.viewMode == files::ViewMode::GRID && !writer->busy(); });
+    until([&] { return writer->settings()->browser.viewMode == files::ViewMode::Grid && !writer->busy(); });
     write(paths.overrides, "[browser]\nview_mode = 'grid'\n");
     writer->reload();
     writer.reset();

@@ -49,19 +49,19 @@ namespace {
     files::ConfigService settings(fixture.paths());
     TEST_CHECK(
         settings.reload()
-        && settings.settings().browser.viewMode == files::ViewMode::MILLER
+        && settings.settings().browser.viewMode == files::ViewMode::Miller
         && settings.settings().browser.millerColumnWidth == 300
     );
     using P = files::BrowserPreference;
     const std::array edits{
-        files::OverrideEdit{P::ViewMode, files::ViewMode::MILLER}, files::OverrideEdit{P::MillerColumnWidth, 417}
+        files::OverrideEdit{P::ViewMode, files::ViewMode::Miller}, files::OverrideEdit{P::MillerColumnWidth, 417}
     };
-    TEST_CHECK(settings.saveOverrides(edits) == files::AtomicWriteState::DURABLE);
+    TEST_CHECK(settings.saveOverrides(edits) == files::AtomicWriteState::Durable);
     files::ConfigService restored(fixture.paths());
     TEST_CHECK(
         restored.reload()
         && restored.settings().browser.millerColumnWidth == 417
-        && restored.settings().browser.viewMode == files::ViewMode::MILLER
+        && restored.settings().browser.viewMode == files::ViewMode::Miller
     );
     const auto before = read(fixture.paths().overrides);
     for (const int width : {179, 801}) {
@@ -76,7 +76,7 @@ namespace {
     fixture.write("config.toml", "[browser]\nview_mode = 'miller'\nmiller_column_width = 300\n");
     const std::array reset{files::OverrideEdit{P::MillerColumnWidth, std::monostate{}}};
     TEST_CHECK(
-        restored.saveOverrides(reset) == files::AtomicWriteState::DURABLE
+        restored.saveOverrides(reset) == files::AtomicWriteState::Durable
         && restored.settings().browser.millerColumnWidth == 300
     );
   }
@@ -87,7 +87,7 @@ namespace {
     TEST_CHECK(settings.reload() && settings.settings().browser.millerShowParents);
     using P = files::BrowserPreference;
     const std::array off{files::OverrideEdit{P::MillerShowParents, false}};
-    TEST_CHECK(settings.saveOverrides(off) == files::AtomicWriteState::DURABLE);
+    TEST_CHECK(settings.saveOverrides(off) == files::AtomicWriteState::Durable);
     files::ConfigService restored(fixture.paths());
     TEST_CHECK(restored.reload() && !restored.settings().browser.millerShowParents);
     const auto before = read(fixture.paths().overrides);
@@ -99,11 +99,11 @@ namespace {
     fixture.write("config.toml", "[browser]\nmiller_show_parents = false\n");
     const std::array on{files::OverrideEdit{P::MillerShowParents, true}};
     TEST_CHECK(
-        restored.saveOverrides(on) == files::AtomicWriteState::DURABLE && restored.settings().browser.millerShowParents
+        restored.saveOverrides(on) == files::AtomicWriteState::Durable && restored.settings().browser.millerShowParents
     );
     const std::array reset{files::OverrideEdit{P::MillerShowParents, std::monostate{}}};
     TEST_CHECK(
-        restored.saveOverrides(reset) == files::AtomicWriteState::DURABLE
+        restored.saveOverrides(reset) == files::AtomicWriteState::Durable
         && !restored.settings().browser.millerShowParents
     );
     fixture.write("config.toml", "[browser]\nmiller_show_parents = 'true'\n");
@@ -144,7 +144,7 @@ namespace {
     fixture.write("config.toml", "[browser]\nsort_by = 'type'\n");
     std::filesystem::remove(fixture.paths().overrides);
     const auto typed = files::loadSettings(fixture.paths());
-    TEST_CHECK(typed && typed->browser.sort.field == files::SortField::TYPE);
+    TEST_CHECK(typed && typed->browser.sort.field == files::SortField::Type);
   }
 
   void testLayersAndReload() {
@@ -154,16 +154,16 @@ namespace {
     fixture.write(
         "config.toml", "[browser]\nshow_hidden = true\nsort_by = 'size'\nsort_descending = true\nview_mode = 'grid'\n"
     );
-    TEST_CHECK(config.reload() && config.settings().browser.viewMode == files::ViewMode::GRID);
+    TEST_CHECK(config.reload() && config.settings().browser.viewMode == files::ViewMode::Grid);
     fixture.write("settings.toml", "[browser]\nshow_hidden = false\ndirectories_first = false\nview_mode = 'list'\n");
     TEST_CHECK(config.reload());
     const auto& browser = config.settings().browser;
     TEST_CHECK(
         !browser.showHidden
-        && browser.sort.field == files::SortField::SIZE
+        && browser.sort.field == files::SortField::Size
         && browser.sort.descending
         && !browser.sort.directoriesFirst
-        && browser.viewMode == files::ViewMode::LIST
+        && browser.viewMode == files::ViewMode::List
     );
     const auto lastGood = config.settings();
     fixture.write("settings.toml", "[browser]\nview_mode = 'unknown'\n");
@@ -252,7 +252,7 @@ namespace {
     files::DirectorySnapshot data;
     data.location = files::Location::fromPath(fixture.directory.native());
     data.generation = 1;
-    data.status = files::DirectoryStatus::READY;
+    data.status = files::DirectoryStatus::Ready;
     data.entries = {
         {.id = 1,
          .location = files::Location::fromPath((fixture.directory / ".hidden").native()),
@@ -295,7 +295,7 @@ namespace {
     TEST_CHECK(config.reload() && config.settings().browser.gridIconSize == 96);
     for (const int size : {32, 256}) {
       const std::array zoom{files::OverrideEdit{Preference::GridIconSize, size}};
-      TEST_CHECK(config.saveOverrides(zoom) == State::DURABLE);
+      TEST_CHECK(config.saveOverrides(zoom) == State::Durable);
       const auto loaded = files::loadSettings(fixture.paths());
       TEST_CHECK(loaded && loaded->browser.gridIconSize == size && loaded->browser.showHidden);
     }
@@ -307,7 +307,7 @@ namespace {
     }
     const std::array reset{files::OverrideEdit{Preference::GridIconSize, std::monostate{}}};
     TEST_CHECK(
-        config.saveOverrides(reset) == State::DURABLE
+        config.saveOverrides(reset) == State::Durable
         && config.settings().browser.gridIconSize == 64
         && !read(fixture.paths().overrides).contains("grid_icon_size")
     );
@@ -329,12 +329,12 @@ namespace {
     }
     fixture.write("settings.toml", "[browser]\nview_mode = 'grid'\n");
     const std::array width{files::OverrideEdit{Preference::SidebarWidth, 400}};
-    TEST_CHECK(config.saveOverrides(width) == State::DURABLE);
+    TEST_CHECK(config.saveOverrides(width) == State::Durable);
     files::ConfigService reloaded(fixture.paths());
     TEST_CHECK(
         reloaded.reload()
         && reloaded.settings().browser.sidebarWidth == 400
-        && reloaded.settings().browser.viewMode == files::ViewMode::GRID
+        && reloaded.settings().browser.viewMode == files::ViewMode::Grid
         && reloaded.settings().browser.showHidden
     );
     const auto before = read(fixture.paths().overrides);
@@ -346,7 +346,7 @@ namespace {
     }
     const std::array inherit{files::OverrideEdit{Preference::SidebarWidth, std::monostate{}}};
     TEST_CHECK(
-        config.saveOverrides(inherit) == State::DURABLE
+        config.saveOverrides(inherit) == State::Durable
         && config.settings().browser.sidebarWidth == 280
         && !read(fixture.paths().overrides).contains("sidebar_width")
     );
@@ -361,7 +361,7 @@ namespace {
     fixture.write("config.toml", "[browser]\nshow_preview = true\nshow_hidden = true\n");
     TEST_CHECK(config.reload() && config.settings().browser.showPreview);
     TEST_CHECK(
-        config.saveOverrides(std::array{files::OverrideEdit{P::ShowPreview, false}}) == files::AtomicWriteState::DURABLE
+        config.saveOverrides(std::array{files::OverrideEdit{P::ShowPreview, false}}) == files::AtomicWriteState::Durable
     );
     const auto loaded = files::loadSettings(fixture.paths());
     TEST_CHECK(loaded && !loaded->browser.showPreview && loaded->browser.showHidden);
@@ -373,7 +373,7 @@ namespace {
     );
     TEST_CHECK(
         config.saveOverrides(std::array{files::OverrideEdit{P::ShowPreview, std::monostate{}}})
-            == files::AtomicWriteState::DURABLE
+            == files::AtomicWriteState::Durable
         && config.settings().browser.showPreview
     );
     fixture.write("config.toml", "[browser]\nshow_preview = 'true'\n");
@@ -381,7 +381,7 @@ namespace {
     fixture.write("config.toml", "[browser]\npreview_width = 444\nshow_preview = true\n");
     TEST_CHECK(config.reload() && config.settings().browser.previewWidth == 444);
     TEST_CHECK(
-        config.saveOverrides(std::array{files::OverrideEdit{P::PreviewWidth, 555}}) == files::AtomicWriteState::DURABLE
+        config.saveOverrides(std::array{files::OverrideEdit{P::PreviewWidth, 555}}) == files::AtomicWriteState::Durable
     );
     TEST_CHECK(files::loadSettings(fixture.paths())->browser.previewWidth == 555);
     const auto before = read(fixture.paths().overrides);
@@ -394,7 +394,7 @@ namespace {
     }
     TEST_CHECK(
         config.saveOverrides(std::array{files::OverrideEdit{P::PreviewWidth, std::monostate{}}})
-            == files::AtomicWriteState::DURABLE
+            == files::AtomicWriteState::Durable
         && config.settings().browser.previewWidth == 444
     );
     for (const auto* value : {"207", "801", "true", "'320'", "320.0"}) {
@@ -413,7 +413,7 @@ namespace {
     fixture.write("settings.toml", "[browser]\nshow_sidebar = true\ngrid_icon_size = 64\n");
     TEST_CHECK(config.reload() && config.settings().browser.showSidebar);
     const std::array hide{files::OverrideEdit{Preference::ShowSidebar, false}};
-    TEST_CHECK(config.saveOverrides(hide) == State::DURABLE);
+    TEST_CHECK(config.saveOverrides(hide) == State::Durable);
     const auto loaded = files::loadSettings(fixture.paths());
     TEST_CHECK(
         loaded
@@ -425,10 +425,10 @@ namespace {
     const std::array invalid{files::OverrideEdit{Preference::ShowSidebar, 0}};
     TEST_CHECK(config.saveOverrides(invalid) == State::NotCommitted && read(fixture.paths().overrides) == saved);
     const std::array show{files::OverrideEdit{Preference::ShowSidebar, true}};
-    TEST_CHECK(config.saveOverrides(show) == State::DURABLE && config.settings().browser.showSidebar);
+    TEST_CHECK(config.saveOverrides(show) == State::Durable && config.settings().browser.showSidebar);
     const std::array inherit{files::OverrideEdit{Preference::ShowSidebar, std::monostate{}}};
     TEST_CHECK(
-        config.saveOverrides(inherit) == State::DURABLE
+        config.saveOverrides(inherit) == State::Durable
         && !config.settings().browser.showSidebar
         && !read(fixture.paths().overrides).contains("show_sidebar")
     );
@@ -462,7 +462,7 @@ namespace {
       fixture.write("settings.toml", std::string("[browser]\n") + column.key + " = true\ngrid_icon_size = 64\n");
       TEST_CHECK(config.reload() && config.settings().browser.columns.*column.member);
       const std::array hide{files::OverrideEdit{column.preference, false}};
-      TEST_CHECK(config.saveOverrides(hide) == State::DURABLE);
+      TEST_CHECK(config.saveOverrides(hide) == State::Durable);
       const auto loaded = files::loadSettings(fixture.paths());
       TEST_CHECK(
           loaded
@@ -475,12 +475,12 @@ namespace {
       TEST_CHECK(config.saveOverrides(invalid) == State::NotCommitted && read(fixture.paths().overrides) == saved);
       const std::array inherit{files::OverrideEdit{column.preference, std::monostate{}}};
       TEST_CHECK(
-          config.saveOverrides(inherit) == State::DURABLE
+          config.saveOverrides(inherit) == State::Durable
           && !(config.settings().browser.columns.*column.member)
           && !read(fixture.paths().overrides).contains(column.key)
       );
       const std::array show{files::OverrideEdit{column.preference, true}};
-      TEST_CHECK(config.saveOverrides(show) == State::DURABLE && config.settings().browser.columns.*column.member);
+      TEST_CHECK(config.saveOverrides(show) == State::Durable && config.settings().browser.columns.*column.member);
       TEST_CHECK(read(fixture.paths().base) == base);
       for (const auto* value : {"0", "'false'", "[]"}) {
         fixture.write("config.toml", std::string("[browser]\n") + column.key + " = " + value + "\n");
@@ -500,18 +500,18 @@ namespace {
     TEST_CHECK(
         config.reload()
         && config.settings().browser.activationMode == A::DoubleClick
-        && config.settings().browser.typingMode == T::SEARCH
+        && config.settings().browser.typingMode == T::Search
     );
     const std::string base =
         "[browser]\nactivation_mode = 'single_click'\ntyping_mode = 'typeahead'\nshow_hidden = true\n";
     fixture.write("config.toml", base);
     fixture.write("settings.toml", "[browser]\ngrid_icon_size = 96\n");
     for (const auto activation : {A::SingleClick, A::DoubleClick}) {
-      for (const auto typing : {T::SEARCH, T::TYPEAHEAD}) {
+      for (const auto typing : {T::Search, T::Typeahead}) {
         const std::array edits{
             files::OverrideEdit{P::ActivationMode, activation}, files::OverrideEdit{P::TypingMode, typing}
         };
-        TEST_CHECK(config.saveOverrides(edits) == S::DURABLE);
+        TEST_CHECK(config.saveOverrides(edits) == S::Durable);
         const auto loaded = files::loadSettings(fixture.paths());
         TEST_CHECK(
             loaded
@@ -536,9 +536,9 @@ namespace {
         files::OverrideEdit{P::ActivationMode, std::monostate{}}, files::OverrideEdit{P::TypingMode, std::monostate{}}
     };
     TEST_CHECK(
-        config.saveOverrides(inherit) == S::DURABLE
+        config.saveOverrides(inherit) == S::Durable
         && config.settings().browser.activationMode == A::SingleClick
-        && config.settings().browser.typingMode == T::TYPEAHEAD
+        && config.settings().browser.typingMode == T::Typeahead
         && read(fixture.paths().base) == base
     );
     const auto lastGood = config.settings();
@@ -575,7 +575,7 @@ namespace {
            {files::minimumDetailsColumnWidth(index), files::maximumDetailsColumnWidth(index),
             files::kDefaultDetailsColumnWidths[index]}) {
         const std::array edit{files::OverrideEdit{preferences[index], width}};
-        TEST_CHECK(config.saveOverrides(edit) == S::DURABLE);
+        TEST_CHECK(config.saveOverrides(edit) == S::Durable);
         const auto loaded = files::loadSettings(fixture.paths());
         TEST_CHECK(
             loaded
@@ -596,7 +596,7 @@ namespace {
       }
       const std::array inherit{files::OverrideEdit{preferences[index], std::monostate{}}};
       TEST_CHECK(
-          config.saveOverrides(inherit) == S::DURABLE
+          config.saveOverrides(inherit) == S::Durable
           && config.settings().browser.columnWidths[index] == 300
           && !read(fixture.paths().overrides).contains(key)
           && read(fixture.paths().base) == base
@@ -626,7 +626,7 @@ namespace {
     Fixture fixture;
     files::ConfigService config(fixture.paths());
     TEST_CHECK(config.reload() && config.settings().browser.columnOrder == files::kDefaultDetailsColumnOrder);
-    const files::DetailsColumnOrder baseOrder{Column::MODIFIED, Column::TYPE, Column::SIZE};
+    const files::DetailsColumnOrder baseOrder{Column::Modified, Column::Type, Column::Size};
     const std::string base = "[browser]\ncolumn_order = ['modified', 'type', 'size']\nshow_size_column = false\n";
     fixture.write("config.toml", base);
     fixture.write("settings.toml", "[browser]\ngrid_icon_size = 64\n");
@@ -634,7 +634,7 @@ namespace {
     auto order = files::kDefaultDetailsColumnOrder;
     do {
       const std::array edit{files::OverrideEdit{Preference::ColumnOrder, order}};
-      TEST_CHECK(config.saveOverrides(edit) == State::DURABLE);
+      TEST_CHECK(config.saveOverrides(edit) == State::Durable);
       const auto loaded = files::loadSettings(fixture.paths());
       TEST_CHECK(
           loaded
@@ -647,10 +647,10 @@ namespace {
     for (const auto& edit : std::array{
              files::OverrideEdit{Preference::ColumnOrder, true},
              files::OverrideEdit{
-                 Preference::ColumnOrder, files::DetailsColumnOrder{Column::TYPE, Column::TYPE, Column::SIZE}
+                 Preference::ColumnOrder, files::DetailsColumnOrder{Column::Type, Column::Type, Column::Size}
              },
              files::OverrideEdit{
-                 Preference::ColumnOrder, files::DetailsColumnOrder{Column::TYPE, Column::SIZE, static_cast<Column>(99)}
+                 Preference::ColumnOrder, files::DetailsColumnOrder{Column::Type, Column::Size, static_cast<Column>(99)}
              }
          }) {
       TEST_CHECK(
@@ -659,7 +659,7 @@ namespace {
     }
     const std::array inherit{files::OverrideEdit{Preference::ColumnOrder, std::monostate{}}};
     TEST_CHECK(
-        config.saveOverrides(inherit) == State::DURABLE
+        config.saveOverrides(inherit) == State::Durable
         && config.settings().browser.columnOrder == baseOrder
         && !read(fixture.paths().overrides).contains("column_order")
         && read(fixture.paths().base) == base
@@ -690,17 +690,17 @@ namespace {
     files::ConfigService config(fixture.paths());
     TEST_CHECK(
         (config.reload()
-         && config.settings().browser.thumbnails == files::ThumbnailOptions{files::ThumbnailPolicy::ALL, 128, 24, 256})
+         && config.settings().browser.thumbnails == files::ThumbnailOptions{files::ThumbnailPolicy::All, 128, 24, 256})
     );
     const std::array edits{
-        files::OverrideEdit{P::ThumbnailPolicy, files::ThumbnailPolicy::NEVER},
+        files::OverrideEdit{P::ThumbnailPolicy, files::ThumbnailPolicy::Never},
         files::OverrideEdit{P::ThumbnailMaxFileMib, 512}, files::OverrideEdit{P::ThumbnailMaxMegapixels, 48},
         files::OverrideEdit{P::ThumbnailCacheMib, 512}
     };
-    TEST_CHECK(config.saveOverrides(edits) == files::AtomicWriteState::DURABLE);
+    TEST_CHECK(config.saveOverrides(edits) == files::AtomicWriteState::Durable);
     const auto loaded = files::loadSettings(fixture.paths());
     TEST_CHECK(
-        (loaded && loaded->browser.thumbnails == files::ThumbnailOptions{files::ThumbnailPolicy::NEVER, 512, 48, 512})
+        (loaded && loaded->browser.thumbnails == files::ThumbnailOptions{files::ThumbnailPolicy::Never, 512, 48, 512})
     );
     const std::array reset{
         files::OverrideEdit{P::ThumbnailPolicy, std::monostate{}},
@@ -709,8 +709,8 @@ namespace {
         files::OverrideEdit{P::ThumbnailCacheMib, std::monostate{}}
     };
     TEST_CHECK(
-        (config.saveOverrides(reset) == files::AtomicWriteState::DURABLE
-         && config.settings().browser.thumbnails == files::ThumbnailOptions{files::ThumbnailPolicy::ALL, 128, 24, 256})
+        (config.saveOverrides(reset) == files::AtomicWriteState::Durable
+         && config.settings().browser.thumbnails == files::ThumbnailOptions{files::ThumbnailPolicy::All, 128, 24, 256})
     );
     for (const auto* invalid :
          {"thumbnail_policy = true", "thumbnail_policy = 'remote'", "thumbnail_max_file_mib = 0",
@@ -740,30 +740,30 @@ namespace {
     TEST_CHECK(first.reload() && second.reload());
     const std::array show{files::OverrideEdit{Preference::ShowHidden, true}};
     const std::array descending{files::OverrideEdit{Preference::SortDescending, true}};
-    TEST_CHECK(first.saveOverrides(show) == State::DURABLE && first.settings().browser.showHidden);
+    TEST_CHECK(first.saveOverrides(show) == State::Durable && first.settings().browser.showHidden);
     // The second instance still has its earlier cache. Saving another key must
     // reread the sidecar under the lock rather than overwrite the first edit.
-    TEST_CHECK(second.saveOverrides(descending) == State::DURABLE);
+    TEST_CHECK(second.saveOverrides(descending) == State::Durable);
     TEST_CHECK(
         second.settings().browser.showHidden
         && second.settings().browser.sort.descending
-        && second.settings().browser.sort.field == files::SortField::SIZE
+        && second.settings().browser.sort.field == files::SortField::Size
     );
     TEST_CHECK(files::validateConfigFile(fixture.paths().overrides).empty());
     const auto saved = read(fixture.paths().overrides);
-    TEST_CHECK(second.saveOverrides(descending) == State::UNCHANGED && read(fixture.paths().overrides) == saved);
+    TEST_CHECK(second.saveOverrides(descending) == State::Unchanged && read(fixture.paths().overrides) == saved);
     const std::array disable{
         files::OverrideEdit{Preference::DirectoriesFirst, false},
         files::OverrideEdit{Preference::SortDescending, false},
     };
     TEST_CHECK(
-        second.saveOverrides(disable) == State::DURABLE
+        second.saveOverrides(disable) == State::Durable
         && second.settings().browser.showHidden
         && !second.settings().browser.sort.directoriesFirst
         && !second.settings().browser.sort.descending
     );
     const std::array inherit{files::OverrideEdit{Preference::ShowHidden, std::monostate{}}};
-    TEST_CHECK(second.saveOverrides(inherit) == State::DURABLE && !second.settings().browser.showHidden);
+    TEST_CHECK(second.saveOverrides(inherit) == State::Durable && !second.settings().browser.showHidden);
     TEST_CHECK(!read(fixture.paths().overrides).contains("show_hidden"));
     TEST_CHECK(read(baseTarget) == baseContent && std::filesystem::is_symlink(fixture.paths().base));
 
@@ -784,17 +784,17 @@ namespace {
     TEST_CHECK(
         second.saveOverrides(invalidEdits) == State::NotCommitted && !std::filesystem::exists(fixture.paths().overrides)
     );
-    const std::array sort{files::OverrideEdit{Preference::SortBy, files::SortField::TYPE}};
+    const std::array sort{files::OverrideEdit{Preference::SortBy, files::SortField::Type}};
     TEST_CHECK(
-        second.saveOverrides(sort) == State::DURABLE && second.settings().browser.sort.field == files::SortField::TYPE
+        second.saveOverrides(sort) == State::Durable && second.settings().browser.sort.field == files::SortField::Type
     );
-    const std::array grid{files::OverrideEdit{Preference::ViewMode, files::ViewMode::GRID}};
-    TEST_CHECK(second.saveOverrides(grid) == State::DURABLE);
+    const std::array grid{files::OverrideEdit{Preference::ViewMode, files::ViewMode::Grid}};
+    TEST_CHECK(second.saveOverrides(grid) == State::Durable);
     files::ConfigService reloaded(fixture.paths());
     TEST_CHECK(
         reloaded.reload()
-        && reloaded.settings().browser.viewMode == files::ViewMode::GRID
-        && reloaded.settings().browser.sort.field == files::SortField::TYPE
+        && reloaded.settings().browser.viewMode == files::ViewMode::Grid
+        && reloaded.settings().browser.sort.field == files::SortField::Type
     );
     const auto gridBytes = read(fixture.paths().overrides);
     const std::array invalidView{files::OverrideEdit{Preference::ViewMode, true}};
@@ -806,8 +806,8 @@ namespace {
     );
     const std::array resetView{files::OverrideEdit{Preference::ViewMode, std::monostate{}}};
     TEST_CHECK(
-        second.saveOverrides(resetView) == State::DURABLE
-        && second.settings().browser.viewMode == files::ViewMode::LIST
+        second.saveOverrides(resetView) == State::Durable
+        && second.settings().browser.viewMode == files::ViewMode::List
         && !read(fixture.paths().overrides).contains("view_mode")
     );
     files::ConfigService aliased({.base = fixture.paths().base, .overrides = fixture.paths().base});
@@ -824,7 +824,7 @@ namespace {
     Fixture invalidBase;
     invalidBase.write("config.toml", "[browser]\nshow_hidden = true\n");
     files::ConfigService protectedConfig(invalidBase.paths());
-    TEST_CHECK(protectedConfig.saveOverrides(descending) == State::DURABLE);
+    TEST_CHECK(protectedConfig.saveOverrides(descending) == State::Durable);
     const auto before = read(invalidBase.paths().overrides);
     const auto beforeSettings = protectedConfig.settings();
     invalidBase.write("config.toml", "schema_version = 999\n");

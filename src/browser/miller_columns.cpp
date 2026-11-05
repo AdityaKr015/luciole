@@ -18,7 +18,7 @@ files::MillerColumns::makeColumn(BrowserController& source, const Location& loca
     column->browser->duplicateFrom(source);
   }
   column->browser->setViewDefaults(
-      ViewMode::MILLER, inheritHistory ? column->browser->viewport().iconSize : source.viewport().iconSize
+      ViewMode::Miller, inheritHistory ? column->browser->viewport().iconSize : source.viewport().iconSize
   );
   column->browser->setChangedCallback([this] { notify(); });
   column->browser->setFileActivatedCallback([this](const Location& target) {
@@ -92,7 +92,7 @@ bool files::MillerColumns::focus(std::size_t index) {
 }
 
 void files::MillerColumns::load(std::size_t index) {
-  if (index < m_columns.size() && m_columns[index]->browser->model().snapshot().status == DirectoryStatus::IDLE) {
+  if (index < m_columns.size() && m_columns[index]->browser->model().snapshot().status == DirectoryStatus::Idle) {
     m_columns[index]->browser->open(m_columns[index]->location);
   }
 }
@@ -148,7 +148,7 @@ void files::MillerColumns::synchronize() {
       }
       continue;
     }
-    if (model.snapshot().status == DirectoryStatus::LOADING || model.snapshot().status == DirectoryStatus::IDLE) {
+    if (model.snapshot().status == DirectoryStatus::Loading || model.snapshot().status == DirectoryStatus::Idle) {
       continue;
     }
     auto& parent = *m_columns[i];

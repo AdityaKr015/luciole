@@ -93,7 +93,7 @@ files::FilePayload files::remainingCutFiles(FilePayload payload, const std::vect
   if (payload.cut) {
     std::unordered_set<std::string> moved;
     for (const auto& result : results) {
-      if (result.outcome == TransferOutcome::MOVED) {
+      if (result.outcome == TransferOutcome::Moved) {
         moved.insert(result.source.uri());
       }
     }

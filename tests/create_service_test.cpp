@@ -41,7 +41,7 @@ namespace {
       }
     }
     void
-    prepare(files::CreateService& service, const fs::path& path, files::CreateKind kind = files::CreateKind::FOLDER) {
+    prepare(files::CreateService& service, const fs::path& path, files::CreateKind kind = files::CreateKind::Folder) {
       TEST_CHECK(service.prepare(location(path), kind));
       until([&] { return !service.busy(); });
       TEST_CHECK(service.canCreate());
@@ -60,7 +60,7 @@ namespace {
     pump.prepare(service, fixture.root);
     pump.create(service, "Documents 文");
     TEST_CHECK(
-        service.snapshot().status == files::CreateStatus::SUCCEEDED && fs::is_empty(fixture.root / "Documents 文")
+        service.snapshot().status == files::CreateStatus::Succeeded && fs::is_empty(fixture.root / "Documents 文")
     );
     TEST_CHECK(service.snapshot().destination == location(fixture.root / "Documents 文"));
     pump.prepare(service, fixture.root);
@@ -86,7 +86,7 @@ namespace {
     pump.prepare(service, fixture.root);
     for (const auto* name : {"folder", "file", "link"}) {
       pump.create(service, name);
-      TEST_CHECK(service.snapshot().status == files::CreateStatus::ERROR && service.canCreate());
+      TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && service.canCreate());
     }
     TEST_CHECK(
         fs::exists(fixture.root / "folder/marker")
@@ -94,14 +94,14 @@ namespace {
         && fs::read_symlink(fixture.root / "link") == "missing"
     );
     pump.create(service, "available");
-    TEST_CHECK(service.snapshot().status == files::CreateStatus::SUCCEEDED);
+    TEST_CHECK(service.snapshot().status == files::CreateStatus::Succeeded);
     files::CreateService other;
     pump.prepare(service, fixture.root);
     pump.prepare(other, fixture.root);
     TEST_CHECK(service.create("racing") && other.create("racing"));
     pump.until([&] { return !service.busy() && !other.busy(); });
-    const bool first = service.snapshot().status == files::CreateStatus::SUCCEEDED;
-    const bool second = other.snapshot().status == files::CreateStatus::SUCCEEDED;
+    const bool first = service.snapshot().status == files::CreateStatus::Succeeded;
+    const bool second = other.snapshot().status == files::CreateStatus::Succeeded;
     TEST_CHECK(first != second && fs::is_directory(fixture.root / "racing"));
   }
   void staleDestinations(Pump& pump, files::CreateKind kind) {
@@ -113,7 +113,7 @@ namespace {
     fs::create_directory(fixture.root / "parent");
     pump.create(service, "blocked");
     TEST_CHECK(
-        service.snapshot().status == files::CreateStatus::ERROR
+        service.snapshot().status == files::CreateStatus::Error
         && !fs::exists(fixture.root / "parent/blocked")
         && !fs::exists(fixture.root / "original/blocked")
     );
@@ -122,7 +122,7 @@ namespace {
     fs::remove(fixture.root / "alias");
     fs::create_directory_symlink(fixture.root / "original", fixture.root / "alias");
     pump.create(service, "blocked");
-    TEST_CHECK(service.snapshot().status == files::CreateStatus::ERROR && fs::is_empty(fixture.root / "original"));
+    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && fs::is_empty(fixture.root / "original"));
   }
   void validationCancellationAndPermissions(Pump& pump) {
     Fixture fixture;
@@ -134,35 +134,35 @@ namespace {
       TEST_CHECK(!service.create(name) && fs::is_empty(fixture.root));
     }
     pump.create(service, std::string(10000, 'a'));
-    TEST_CHECK(service.snapshot().status == files::CreateStatus::ERROR && fs::is_empty(fixture.root));
+    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && fs::is_empty(fixture.root));
     service.cancel();
     TEST_CHECK(!service.canCreate() && fs::is_empty(fixture.root));
-    TEST_CHECK(service.prepare(location(fixture.root), files::CreateKind::FOLDER));
-    TEST_CHECK(!service.prepare(location(fixture.root), files::CreateKind::FOLDER) && !service.create("busy"));
+    TEST_CHECK(service.prepare(location(fixture.root), files::CreateKind::Folder));
+    TEST_CHECK(!service.prepare(location(fixture.root), files::CreateKind::Folder) && !service.create("busy"));
     service.cancel();
     pump.until([&] { return !service.busy(); });
-    TEST_CHECK(service.snapshot().status == files::CreateStatus::CANCELLED && fs::is_empty(fixture.root));
+    TEST_CHECK(service.snapshot().status == files::CreateStatus::Cancelled && fs::is_empty(fixture.root));
     pump.prepare(service, fixture.root);
     TEST_CHECK(service.create("maybe-created"));
     service.cancel();
     pump.until([&] { return !service.busy(); });
-    const bool committed = service.snapshot().status == files::CreateStatus::SUCCEEDED;
+    const bool committed = service.snapshot().status == files::CreateStatus::Succeeded;
     TEST_CHECK(
-        (committed || service.snapshot().status == files::CreateStatus::CANCELLED)
+        (committed || service.snapshot().status == files::CreateStatus::Cancelled)
         && fs::exists(fixture.root / "maybe-created") == committed
     );
     for (const auto& parent :
          {location(fixture.root / "missing"), files::Location::fromUri("sftp://example.invalid/folder")}) {
-      TEST_CHECK(service.prepare(parent, files::CreateKind::FOLDER));
+      TEST_CHECK(service.prepare(parent, files::CreateKind::Folder));
       pump.until([&] { return !service.busy(); });
-      TEST_CHECK(service.snapshot().status == files::CreateStatus::ERROR && !service.canCreate());
+      TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && !service.canCreate());
     }
     if (::geteuid() != 0) {
       pump.prepare(service, fixture.root);
       fs::permissions(fixture.root, fs::perms::owner_read | fs::perms::owner_exec);
       pump.create(service, "denied");
       fs::permissions(fixture.root, fs::perms::owner_all);
-      TEST_CHECK(service.snapshot().status == files::CreateStatus::ERROR && !fs::exists(fixture.root / "denied"));
+      TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && !fs::exists(fixture.root / "denied"));
     }
     struct MaskGuard {
       mode_t previous = ::umask(0027);
@@ -179,7 +179,7 @@ namespace {
     pump.prepare(service, fixture.root, files::CreateKind::EmptyFile);
     pump.create(service, "Document 文.txt");
     TEST_CHECK(
-        service.snapshot().status == files::CreateStatus::SUCCEEDED
+        service.snapshot().status == files::CreateStatus::Succeeded
         && service.snapshot().kind == files::CreateKind::EmptyFile
         && service.snapshot().destination == location(fixture.root / "Document 文.txt")
         && fs::is_regular_file(fixture.root / "Document 文.txt")
@@ -194,7 +194,7 @@ namespace {
     pump.prepare(service, fixture.root, files::CreateKind::EmptyFile);
     for (const auto* name : {"protected.txt", "directory", "broken-link", "link", "pipe"}) {
       pump.create(service, name);
-      TEST_CHECK(service.snapshot().status == files::CreateStatus::ERROR && service.canCreate());
+      TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && service.canCreate());
     }
     std::ifstream content(fixture.root / "protected.txt");
     const std::string bytes{std::istreambuf_iterator<char>(content), {}};
@@ -209,7 +209,7 @@ namespace {
     TEST_CHECK(!service.create("../escaped"));
     pump.create(service, "retry.txt");
     TEST_CHECK(
-        service.snapshot().status == files::CreateStatus::SUCCEEDED && fs::file_size(fixture.root / "retry.txt") == 0
+        service.snapshot().status == files::CreateStatus::Succeeded && fs::file_size(fixture.root / "retry.txt") == 0
     );
     files::CreateService other;
     pump.prepare(service, fixture.root, files::CreateKind::EmptyFile);
@@ -217,17 +217,17 @@ namespace {
     TEST_CHECK(service.create("racing.txt") && other.create("racing.txt"));
     pump.until([&] { return !service.busy() && !other.busy(); });
     TEST_CHECK(
-        (service.snapshot().status == files::CreateStatus::SUCCEEDED)
-            != (other.snapshot().status == files::CreateStatus::SUCCEEDED)
+        (service.snapshot().status == files::CreateStatus::Succeeded)
+            != (other.snapshot().status == files::CreateStatus::Succeeded)
         && fs::file_size(fixture.root / "racing.txt") == 0
     );
     pump.prepare(service, fixture.root, files::CreateKind::EmptyFile);
     TEST_CHECK(service.create("cancelled.txt"));
     service.cancel();
     pump.until([&] { return !service.busy(); });
-    const bool committed = service.snapshot().status == files::CreateStatus::SUCCEEDED;
+    const bool committed = service.snapshot().status == files::CreateStatus::Succeeded;
     TEST_CHECK(
-        (committed || service.snapshot().status == files::CreateStatus::CANCELLED)
+        (committed || service.snapshot().status == files::CreateStatus::Cancelled)
         && fs::exists(fixture.root / "cancelled.txt") == committed
     );
     const auto raw = std::string("raw-") + static_cast<char>(0xff);
@@ -248,7 +248,7 @@ namespace {
       fs::permissions(fixture.root, fs::perms::owner_read | fs::perms::owner_exec);
       pump.create(service, "denied.txt");
       fs::permissions(fixture.root, fs::perms::owner_all);
-      TEST_CHECK(service.snapshot().status == files::CreateStatus::ERROR && !fs::exists(fixture.root / "denied.txt"));
+      TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && !fs::exists(fixture.root / "denied.txt"));
     }
   }
   void monitoredCreation(Pump& pump) {
@@ -257,7 +257,7 @@ namespace {
     files::DirectorySession session;
     session.setChangedCallback([&] { model.applySnapshot(session.snapshot()); });
     session.open(location(fixture.root));
-    pump.until([&] { return model.snapshot().status == files::DirectoryStatus::READY; });
+    pump.until([&] { return model.snapshot().status == files::DirectoryStatus::Ready; });
     files::CreateService service;
     pump.prepare(service, fixture.root);
     pump.create(service, "created");
@@ -288,7 +288,7 @@ int main() {
     createsFolders(pump);
     createsEmptyFiles(pump);
     collisionsAndRetry(pump);
-    staleDestinations(pump, files::CreateKind::FOLDER);
+    staleDestinations(pump, files::CreateKind::Folder);
     staleDestinations(pump, files::CreateKind::EmptyFile);
     validationCancellationAndPermissions(pump);
     monitoredCreation(pump);

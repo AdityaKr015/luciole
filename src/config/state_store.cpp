@@ -83,8 +83,8 @@ namespace {
         if (tab.secondary) {
           location(*tab.secondary, tabKey + ".secondary_uri");
         }
-        if ((tab.activePane != files::ActivePane::PRIMARY && tab.activePane != files::ActivePane::SECONDARY)
-            || (tab.activePane == files::ActivePane::SECONDARY && !tab.secondary)) {
+        if ((tab.activePane != files::ActivePane::Primary && tab.activePane != files::ActivePane::Secondary)
+            || (tab.activePane == files::ActivePane::Secondary && !tab.secondary)) {
           add(tabKey + ".active_pane", "active pane must exist and be primary or secondary");
         }
       }
@@ -178,7 +178,7 @@ namespace {
       return files::SavedTab{
           .primary = std::move(*primary),
           .secondary = std::move(secondary),
-          .activePane = *active == "secondary" ? files::ActivePane::SECONDARY : files::ActivePane::PRIMARY
+          .activePane = *active == "secondary" ? files::ActivePane::Secondary : files::ActivePane::Primary
       };
     }
 
@@ -290,7 +290,7 @@ namespace {
       for (const auto& tab : window.tabs) {
         toml::table value{
             {"primary_uri", tab.primary.uri()},
-            {"active_pane", tab.activePane == files::ActivePane::PRIMARY ? "primary" : "secondary"}
+            {"active_pane", tab.activePane == files::ActivePane::Primary ? "primary" : "secondary"}
         };
         if (tab.secondary) {
           value.insert("secondary_uri", tab.secondary->uri());

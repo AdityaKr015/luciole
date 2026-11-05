@@ -59,7 +59,7 @@ namespace {
     ThumbnailStore store;
     const auto native = source.location.nativePath();
     if (!native) {
-      if (options.policy == ThumbnailPolicy::ALL && source.modifiedSeconds) {
+      if (options.policy == ThumbnailPolicy::All && source.modifiedSeconds) {
         if (auto cached = store.read(source.location.uri(), side, *source.modifiedSeconds, source.size)) {
           result.image.pixels = std::move(cached->image);
         }
@@ -76,7 +76,7 @@ namespace {
         && g_file_info_has_attribute(filesystem.get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE)
         && !g_file_info_get_attribute_boolean(filesystem.get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE);
     if (!local) {
-      if (options.policy == ThumbnailPolicy::ALL && source.modifiedSeconds) {
+      if (options.policy == ThumbnailPolicy::All && source.modifiedSeconds) {
         if (auto cached = store.read(source.location.uri(), side, *source.modifiedSeconds, source.size)) {
           result.image.pixels = std::move(cached->image);
         }
@@ -182,7 +182,7 @@ namespace {
 } // namespace
 
 struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
-  enum class Stage : std::uint8_t { ProbeQueued, PROBING, DecodeQueued, DECODING, READY };
+  enum class Stage : std::uint8_t { ProbeQueued, Probing, DecodeQueued, Decoding, Ready };
   struct Item {
     explicit Item(DirectoryEntry entry) : source(std::move(entry)) {}
     std::shared_ptr<FileIconImage> image;
@@ -214,7 +214,7 @@ struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
   };
   static constexpr std::size_t kWriteBudget = 16U * 1024U * 1024U;
   ThumbnailOptions options;
-  ThumbnailPurpose purpose = ThumbnailPurpose::THUMBNAIL;
+  ThumbnailPurpose purpose = ThumbnailPurpose::Thumbnail;
   std::unordered_map<std::string, Item> cache;
   std::unordered_map<const FileIconImage*, Item*> leases;
   std::function<void()> changed;
@@ -380,7 +380,7 @@ struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
   }
   void start(std::unordered_map<std::string, Item>::iterator next, bool generate) {
     auto& item = next->second;
-    item.stage = generate ? Stage::DECODING : Stage::PROBING;
+    item.stage = generate ? Stage::Decoding : Stage::Probing;
     if (generate) {
       ++active;
     } else {
@@ -414,7 +414,7 @@ struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
             if (loaded->loaded.decodeNeeded) {
               item.stage = Stage::DecodeQueued;
             } else {
-              item.stage = Stage::READY;
+              item.stage = Stage::Ready;
               *item.image = std::move(loaded->loaded.image);
               item.failed = !item.image->pixels;
               item.retry = std::chrono::steady_clock::now() + std::chrono::seconds(30);
@@ -453,7 +453,7 @@ struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
     }
     // Cancellation must run even while both decoders are occupied.
     for (auto it = cache.begin(); it != cache.end();) {
-      if (it->second.stage != Stage::READY && it->second.image.use_count() == 1) {
+      if (it->second.stage != Stage::Ready && it->second.image.use_count() == 1) {
         const auto old = it++;
         erase(old);
       } else {
@@ -481,7 +481,7 @@ files::ThumbnailService::ThumbnailService(ThumbnailPurpose purpose) : m_state(st
   m_state->purpose = purpose;
 }
 int files::ThumbnailService::pixelSizeClass(int pixels, ThumbnailPurpose purpose) {
-  return purpose == ThumbnailPurpose::PREVIEW && pixels > 1024 ? kMaxPreviewImageSide
+  return purpose == ThumbnailPurpose::Preview && pixels > 1024 ? kMaxPreviewImageSide
                                                                : ThumbnailStore::sizeClass(std::clamp(pixels, 1, 1024));
 }
 files::ThumbnailService::~ThumbnailService() {
@@ -493,7 +493,7 @@ std::shared_ptr<const files::FileIconImage>
 files::ThumbnailService::request(const DirectoryEntry& source, int pixels, bool visible) {
   auto& state = *m_state;
   const auto& mime = source.contentType;
-  if (state.options.policy == ThumbnailPolicy::NEVER
+  if (state.options.policy == ThumbnailPolicy::Never
       || state.clearing
       || !mime
       || !(
@@ -506,10 +506,10 @@ files::ThumbnailService::request(const DirectoryEntry& source, int pixels, bool 
       || source.symlink
       || !source.modifiedSeconds
       || privateUri(source.location.uri())
-      || (state.options.policy == ThumbnailPolicy::LOCAL && !source.location.nativePath())) {
+      || (state.options.policy == ThumbnailPolicy::Local && !source.location.nativePath())) {
     return {};
   }
-  const int side = pixelSizeClass(pixels, mime->starts_with("image/") ? state.purpose : ThumbnailPurpose::THUMBNAIL);
+  const int side = pixelSizeClass(pixels, mime->starts_with("image/") ? state.purpose : ThumbnailPurpose::Thumbnail);
   const auto key = std::format(
       "{}\n{}\n{}\n{}\n{}\n{}\n{}", source.location.uri(), source.id, source.etag.value_or(""),
       source.modifiedSeconds.value_or(0), source.size.value_or(0), source.contentRevision.value_or(""), side
@@ -551,7 +551,7 @@ bool files::ThumbnailService::touch(const std::shared_ptr<const FileIconImage>& 
   return true;
 }
 std::shared_ptr<const files::FileIconImage> files::ThumbnailService::prepared(const DirectoryEntry& source) {
-  if (m_state->clearing || m_state->options.policy == ThumbnailPolicy::NEVER) {
+  if (m_state->clearing || m_state->options.policy == ThumbnailPolicy::Never) {
     return {};
   }
   for (const int side : {1024, 512, 256, 128}) {
@@ -676,6 +676,6 @@ std::size_t files::ThumbnailService::reservedBytes() const { return m_state->res
 std::size_t files::ThumbnailService::activeJobs() const { return m_state->active; }
 std::size_t files::ThumbnailService::queuedJobs() const {
   return static_cast<std::size_t>(std::ranges::count_if(m_state->cache, [](const auto& item) {
-    return item.second.stage != State::Stage::READY && item.second.stage != State::Stage::DECODING;
+    return item.second.stage != State::Stage::Ready && item.second.stage != State::Stage::Decoding;
   }));
 }

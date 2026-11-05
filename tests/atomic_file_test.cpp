@@ -68,18 +68,18 @@ namespace {
     const auto parent = fixture.directory / "new" / "nested";
     const auto path = parent / "settings.toml";
     auto result = save(path, "first");
-    TEST_CHECK(result.state == AtomicWriteState::DURABLE && result.error.empty() && read(path) == "first");
+    TEST_CHECK(result.state == AtomicWriteState::Durable && result.error.empty() && read(path) == "first");
     struct stat info{};
     TEST_CHECK(::stat(path.c_str(), &info) == 0 && (info.st_mode & 0777) == 0600);
     TEST_CHECK(::stat(parent.c_str(), &info) == 0 && (info.st_mode & 0777) == 0700);
     plainWrite(parent / "settings.toml.tmp", "unrelated fixed temporary name");
     result = save(path, "second");
-    TEST_CHECK(result.state == AtomicWriteState::DURABLE && read(path) == "second");
+    TEST_CHECK(result.state == AtomicWriteState::Durable && read(path) == "second");
     TEST_CHECK(read(parent / "settings.toml.tmp") == "unrelated fixed temporary name");
     TEST_CHECK(::stat(path.c_str(), &info) == 0);
     const auto inode = info.st_ino;
     result = save(path, "second");
-    TEST_CHECK(result.state == AtomicWriteState::UNCHANGED && ::stat(path.c_str(), &info) == 0 && info.st_ino == inode);
+    TEST_CHECK(result.state == AtomicWriteState::Unchanged && ::stat(path.c_str(), &info) == 0 && info.st_ino == inode);
     TEST_CHECK(
         save(path, std::string(256 * 1024 + 1, 'x')).state == AtomicWriteState::NotCommitted && read(path) == "second"
     );
@@ -134,7 +134,7 @@ namespace {
   void testLockAndFailureCleanup() {
     Fixture fixture;
     const auto path = fixture.directory / "settings.toml";
-    TEST_CHECK(save(path, "old").state == AtomicWriteState::DURABLE);
+    TEST_CHECK(save(path, "old").state == AtomicWriteState::Durable);
     const int lock = ::open((fixture.directory / ".settings.toml.lock").c_str(), O_RDWR | O_CLOEXEC);
     TEST_CHECK(lock >= 0 && ::flock(lock, LOCK_EX | LOCK_NB) == 0);
     const auto busy = save(path, "blocked");
@@ -152,7 +152,7 @@ namespace {
         && WEXITSTATUS(contenderStatus) == 0
     );
     ::close(lock);
-    TEST_CHECK(save(path, "after lock").state == AtomicWriteState::DURABLE);
+    TEST_CHECK(save(path, "after lock").state == AtomicWriteState::Durable);
 
     // A real storage failure before rename must preserve the old file and
     // remove this transaction's temporary file. Limits affect only the child.

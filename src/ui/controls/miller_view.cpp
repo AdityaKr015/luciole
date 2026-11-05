@@ -110,7 +110,7 @@ void MillerView::synchronize() {
       continue;
     }
     auto adapter = std::make_unique<files::FileViewAdapter>(
-        *source->browser, m_icons, m_thumbnails, files::ViewMode::MILLER,
+        *source->browser, m_icons, m_thumbnails, files::ViewMode::Miller,
         [this] { return modifiers ? modifiers() : 0U; },
         [this, id] { return indexOf(id) == m_columns.focused() && keyboardFocus && keyboardFocus(); }
     );
@@ -180,7 +180,7 @@ void MillerView::synchronize() {
       const auto first = grid->firstVisibleIndex();
       const auto& rows = controller->model().rows();
       return files::BrowseViewport{
-          .mode = files::ViewMode::MILLER,
+          .mode = files::ViewMode::Miller,
           .iconSize = controller->viewport().iconSize,
           .vertical = grid->scrollView().scrollOffset(),
           .withinRow = grid->firstVisibleOffset(),
@@ -343,10 +343,10 @@ void MillerView::doLayout(Renderer& renderer) {
     view.root->setFrameSize(columnWidth, h);
     view.grid->arrange(renderer, {0, 0, columnWidth, h});
     const auto& snapshot = model.snapshot();
-    loadPending = loadPending || snapshot.status == files::DirectoryStatus::IDLE;
+    loadPending = loadPending || snapshot.status == files::DirectoryStatus::Idle;
     const bool empty = model.rows().empty();
     view.notice->setText(
-        snapshot.status == files::DirectoryStatus::LOADING || snapshot.status == files::DirectoryStatus::IDLE
+        snapshot.status == files::DirectoryStatus::Loading || snapshot.status == files::DirectoryStatus::Idle
             ? "Loading…"
             : snapshot.error ? snapshot.error->message
                              : "This folder is empty."

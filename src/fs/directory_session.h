@@ -14,7 +14,7 @@
 #include <vector>
 
 namespace files {
-  enum class DirectoryStatus : std::uint8_t { IDLE, LOADING, READY, ERROR, CANCELLED };
+  enum class DirectoryStatus : std::uint8_t { Idle, Loading, Ready, Error, Cancelled };
   struct DirectoryEntry {
     std::uint64_t id = 0;
     Location location;
@@ -38,7 +38,7 @@ namespace files {
   struct DirectorySnapshot {
     std::uint64_t generation = 0;
     std::optional<Location> location;
-    DirectoryStatus status = DirectoryStatus::IDLE;
+    DirectoryStatus status = DirectoryStatus::Idle;
     std::vector<DirectoryEntry> entries;
     std::optional<FileError> error;
     std::optional<FileError> monitorError;

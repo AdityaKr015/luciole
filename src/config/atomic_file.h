@@ -8,10 +8,10 @@
 
 namespace files {
   enum class AtomicWriteState : unsigned char {
-    UNCHANGED,
+    Unchanged,
     NotCommitted,
-    COMMITTED, // Visible replacement, but directory sync failed. Do not report rollback.
-    DURABLE,
+    Committed, // Visible replacement, but directory sync failed. Do not report rollback.
+    Durable,
   };
 
   struct AtomicWriteResult {

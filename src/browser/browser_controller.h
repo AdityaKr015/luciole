@@ -5,7 +5,7 @@
 
 namespace files {
   struct BrowseViewport {
-    ViewMode mode = ViewMode::GRID;
+    ViewMode mode = ViewMode::Grid;
     int iconSize = 48;
     float vertical = 0;
     float horizontal = 0;
