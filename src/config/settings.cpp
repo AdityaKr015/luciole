@@ -345,7 +345,7 @@ namespace {
       settings.browser.thumbnails.policy = *patch.thumbnailPolicy;
     for (std::size_t i = 0; i < kThumbnailIntegers.size(); ++i)
       if (patch.thumbnailIntegers[i])
-        settings.browser.thumbnails.*(kThumbnailIntegers[i].member) = *patch.thumbnailIntegers[i];
+        settings.browser.thumbnails.*kThumbnailIntegers[i].member = *patch.thumbnailIntegers[i];
     if (patch.activationMode)
       settings.browser.activationMode = *patch.activationMode;
     if (patch.typingMode)

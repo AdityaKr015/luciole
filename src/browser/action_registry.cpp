@@ -126,7 +126,7 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
     return c.pinned
         && std::ranges::any_of(r.targets, [&](const auto& target) { return c.pinned(target.location) == pinned; });
   };
-  const auto writable = [&]() -> ActionState {
+  const auto writable = [&] -> ActionState {
     if (c.operationsBusy)
       return unavailable("Another file operation is still finishing.");
     if (snapshot.metadata.filesystem.readOnly == true)

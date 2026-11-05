@@ -1090,9 +1090,8 @@ namespace {
         break;
       case PointerEvent::Type::Leave:
         dispatcher->pointerLeave();
-        if (dispatcher == &m_dispatcher) {
-          if (!m_systemDrag)
-            cancelDrag();
+        if (dispatcher == &m_dispatcher && !m_systemDrag) {
+          cancelDrag();
         }
         break;
       case PointerEvent::Type::Motion:
