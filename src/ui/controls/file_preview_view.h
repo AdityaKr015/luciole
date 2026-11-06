@@ -24,6 +24,5 @@ private:
   Label *m_heading, *m_name, *m_metadata, *m_status, *m_text;
   Button *m_open, *m_openWith;
   ScrollView* m_scroll;
-  Flex* m_actions;
   std::string m_location;
 };

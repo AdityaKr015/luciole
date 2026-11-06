@@ -67,20 +67,22 @@ FilePreviewView::FilePreviewView(
   addChild(std::move(body));
   addChild(
       ui::row(
-          {.out = &m_actions, .align = FlexAlign::Stretch, .gap = Style::spaceSm},
+          {.align = FlexAlign::Center, .justify = FlexJustify::End, .gap = Style::spaceSm},
           ui::button(
               {.out = &m_open,
                .text = "Open",
+               .controlHeight = Style::controlHeightSm,
                .variant = ButtonVariant::Ghost,
-               .flexGrow = 1,
+               .paddingH = Style::spaceSm,
                .onClick = std::move(open)}
           ),
           ui::button(
               {.out = &m_openWith,
                .text = "Open With…",
+               .controlHeight = Style::controlHeightSm,
                .variant = ButtonVariant::Ghost,
                .tooltip = "Open With…",
-               .flexGrow = 1,
+               .paddingH = Style::spaceSm,
                .onClick = std::move(openWith)}
           )
       )
@@ -92,7 +94,6 @@ void FilePreviewView::sync(
   setRadii(quick ? Radii(Style::radiusXl) : Radii(0, Style::radiusXl, Style::radiusXl, 0));
   const float budget = std::max(40.0F, width - Style::spaceMd * 2 - Style::scrollbarWidth - Style::scrollbarGap);
   m_heading->setMaxWidth(std::max(1.0F, width - Style::spaceMd * 2 - Style::controlHeightSm - Style::spaceSm));
-  m_actions->setDirection(width < 240 ? FlexDirection::Vertical : FlexDirection::Horizontal);
   for (auto* button : {m_open, m_openWith}) {
     button->setMaxWidth(std::max(40.0F, width - Style::spaceMd * 2));
   }
