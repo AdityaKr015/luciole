@@ -14,9 +14,8 @@ files::FileIcon::FileIcon(FileIconCache& cache, float size, ThumbnailService* th
   setHitTestVisible(false);
 }
 files::FileIcon::~FileIcon() {
-  if (m_textures != nullptr && m_texture.valid()) {
-    m_textures->unload(m_texture);
-  }
+  m_lifetime.reset();
+  m_texture.reset();
 }
 void files::FileIcon::bind(const FileIconSource& source, ColorSpec foreground) {
   if (!m_thumbnailSource && source == m_source && foreground == m_foreground) {
@@ -56,20 +55,25 @@ void files::FileIcon::bindFile(const DirectoryEntry& entry, ColorSpec foreground
 void files::FileIcon::setThumbnailVisible(bool visible) {
   if (m_thumbnailVisible != visible) {
     m_thumbnailVisible = visible;
+    if (!visible) {
+      m_texture.reset();
+      m_asset.reset();
+      m_thumbnail.reset();
+      m_requestedPixels.reset();
+      m_image->setTextureId({});
+    }
     markLayoutDirty();
   }
 }
-void files::FileIcon::releaseFile(Renderer& renderer) {
-  const bool changed = m_prepared || m_thumbnailSource || m_thumbnail || m_asset || m_texture.valid();
+void files::FileIcon::releaseFile(Renderer&) {
+  const bool changed = m_prepared || m_thumbnailSource || m_thumbnail || m_asset || !m_texture.empty();
   m_prepared.reset();
   m_thumbnailSource.reset();
   m_thumbnail.reset();
   m_thumbnailPixels = 0;
   m_asset.reset();
-  if (m_texture.valid()) {
-    renderer.textureManager().unload(m_texture);
-  }
-  m_texture = {};
+  m_texture.reset();
+  m_requestedPixels.reset();
   m_image->setTextureId({});
   if (changed) {
     markLayoutDirty();
@@ -97,6 +101,11 @@ LayoutSize files::FileIcon::doMeasure(Renderer&, const LayoutConstraints&) {
   return {m_size, m_previewHeight > 0 ? m_previewHeight : m_size};
 }
 void files::FileIcon::doLayout(Renderer& renderer) {
+  if (!m_thumbnailVisible) {
+    m_texture.reset();
+    m_image->setTextureId({});
+    return;
+  }
   const int pixels = static_cast<int>(std::ceil(m_size * renderer.renderScale()));
   if (m_thumbnails
       && m_thumbnailSource
@@ -111,19 +120,36 @@ void files::FileIcon::doLayout(Renderer& renderer) {
   const auto asset = m_prepared && m_prepared->pixels            ? m_prepared
       : m_thumbnailVisible && m_thumbnail && m_thumbnail->pixels ? m_thumbnail
                                                                  : m_cache.request(m_source, pixels);
-  m_textures = &renderer.textureManager();
-  if (asset != m_asset) {
-    if (m_texture.valid()) {
-      m_textures->unload(m_texture);
+  m_asset = asset;
+  if (asset && asset->pixels) {
+    if (asset->pixels != m_requestedPixels) {
+      const PreparedTextureRequest request{
+          .source = asset->sourceKey, .revision = asset->revision, .mipmap = m_previewHeight > 0
+      };
+      if (m_requestedSource != request.source) {
+        m_texture.reset();
+      }
+      if (m_texture.empty()) {
+        const std::weak_ptr<int> alive = m_lifetime;
+        m_texture = m_cache.textures().acquirePrepared(request, asset->pixels, nullptr, [this, alive] {
+          if (!alive.expired()) {
+            markLayoutDirty();
+            m_cache.imageChanged();
+          }
+        });
+      } else {
+        (void)m_texture.setPreparedImage(request, asset->pixels);
+      }
+      m_requestedPixels = asset->pixels;
+      m_requestedSource = request.source;
     }
-    m_asset = asset;
+  } else {
+    m_texture.reset();
+    m_requestedPixels.reset();
   }
-  if (m_thumbnailVisible && !m_texture.valid() && m_asset && m_asset->pixels) {
-    const auto& pixels = *m_asset->pixels;
-    m_texture = m_textures->loadFromRgba(pixels.rgba.data(), pixels.width, pixels.height, m_previewHeight > 0);
-  }
-  m_image->setTextureId(m_texture.id);
-  m_image->setTextureSize(m_texture.width, m_texture.height);
+  const auto texture = m_texture.texture();
+  m_image->setTextureId(texture.id);
+  m_image->setTextureSize(texture.width, texture.height);
   const bool symbolic = m_asset && m_asset->symbolic;
   m_image->setAlphaMaskTint(symbolic);
   m_image->setTint(symbolic ? resolveColorSpec(m_foreground) : Color{1, 1, 1, 1});
@@ -131,7 +157,6 @@ void files::FileIcon::doLayout(Renderer& renderer) {
   m_image->setSize(width(), height());
 }
 void files::FileIcon::doInvalidateGpuResources(Renderer&) {
-  m_texture = {};
   m_image->setTextureId({});
   markLayoutDirty();
 }

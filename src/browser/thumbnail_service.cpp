@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <format>
 #include <mutex>
+#include <nlohmann/json.hpp>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <unordered_map>
@@ -46,7 +47,9 @@ namespace {
         || g_uri_get_fragment(parsed.get());
   }
   struct LoadResult {
-    files::FileIconImage image{.pixels = std::nullopt, .path = {}, .symbolic = false, .ready = true};
+    files::FileIconImage image{
+        .pixels = {}, .path = {}, .symbolic = false, .ready = true, .sourceKey = {}, .revision = {}
+    };
     std::optional<files::ThumbnailCacheWrite> write;
     bool decodeNeeded = false;
   };
@@ -61,7 +64,7 @@ namespace {
     if (!native) {
       if (options.policy == ThumbnailPolicy::All && source.modifiedSeconds) {
         if (auto cached = store.read(source.location.uri(), side, *source.modifiedSeconds, source.size)) {
-          result.image.pixels = std::move(cached->image);
+          result.image.pixels = std::make_shared<const LoadedImageFile>(std::move(cached->image));
         }
       }
       return result;
@@ -78,7 +81,7 @@ namespace {
     if (!local) {
       if (options.policy == ThumbnailPolicy::All && source.modifiedSeconds) {
         if (auto cached = store.read(source.location.uri(), side, *source.modifiedSeconds, source.size)) {
-          result.image.pixels = std::move(cached->image);
+          result.image.pixels = std::make_shared<const LoadedImageFile>(std::move(cached->image));
         }
       }
       return result;
@@ -134,7 +137,7 @@ namespace {
           )) {
         struct stat after{};
         if (::fstat(file.value, &after) == 0 && stamp(after) == sourceStamp && !g_cancellable_is_cancelled(cancel)) {
-          result.image.pixels = std::move(cached->image);
+          result.image.pixels = std::make_shared<const LoadedImageFile>(std::move(cached->image));
         }
         return result;
       }
@@ -176,7 +179,7 @@ namespace {
       };
       result.write.emplace(ThumbnailCacheWrite{std::move(cached), side});
     }
-    result.image.pixels = std::move(*decoded);
+    result.image.pixels = std::make_shared<const LoadedImageFile>(std::move(*decoded));
     return result;
   }
 } // namespace
@@ -415,6 +418,15 @@ struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
               item.stage = Stage::DecodeQueued;
             } else {
               item.stage = Stage::Ready;
+              loaded->loaded.image.sourceKey = "file:" + request->source.location.uri();
+              loaded->loaded.image.revision =
+                  nlohmann::json::array({"pixbuf-media-v1", request->source.etag.value_or(""),
+                                         request->source.modifiedSeconds.value_or(0), request->source.size.value_or(0),
+                                         request->source.contentRevision.value_or(""),
+                                         request->source.identity ? request->source.identity->filesystem : "",
+                                         request->source.identity ? request->source.identity->file : "", request->side,
+                                         request->options.maxFileMiB, request->options.maxMegapixels})
+                      .dump();
               *item.image = std::move(loaded->loaded.image);
               item.failed = !item.image->pixels;
               item.retry = std::chrono::steady_clock::now() + std::chrono::seconds(30);
@@ -633,7 +645,17 @@ void files::ThumbnailService::setOptions(ThumbnailOptions options) {
   m_state->notify();
 }
 void files::ThumbnailService::invalidate() { m_state->retire(); }
-void files::ThumbnailService::endFrame() { m_state->schedule(); }
+void files::ThumbnailService::endFrame() {
+  for (auto it = m_state->cache.begin(); it != m_state->cache.end();) {
+    if (it->second.stage == State::Stage::Ready && it->second.image.use_count() == 1) {
+      auto retired = it++;
+      m_state->erase(retired);
+    } else {
+      ++it;
+    }
+  }
+  m_state->schedule();
+}
 void files::ThumbnailService::setChangedCallback(std::function<void()> callback) {
   m_state->changed = std::move(callback);
 }

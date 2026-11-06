@@ -1,7 +1,7 @@
 #pragma once
 
 #include "browser/thumbnail_options.h"
-#include "render/core/image_file_loader.h"
+#include "render/core/image_decoder.h"
 
 #include <gio/gio.h>
 

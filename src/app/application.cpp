@@ -2,6 +2,7 @@
 
 #include "app/deferred_call_poll_source.h"
 #include "app/glib_poll_source.h"
+#include "app/library_setup.h"
 #include "app/main_loop.h"
 #include "app/timer_poll_source.h"
 #include "browser/action_registry.h"
@@ -32,6 +33,7 @@
 #include "operations/rename_service.h"
 #include "operations/transfer_service.h"
 #include "operations/trash_service.h"
+#include "platform/desktop_integration.h"
 #include "platform/file_launcher.h"
 #include "platform/terminal_launcher.h"
 #include "platform/text_clipboard.h"
@@ -85,13 +87,13 @@ namespace {
 
   class KeyRepeatPollSource final : public PollSource {
   public:
-    explicit KeyRepeatPollSource(WaylandSeat& seat) : m_seat(seat) {}
+    explicit KeyRepeatPollSource(WaylandConnection& seat) : m_seat(seat) {}
     int pollTimeoutMs() const override { return m_seat.repeatPollTimeoutMs(); }
     void dispatch(const std::vector<pollfd>&, std::size_t) override { m_seat.repeatTick(); }
 
   private:
     void doAddPollFds(std::vector<pollfd>&) override {}
-    WaylandSeat& m_seat;
+    WaylandConnection& m_seat;
   };
 
   void initializeKeys() {
@@ -147,7 +149,7 @@ namespace {
   public:
     BrowserPage(
         WaylandConnection& connection, RenderContext& renderer, TextInputService& textInput,
-        const files::BrowserSettings& settings, files::WaylandTextClipboard& clipboard, ToplevelSurface& surface,
+        const files::BrowserSettings& settings, files::WaylandTextClipboard& clipboard, files::WindowSurface& surface,
         AnimationManager& animations, files::PinService& pins, files::FileIconCache& icons,
         files::ViewPreferenceWriter& preferences
     )
@@ -155,12 +157,12 @@ namespace {
           m_surface(&surface), m_browser(settings.sort, settings.showHidden), m_icons(icons),
           m_listAdapter(
               m_browser, m_icons, m_thumbnails, files::ViewMode::List,
-              [this] { return m_connection.input().keyboardModifiers(); },
+              [this] { return m_connection.keyboardModifiers(); },
               [this] { return m_fileKeyboardFocus && m_list != nullptr && m_list->focusArea()->focused(); }
           ),
           m_gridAdapter(
               m_browser, m_icons, m_thumbnails, files::ViewMode::Grid,
-              [this] { return m_connection.input().keyboardModifiers(); },
+              [this] { return m_connection.keyboardModifiers(); },
               [this] { return m_fileKeyboardFocus && m_list != nullptr && m_list->focusArea()->focused(); }
           ),
           m_preferences(preferences), m_savedSettings(settings), m_pins(pins), m_viewMode(settings.viewMode),
@@ -207,7 +209,7 @@ namespace {
       m_activationMode = settings.activationMode;
       m_typingMode = settings.typingMode;
       m_dispatcher.setCursorShapeCallback([this](std::uint32_t serial, std::uint32_t shape) {
-        m_connection.input().setCursorShape(serial, shape);
+        m_connection.extension<files::DesktopIntegration>().setCursorShape(serial, shape);
       });
       m_dispatcher.setFocusChangeCallback([this](InputArea*, InputArea* focused) {
         if (m_settingsView) {
@@ -559,8 +561,8 @@ namespace {
                   std::exchange(m_dropCompletion, {})(false);
                 }
               },
-          .preferred = (m_connection.input().keyboardModifiers() & KeyMod::Ctrl) != 0 ? files::TransferAction::Copy
-                                                                                      : files::TransferAction::Move
+          .preferred = (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0 ? files::TransferAction::Copy
+                                                                              : files::TransferAction::Move
       };
     }
     void iconsReady() {
@@ -679,8 +681,8 @@ namespace {
     bool dragging() const { return m_drag.has_value(); }
     bool pointerCaptured() const { return m_dispatcher.pointerCaptured(); }
     bool contains(float x, float y) const { return m_body && m_body->containsScenePoint(x, y); }
-    ToplevelSurface* boundSurface() const { return m_surface; }
-    void rebind(ToplevelSurface& surface) {
+    files::WindowSurface* boundSurface() const { return m_surface; }
+    void rebind(files::WindowSurface& surface) {
       deactivate();
       m_surface = &surface;
     }
@@ -991,8 +993,7 @@ namespace {
           && m_miller.enabled()
           && event.type == PointerEvent::Type::Axis
           && m_filePane->containsScenePoint(x, y)
-          && (event.axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL
-              || m_connection.input().keyboardModifiers() == KeyMod::Shift)) {
+          && (event.axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL || m_connection.keyboardModifiers() == KeyMod::Shift)) {
         const float delta = event.axisValue120 != 0
             ? static_cast<float>(event.axisValue120) / 120.0F * Style::scrollWheelStep
             : event.axisDiscrete != 0 ? static_cast<float>(event.axisDiscrete) * Style::scrollWheelStep
@@ -1104,7 +1105,7 @@ namespace {
       if (dispatcher == &m_dispatcher && event.type == PointerEvent::Type::Button && event.pressed) {
         const auto& location = browser().model().snapshot().location;
         const bool blank = event.button == BTN_LEFT
-            && m_connection.input().keyboardModifiers() == 0
+            && m_connection.keyboardModifiers() == 0
             && !m_editingLocation
             && location
             && m_locationArea
@@ -1172,7 +1173,7 @@ namespace {
             && m_filePane->containsScenePoint(x, y)
             && (event.axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL
                 || (event.axis == WL_POINTER_AXIS_VERTICAL_SCROLL
-                    && m_connection.input().keyboardModifiers() == KeyMod::Shift))) {
+                    && m_connection.keyboardModifiers() == KeyMod::Shift))) {
           if (!m_columnResize && !m_columnDrag) {
             InputArea::PointerData data;
             data.axisValue = event.axisValue;
@@ -1196,7 +1197,7 @@ namespace {
 
     void keyboard(const KeyboardEvent& event) {
       if (event.pressed) {
-        m_popupSerial = m_connection.input().lastSerial();
+        m_popupSerial = m_connection.lastInputSerial();
         m_lastBreadcrumb.reset();
         m_blankLocationClick.reset();
         if ((m_columnDrag || m_columnResize || (m_millerView && m_millerView->resizing()))
@@ -1635,11 +1636,11 @@ namespace {
           .id = static_cast<int>(action),
           .label = std::string(definition.label),
           .enabled = state.enabled,
-          .destructive = definition.destructive,
           .checkmark = !radio && state.checked != -1,
           .radio = radio,
           .toggleState = state.checked,
-          .shortcut = definition.shortcut.empty() ? std::nullopt : std::optional(std::string(definition.shortcut))
+          .shortcut = definition.shortcut.empty() ? std::nullopt : std::optional(std::string(definition.shortcut)),
+          .destructive = definition.destructive
       };
     }
     void dispatchAction(Action action) {
@@ -2924,7 +2925,7 @@ namespace {
           endLocationEdit(false);
         }
         auto root = std::make_unique<ArchiveView>(
-            m_icons, [this] { return m_connection.input().keyboardModifiers(); }, [this] { deferCloseArchive(); },
+            m_icons, [this] { return m_connection.keyboardModifiers(); }, [this] { deferCloseArchive(); },
             [this](std::vector<std::string> selected) {
               if (m_archives.catalog()) {
                 openArchiveDialog({m_archives.catalog()->source}, std::move(selected), false);
@@ -3587,7 +3588,7 @@ namespace {
           const files::GioPtr<GFile> parent(g_file_get_parent(source.file().get()));
           differentParent |= !parent || !g_file_equal(parent.get(), destination.file().get());
         }
-        return differentParent || (m_connection.input().keyboardModifiers() & KeyMod::Ctrl) != 0;
+        return differentParent || (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0;
       }
       if (!m_drag || m_drag->sourcePin || !destination.nativePath()) {
         return false;
@@ -3608,7 +3609,7 @@ namespace {
         const files::GioPtr<GFile> parent(g_file_get_parent(source.location.file().get()));
         anyDifferentParent = anyDifferentParent || !parent || !g_file_equal(parent.get(), destination.file().get());
       }
-      return anyDifferentParent || (m_connection.input().keyboardModifiers() & KeyMod::Ctrl) != 0;
+      return anyDifferentParent || (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0;
     }
 
     std::optional<DropTarget> dropTarget() const {
@@ -3756,10 +3757,9 @@ namespace {
               cancelDrag();
             }
           },
-          (m_connection.input().keyboardModifiers() & KeyMod::Ctrl) != 0 ? std::optional(files::TransferAction::Copy)
-              : (m_connection.input().keyboardModifiers() & KeyMod::Shift) != 0
-              ? std::optional(files::TransferAction::Move)
-              : std::nullopt
+          (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0        ? std::optional(files::TransferAction::Copy)
+              : (m_connection.keyboardModifiers() & KeyMod::Shift) != 0 ? std::optional(files::TransferAction::Move)
+                                                                        : std::nullopt
       );
       if (m_systemDrag) {
         m_dispatcher.cancelPointerCapture();
@@ -3796,7 +3796,9 @@ namespace {
         m_placeDropLine->setVisible(false);
         m_folderDropHighlight->setVisible(false);
       }
-      m_connection.input().setCursorShape(m_connection.input().lastSerial(), WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT);
+      m_connection.extension<files::DesktopIntegration>().setCursorShape(
+          m_connection.lastInputSerial(), WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT
+      );
       m_surface->requestLayout();
     }
     VirtualGridView* dragView() const {
@@ -3934,12 +3936,12 @@ namespace {
         m_placeDropLine->setVisible(true);
         m_placeDropLine->arrange(renderer, m_places->dropLine(*slot));
       }
-      const bool copy = (m_connection.input().keyboardModifiers() & KeyMod::Ctrl) != 0;
+      const bool copy = (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0;
       const auto shape = slot
           ? (m_drag->sourcePin ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY)
           : m_lastDropTarget ? (copy ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE)
                              : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP;
-      m_connection.input().setCursorShape(m_connection.input().lastSerial(), shape);
+      m_connection.extension<files::DesktopIntegration>().setCursorShape(m_connection.lastInputSerial(), shape);
     }
     void finishDrag(float x, float y) {
       m_pointerX = x;
@@ -3949,7 +3951,7 @@ namespace {
       const auto previous = m_lastDropTarget;
       const auto slot = pinDropSlot();
       const auto drag = *m_drag;
-      const bool copy = (m_connection.input().keyboardModifiers() & KeyMod::Ctrl) != 0;
+      const bool copy = (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0;
       cancelDrag();
       if (!current) {
         return;
@@ -5011,7 +5013,7 @@ namespace {
       if (m_viewMode != files::ViewMode::Grid
           || m_list == nullptr
           || !m_list->visible()
-          || m_connection.input().keyboardModifiers() != KeyMod::Ctrl
+          || m_connection.keyboardModifiers() != KeyMod::Ctrl
           || event.axis != WL_POINTER_AXIS_VERTICAL_SCROLL) {
         m_zoomScroll = 0;
         return false;
@@ -6046,7 +6048,7 @@ namespace {
       m_millerView = miller.get();
       miller->setVisible(false);
       miller->setParticipatesInLayout(false);
-      miller->modifiers = [this] { return m_connection.input().keyboardModifiers(); };
+      miller->modifiers = [this] { return m_connection.keyboardModifiers(); };
       miller->keyboardFocus = [this] { return m_fileKeyboardFocus && m_list && m_list->focusArea()->focused(); };
       miller->cut = [this](const files::Location& location) { return m_clipboard.isCut(location); };
       miller->focus = [this](std::size_t index) { focusMiller(index); };
@@ -6428,7 +6430,7 @@ namespace {
       m_menuSurface->setSceneRoot(m_menuRoot.get());
       m_menuDispatcher.setSceneRoot(m_menuRoot.get());
       m_menuDispatcher.setCursorShapeCallback([this](std::uint32_t serial, std::uint32_t shape) {
-        m_connection.input().setCursorShape(serial, shape);
+        m_connection.extension<files::DesktopIntegration>().setCursorShape(serial, shape);
       });
       m_menuSurface->setPrepareFrameCallback([this](bool, bool) {
         if (m_menuSurface == nullptr || !m_renderer.makeCurrent(m_menuSurface->renderTarget())) {
@@ -6521,7 +6523,7 @@ namespace {
           .gravity = alignLeft ? XDG_POSITIONER_GRAVITY_BOTTOM_LEFT : XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT,
           .constraintAdjustment =
               XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X | XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y,
-          .serial = m_popupSerial != 0 ? m_popupSerial : m_connection.input().lastSerial(),
+          .serial = m_popupSerial != 0 ? m_popupSerial : m_connection.lastInputSerial(),
       };
       if (!m_menuSurface->initializeAsChild(
               m_surface->xdgSurface(), m_connection.outputForSurface(m_surface->wlSurface()), config
@@ -6757,7 +6759,7 @@ namespace {
     RenderContext& m_renderer;
     TextInputService& m_textInput;
     AnimationManager& m_animations;
-    ToplevelSurface* m_surface;
+    files::WindowSurface* m_surface;
     files::BrowserController m_browser;
     files::MillerColumns m_miller;
     MillerView* m_millerView = nullptr;
@@ -6995,7 +6997,7 @@ namespace {
   class WorkspaceApplication {
     struct Host {
       files::WindowId id;
-      ToplevelSurface surface;
+      files::WindowSurface surface;
       std::unique_ptr<Node> root;
       std::unique_ptr<Node> toolbar;
       Node* toolbarNode = nullptr;
@@ -7108,6 +7110,8 @@ namespace {
       });
       m_pins.reload();
     }
+    SharedTextureCache& imageTextures() { return m_icons.textures(); }
+
     ~WorkspaceApplication() {
       m_lifetime.reset();
       m_clipboard.setChangedCallback({});
@@ -7284,7 +7288,7 @@ namespace {
         }
       }
       for (auto& [id, page] : m_pages) {
-        if (page->popupOwns(m_connection.input().lastKeyboardSurface())) {
+        if (page->popupOwns(m_connection.lastKeyboardSurface())) {
           (void)id;
           page->keyboard(event);
           return;
@@ -7429,7 +7433,10 @@ namespace {
       }
       host->pointerX = static_cast<float>(event.sx);
       host->pointerY = static_cast<float>(event.sy);
-      m_focused = host->id;
+      if ((event.type == PointerEvent::Type::Button && event.pressed)
+          || (event.type != PointerEvent::Type::Leave && m_connection.lastKeyboardSurface() == event.surface)) {
+        m_focused = host->id;
+      }
       const auto found = m_model.windows().find(host->id);
       if (found == m_model.windows().end() || !found->second.active) {
         return;
@@ -7648,10 +7655,16 @@ namespace {
         raw->surface.requestLayout();
       });
       host->dispatcher.setCursorShapeCallback([this](auto serial, auto shape) {
-        m_connection.input().setCursorShape(serial, shape);
+        m_connection.extension<files::DesktopIntegration>().setCursorShape(serial, shape);
       });
       if (!host->surface.initialize(
-              nullptr, {.width = 1080, .height = 720, .minWidth = 620, .minHeight = 400, .title = "Noctalia Files"}
+              nullptr,
+              {.width = 1080,
+               .height = 720,
+               .minWidth = 620,
+               .minHeight = 400,
+               .title = "Noctalia Files",
+               .appId = "dev.noctalia.Files"}
           )) {
         throw std::runtime_error("Cannot initialize a Files window.");
       }
@@ -8352,17 +8365,18 @@ int files::runApplication(const std::optional<std::string>& initialLocation) {
     if (!config.reload()) {
       throw std::runtime_error(config.issues().front().format());
     }
+    files::initializeLibrary();
     GlibPollSource glib;
     TextInputService textInput;
     WaylandConnection connection;
-    std::string error;
-    if (!connection.initialize(error)) {
-      throw std::runtime_error(error);
+    if (!connection.connect()) {
+      throw std::runtime_error("could not connect to Wayland: " + connection.describeDisplayError());
     }
-    connection.bindTextInput(textInput);
+    connection.setTextInputService(&textInput);
+    auto& desktop = connection.extension<files::DesktopIntegration>();
     WaylandTextClipboard clipboard(
-        connection.display(), connection.dataDeviceManager(), connection.seat(),
-        [&connection] { return connection.input().lastKeyboardSurface() ? connection.input().lastSerial() : 0; },
+        connection.display(), desktop.dataDeviceManager(), connection.seat(),
+        [&connection] { return connection.lastKeyboardSurface() ? connection.lastInputSerial() : 0; },
         connection.compositor(), connection.shm()
     );
     Input::setTextClipboard(&clipboard);
@@ -8374,32 +8388,40 @@ int files::runApplication(const std::optional<std::string>& initialLocation) {
     RenderContext renderer;
     renderer.initialize(graphics);
     WorkspaceApplication application(connection, renderer, textInput, clipboard, config.settings().browser);
+    application.imageTextures().initialize(&graphics);
     application.start(initialLocation);
-    connection.input().setPointerEventCallback([&application](const PointerEvent& event) {
+    connection.setPointerEventCallback([&application, &desktop](const PointerEvent& event) {
+      desktop.pointer(event);
       application.pointer(event);
     });
-    connection.input().setKeyboardEventCallback([&application](const KeyboardEvent& event) {
-      application.keyboard(event);
-    });
-    connection.input().setKeyboardFocusCallback([&application, &textInput,
-                                                 &clipboard](wl_surface* surface, bool entered) {
-      textInput.onKeyboardFocusSurface(surface, entered);
+    connection.setKeyboardEventCallback([&application](const KeyboardEvent& event) { application.keyboard(event); });
+    connection.setKeyboardFocusCallback([&application, &clipboard](wl_surface* surface, bool entered) {
       application.focus(surface, entered);
       if (entered) {
         clipboard.keyboardFocusEntered();
       }
     });
-    connection.setOutputChangedCallback([&application](wl_output* output) { application.outputChanged(output); });
+    connection.setOutputChangeCallback([&application, &connection] {
+      for (const auto& output : connection.outputs()) {
+        application.outputChanged(output.output);
+      }
+    });
     DeferredCallPollSource deferred;
     TimerPollSource timers;
-    KeyRepeatPollSource repeat(connection.input());
+    KeyRepeatPollSource repeat(connection);
     IconThemePollSource icons;
     icons.setChangeCallback([&application] { application.iconsChanged(); });
-    MainLoop loop(connection, {&deferred, &timers, &repeat, &glib, &icons}, [&application] {
-      return application.running();
-    });
+    MainLoop loop(
+        connection, {&deferred, &timers, &repeat, &glib, &icons, &application.imageTextures()},
+        [&application] { return application.running(); }
+    );
     loop.run();
-    connection.setOutputChangedCallback({});
+    connection.setOutputChangeCallback({});
+    connection.setPointerEventCallback({});
+    connection.setKeyboardEventCallback({});
+    connection.setKeyboardFocusCallback({});
+    textInput.cleanup();
+    connection.setTextInputService(nullptr);
   } catch (const std::exception& error) {
     std::println(stderr, "noctalia-files: {}", error.what());
     result = EXIT_FAILURE;

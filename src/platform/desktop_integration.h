@@ -1,0 +1,47 @@
+#pragma once
+
+#include "wayland/toplevel_surface.h"
+#include "wayland/wayland_extension.h"
+
+#include <memory>
+
+struct wl_cursor_theme;
+struct wl_data_device_manager;
+struct wl_surface;
+struct zxdg_decoration_manager_v1;
+struct PointerEvent;
+class WaylandConnection;
+
+namespace files {
+  class DesktopIntegration final : public WaylandExtension {
+  public:
+    explicit DesktopIntegration(WaylandConnection& connection);
+    void onGlobal(wl_registry*, std::uint32_t, std::string_view, std::uint32_t) override;
+    void onGlobalRemove(std::uint32_t name) override;
+    void releaseGlobals() override;
+    void pointer(const PointerEvent& event);
+    void setCursorShape(std::uint32_t serial, std::uint32_t shape);
+    wl_data_device_manager* dataDeviceManager() const { return m_dataDeviceManager; }
+    zxdg_decoration_manager_v1* decorationManager() const { return m_decorations; }
+
+  private:
+    WaylandConnection& m_connection;
+    wl_data_device_manager* m_dataDeviceManager = nullptr;
+    zxdg_decoration_manager_v1* m_decorations = nullptr;
+    wl_cursor_theme* m_cursorTheme = nullptr;
+    wl_surface* m_cursorSurface = nullptr;
+    std::uint32_t m_dataGlobal = 0, m_decorationGlobal = 0, m_shapeGlobal = 0;
+    std::uint32_t m_enterSerial = 0;
+  };
+
+  class WindowSurface final : public ToplevelSurface {
+  public:
+    explicit WindowSurface(WaylandConnection& connection);
+    ~WindowSurface() override;
+    bool serverDecorated() const;
+
+  private:
+    struct Decoration;
+    std::shared_ptr<Decoration> m_decoration;
+  };
+} // namespace files

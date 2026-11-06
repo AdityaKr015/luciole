@@ -1,10 +1,11 @@
 #include "app/glib_poll_source.h"
+#include "browser/png_decoder.h"
 #include "browser/thumbnail_provider.h"
 #include "browser/thumbnail_service.h"
 #include "browser/thumbnail_store.h"
 #include "browser/thumbnail_worker.h"
 #include "core/log.h"
-#include "render/core/image_decoder.h"
+#include "platform/pixbuf_image_decoder.h"
 #include "render/core/image_orientation.h"
 #include "render/core/image_resize.h"
 #include "test_check.h"
@@ -231,9 +232,22 @@ namespace {
     auto corrupt = pngData;
     corrupt[20] ^= 1;
     TEST_CHECK(!files::decodeThumbnail(corrupt, 128, 1000000, cancel.get()));
-    TEST_CHECK(!decodeRasterImage(pngData.data(), pngData.size(), 100));
-    const auto theme = decodeRasterImage(pngData.data(), pngData.size());
+    TEST_CHECK(!files::decodePng(pngData.data(), pngData.size(), 100));
+    const auto theme = files::decodePng(pngData.data(), pngData.size());
     TEST_CHECK(theme && theme->pixels == picture().rgba);
+    files::installPixbufImageDecoder();
+    const auto providerBytes = png(picture(128, 64));
+    const files::GString base64(g_base64_encode(providerBytes.data(), providerBytes.size()));
+    const std::string uri = "data:image/png;base64," + std::string(base64.get());
+    const auto cropped = loadImageFile(uri, 32, true);
+    TEST_CHECK(cropped && cropped->width == 32 && cropped->height == 32);
+    TEST_CHECK(cropped->sourceWidth == 128 && cropped->sourceHeight == 64);
+    const auto bounded = loadImageFile(uri, 32, false);
+    TEST_CHECK(bounded && bounded->width == 32 && bounded->height == 16);
+    const auto original = decodeRasterImage(providerBytes.data(), providerBytes.size());
+    TEST_CHECK(original && original->width == 128 && original->height == 64);
+    TEST_CHECK(!loadImageFile("data:image/png;base64,invalid!", 32));
+    TEST_CHECK(!decodeRasterImage(nullptr, 0));
   }
   void benchmarkThumbnails(const fs::path& directory, std::size_t limit, bool videos) {
     TEST_CHECK(limit >= 1 && limit <= 256);
@@ -276,7 +290,7 @@ namespace {
         }
         return done;
       });
-      TEST_CHECK(std::ranges::all_of(assets, [](const auto& image) { return image->pixels.has_value(); }));
+      TEST_CHECK(std::ranges::all_of(assets, [](const auto& image) { return static_cast<bool>(image->pixels); }));
       std::ranges::sort(elapsed);
       std::println(
           "{} count={} first={:.2f} median={:.2f} last={:.2f} ms", name, entries.size(), elapsed.front(),
@@ -879,7 +893,7 @@ namespace {
     thumbnails.setOptions(options);
     auto remoteAsset = thumbnails.request(remoteEntry, 48);
     pump.until([&] { return remoteAsset->ready; });
-    TEST_CHECK(remoteAsset->pixels.has_value());
+    TEST_CHECK(static_cast<bool>(remoteAsset->pixels));
     auto owner = std::make_unique<files::ThumbnailService>();
     auto retiring = owner->request(entry, 48);
     owner->setChangedCallback([&] { owner.reset(); });

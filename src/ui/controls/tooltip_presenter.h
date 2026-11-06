@@ -1,8 +1,8 @@
 #pragma once
 
 #include "core/timer_manager.h"
+#include "render/scene/tooltip_content.h"
 #include "ui/controls/flex.h"
-#include "ui/tooltip_content.h"
 
 #include <functional>
 #include <string>

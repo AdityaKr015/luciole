@@ -1,6 +1,6 @@
 #pragma once
 
-#include "render/core/image_file_loader.h"
+#include "render/core/image_decoder.h"
 
 #include <gdk-pixbuf/gdk-pixbuf.h>
 #include <gio/gio.h>

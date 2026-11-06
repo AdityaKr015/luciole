@@ -2,6 +2,7 @@
 #include "test_check.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <fcntl.h>
 #include <poll.h>
@@ -57,7 +58,17 @@ namespace {
                 if (offer.source) {
                   wl_data_source_send_send(offer.source, mime, fd);
                 } else if (const auto found = offer.data.find(mime); found != offer.data.end()) {
-                  (void)::write(fd, found->second.data(), found->second.size());
+                  std::size_t offset = 0;
+                  while (offset < found->second.size()) {
+                    const auto written = ::write(fd, found->second.data() + offset, found->second.size() - offset);
+                    if (written < 0 && errno == EINTR) {
+                      continue;
+                    }
+                    if (written <= 0) {
+                      break;
+                    }
+                    offset += static_cast<std::size_t>(written);
+                  }
                 }
                 ::close(fd);
               },

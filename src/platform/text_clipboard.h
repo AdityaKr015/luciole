@@ -2,7 +2,7 @@
 
 #include "core/text_clipboard.h"
 #include "platform/file_payload.h"
-#include "render/core/image_file_loader.h"
+#include "render/core/image_decoder.h"
 
 #include <cstdint>
 #include <functional>

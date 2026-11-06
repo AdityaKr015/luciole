@@ -117,7 +117,7 @@ printf '%s\n' "${COMPREPLY[@]}"
         result = self.invoke()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("browser.show_hidden", result.stderr)
-        self.assertNotIn("cannot connect to Wayland", result.stderr)
+        self.assertNotIn("connect to Wayland", result.stderr)
         self.assertEqual(self.invoke("--help", config_home="invalid-relative-directory").returncode, 0)
         self.assertEqual(self.invoke("--version", config_home="invalid-relative-directory").returncode, 0)
 
@@ -125,11 +125,11 @@ printf '%s\n' "${COMPREPLY[@]}"
         result = self.invoke()
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")
-        self.assertIn("cannot connect to Wayland", result.stderr)
+        self.assertIn("connect to Wayland", result.stderr)
         for args in ((str(self.config_dir),), ("--", str(self.config_dir))):
             result = self.invoke(*args)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("cannot connect to Wayland", result.stderr)
+            self.assertIn("connect to Wayland", result.stderr)
 
 
 if __name__ == "__main__":

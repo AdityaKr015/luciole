@@ -6,7 +6,7 @@
 
 namespace files {
   // Adapted from Noctalia's ThumbnailService acquire/release and worker publication model.
-  // Cells hold prepared images, upload during Layout and release them on rebinding.
+  // Cells borrow immutable prepared pixels; the shared texture cache owns upload and residency.
   class ThumbnailService {
   public:
     explicit ThumbnailService(ThumbnailPurpose purpose = ThumbnailPurpose::Thumbnail);

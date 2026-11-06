@@ -1,5 +1,6 @@
 #include "app/glib_poll_source.h"
 #include "browser/file_icon_cache.h"
+#include "platform/pixbuf_image_decoder.h"
 #include "system/icon_resolver.h"
 #include "test_check.h"
 
@@ -73,15 +74,15 @@ namespace {
       while (!done()) {
         TEST_CHECK(std::chrono::steady_clock::now() < deadline);
         std::vector<pollfd> fds;
-        const auto start = source.addPollFds(fds);
-        const int timeout = source.pollTimeoutMs();
+        const auto start = m_source.addPollFds(fds);
+        const int timeout = m_source.pollTimeoutMs();
         TEST_CHECK(::poll(fds.data(), fds.size(), timeout < 0 ? 20 : std::min(timeout, 20)) >= 0);
-        source.dispatch(fds, start);
+        m_source.dispatch(fds, start);
       }
     }
 
   private:
-    GlibPollSource source;
+    GlibPollSource m_source;
   };
   void testIcons() {
     Fixture fixture;
@@ -134,6 +135,7 @@ namespace {
 } // namespace
 
 int main() {
+  files::installPixbufImageDecoder();
   try {
     testIcons();
     std::println("file icon checks passed");

@@ -1,7 +1,8 @@
 #pragma once
 
 #include "fs/file_icon_source.h"
-#include "render/core/image_file_loader.h"
+#include "render/core/image_decoder.h"
+#include "render/core/shared_texture_cache.h"
 
 #include <functional>
 #include <memory>
@@ -9,10 +10,12 @@
 
 namespace files {
   struct FileIconImage {
-    std::optional<LoadedImageFile> pixels;
+    std::shared_ptr<const LoadedImageFile> pixels;
     std::string path;
     bool symbolic = false;
     bool ready = false;
+    std::string sourceKey;
+    std::string revision;
   };
 
   // Main-context cache. Workers resolve/decode; cells only present prepared pixels.
@@ -24,10 +27,13 @@ namespace files {
     FileIconCache& operator=(const FileIconCache&) = delete;
 
     std::shared_ptr<const FileIconImage> request(const FileIconSource& source, int pixels);
+    SharedTextureCache& textures() { return m_textures; }
+    void imageChanged();
     void invalidate();
     void setChangedCallback(std::function<void()> callback);
 
   private:
+    SharedTextureCache m_textures;
     struct State;
     std::shared_ptr<State> m_state;
   };

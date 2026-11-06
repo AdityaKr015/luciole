@@ -18,12 +18,6 @@ protocol_root = wayland_protocols.get_variable('pkgdatadir')
 protocol_sources = []
 protocol_headers = []
 foreach protocol : [
-  ['xdg-shell', 'stable/xdg-shell/xdg-shell.xml'],
-  ['viewporter', 'stable/viewporter/viewporter.xml'],
-  ['fractional-scale-v1', 'staging/fractional-scale/fractional-scale-v1.xml'],
-  ['tablet-v2', 'stable/tablet/tablet-v2.xml'],
-  ['cursor-shape-v1', 'staging/cursor-shape/cursor-shape-v1.xml'],
-  ['text-input-unstable-v3', 'unstable/text-input/text-input-unstable-v3.xml'],
   ['xdg-decoration-unstable-v1', 'unstable/xdg-decoration/xdg-decoration-unstable-v1.xml'],
 ]
   header = custom_target(protocol[0] + '-header',
@@ -50,19 +44,10 @@ if not cpp.has_header('stb/stb_image_resize2.h')
 endif
 webp = dependency('libwebp')
 tomlplusplus = dependency('tomlplusplus', version: '>=3.4')
-ui_dependencies = [
-  gio,
-  gdk_pixbuf,
-  glycin,
-  webp,
-  dependency('wayland-client'), dependency('wayland-egl'), dependency('wayland-cursor'),
-  dependency('egl'), dependency('glesv2'), dependency('xkbcommon'),
-  dependency('freetype2'), dependency('fontconfig'),
-  dependency('cairo'), dependency('cairo-ft'),
-  dependency('pango', version: '>=1.50'), dependency('pangocairo'), dependency('pangoft2'),
-  dependency('harfbuzz'), dependency('libpng'), dependency('librsvg-2.0'), dependency('nlohmann_json'),
-  dependency('threads'),
+ui_dependencies = [gio, gdk_pixbuf, glycin, webp,
+  dependency('wayland-cursor'), dependency('libpng'), dependency('librsvg-2.0'), dependency('threads'),
 ]
+
 if cpp.get_define('_LIBCPP_VERSION', prefix: '#include <version>') != ''
   add_project_arguments('-fexperimental-library', language: 'cpp')
   add_project_link_arguments('-lc++experimental', language: 'cpp')
@@ -78,6 +63,10 @@ if get_option('buildtype') == 'release'
 else
   add_project_arguments('-D_GLIBCXX_ASSERTIONS', language: 'cpp')
 endif
+
+subdir('lib')
+ui_dependencies += noctalia_ui_dep
+protocol_headers += noctalia_ui_protocol_headers
 
 build_config = configuration_data()
 build_config.set_quoted('NOCTALIA_FILES_VERSION', meson.project_version())
@@ -102,15 +91,14 @@ completions = configure_file(
 )
 app_sources = files(
   'src/app/application.cpp',
+  'src/app/library_setup.cpp',
+  'src/platform/artwork_loader.cpp',
+  'src/platform/pixbuf_image_decoder.cpp',
+  'src/platform/desktop_integration.cpp',
+  'src/browser/png_decoder.cpp',
   'src/app/cli.cpp',
   'src/app/main_loop.cpp',
   'src/browser/file_view.cpp',
-  'src/core/deferred_call.cpp',
-  'src/core/files/resource_paths.cpp',
-  'src/core/input/key_chord.cpp',
-  'src/core/input/keybind_matcher.cpp',
-  'src/core/log.cpp',
-  'src/core/inotify/inotify.cpp',
   'src/system/icon_resolver.cpp',
   'src/system/freedesktop_key_file.cpp',
   'src/system/icon_theme_poll_source.cpp',
@@ -123,7 +111,6 @@ app_sources = files(
   'src/browser/thumbnail_service.cpp',
   'src/browser/preview_service.cpp',
   'src/ui/controls/file_preview_view.cpp',
-  'src/render/core/image_orientation.cpp',
   'src/config/view_preference_writer.cpp',
   'src/platform/file_launcher.cpp',
   'src/platform/text_clipboard.cpp',
@@ -135,74 +122,8 @@ app_sources = files(
   'src/ui/controls/archive_view.cpp',
   'src/ui/controls/miller_view.cpp',
   'src/ui/controls/tooltip_presenter.cpp',
-  'src/ui/controls/select.cpp',
-  'src/core/timer_manager.cpp',
-  'src/core/ui_phase.cpp',
-  'src/ui/controls/color_swatch_preview.cpp',
-  'src/util/clamp.cpp',
   'src/main.cpp',
-  'src/render/animation/animation.cpp',
-  'src/render/animation/animation_manager.cpp',
-  'src/render/animation/motion_service.cpp',
-  'src/render/backend/gles_framebuffer.cpp',
-  'src/render/backend/gles_render_backend.cpp',
-  'src/render/backend/gles_texture_manager.cpp',
-  'src/render/backend/render_backend.cpp',
-  'src/render/core/color.cpp',
-  'src/render/core/image_decoder.cpp',
-  'src/render/core/image_resize.cpp',
-  'src/render/core/stb_image_resize_impl.cpp',
-  'src/render/core/image_file_loader.cpp',
-  'src/render/core/shader_program.cpp',
-  'src/render/gl_shared_context.cpp',
-  'src/render/programs/blur_program.cpp',
-  'src/render/programs/glyph_program.cpp',
-  'src/render/programs/image_program.cpp',
-  'src/render/programs/rect_program.cpp',
-  'src/render/programs/spinner_program.cpp',
-  'src/render/render_context.cpp',
-  'src/render/render_target.cpp',
-  'src/render/scene/input_area.cpp',
-  'src/render/scene/input_dispatcher.cpp',
-  'src/render/scene/node.cpp',
-  'src/render/text/cairo_glyph_renderer.cpp',
-  'src/render/text/cairo_text_renderer.cpp',
-  'src/render/text/font_registry.cpp',
-  'src/render/text/font_weight_catalog.cpp',
-  'src/render/text/glyph_registry.cpp',
-  'src/ui/builders.cpp',
-  'src/ui/controls/box.cpp',
   'src/ui/controls/selection_surface.cpp',
-  'src/ui/controls/button.cpp',
-  'src/ui/controls/checkbox.cpp',
-  'src/ui/controls/context_menu.cpp',
-  'src/ui/controls/flex.cpp',
-  'src/ui/controls/glyph.cpp',
-  'src/ui/controls/input.cpp',
-  'src/ui/controls/label.cpp',
-  'src/ui/controls/progress_bar.cpp',
-  'src/ui/controls/radio_button.cpp',
-  'src/ui/controls/roving_list_nav.cpp',
-  'src/ui/controls/scroll_view.cpp',
-  'src/ui/controls/scrollbar.cpp',
-  'src/ui/controls/segmented.cpp',
-  'src/ui/controls/separator.cpp',
-  'src/ui/controls/slider.cpp',
-  'src/ui/controls/spacer.cpp',
-  'src/ui/controls/spinner.cpp',
-  'src/ui/controls/stepper.cpp',
-  'src/ui/controls/toggle.cpp',
-  'src/ui/controls/virtual_grid_view.cpp',
-  'src/ui/controls/virtual_list_view.cpp',
-  'src/ui/palette.cpp',
-  'src/ui/scroll_into_view.cpp',
-  'src/ui/style.cpp',
-  'src/wayland/popup_surface.cpp',
-  'src/wayland/surface.cpp',
-  'src/wayland/text_input_service.cpp',
-  'src/wayland/toplevel_surface.cpp',
-  'src/wayland/wayland_connection.cpp',
-  'src/wayland/wayland_seat.cpp',
 )
 
 filesystem_service = declare_dependency(
@@ -218,7 +139,7 @@ filesystem_service = declare_dependency(
     'src/app/glib_poll_source.cpp',
   ),
   include_directories: include_directories('src'),
-  dependencies: gio,
+  dependencies: [gio, noctalia_ui_dep],
 )
 
 browser_model = declare_dependency(
@@ -288,84 +209,74 @@ build_tests = tests_opt.enabled() or (
   tests_opt.auto() and get_option('buildtype') == 'debug' and get_option('b_sanitize') == 'none'
 )
 if build_tests
-  input_objects = app.extract_objects(files(
-    'src/render/scene/input_area.cpp', 'src/render/scene/input_dispatcher.cpp', 'src/render/scene/node.cpp',
-    'src/render/animation/animation.cpp', 'src/render/animation/animation_manager.cpp', 'src/render/animation/motion_service.cpp',
-    'src/core/ui_phase.cpp', 'src/core/log.cpp', 'src/core/input/keybind_matcher.cpp', 'src/core/input/key_chord.cpp',
-    'src/wayland/text_input_service.cpp',
-  ))
-  input_test = executable('input-lifetime-test', 'tests/input_lifetime_test.cpp',
-    protocol_sources, protocol_headers, objects: input_objects,
+  input_test = executable('input-lifetime-test', 'tests/library_test_setup.cpp', 'tests/input_lifetime_test.cpp',
+    protocol_headers,
     include_directories: include_directories('src', '.'), dependencies: ui_dependencies, override_options: ['b_ndebug=false'])
   test('input-lifetime', input_test)
-  tab_test = executable('tab-workspace-test', 'tests/tab_workspace_test.cpp', 'src/browser/tab_workspace.cpp', include_directories: include_directories('src'), override_options: ['b_ndebug=false'])
+  tab_test = executable('tab-workspace-test', 'tests/library_test_setup.cpp', 'tests/tab_workspace_test.cpp', 'src/browser/tab_workspace.cpp', dependencies: noctalia_ui_dep, include_directories: include_directories('src'), override_options: ['b_ndebug=false'])
   test('tab-workspace', tab_test)
-  archive_test = executable('archive-service-test', 'tests/archive_service_test.cpp', dependencies: archive_service, override_options: ['b_ndebug=false'])
+  archive_test = executable('archive-service-test', 'tests/library_test_setup.cpp', 'tests/archive_service_test.cpp', dependencies: archive_service, override_options: ['b_ndebug=false'])
   test('archive-service', archive_test, timeout: 90, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  thumbnail_test = executable('thumbnail-test',
+  thumbnail_test = executable('thumbnail-test', 'tests/library_test_setup.cpp',
+    'src/platform/pixbuf_image_decoder.cpp', 'src/platform/artwork_loader.cpp',
     'tests/thumbnail_test.cpp',
-    'src/core/log.cpp',
+    'src/browser/png_decoder.cpp',
     'src/browser/thumbnail_codec.cpp',
     'src/browser/thumbnail_store.cpp',
     'src/browser/thumbnail_provider.cpp',
     'src/browser/thumbnail_worker.cpp',
     'src/browser/thumbnail_service.cpp',
-    'src/render/core/image_orientation.cpp',
-    'src/render/core/image_decoder.cpp',
-    'src/render/core/image_resize.cpp',
-    'src/render/core/stb_image_resize_impl.cpp',
-    dependencies: [filesystem_service, settings_service, gdk_pixbuf, webp, dependency('libpng'), dependency('nlohmann_json'), dependency('threads')], override_options: ['b_ndebug=false']
+    dependencies: ui_dependencies + [filesystem_service, settings_service], override_options: ['b_ndebug=false']
   )
   test('thumbnail', thumbnail_test, timeout: 90, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  preview_test = executable('preview-service-test', 'tests/preview_service_test.cpp',
+  preview_test = executable('preview-service-test', 'tests/library_test_setup.cpp', 'tests/preview_service_test.cpp',
     'src/browser/preview_service.cpp',
     objects: thumbnail_test.extract_objects(files(
-      'src/core/log.cpp',
-      'src/browser/thumbnail_codec.cpp', 'src/browser/thumbnail_store.cpp',
+      'src/browser/png_decoder.cpp', 'src/browser/thumbnail_codec.cpp', 'src/browser/thumbnail_store.cpp',
       'src/browser/thumbnail_provider.cpp', 'src/browser/thumbnail_worker.cpp',
-      'src/browser/thumbnail_service.cpp', 'src/render/core/image_orientation.cpp',
-      'src/render/core/image_decoder.cpp', 'src/render/core/image_resize.cpp', 'src/render/core/stb_image_resize_impl.cpp')),
-    dependencies: [filesystem_service, settings_service, gdk_pixbuf, webp, dependency('libpng'), dependency('nlohmann_json'), dependency('threads')], override_options: ['b_ndebug=false'])
+      'src/browser/thumbnail_service.cpp',)),
+    dependencies: ui_dependencies + [filesystem_service, settings_service], override_options: ['b_ndebug=false'])
   test('preview-service', preview_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   python = import('python').find_installation('python3')
-  clipboard_test = executable('clipboard-test', 'tests/clipboard_test.cpp', 'src/platform/text_clipboard.cpp', 'src/platform/file_payload.cpp', dependencies: [filesystem_service, dependency('wayland-client'), dependency('wayland-server')], override_options: ['b_ndebug=false'])
+  clipboard_test = executable('clipboard-test', 'tests/library_test_setup.cpp', 'tests/clipboard_test.cpp', 'src/platform/text_clipboard.cpp', 'src/platform/file_payload.cpp', dependencies: [noctalia_ui_dep, filesystem_service, dependency('wayland-client'), dependency('wayland-server')], override_options: ['b_ndebug=false'])
   test('clipboard', clipboard_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  payload_test = executable('file-payload-test', 'tests/file_payload_test.cpp', 'src/platform/file_payload.cpp', dependencies: filesystem_service, override_options: ['b_ndebug=false'])
+  payload_test = executable('file-payload-test', 'tests/library_test_setup.cpp', 'tests/file_payload_test.cpp', 'src/platform/file_payload.cpp', dependencies: filesystem_service, override_options: ['b_ndebug=false'])
   test('file-payload', payload_test, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  actions_test = executable('browser-actions-test', 'tests/browser_actions_test.cpp', dependencies: browser_model, override_options: ['b_ndebug=false'])
+  actions_test = executable('browser-actions-test', 'tests/library_test_setup.cpp', 'tests/browser_actions_test.cpp', dependencies: browser_model, override_options: ['b_ndebug=false'])
   test('browser-actions', actions_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  empty_trash_test = executable('empty-trash-service-test', 'tests/empty_trash_service_test.cpp', dependencies: trash_service, override_options: ['b_ndebug=false'])
+  empty_trash_test = executable('empty-trash-service-test', 'tests/library_test_setup.cpp', 'tests/empty_trash_service_test.cpp', dependencies: trash_service, override_options: ['b_ndebug=false'])
   test('empty-trash-service', empty_trash_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  trash_browse_test = executable('trash-browse-test', 'tests/trash_browse_test.cpp', dependencies: browser_model, override_options: ['b_ndebug=false'])
+  trash_browse_test = executable('trash-browse-test', 'tests/library_test_setup.cpp', 'tests/trash_browse_test.cpp', dependencies: browser_model, override_options: ['b_ndebug=false'])
   test('trash-browse', trash_browse_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  trash_test = executable('trash-service-test', 'tests/trash_service_test.cpp', dependencies: [trash_service, browser_model], override_options: ['b_ndebug=false'])
+  trash_test = executable('trash-service-test', 'tests/library_test_setup.cpp', 'tests/trash_service_test.cpp', dependencies: [trash_service, browser_model], override_options: ['b_ndebug=false'])
   test('trash-service', trash_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  create_test = executable('create-service-test', 'tests/create_service_test.cpp', dependencies: [create_service, browser_model], override_options: ['b_ndebug=false'])
+  create_test = executable('create-service-test', 'tests/library_test_setup.cpp', 'tests/create_service_test.cpp', dependencies: [create_service, browser_model], override_options: ['b_ndebug=false'])
   test('create-service', create_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  rename_test = executable('rename-service-test', 'tests/rename_service_test.cpp', dependencies: [rename_service, browser_model], override_options: ['b_ndebug=false'])
+  rename_test = executable('rename-service-test', 'tests/library_test_setup.cpp', 'tests/rename_service_test.cpp', dependencies: [rename_service, browser_model], override_options: ['b_ndebug=false'])
   test('rename-service', rename_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  transfer_test = executable('transfer-service-test', 'tests/transfer_service_test.cpp', dependencies: transfer_service, override_options: ['b_ndebug=false'])
+  transfer_test = executable('transfer-service-test', 'tests/library_test_setup.cpp', 'tests/transfer_service_test.cpp', dependencies: transfer_service, override_options: ['b_ndebug=false'])
   test('transfer-service', transfer_test, timeout: 90, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  places_test = executable('places-test', 'tests/places_test.cpp', dependencies: places_service, override_options: ['b_ndebug=false'])
+  places_test = executable('places-test', 'tests/library_test_setup.cpp', 'tests/places_test.cpp', dependencies: places_service, override_options: ['b_ndebug=false'])
   test('places', places_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  icon_test = executable('file-icon-test',
+  icon_test = executable('file-icon-test', 'tests/library_test_setup.cpp',
     'tests/file_icon_test.cpp',
+    'src/platform/artwork_loader.cpp',
+    'src/platform/pixbuf_image_decoder.cpp',
+    'src/browser/png_decoder.cpp',
+    'src/browser/thumbnail_codec.cpp',
     'src/browser/file_icon_cache.cpp',
     'src/system/icon_resolver.cpp',
     'src/system/freedesktop_key_file.cpp',
-    'src/render/core/image_file_loader.cpp',
-    'src/render/core/image_decoder.cpp',
-    'src/core/log.cpp',
     dependencies: ui_dependencies + [filesystem_service], override_options: ['b_ndebug=false']
   )
   test('file-icon', icon_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  view_writer_test = executable('view-preference-writer-test',
+  view_writer_test = executable('view-preference-writer-test', 'tests/library_test_setup.cpp',
     'tests/view_preference_writer_test.cpp',
     'src/config/view_preference_writer.cpp',
     dependencies: [settings_service, filesystem_service], override_options: ['b_ndebug=false']
   )
   test('view-preference-writer', view_writer_test, timeout: 30, env: ['G_DEBUG=fatal-warnings'])
-  directory_test = executable('directory-session-test',
+  directory_test = executable('directory-session-test', 'tests/library_test_setup.cpp',
     'tests/directory_session_test.cpp',
     include_directories: include_directories('src'),
     dependencies: filesystem_service, override_options: ['b_ndebug=false']
@@ -373,25 +284,25 @@ if build_tests
   test('directory-session', directory_test, timeout: 30,
     env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],
   )
-  browser_test = executable('directory-model-test',
+  browser_test = executable('directory-model-test', 'tests/library_test_setup.cpp',
     'tests/directory_model_test.cpp',
     dependencies: browser_model, override_options: ['b_ndebug=false']
   )
   test('directory-model', browser_test, timeout: 30,
     env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],
   )
-  file_launcher_test = executable('file-launcher-test',
-    'tests/file_launcher_test.cpp', 'src/platform/file_launcher.cpp', 'src/core/log.cpp',
+  file_launcher_test = executable('file-launcher-test', 'tests/library_test_setup.cpp',
+    'tests/file_launcher_test.cpp', 'src/platform/file_launcher.cpp',
     dependencies: filesystem_service, override_options: ['b_ndebug=false']
   )
   test('file-launcher', python,
     args: [files('tests/file_launcher_test.py'), file_launcher_test], timeout: 30,
   )
-  controller_test = executable('browser-controller-test',
+  controller_test = executable('browser-controller-test', 'tests/library_test_setup.cpp',
     'tests/browser_controller_test.cpp',
     dependencies: browser_model, override_options: ['b_ndebug=false']
   )
-  miller_test = executable('miller-columns-test',
+  miller_test = executable('miller-columns-test', 'tests/library_test_setup.cpp',
     'tests/miller_columns_test.cpp',
     dependencies: browser_model, override_options: ['b_ndebug=false']
   )
@@ -401,14 +312,14 @@ if build_tests
   test('browser-controller', controller_test, timeout: 30,
     env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],
   )
-  navigation_test = executable('navigation-services-test',
+  navigation_test = executable('navigation-services-test', 'tests/library_test_setup.cpp',
     'tests/navigation_services_test.cpp', 'src/platform/terminal_launcher.cpp',
     dependencies: browser_model, override_options: ['b_ndebug=false']
   )
   test('navigation-services', navigation_test, timeout: 30,
     env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],
   )
-  settings_test = executable('settings-test',
+  settings_test = executable('settings-test', 'tests/library_test_setup.cpp',
     'tests/settings_test.cpp',
     dependencies: [settings_service, browser_model], override_options: ['b_ndebug=false']
   )
@@ -420,7 +331,7 @@ if build_tests
     dependencies: settings_service, override_options: ['b_ndebug=false']
   )
   test('atomic-file', atomic_test, timeout: 30)
-  state_test = executable('state-store-test',
+  state_test = executable('state-store-test', 'tests/library_test_setup.cpp',
     'tests/state_store_test.cpp',
     dependencies: state_service, override_options: ['b_ndebug=false']
   )
@@ -430,11 +341,12 @@ if build_tests
   test('headless-cli', python,
     args: [files('tests/cli_test.py'), app, meson.project_version()],
     timeout: 30,
+    env: ['NOCTALIA_FILES_ASSETS_DIR=' + (meson.project_source_root() / 'lib/assets')],
   )
 endif
 
 install_data('LICENSE', install_dir: get_option('datadir') / 'licenses/noctalia-files')
-install_subdir('assets/fonts', install_dir: get_option('datadir') / 'noctalia-files/assets')
+install_subdir(noctalia_ui_assets_dir / 'fonts', install_dir: get_option('datadir') / 'noctalia-files/assets')
 install_data('assets/completions/noctalia-files.bash',
   install_dir: get_option('datadir') / 'bash-completion/completions',
   rename: 'noctalia-files',

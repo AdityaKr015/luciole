@@ -1,6 +1,6 @@
 #include "app/main_loop.h"
 
-#include "app/poll_source.h"
+#include "core/poll_source.h"
 #include "wayland/surface.h"
 #include "wayland/wayland_connection.h"
 
@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <unordered_map>
 #include <utility>
+#include <wayland-client.h>
 
 MainLoop::MainLoop(WaylandConnection& wayland, std::vector<PollSource*> sources, std::function<bool()> running)
     : m_wayland(wayland), m_sources(std::move(sources)), m_running(std::move(running)) {}

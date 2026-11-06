@@ -300,7 +300,7 @@ std::unique_ptr<Node> files::FileViewAdapter::createTile() {
 std::unique_ptr<Node> files::FileViewAdapter::createDecoration() { return std::make_unique<SelectionSurface>(); }
 void files::FileViewAdapter::bindDecoration(Node& decoration, const VirtualGridDecorationLayout& layout) {
   const auto& model = m_browser.model();
-  std::vector<std::uint8_t> selected(layout.itemCount, 0);
+  std::vector<std::uint8_t> selected(((layout.itemCount + layout.columns - 1) / layout.columns) * layout.columns, 0);
   for (std::size_t i = 0; i < layout.itemCount && layout.firstIndex + i < model.rows().size(); ++i) {
     const auto col = i % layout.columns;
     const auto visual = (i / layout.columns) * layout.columns + (layout.rtl ? layout.columns - col - 1 : col);

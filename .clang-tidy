@@ -56,7 +56,8 @@ Checks: >-
   readability-use-anyofallof,
   readability-use-concise-preprocessor-directives,
   readability-use-std-min-max,
-HeaderFilterRegex: '(^|/)src/.*\.h$'
+HeaderFilterRegex: '^(\.\./)?(src|lib)/.*\.h$'
+ExcludeHeaderFilterRegex: '.*-client-protocol\.h$'
 CheckOptions:
   readability-identifier-naming.EnumConstantCase: CamelCase
   readability-identifier-naming.PrivateMemberCase: camelBack

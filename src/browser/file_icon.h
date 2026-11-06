@@ -39,8 +39,10 @@ namespace files {
     FileIconSource m_source;
     ColorSpec m_foreground = colorSpecFromRole(ColorRole::OnSurface);
     ImageNode* m_image = nullptr;
-    TextureManager* m_textures = nullptr;
-    TextureHandle m_texture{};
+    SharedTextureCache::Lease m_texture;
+    std::shared_ptr<const LoadedImageFile> m_requestedPixels;
+    std::string m_requestedSource;
+    std::shared_ptr<int> m_lifetime = std::make_shared<int>(0);
     std::shared_ptr<const FileIconImage> m_asset;
     std::shared_ptr<const FileIconImage> m_prepared;
   };

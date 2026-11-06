@@ -143,6 +143,12 @@ stdenv.mkDerivation (finalAttrs: {
     tomlplusplus
   ];
 
+  # GNU LTO archives need the compiler's plugin-aware tools.
+  preConfigure = lib.optionalString stdenv.cc.isGNU ''
+    export AR="${stdenv.cc.cc}/bin/gcc-ar"
+    export RANLIB="${stdenv.cc.cc}/bin/gcc-ranlib"
+  '';
+
   mesonBuildType = "release";
   postFixup = ''
     wrapProgram "$out/bin/noctalia-files" \

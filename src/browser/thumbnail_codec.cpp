@@ -62,7 +62,7 @@ std::expected<LoadedImageFile, std::string> files::decodeThumbnail(
     std::span<const std::uint8_t> bytes, int target, std::uint64_t maxPixels, GCancellable* cancellable,
     std::string_view contentType
 ) {
-  if (bytes.empty() || target < 1 || target > kMaxPreviewImageSide || !maxPixels || maxPixels > 64'000'000) {
+  if (bytes.empty() || target < 1 || target > 8192 || !maxPixels || maxPixels > 64'000'000) {
     return std::unexpected("invalid thumbnail input");
   }
   if (g_cancellable_is_cancelled(cancellable)) {
@@ -161,7 +161,7 @@ std::expected<LoadedImageFile, std::string> files::decodeThumbnail(
 
 std::expected<LoadedImageFile, std::string>
 files::fitThumbnailPixels(GdkPixbuf* pixbuf, int target, std::uint64_t maxPixels) {
-  if (!pixbuf || target < 1 || target > kMaxPreviewImageSide) {
+  if (!pixbuf || target < 1 || target > 8192) {
     return std::unexpected("invalid thumbnail pixels");
   }
   const int width = gdk_pixbuf_get_width(pixbuf), height = gdk_pixbuf_get_height(pixbuf);

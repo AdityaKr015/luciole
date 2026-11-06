@@ -60,14 +60,16 @@ namespace {
       }
       if (auto image = loadImageFile(path, size)) {
         return {
-            .pixels = std::move(*image),
+            .pixels = std::make_shared<const LoadedImageFile>(std::move(*image)),
             .path = path,
             .symbolic = path.ends_with("-symbolic.svg") || path.ends_with("-symbolic.png"),
-            .ready = true
+            .ready = true,
+            .sourceKey = {},
+            .revision = {}
         };
       }
     }
-    return {.pixels = std::nullopt, .path = {}, .symbolic = false, .ready = true};
+    return {.pixels = {}, .path = {}, .symbolic = false, .ready = true, .sourceKey = {}, .revision = {}};
   }
 
   std::string keyFor(const files::FileIconSource& source, int size) {
@@ -103,6 +105,9 @@ struct files::FileIconCache::State : std::enable_shared_from_this<State> {
   bool alive = true;
 
   void trim(bool reserveEntry) {
+    std::erase_if(cache, [](const auto& item) {
+      return item.second.image->ready && item.second.image.use_count() == 1;
+    });
     std::size_t bytes = 0;
     for (const auto& [_, item] : cache) {
       bytes += item.image->pixels ? item.image->pixels->rgba.size() : 0;
@@ -138,6 +143,8 @@ struct files::FileIconCache::State : std::enable_shared_from_this<State> {
             );
             --owner->active;
             if (owner->alive && owner->generation == request->generation && image) {
+              image->sourceKey = "icon:" + keyFor(request->source, request->pixels);
+              image->revision = "artwork-v1:" + std::to_string(request->generation);
               *request->image = std::move(*image);
               owner->trim(false);
               const auto changed = owner->changed;
@@ -179,6 +186,7 @@ void files::FileIconCache::invalidate() {
   m_state->cache.clear();
 }
 std::shared_ptr<const files::FileIconImage> files::FileIconCache::request(const FileIconSource& source, int pixels) {
+  m_state->trim(false);
   pixels = std::clamp(pixels, 1, 512);
   const auto key = keyFor(source, pixels);
   if (const auto found = m_state->cache.find(key); found != m_state->cache.end()) {
@@ -194,4 +202,10 @@ std::shared_ptr<const files::FileIconImage> files::FileIconCache::request(const 
   m_state->pending.push_back({m_state, source, image, pixels, m_state->generation});
   m_state->pump();
   return image;
+}
+
+void files::FileIconCache::imageChanged() {
+  if (m_state->alive && m_state->changed) {
+    m_state->changed();
+  }
 }

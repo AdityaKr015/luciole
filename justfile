@@ -40,7 +40,7 @@ build m=mode: (_ensure-configured m)
     meson compile -C "build-$1" noctalia-files
 
 run m=mode: (build m)
-    NOCTALIA_FILES_ASSETS_DIR="$PWD/assets" ./build-$1/noctalia-files
+    NOCTALIA_FILES_ASSETS_DIR="$PWD/lib/assets" ./build-$1/noctalia-files
 
 test m=mode *args: (_ensure-configured m)
     meson configure "build-$1" -Dtests=enabled
@@ -98,6 +98,7 @@ _files kind:
                 name
                 for name in children
                 if name not in EXCLUDED
+                and not (name == "lib" and kind == "text")
                 and not name.startswith(("build-", "result-"))
                 and not Path(directory, name).is_symlink()
             )
@@ -133,7 +134,7 @@ format: format-code
 format-check: format-code-check lint-prose
 
 format-code: _check_formatter
-    just _files code | xargs -0 -r clang-format -i
+    just _files code | python3 -c 'import sys; sys.stdout.buffer.write(b"\0".join(p for p in sys.stdin.buffer.read().split(b"\0") if p and not p.startswith(b"lib/"))+b"\0")' | xargs -0 -r clang-format -i
 
 format-code-check: _check_formatter
     just _files code | xargs -0 -r clang-format --dry-run -Werror
@@ -146,7 +147,7 @@ format-nix-check:
 
 _clang_tidy m=mode: (_ensure-configured m)
     meson compile -C "build-$1" noctalia-files
-    run-clang-tidy -quiet -p "build-$1" -j "$(nproc)" -warnings-as-errors='*' -header-filter='(\.\./)?src/.*' "$(realpath src)/.*"
+    run-clang-tidy -quiet -p "build-$1" -j "$(nproc)" -warnings-as-errors='*' -header-filter="$(realpath .)/(src|lib)/.*|^\.\./(src|lib)/.*" "$(realpath .)/(src|lib)/.*"
 
 lint m=mode: (_clang_tidy m) lint-python lint-prose
 
