@@ -212,17 +212,20 @@ void files::PlacesSidebar::rebuild() {
   }
   sync(m_current);
 }
-void files::PlacesSidebar::doLayout(Renderer& renderer) {
+LayoutSize files::PlacesSidebar::doMeasure(Renderer& renderer, const LayoutConstraints& constraints) {
   if (m_dirty) {
     m_dirty = false;
     rebuild();
   }
-  Flex::doLayout(renderer);
+  return Flex::doMeasure(renderer, constraints);
 }
-LayoutSize files::PlacesSidebar::doMeasure(Renderer& renderer, const LayoutConstraints& constraints) {
-  return measureByLayout(renderer, constraints);
+void files::PlacesSidebar::doArrange(Renderer& renderer, const LayoutRect& rect) {
+  if (m_dirty) {
+    m_dirty = false;
+    rebuild();
+  }
+  Flex::doArrange(renderer, rect);
 }
-void files::PlacesSidebar::doArrange(Renderer& renderer, const LayoutRect& rect) { arrangeByLayout(renderer, rect); }
 std::optional<std::size_t> files::PlacesSidebar::dropSlot(float x, float y) const {
   float localX = 0, localY = 0;
   if (!Node::mapFromScene(this, x, y, localX, localY)
