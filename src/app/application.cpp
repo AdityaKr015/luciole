@@ -4202,12 +4202,14 @@ namespace {
       }
       const auto anchor = sceneRect(*m_locationArea);
       const float width = std::min(anchor.width, static_cast<float>(m_surface->width()) - 16.0F);
-      m_completionControl->setMenuWidth(width);
-      m_completionFrame->arrange(
-          renderer,
-          {std::clamp(anchor.x, 8.0F, std::max(8.0F, static_cast<float>(m_surface->width()) - width - 8.0F)),
-           anchor.y + anchor.height + 4.0F, width, m_completionControl->preferredHeight()}
+      float x = 0, y = 0;
+      // The dropdown extends outside the toolbar's hit bounds.
+      (void)Node::mapFromScene(
+          m_toolbar, std::clamp(anchor.x, 8.0F, std::max(8.0F, static_cast<float>(m_surface->width()) - width - 8.0F)),
+          anchor.y + anchor.height + 4.0F, x, y
       );
+      m_completionControl->setMenuWidth(width);
+      m_completionFrame->arrange(renderer, {x, y, width, m_completionControl->preferredHeight()});
     }
     void beginLocationEdit() {
       m_blankLocationClick.reset();
@@ -6317,7 +6319,7 @@ namespace {
           std::move(completion)
       );
       completionFrame->setZIndex(110);
-      m_root->addChild(std::move(completionFrame));
+      m_toolbar->addChild(std::move(completionFrame));
       m_root->setAnimationManager(&m_animations);
       m_dispatcher.setSceneRoot(m_root);
     }
