@@ -179,7 +179,8 @@ rename_service = declare_dependency(
 )
 
 trash_service = declare_dependency(
-  sources: files('src/operations/trash_service.cpp', 'src/operations/empty_trash_service.cpp'),
+  sources: files('src/operations/trash_service.cpp', 'src/operations/empty_trash_service.cpp',
+    'src/operations/trash_item.cpp', 'src/operations/restore_service.cpp'),
   dependencies: filesystem_service,
 )
 
@@ -246,6 +247,8 @@ if build_tests
   test('browser-actions', actions_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   empty_trash_test = executable('empty-trash-service-test', 'tests/library_test_setup.cpp', 'tests/empty_trash_service_test.cpp', dependencies: trash_service, override_options: ['b_ndebug=false'])
   test('empty-trash-service', empty_trash_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
+  restore_test = executable('restore-service-test', 'tests/library_test_setup.cpp', 'tests/restore_service_test.cpp', dependencies: trash_service, override_options: ['b_ndebug=false'])
+  test('restore-service', restore_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   trash_browse_test = executable('trash-browse-test', 'tests/library_test_setup.cpp', 'tests/trash_browse_test.cpp', dependencies: browser_model, override_options: ['b_ndebug=false'])
   test('trash-browse', trash_browse_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   trash_test = executable('trash-service-test', 'tests/library_test_setup.cpp', 'tests/trash_service_test.cpp', dependencies: [trash_service, browser_model], override_options: ['b_ndebug=false'])

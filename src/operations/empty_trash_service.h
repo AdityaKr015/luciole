@@ -1,6 +1,6 @@
 #pragma once
 
-#include "fs/location.h"
+#include "fs/directory_session.h"
 
 #include <cstdint>
 #include <functional>
@@ -25,7 +25,7 @@ namespace files {
     bool sizeIncomplete = false;
   };
 
-  // Only the standard Trash root is accepted; preparation never removes anything.
+  // Only the standard Trash root and its immediate items are accepted.
   class EmptyTrashService {
   public:
     EmptyTrashService();
@@ -33,6 +33,7 @@ namespace files {
     EmptyTrashService(const EmptyTrashService&) = delete;
     EmptyTrashService& operator=(const EmptyTrashService&) = delete;
     bool prepare();
+    bool prepareSelection(std::vector<DirectoryEntry> selection);
     bool empty();
     void cancel();
     bool busy() const;
@@ -43,6 +44,7 @@ namespace files {
     void setChangedCallback(std::function<void()> callback);
 
   private:
+    bool prepareTargets(std::optional<std::vector<DirectoryEntry>> selection);
     struct State;
     std::shared_ptr<State> m_state;
   };

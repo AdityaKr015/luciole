@@ -42,6 +42,8 @@ namespace files {
     PasteFiles,
     Rename,
     Trash,
+    Restore,
+    DeletePermanently,
     Properties,
     Compress,
     ExtractHere,

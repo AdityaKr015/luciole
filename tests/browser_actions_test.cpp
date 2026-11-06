@@ -73,6 +73,48 @@ namespace {
     model.applySnapshot(data);
     TEST_CHECK(!R::state(A::CopyFiles, c, R::capture(c)).enabled);
   }
+  void testTrashActions() {
+    files::DirectoryModel model;
+    auto data = snapshot();
+    data.location = files::Location::trash();
+    data.entries.erase(data.entries.begin() + 1, data.entries.end());
+    data.entries[0].location = files::Location::fromUri("trash:///alpha.txt");
+    data.entries[0].identity = files::FileIdentity{"trash-volume", "item-1"};
+    data.entries[0].trash.original = files::Location::fromPath("/tmp/original/alpha.txt");
+    model.applySnapshot(data);
+    model.select(1);
+    files::ActionContext context{.model = model, .context = 33, .query = {}, .pinned = {}};
+    const auto request = R::capture(context);
+    TEST_CHECK(
+        R::state(A::Restore, context, request).enabled && R::state(A::DeletePermanently, context, request).enabled
+    );
+    context.operationsBusy = true;
+    TEST_CHECK(
+        !R::state(A::Restore, context, request).enabled && !R::state(A::DeletePermanently, context, request).enabled
+    );
+    context.operationsBusy = false;
+    data.entries[0].trash.original.reset();
+    ++data.generation;
+    model.applySnapshot(data);
+    TEST_CHECK(
+        !R::state(A::Restore, context, request).enabled && R::state(A::DeletePermanently, context, request).enabled
+    );
+    data.entries[0].access.remove = false;
+    ++data.generation;
+    model.applySnapshot(data);
+    TEST_CHECK(!R::state(A::DeletePermanently, context, request).enabled);
+    data.entries[0].access.remove = true;
+    data.location = files::Location::fromUri("trash:///folder");
+    data.entries[0].location = files::Location::fromUri("trash:///folder/alpha.txt");
+    ++data.generation;
+    model.applySnapshot(data);
+    TEST_CHECK(!R::state(A::DeletePermanently, context, R::capture(context)).enabled);
+    data.location = files::Location::fromPath("/tmp/action-fixture");
+    data.entries[0].location = files::Location::fromPath("/tmp/action-fixture/alpha.txt");
+    ++data.generation;
+    model.applySnapshot(data);
+    TEST_CHECK(!R::state(A::DeletePermanently, context, R::capture(context)).enabled);
+  }
   void testPreviewActions() {
     files::DirectoryModel model;
     model.applySnapshot(snapshot());
@@ -279,6 +321,7 @@ namespace {
 int main() {
   try {
     testArchiveActions();
+    testTrashActions();
     testFileClipboardActions();
     testPreviewActions();
     testCapabilitiesAndTargets();

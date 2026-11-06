@@ -44,6 +44,8 @@ namespace {
        {A::PasteFiles, "Paste", "Ctrl+V", S::Location},
        {A::Rename, "Rename…", "F2", S::Targets},
        {A::Trash, "Move to Trash", "Delete", S::Targets},
+       {A::Restore, "Restore", "", S::Targets},
+       {A::DeletePermanently, "Delete Permanently…", "Delete", S::Targets, true},
        {A::Properties, "Properties", "Alt+Return", S::Targets},
        {A::Compress, "Compress…", "", S::Targets},
        {A::ExtractHere, "Extract Here", "", S::Targets},
@@ -224,6 +226,30 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
       return unavailable("Writing to this folder is not permitted.");
     }
     return writable();
+  case A::Restore:
+  case A::DeletePermanently:
+    if (const auto state = writable(); !state.enabled) {
+      return state;
+    }
+    if (r.folder != Location::trash() || !c.query.empty() || !ready) {
+      return unavailable("Select items directly in Trash first.");
+    }
+    if (!all([](const auto& entry) {
+          const GioPtr<GFile> parent(g_file_get_parent(entry.location.file().get()));
+          return entry.location.isTrash()
+              && parent
+              && g_file_equal(parent.get(), Location::trash().file().get())
+              && entry.identity
+              && entry.access.remove.value_or(true);
+        })) {
+      return unavailable("These items cannot be changed by the Trash provider.");
+    }
+    if (action == A::Restore && !all([](const auto& entry) {
+          return entry.trash.original && entry.trash.original->nativePath().has_value();
+        })) {
+      return unavailable("The original location is unavailable for one or more selected items.");
+    }
+    return {};
   case A::Rename:
   case A::Trash: {
     if (const auto state = writable(); !state.enabled) {

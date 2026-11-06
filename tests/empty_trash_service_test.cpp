@@ -38,9 +38,9 @@ namespace {
       while (!done()) {
         TEST_CHECK(std::chrono::steady_clock::now() < deadline);
         std::vector<pollfd> fds;
-        const auto start = source.addPollFds(fds);
+        const auto start = m_source.addPollFds(fds);
         TEST_CHECK(::poll(fds.data(), fds.size(), 1) >= 0);
-        source.dispatch(fds, start);
+        m_source.dispatch(fds, start);
       }
     }
     void prepare(files::EmptyTrashService& service) {
@@ -55,12 +55,11 @@ namespace {
     }
 
   private:
-    GlibPollSource source;
+    GlibPollSource m_source;
   };
   void trash(const fs::path& path) {
     GError* error = nullptr;
     const bool ok = g_file_trash(files::Location::fromPath(path.native()).file().get(), nullptr, &error);
-    const std::string message = error ? error->message : "trash failed";
     g_clear_error(&error);
     TEST_CHECK(ok);
   }
@@ -145,6 +144,57 @@ namespace {
     pump.prepare(service);
     TEST_CHECK(service.snapshot().results.empty() && fs::is_empty(trashInfo()) && fs::is_empty(trashFiles()));
     service.cancel();
+  }
+  void selectedDeletion(Pump& pump) {
+    Fixture fixture;
+    write(fixture.root / "keep-selected-test", "keep unrelated");
+    write(fixture.root / "delete-selected-test", "delete selected");
+    for (const auto* name : {"keep-selected-test", "delete-selected-test"}) {
+      trash(fixture.root / name);
+    }
+    const auto selected = [&] {
+      files::DirectorySession session;
+      session.open(files::Location::trash());
+      pump.until([&] { return session.snapshot().status != files::DirectoryStatus::Loading; });
+      TEST_CHECK(session.snapshot().status == files::DirectoryStatus::Ready);
+      const auto found = std::ranges::find_if(session.snapshot().entries, [&](const auto& entry) {
+        return entry.trash.original == files::Location::fromPath((fixture.root / "delete-selected-test").native());
+      });
+      TEST_CHECK(found != session.snapshot().entries.end());
+      return *found;
+    };
+    files::EmptyTrashService service;
+    TEST_CHECK(!service.prepareSelection({}));
+    auto entry = selected();
+    TEST_CHECK(service.prepareSelection({entry}));
+    pump.until([&] { return !service.busy(); });
+    TEST_CHECK(service.canEmpty() && service.snapshot().results.size() == 1 && service.snapshot().size == 15);
+    service.cancel();
+    TEST_CHECK(!service.empty() && read(trashFiles() / "delete-selected-test") == "delete selected");
+    TEST_CHECK(service.prepareSelection({entry}));
+    pump.until([&] { return !service.busy(); });
+    write(trashFiles() / "delete-selected-test", "changed after confirmation");
+    pump.empty(service);
+    TEST_CHECK(service.snapshot().results.front().outcome == Outcome::Failed);
+    TEST_CHECK(read(trashFiles() / "keep-selected-test") == "keep unrelated");
+    TEST_CHECK(service.prepareSelection({entry}));
+    pump.until([&] { return !service.busy(); });
+    TEST_CHECK(service.snapshot().status == Status::Error && !service.empty());
+    entry = selected();
+    TEST_CHECK(service.prepareSelection({entry}));
+    pump.until([&] { return !service.busy(); });
+    pump.empty(service);
+    TEST_CHECK(service.snapshot().results.front().outcome == Outcome::Deleted);
+    TEST_CHECK(
+        !fs::exists(trashFiles() / "delete-selected-test")
+        && read(trashFiles() / "keep-selected-test") == "keep unrelated"
+    );
+    entry.location = files::Location::trash();
+    TEST_CHECK(service.prepareSelection({entry}));
+    pump.until([&] { return !service.busy(); });
+    TEST_CHECK(service.snapshot().status == Status::Error && !service.empty());
+    pump.prepare(service);
+    pump.empty(service);
   }
   void staleItemsAndPartialOutcomes(Pump& pump) {
     Fixture fixture;
@@ -255,6 +305,7 @@ int main(int argc, char** argv) {
     Pump pump;
     if (argc == 2 && std::string_view(argv[1]) == "--provider") {
       successfulEmptyAndNewArrivals(pump);
+      selectedDeletion(pump);
       staleItemsAndPartialOutcomes(pump);
       cancellationBetweenItems(pump);
       confirmationDoesNotWaitForSize(pump);

@@ -1,5 +1,7 @@
 #include "operations/empty_trash_service.h"
 
+#include "operations/trash_item.h"
+
 #include <atomic>
 #include <limits>
 #include <set>
@@ -7,58 +9,14 @@
 #include <utility>
 
 namespace {
-  constexpr const char* kAttributes =
-      "standard::name,standard::display-name,standard::type,standard::is-symlink,id::file,id::filesystem,etag::value,"
-      "trash::orig-path,trash::deletion-date";
   struct ErrorFree {
     void operator()(GError* error) const { g_error_free(error); }
   };
   using Error = std::unique_ptr<GError, ErrorFree>;
-  std::optional<std::string> attribute(GFileInfo* info, const char* name, bool bytes = false) {
-    if (g_file_info_get_attribute_type(info, name)
-        != (bytes ? G_FILE_ATTRIBUTE_TYPE_BYTE_STRING : G_FILE_ATTRIBUTE_TYPE_STRING)) {
-      return std::nullopt;
-    }
-    const char* value =
-        bytes ? g_file_info_get_attribute_byte_string(info, name) : g_file_info_get_attribute_string(info, name);
-    return value != nullptr && *value != '\0' ? std::optional<std::string>(value) : std::nullopt;
-  }
-  struct Identity {
-    std::string file, filesystem;
-    GFileType type;
-    bool symlink;
-    std::optional<std::string> etag, original, deleted;
-  };
-  Identity identity(GFileInfo* info) {
-    const auto file = attribute(info, G_FILE_ATTRIBUTE_ID_FILE);
-    const auto filesystem = attribute(info, G_FILE_ATTRIBUTE_ID_FILESYSTEM);
-    const auto type = g_file_info_get_file_type(info);
-    if (!file || !filesystem || type == G_FILE_TYPE_UNKNOWN) {
-      throw std::runtime_error("The trash service cannot identify these items safely.");
-    }
-    return {
-        *file,
-        *filesystem,
-        type,
-        g_file_info_get_is_symlink(info) != FALSE,
-        attribute(info, G_FILE_ATTRIBUTE_ETAG_VALUE),
-        attribute(info, G_FILE_ATTRIBUTE_TRASH_ORIG_PATH, true),
-        attribute(info, G_FILE_ATTRIBUTE_TRASH_DELETION_DATE)
-    };
-  }
-  bool sameIdentity(const Identity& a, const Identity& b) {
-    return a.file == b.file
-        && a.filesystem == b.filesystem
-        && a.type == b.type
-        && a.symlink == b.symlink
-        && (!a.etag || a.etag == b.etag)
-        && a.original == b.original
-        && a.deleted == b.deleted;
-  }
   struct Target {
     files::Location location;
     std::string displayName;
-    Identity identity;
+    files::TrashItemIdentity identity;
   };
   using Targets = std::vector<Target>;
   struct Reply {
@@ -288,7 +246,14 @@ void files::EmptyTrashService::cancel() {
     m_state->snapshot.status = EmptyTrashStatus::Cancelled;
   }
 }
-bool files::EmptyTrashService::prepare() {
+bool files::EmptyTrashService::prepare() { return prepareTargets(std::nullopt); }
+bool files::EmptyTrashService::prepareSelection(std::vector<DirectoryEntry> selection) {
+  if (selection.empty() || selection.size() > 4096) {
+    return false;
+  }
+  return prepareTargets(std::move(selection));
+}
+bool files::EmptyTrashService::prepareTargets(std::optional<std::vector<DirectoryEntry>> selection) {
   if (busy()) {
     return false;
   }
@@ -298,17 +263,44 @@ bool files::EmptyTrashService::prepare() {
   m_state->snapshot = {
       .status = EmptyTrashStatus::Preparing, .results = {}, .error = {}, .size = std::nullopt, .sizeIncomplete = false
   };
-  State::launch(m_state, [owner = m_state] {
+  State::launch(m_state, [owner = m_state, selection = std::move(selection)] {
+    auto targets = std::make_shared<Targets>();
+    if (selection) {
+      std::set<std::string> seen;
+      for (const auto& entry : *selection) {
+        if (!isTopLevelTrashItem(entry.location) || !seen.insert(entry.location.uri()).second) {
+          throw std::runtime_error("Only distinct top-level Trash items can be deleted.");
+        }
+        GError* raw = nullptr;
+        const GioPtr<GFileInfo> info(g_file_query_info(
+            entry.location.file().get(), trashItemAttributes, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS,
+            owner->cancellable.get(), &raw
+        ));
+        const Error error(raw);
+        if (!info) {
+          throw std::runtime_error(error ? error->message : "Could not read the selected item.");
+        }
+        const auto expected = readTrashItemIdentity(entry);
+        if (expected != readTrashItemIdentity(info.get())) {
+          throw std::runtime_error("The selected item changed. Select it again before deleting it.");
+        }
+        targets->push_back({entry.location, entry.displayName, expected});
+      }
+      Reply reply{.targets = std::move(targets), .results = {}, .error = {}, .finished = false};
+      for (const auto& target : *reply.targets) {
+        reply.results.push_back({target.location, target.displayName, EmptyTrashOutcome::Cancelled, {}});
+      }
+      return reply;
+    }
     const auto root = Location::trash().file();
     GError* raw = nullptr;
     const GioPtr<GFileEnumerator> enumerator(g_file_enumerate_children(
-        root.get(), kAttributes, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, owner->cancellable.get(), &raw
+        root.get(), trashItemAttributes, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, owner->cancellable.get(), &raw
     ));
     const Error error(raw);
     if (!enumerator) {
       throw std::runtime_error(error ? error->message : "Could not read Trash.");
     }
-    auto targets = std::make_shared<Targets>();
     std::set<std::string> names;
     for (;;) {
       raw = nullptr;
@@ -338,7 +330,7 @@ bool files::EmptyTrashService::prepare() {
       }
       const char* display = g_file_info_get_display_name(info.get());
       const GString valid(g_utf8_make_valid(display != nullptr ? display : name, -1));
-      targets->push_back({std::move(location), valid.get(), identity(info.get())});
+      targets->push_back({std::move(location), valid.get(), readTrashItemIdentity(info.get())});
     }
     raw = nullptr;
     const bool closed = g_file_enumerator_close(enumerator.get(), owner->cancellable.get(), &raw);
@@ -386,7 +378,7 @@ void files::EmptyTrashService::State::startEmpty(const std::shared_ptr<State>& o
           try {
             GError* raw = nullptr;
             const GioPtr<GFileInfo> info(g_file_query_info(
-                target.location.file().get(), kAttributes, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS,
+                target.location.file().get(), trashItemAttributes, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS,
                 owner->cancellable.get(), &raw
             ));
             const Error error(raw);
@@ -398,7 +390,7 @@ void files::EmptyTrashService::State::startEmpty(const std::shared_ptr<State>& o
                   ? EmptyTrashOutcome::Skipped
                   : EmptyTrashOutcome::Failed;
               result.error = error ? error->message : "Could not check the item.";
-            } else if (!sameIdentity(target.identity, identity(info.get()))) {
+            } else if (target.identity != readTrashItemIdentity(info.get())) {
               result.outcome = EmptyTrashOutcome::Failed;
               result.error = "The item changed after confirmation was prepared. It was left in Trash.";
             } else {
