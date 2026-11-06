@@ -51,11 +51,18 @@ BrowserSettingsView::BrowserSettingsView(
   auto navigation = ui::column(
       {.out = &m_navigation,
        .align = FlexAlign::Stretch,
-       .gap = 4.0F,
-       .padding = 8.0F,
        .fill = colorSpecFromRole(ColorRole::SurfaceContainerLow),
-       .width = 152.0F}
+       .width = 152.0F},
+      ui::scrollView(
+          {.out = &m_navigationScroll,
+           .viewportPaddingH = Style::spaceSm,
+           .viewportPaddingV = Style::spaceSm,
+           .fillWidth = true,
+           .flexGrow = 1.0F}
+      )
   );
+  m_navigationScroll->content()->setAlign(FlexAlign::Stretch);
+  m_navigationScroll->content()->setGap(Style::spaceXs);
   auto body = ui::scrollView(
       {.out = &m_body,
        .viewportPaddingH = 0.0F,
@@ -199,7 +206,7 @@ void BrowserSettingsView::section(const std::string& title) {
       : index == 3                     ? "columns-3"
                                        : "photo";
   Button* button = nullptr;
-  m_navigation->addChild(
+  m_navigationScroll->content()->addChild(
       ui::button(
           {.out = &button,
            .text = title,
@@ -246,6 +253,7 @@ void BrowserSettingsView::selectPage(std::size_t selected) {
     m_navButtons[index]->setVariant(index == selected ? ButtonVariant::TabActive : ButtonVariant::Tab);
   }
   m_body->requestScrollToOffset(0);
+  m_navigationScroll->requestScrollIntoView(m_navButtons[selected]);
 }
 void BrowserSettingsView::setCompact(bool compact) {
   const float width = compact ? 152.0F : 192.0F;
@@ -370,4 +378,7 @@ void BrowserSettingsView::sync(
   m_status->setParticipatesInLayout(!error.empty() || busy);
   m_status->setColor(colorSpecFromRole(error.empty() ? ColorRole::OnSurfaceVariant : ColorRole::Error));
 }
-void BrowserSettingsView::reveal(const Node* node) { m_body->requestScrollIntoView(node); }
+void BrowserSettingsView::reveal(const Node* node) {
+  m_navigationScroll->requestScrollIntoView(node);
+  m_body->requestScrollIntoView(node);
+}

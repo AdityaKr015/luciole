@@ -42,6 +42,7 @@ private:
   Label* m_status = nullptr;
   class Button* m_clearThumbnails = nullptr;
   Flex* m_navigation = nullptr;
+  ScrollView* m_navigationScroll = nullptr;
   Flex* m_section = nullptr;
   std::vector<Flex*> m_pages;
   std::vector<class Button*> m_navButtons;
