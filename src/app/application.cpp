@@ -2765,6 +2765,7 @@ namespace {
         m_miller.defaultWidth = static_cast<float>(settings.millerColumnWidth);
         if (m_settingsView && m_miller.enabled()) {
           m_miller.columns()[m_miller.focused()]->width = m_miller.defaultWidth;
+          m_miller.columns()[m_miller.focused()]->fixedWidth = false;
         }
       }
       if (force || before.activationMode != settings.activationMode || before.typingMode != settings.typingMode) {

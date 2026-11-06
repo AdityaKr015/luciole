@@ -16,6 +16,7 @@ namespace files {
       bool explicitPath = false;
       std::uint64_t seedRevision = 0;
       std::optional<EntryId> pathEntry = std::nullopt;
+      bool fixedWidth = false;
     };
     static constexpr std::size_t maxColumns = 16;
     float defaultWidth = 260;

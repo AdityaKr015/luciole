@@ -68,7 +68,11 @@ std::optional<std::size_t> MillerView::columnAt(float x, float y) const {
     return std::nullopt;
   }
   for (std::size_t i = 0; i < m_columns.columns().size(); ++i) {
-    if (const auto* grid = view(i); grid && grid->visible() && grid->containsScenePoint(x, y)) {
+    const auto found = m_views.find(m_columns.columns()[i]->id);
+    if (found != m_views.end()
+        && found->second.root->visible()
+        && found->second.grid->visible()
+        && found->second.grid->containsScenePoint(x, y)) {
       return i;
     }
   }
@@ -202,12 +206,23 @@ void MillerView::synchronize() {
       if (data.pressed) {
         m_resizing = id;
         m_resizeStart = data.sceneX;
-        m_resizeWidth = m_columns.columns()[index]->width;
+        auto& column = *m_columns.columns()[index];
+        m_resizePreferredWidth = column.width;
+        m_resizeFixedWidth = column.fixedWidth;
+        m_resizeWidth = m_views.at(id).root->width();
+        column.width = m_resizeWidth;
+        column.fixedWidth = true;
+        markLayoutDirty();
       } else if (m_resizing == id) {
         m_resizing.reset();
-        if (resized) {
-          resized(static_cast<int>(std::lround(m_columns.columns()[index]->width)));
+        auto& column = *m_columns.columns()[index];
+        if (std::abs(column.width - m_resizeWidth) < 0.5F) {
+          column.width = m_resizePreferredWidth;
+          column.fixedWidth = m_resizeFixedWidth;
+        } else if (resized) {
+          resized(static_cast<int>(std::lround(column.width)));
         }
+        markLayoutDirty();
       }
     });
     handle->setOnMotion([this, id, handle](const InputArea::PointerData& data) {
@@ -224,7 +239,8 @@ void MillerView::synchronize() {
     handle->setOnCancel([this, id] {
       const auto index = indexOf(id);
       if (m_resizing == id && index < m_columns.columns().size()) {
-        m_columns.columns()[index]->width = m_resizeWidth;
+        m_columns.columns()[index]->width = m_resizePreferredWidth;
+        m_columns.columns()[index]->fixedWidth = m_resizeFixedWidth;
       }
       m_resizing.reset();
       markLayoutDirty();
@@ -234,11 +250,17 @@ void MillerView::synchronize() {
       if (index >= m_columns.columns().size() || key.modifiers != 0) {
         return;
       }
-      auto& value = m_columns.columns()[index]->width;
+      auto& column = *m_columns.columns()[index];
+      auto& value = column.width;
       if (KeySymbol::isLeft(key.sym) || KeySymbol::isRight(key.sym)) {
-        value = std::clamp(value + ((KeySymbol::isRight(key.sym) != Style::rtl()) ? 16.0F : -16.0F), 180.0F, 800.0F);
+        value = std::clamp(
+            m_views.at(id).root->width() + ((KeySymbol::isRight(key.sym) != Style::rtl()) ? 16.0F : -16.0F), 180.0F,
+            800.0F
+        );
+        column.fixedWidth = true;
       } else if (KeySymbol::isHome(key.sym)) {
         value = 260;
+        column.fixedWidth = false;
       } else {
         return;
       }
@@ -290,23 +312,61 @@ LayoutSize MillerView::doMeasure(Renderer&, const LayoutConstraints& constraints
 }
 void MillerView::doArrange(Renderer& renderer, const LayoutRect& rect) { arrangeByLayout(renderer, rect); }
 void MillerView::doLayout(Renderer& renderer) {
+  const auto& columns = m_columns.columns();
+  std::vector<float> widths;
+  widths.reserve(columns.size());
+  const float automaticLimit = std::min(width(), std::max(160.0F, width() * 0.5F));
+  std::size_t automatic = 0;
   m_extent = 0;
-  for (const auto& column : m_columns.columns()) {
-    m_extent += column->width;
+  for (const auto& column : columns) {
+    const float span = column->fixedWidth ? column->width : std::min(column->width, automaticLimit);
+    widths.push_back(span);
+    m_extent += span;
+    automatic += column->fixedWidth ? 0U : 1U;
   }
   const float spare = m_columns.enabled() ? std::max(0.0F, width() - m_extent) : 0;
+  for (std::size_t i = 0; i < widths.size(); ++i) {
+    if (automatic > 0 && !columns[i]->fixedWidth) {
+      widths[i] += spare / static_cast<float>(automatic);
+    } else if (automatic == 0 && i + 1 == widths.size()) {
+      widths[i] += spare;
+    }
+  }
   m_extent += spare;
+  if (m_layoutWidth != width()) {
+    m_layoutWidth = width();
+    m_reveal = true;
+  }
   const float maximum = std::max(0.0F, m_extent - width());
   m_offset = std::clamp(m_offset, 0.0F, maximum);
   const float gutter = maximum > 0 ? Style::scrollbarWidth + Style::scrollbarGap : 0;
   const float h = std::max(0.0F, height() - gutter);
   if (std::exchange(m_reveal, false) && m_columns.enabled()) {
-    float left = 0;
-    const auto target = std::min(m_revealColumn.value_or(m_columns.focused()), m_columns.columns().size() - 1);
-    for (std::size_t i = 0; i < target; ++i) {
-      left += m_columns.columns()[i]->width;
+    const auto target = std::min(m_revealColumn.value_or(m_columns.focused()), columns.size() - 1);
+    std::size_t first = target;
+    std::size_t last = target;
+    if (target == m_columns.focused() && target + 1 < columns.size()) {
+      ++last;
+    } else if (target > 0) {
+      --first;
     }
-    const float span = m_columns.columns()[target]->width + (target + 1 == m_columns.columns().size() ? spare : 0);
+    float left = 0;
+    for (std::size_t i = 0; i < target; ++i) {
+      left += widths[i];
+    }
+    float span = widths[target];
+    float contextSpan = span;
+    if (first != target) {
+      contextSpan += widths[first];
+    } else if (last != target) {
+      contextSpan += widths[last];
+    }
+    if (contextSpan <= width() + 0.5F) {
+      if (first != target) {
+        left -= widths[first];
+      }
+      span = contextSpan;
+    }
     m_revealColumn.reset();
     if (Style::rtl()) {
       left = m_extent - left - span;
@@ -322,10 +382,10 @@ void MillerView::doLayout(Renderer& renderer) {
   m_wheel->setFrameSize(width(), h);
   float start = 0;
   bool loadPending = false;
-  for (const auto& source : m_columns.columns()) {
-    const auto& column = *source;
-    const bool last = &column == m_columns.columns().back().get();
-    const float columnWidth = column.width + (last ? spare : 0);
+  for (std::size_t i = 0; i < columns.size(); ++i) {
+    const auto& column = *columns[i];
+    const bool last = i + 1 == columns.size();
+    const float columnWidth = widths[i];
     auto& view = m_views.at(column.id);
     const float x = (Style::rtl() ? m_extent - start - columnWidth : start) - m_offset;
     const bool visible = x < width() && x + columnWidth > 0;
@@ -359,7 +419,7 @@ void MillerView::doLayout(Renderer& renderer) {
         view.divider->hovered() || view.divider->focused() || m_resizing == column.id ? ColorRole::Primary
                                                                                       : ColorRole::OutlineVariant
     ));
-    view.divider->setVisible(!last || spare == 0 || m_resizing == column.id);
+    view.divider->setVisible(!last || columnWidth <= column.width + 0.5F || m_resizing == column.id);
     view.divider->arrange(renderer, {Style::rtl() ? 0.0F : columnWidth - 6, 0, 6, h});
     view.line->arrange(renderer, {2, 0, 1, h});
     start += columnWidth;

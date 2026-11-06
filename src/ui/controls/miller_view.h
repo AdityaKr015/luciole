@@ -62,4 +62,7 @@ private:
   std::optional<std::size_t> m_revealColumn;
   std::optional<std::uint64_t> m_resizing;
   float m_resizeStart = 0, m_resizeWidth = 0;
+  float m_resizePreferredWidth = 0;
+  bool m_resizeFixedWidth = false;
+  float m_layoutWidth = 0;
 };

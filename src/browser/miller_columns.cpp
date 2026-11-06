@@ -213,6 +213,7 @@ void files::MillerColumns::synchronize() {
     auto child = makeColumn(browser, destination);
     child->identity = identity;
     child->width = m_columns[i]->width;
+    child->fixedWidth = m_columns[i]->fixedWidth;
     child->browser->open(destination);
     if (m_columns.size() == maxColumns) {
       auto first = std::move(m_columns.front());
