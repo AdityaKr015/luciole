@@ -613,6 +613,12 @@ namespace {
       (void)m_dispatcher.cycleTabFocus(reverse);
       return m_dispatcher.focusedArea();
     }
+    bool completeLocationOnTab(std::uint32_t modifiers) {
+      return m_editingLocation
+          && m_location != nullptr
+          && m_dispatcher.focusedArea() == m_location->inputArea()
+          && completionKey(XKB_KEY_Tab, modifiers);
+    }
     void nativeFocus() {
       if (m_active) {
         m_dispatcher.setTextInputContext(m_surface->wlSurface(), &m_textInput);
@@ -7355,6 +7361,9 @@ namespace {
         if (!page.overlay()
             && KeySymbol::isTab(event.sym)
             && (event.modifiers == 0 || event.modifiers == KeyMod::Shift)) {
+          if (page.completeLocationOnTab(event.modifiers)) {
+            return;
+          }
           auto* target = page.cycleFocus(event.modifiers == KeyMod::Shift);
           for (auto tab : host.mounted) {
             if (tab != record->second.active && m_pages.at(tab)->owns(target)) {
