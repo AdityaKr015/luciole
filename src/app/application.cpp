@@ -50,6 +50,7 @@
 #include "ui/controls/context_menu.h"
 #include "ui/controls/file_preview_view.h"
 #include "ui/controls/input.h"
+#include "ui/controls/link_dialog.h"
 #include "ui/controls/miller_view.h"
 #include "ui/controls/name_editor.h"
 #include "ui/controls/scroll_view.h"
@@ -2021,6 +2022,9 @@ namespace {
       case Action::Rename:
         openFileRename(targets.front());
         break;
+      case Action::CreateLink:
+        openLinkDialog(targets.front());
+        break;
       case Action::Trash:
         trashItems(targets);
         break;
@@ -2273,6 +2277,7 @@ namespace {
           add(Action::Rename);
         }
         if (!trash) {
+          add(Action::CreateLink);
           add(Action::Compress);
           add(Action::Trash);
         }
@@ -2817,6 +2822,73 @@ namespace {
         );
       }
     }
+    void openLinkDialog(const files::DirectoryEntry& target) {
+      if (!actionState(Action::CreateLink, requestFor({target})).enabled || !targetsCurrent({target})) {
+        actionError("This item cannot be linked right now.");
+        return;
+      }
+      const files::GioPtr<GFile> parent(g_file_get_parent(target.location.file().get()));
+      if (!parent) {
+        actionError("The source has no containing folder.");
+        return;
+      }
+      const files::GString uri(g_file_get_uri(parent.get()));
+      const auto base = files::Location::fromUri(uri.get());
+      const float width = std::min(480.0F, static_cast<float>(m_surface->width()) - 32.0F);
+      auto root = std::make_unique<LinkDialog>(
+          width, files::locationEditText(target.location), "Link to " + target.displayName,
+          files::locationEditText(base), target.type == G_FILE_TYPE_REGULAR && !target.symlink,
+          [this, base](std::string name, const std::string& path, files::CreateKind kind) {
+            if (!m_linkDialog) {
+              return;
+            }
+            try {
+              const auto parent = files::resolveLocationText(path, base);
+              if (m_creator.createLink(parent, std::move(name), kind)) {
+                m_linkDialog->setSaving(true);
+              } else {
+                m_linkDialog->showError(
+                    m_creator.snapshot().error.empty() ? "The source is unavailable. Close this dialog and try again."
+                                                       : m_creator.snapshot().error
+                );
+              }
+            } catch (const std::exception& error) {
+              m_linkDialog->showError(error.what());
+            }
+            m_menuSurface->requestLayout();
+          },
+          [this] { dismissMenu(); }
+      );
+      auto* dialog = root.get();
+      UiPhaseScope phase(UiPhase::Layout);
+      LayoutConstraints constraints;
+      constraints.setExactWidth(width);
+      const float height = std::min(
+          root->measure(m_surface->renderTarget().renderer(), constraints).height,
+          static_cast<float>(m_surface->height()) - 64.0F
+      );
+      showPopup(
+          std::move(root), nullptr, {(m_surface->width() - width) * 0.5F, (m_surface->height() - height) * 0.5F, 1, 1},
+          width, height
+      );
+      if (m_menuSurface) {
+        m_linkDialog = dialog;
+        m_linkPreparing = true;
+        m_dialogHeight = height;
+        m_dialogWidth = width;
+        m_menuDispatcher.setFocusChangeCallback([this](InputArea*, InputArea* focused) {
+          if (m_linkDialog) {
+            m_linkDialog->reveal(focused);
+            m_menuSurface->requestLayout();
+          }
+        });
+        dialog->setSaving(true);
+        if (!m_creator.prepareLink(target)) {
+          dialog->setSaving(false);
+          dialog->showError("Another creation is still finishing.");
+        }
+      }
+    }
     void syncCreation() {
       if (m_creator.busy()) {
         return;
@@ -2824,14 +2896,25 @@ namespace {
       const auto& snapshot = m_creator.snapshot();
       if (snapshot.status == files::CreateStatus::Succeeded || snapshot.status == files::CreateStatus::Partial) {
         m_actionError = snapshot.error;
+        if (m_linkDialog && snapshot.error.empty() && snapshot.parent) {
+          m_actionError = "Link created in " + files::locationEditText(*snapshot.parent);
+        }
         if (browser().model().snapshot().location == snapshot.parent) {
           m_revealTarget = snapshot.destination;
           browser().refresh();
         }
-        if (m_createEditor != nullptr) {
+        if (m_createEditor != nullptr || m_linkDialog != nullptr) {
           m_createEditor = nullptr;
           dismissMenu();
         }
+      } else if (m_linkDialog) {
+        m_linkDialog->setSaving(false);
+        m_linkDialog->showError(snapshot.error);
+        if (std::exchange(m_linkPreparing, false)) {
+          m_menuDispatcher.setFocus(m_linkDialog->nameInput()->inputArea());
+          m_linkDialog->nameInput()->selectAll();
+        }
+        m_menuSurface->requestLayout();
       } else if (m_createEditor == nullptr) {
         if (snapshot.status == files::CreateStatus::Error) {
           actionError("Could not create: " + snapshot.error);
@@ -5615,7 +5698,10 @@ namespace {
       if (m_creator.busy()) {
         const char* kind = m_creator.snapshot().kind == files::CreateKind::Folder ? "folder"
             : m_creator.snapshot().kind == files::CreateKind::Document            ? "document"
-                                                                                  : "file";
+            : m_creator.snapshot().kind == files::CreateKind::SymbolicLink
+                || m_creator.snapshot().kind == files::CreateKind::HardLink
+            ? "link"
+            : "file";
         status = m_creator.snapshot().status == files::CreateStatus::Creating
             ? std::format("Creating {}…", kind)
             : std::format("Preparing {} creation…", kind);
@@ -6747,13 +6833,15 @@ namespace {
           m_dispatcher.setFocus(m_list->focusArea());
         }
       }
-      if (m_createParent) {
+      if (m_createParent || m_linkDialog) {
         m_creator.cancel();
         if (m_list != nullptr) {
           m_dispatcher.setFocus(m_list->focusArea());
         }
       }
       m_createEditor = nullptr;
+      m_linkDialog = nullptr;
+      m_linkPreparing = false;
       m_createParent.reset();
       m_creationPreparing = false;
       m_fileRenameEditor = nullptr;
@@ -7375,6 +7463,8 @@ namespace {
     NameEditor* m_placeEditor = nullptr;
     NameEditor* m_fileRenameEditor = nullptr;
     NameEditor* m_createEditor = nullptr;
+    LinkDialog* m_linkDialog = nullptr;
+    bool m_linkPreparing = false;
     std::optional<files::Location> m_createParent;
     bool m_creationPreparing = false;
     bool m_creationDirty = false;

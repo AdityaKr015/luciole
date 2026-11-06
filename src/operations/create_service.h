@@ -1,5 +1,6 @@
 #pragma once
 
+#include "fs/directory_session.h"
 #include "fs/location.h"
 #include "operations/template_catalog.h"
 
@@ -9,7 +10,7 @@
 #include <string>
 
 namespace files {
-  enum class CreateKind { Folder, EmptyFile, Document };
+  enum class CreateKind { Folder, EmptyFile, Document, SymbolicLink, HardLink };
   enum class CreateStatus { Idle, Preparing, Ready, Creating, Succeeded, Partial, Error, Cancelled };
   struct CreateSnapshot {
     CreateStatus status = CreateStatus::Idle;
@@ -28,6 +29,8 @@ namespace files {
     CreateService& operator=(const CreateService&) = delete;
     bool prepare(const Location& parent, CreateKind kind);
     bool prepareTemplate(const Location& parent, DocumentTemplate source);
+    bool prepareLink(const DirectoryEntry& source);
+    bool createLink(const Location& parent, std::string name, CreateKind kind);
     bool create(std::string name);
     void cancel();
     bool busy() const;

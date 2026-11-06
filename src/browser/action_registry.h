@@ -41,6 +41,7 @@ namespace files {
     CopyFiles,
     PasteFiles,
     Rename,
+    CreateLink,
     Trash,
     Restore,
     DeletePermanently,

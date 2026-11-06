@@ -64,6 +64,219 @@ namespace {
     std::ifstream input(path, std::ios::binary);
     return {std::istreambuf_iterator<char>(input), {}};
   }
+  files::DirectoryEntry linkEntry(const fs::path& path) {
+    const files::GioPtr<GFileInfo> info(g_file_query_info(
+        location(path).file().get(), "id::file,id::filesystem,standard::type,standard::is-symlink",
+        G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, nullptr
+    ));
+    TEST_CHECK(info);
+    const files::GString display(g_filename_display_name(path.filename().c_str()));
+    return {
+        .id = 1,
+        .location = location(path),
+        .name = path.filename().native(),
+        .displayName = display.get(),
+        .type = g_file_info_get_file_type(info.get()),
+        .symlink = g_file_info_get_is_symlink(info.get()) != FALSE,
+        .size = {},
+        .modifiedSeconds = {},
+        .etag = {},
+        .parentDisplayName = {},
+        .identity = files::readFileIdentity(info.get())
+    };
+  }
+  void prepareLink(Pump& pump, files::CreateService& service, const fs::path& path) {
+    TEST_CHECK(service.prepareLink(linkEntry(path)));
+    pump.until([&] { return !service.busy(); });
+    TEST_CHECK(service.canCreate());
+  }
+  void createLink(
+      Pump& pump, files::CreateService& service, const fs::path& parent, const std::string& name,
+      files::CreateKind kind = files::CreateKind::SymbolicLink
+  ) {
+    TEST_CHECK(service.createLink(location(parent), name, kind));
+    pump.until([&] { return !service.busy(); });
+  }
+  void createsLinks(Pump& pump) {
+    using K = files::CreateKind;
+    Fixture fixture;
+    const auto source = fixture.root / (std::string("source #%-") + static_cast<char>(0xff));
+    std::ofstream(source) << "original";
+    fs::create_directory(fixture.root / "output");
+    const auto output = fixture.root / "output";
+    files::CreateService service;
+    prepareLink(pump, service, source);
+    TEST_CHECK(!service.create("wrong API") && !service.createLink(location(output), "bad", K::Folder));
+    createLink(pump, service, output, "Symbolic 文");
+    TEST_CHECK(
+        service.snapshot().status == files::CreateStatus::Succeeded
+        && service.snapshot().destination == location(output / "Symbolic 文")
+    );
+    TEST_CHECK(fs::read_symlink(output / "Symbolic 文") == source && contents(output / "Symbolic 文") == "original");
+    prepareLink(pump, service, source);
+    std::ofstream(source) << "edited while choosing";
+    createLink(pump, service, output, "Hard 文", K::HardLink);
+    TEST_CHECK(
+        service.snapshot().status == files::CreateStatus::Succeeded && fs::equivalent(source, output / "Hard 文")
+    );
+    std::ofstream(output / "Hard 文") << "shared contents";
+    TEST_CHECK(contents(source) == "shared contents");
+    fs::remove(source);
+    TEST_CHECK(
+        contents(output / "Hard 文") == "shared contents"
+        && fs::is_symlink(output / "Symbolic 文")
+        && !fs::exists(output / "Symbolic 文")
+    );
+    fs::create_directory(fixture.root / "folder");
+    prepareLink(pump, service, fixture.root / "folder");
+    createLink(pump, service, output, "refuse folder", K::HardLink);
+    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && !fs::exists(output / "refuse folder"));
+    createLink(pump, service, output, "folder link");
+    TEST_CHECK(service.snapshot().status == files::CreateStatus::Succeeded && fs::is_directory(output / "folder link"));
+    fs::create_symlink("missing", fixture.root / "broken");
+    prepareLink(pump, service, fixture.root / "broken");
+    createLink(pump, service, output, "refuse symlink", K::HardLink);
+    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && !fs::is_symlink(output / "refuse symlink"));
+    createLink(pump, service, output, "link to broken");
+    TEST_CHECK(
+        service.snapshot().status == files::CreateStatus::Succeeded
+        && fs::read_symlink(output / "link to broken") == fixture.root / "broken"
+    );
+    TEST_CHECK(::mkfifo((fixture.root / "pipe").c_str(), 0600) == 0);
+    TEST_CHECK(!service.prepareLink(linkEntry(fixture.root / "pipe")));
+  }
+  void linkCollisionsAndErrors(Pump& pump) {
+    using K = files::CreateKind;
+    Fixture fixture;
+    const auto source = fixture.root / "source";
+    std::ofstream(source) << "keep source";
+    fs::create_directory(fixture.root / "output");
+    const auto output = fixture.root / "output";
+    std::ofstream(output / "file") << "keep existing";
+    fs::create_directory(output / "folder");
+    fs::create_symlink("missing", output / "link");
+    TEST_CHECK(::mkfifo((output / "pipe").c_str(), 0600) == 0);
+    files::CreateService service;
+    prepareLink(pump, service, source);
+    for (const auto kind : {K::SymbolicLink, K::HardLink}) {
+      for (const auto* name : {"file", "folder", "link", "pipe"}) {
+        createLink(pump, service, output, name, kind);
+        TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && service.canCreate());
+      }
+      for (const auto& destination : {fixture.root / "missing", output / "file"}) {
+        createLink(pump, service, destination, "no effect", kind);
+        TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && service.canCreate());
+      }
+    }
+    TEST_CHECK(
+        contents(source) == "keep source"
+        && contents(output / "file") == "keep existing"
+        && fs::is_directory(output / "folder")
+        && fs::is_symlink(output / "link")
+        && fs::is_fifo(output / "pipe")
+    );
+    TEST_CHECK(!service.createLink(location(output), "../escape", K::SymbolicLink));
+    createLink(pump, service, output, std::string(10000, 'x'));
+    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error);
+    TEST_CHECK(service.createLink(
+        files::Location::fromUri("sftp://example.invalid/destination"), "native only", K::SymbolicLink
+    ));
+    pump.until([&] { return !service.busy(); });
+    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error);
+    createLink(pump, service, output, "retry", K::HardLink);
+    TEST_CHECK(service.snapshot().status == files::CreateStatus::Succeeded && fs::equivalent(source, output / "retry"));
+    if (::geteuid() != 0) {
+      prepareLink(pump, service, source);
+      fs::permissions(output, fs::perms::owner_read | fs::perms::owner_exec);
+      createLink(pump, service, output, "denied");
+      fs::permissions(output, fs::perms::owner_all);
+      TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && !fs::exists(output / "denied"));
+    }
+  }
+  void staleLinksAndCancellation(Pump& pump) {
+    using K = files::CreateKind;
+    Fixture fixture;
+    fs::create_directory(fixture.root / "parent");
+    fs::create_directory(fixture.root / "output");
+    const auto path = fixture.root / "parent/source";
+    const auto output = fixture.root / "output";
+    std::ofstream(path) << "original";
+    const auto captured = linkEntry(path);
+    fs::rename(path, fixture.root / "held");
+    std::ofstream(path) << "replacement";
+    files::CreateService service;
+    TEST_CHECK(service.prepareLink(captured));
+    pump.until([&] { return !service.busy(); });
+    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && !service.canCreate());
+    for (const auto kind : {K::SymbolicLink, K::HardLink}) {
+      prepareLink(pump, service, path);
+      fs::rename(path, fixture.root / "saved");
+      std::ofstream(path) << "changed again";
+      createLink(pump, service, output, "refused", kind);
+      TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && fs::is_empty(output));
+      fs::remove(fixture.root / "saved");
+    }
+    prepareLink(pump, service, path);
+    fs::rename(fixture.root / "parent", fixture.root / "old parent");
+    fs::create_directory(fixture.root / "parent");
+    std::ofstream(path) << "new parent";
+    createLink(pump, service, output, "refused parent");
+    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && fs::is_empty(output));
+    auto entry = linkEntry(path);
+    TEST_CHECK(service.prepareLink(entry));
+    TEST_CHECK(!service.prepareLink(entry));
+    service.cancel();
+    pump.until([&] { return !service.busy(); });
+    TEST_CHECK(service.snapshot().status == files::CreateStatus::Cancelled && !service.canCreate());
+    prepareLink(pump, service, path);
+    TEST_CHECK(service.createLink(location(output), "maybe", K::HardLink));
+    service.cancel();
+    pump.until([&] { return !service.busy(); });
+    const bool committed = service.snapshot().status == files::CreateStatus::Succeeded;
+    TEST_CHECK(
+        (committed || service.snapshot().status == files::CreateStatus::Cancelled)
+        && fs::exists(output / "maybe") == committed
+    );
+    auto dying = std::make_unique<files::CreateService>();
+    bool notified = false;
+    dying->setChangedCallback([&] { notified = true; });
+    TEST_CHECK(dying->prepareLink(entry));
+    notified = false;
+    dying.reset();
+    prepareLink(pump, service, path);
+    TEST_CHECK(!notified);
+  }
+  void linksAcrossFilesystems(Pump& pump) {
+    Fixture fixture;
+    const auto source = fixture.root / "source";
+    std::ofstream(source) << "cross filesystem";
+    std::string temporary = "/dev/shm/noctalia-link-XXXXXX";
+    if (!::mkdtemp(temporary.data())) {
+      std::println("cross-filesystem link fixture unavailable");
+      return;
+    }
+    struct Cleanup {
+      fs::path path;
+      ~Cleanup() {
+        std::error_code error;
+        fs::remove_all(path, error);
+      }
+    } cleanup{temporary};
+    struct stat from{}, to{};
+    TEST_CHECK(::stat(source.c_str(), &from) == 0 && ::stat(temporary.c_str(), &to) == 0);
+    if (from.st_dev == to.st_dev) {
+      return;
+    }
+    files::CreateService service;
+    prepareLink(pump, service, source);
+    createLink(pump, service, temporary, "hard", files::CreateKind::HardLink);
+    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && fs::is_empty(temporary));
+    createLink(pump, service, temporary, "symbolic");
+    TEST_CHECK(
+        service.snapshot().status == files::CreateStatus::Succeeded
+        && contents(fs::path(temporary) / "symbolic") == "cross filesystem"
+    );
+  }
   files::DocumentTemplate documentTemplate(const fs::path& path) {
     struct stat info{};
     TEST_CHECK(::lstat(path.c_str(), &info) == 0);
@@ -436,6 +649,10 @@ int main() {
     templateCatalog(pump, home.root);
     createsDocuments(pump);
     staleTemplatesAndCancellation(pump);
+    createsLinks(pump);
+    linkCollisionsAndErrors(pump);
+    staleLinksAndCancellation(pump);
+    linksAcrossFilesystems(pump);
     createsFolders(pump);
     createsEmptyFiles(pump);
     collisionsAndRetry(pump);

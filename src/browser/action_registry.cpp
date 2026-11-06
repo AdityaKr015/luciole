@@ -43,6 +43,7 @@ namespace {
        {A::CopyFiles, "Copy", "Ctrl+C", S::Targets},
        {A::PasteFiles, "Paste", "Ctrl+V", S::Location},
        {A::Rename, "Rename…", "F2", S::Targets},
+       {A::CreateLink, "Create Link…", "", S::Targets},
        {A::Trash, "Move to Trash", "Delete", S::Targets},
        {A::Restore, "Restore", "", S::Targets},
        {A::DeletePermanently, "Delete Permanently…", "Delete", S::Targets, true},
@@ -147,6 +148,20 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
     return {};
   };
   switch (action) {
+  case A::CreateLink:
+    if (c.operationsBusy) {
+      return unavailable("Another file operation is still finishing.");
+    }
+    return single() && all([](const auto& entry) {
+             return entry.location.nativePath().has_value()
+                 && !entry.location.isTrash()
+                 && entry.identity.has_value()
+                 && (entry.type == G_FILE_TYPE_REGULAR
+                     || entry.type == G_FILE_TYPE_DIRECTORY
+                     || entry.type == G_FILE_TYPE_SYMBOLIC_LINK);
+           })
+        ? ActionState{}
+        : unavailable("Select one native file, folder or symbolic link.");
   case A::ShowPreview:
     return {.enabled = true, .reason = {}, .checked = c.showPreview ? 1 : 0};
   case A::QuickPreview:

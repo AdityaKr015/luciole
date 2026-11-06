@@ -115,6 +115,54 @@ namespace {
     model.applySnapshot(data);
     TEST_CHECK(!R::state(A::DeletePermanently, context, R::capture(context)).enabled);
   }
+  void testLinkActions() {
+    files::DirectoryModel model;
+    auto data = snapshot();
+    data.entries[0].identity = files::FileIdentity{"native", "source"};
+    model.applySnapshot(data);
+    model.select(1);
+    files::ActionContext context{.model = model, .context = 44, .query = {}, .pinned = {}};
+    const auto enabled = [&] { return R::state(A::CreateLink, context, R::capture(context)).enabled; };
+    TEST_CHECK(enabled());
+    context.operationsBusy = true;
+    TEST_CHECK(!enabled());
+    context.operationsBusy = false;
+    data.metadata.filesystem.readOnly = true;
+    ++data.generation;
+    model.applySnapshot(data);
+    TEST_CHECK(enabled());
+    for (const auto type : {G_FILE_TYPE_DIRECTORY, G_FILE_TYPE_SYMBOLIC_LINK}) {
+      data.entries[0].type = type;
+      data.entries[0].symlink = type == G_FILE_TYPE_SYMBOLIC_LINK;
+      ++data.generation;
+      model.applySnapshot(data);
+      TEST_CHECK(enabled());
+    }
+    data.entries[0].type = G_FILE_TYPE_SPECIAL;
+    ++data.generation;
+    model.applySnapshot(data);
+    TEST_CHECK(!enabled());
+    data.entries[0].type = G_FILE_TYPE_REGULAR;
+    data.entries[0].symlink = false;
+    for (const auto& uri : {"trash:///source", "sftp://example.invalid/source"}) {
+      data.entries[0].location = files::Location::fromUri(uri);
+      ++data.generation;
+      model.applySnapshot(data);
+      TEST_CHECK(!enabled());
+    }
+    data.entries[0].location = files::Location::fromPath("/tmp/action-fixture/alpha.txt");
+    data.entries[0].identity.reset();
+    ++data.generation;
+    model.applySnapshot(data);
+    TEST_CHECK(!enabled());
+    data.entries[0].identity = files::FileIdentity{"native", "source"};
+    ++data.generation;
+    model.applySnapshot(data);
+    context.query = "source";
+    TEST_CHECK(enabled());
+    model.selectAll();
+    TEST_CHECK(!enabled());
+  }
   void testPreviewActions() {
     files::DirectoryModel model;
     model.applySnapshot(snapshot());
@@ -328,6 +376,7 @@ int main() {
   try {
     testArchiveActions();
     testTrashActions();
+    testLinkActions();
     testFileClipboardActions();
     testPreviewActions();
     testCapabilitiesAndTargets();

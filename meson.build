@@ -111,6 +111,7 @@ app_sources = files(
   'src/browser/thumbnail_service.cpp',
   'src/browser/preview_service.cpp',
   'src/ui/controls/file_preview_view.cpp',
+  'src/ui/controls/link_dialog.cpp',
   'src/config/view_preference_writer.cpp',
   'src/platform/file_launcher.cpp',
   'src/platform/text_clipboard.cpp',
