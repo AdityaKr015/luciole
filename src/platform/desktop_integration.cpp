@@ -72,7 +72,8 @@ void files::DesktopIntegration::setCursorShape(std::uint32_t serial, std::uint32
     m_connection.setCursorShape(serial, shape);
     return;
   }
-  if (!m_enterSerial || !m_connection.pointer() || !m_connection.compositor() || !m_connection.shm()) {
+  const auto enterSerial = m_enterSerial != 0 ? m_enterSerial : serial;
+  if (!enterSerial || !m_connection.pointer() || !m_connection.compositor() || !m_connection.shm()) {
     return;
   }
   if (!m_cursorTheme) {
@@ -91,6 +92,15 @@ void files::DesktopIntegration::setCursorShape(std::uint32_t serial, std::uint32
     break;
   case WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_POINTER:
     name = "hand2";
+    break;
+  case WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY:
+    name = "copy";
+    break;
+  case WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE:
+    name = "move";
+    break;
+  case WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP:
+    name = "no-drop";
     break;
   case WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COL_RESIZE:
   case WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_EW_RESIZE:
@@ -115,7 +125,7 @@ void files::DesktopIntegration::setCursorShape(std::uint32_t serial, std::uint32
   }
   auto* image = cursor->images[0];
   wl_pointer_set_cursor(
-      m_connection.pointer(), m_enterSerial, m_cursorSurface, static_cast<int>(image->hotspot_x),
+      m_connection.pointer(), enterSerial, m_cursorSurface, static_cast<int>(image->hotspot_x),
       static_cast<int>(image->hotspot_y)
   );
   wl_surface_attach(m_cursorSurface, wl_cursor_image_get_buffer(image), 0, 0);

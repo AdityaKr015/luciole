@@ -21,6 +21,7 @@ namespace files {
     void releaseGlobals() override;
     void pointer(const PointerEvent& event);
     void setCursorShape(std::uint32_t serial, std::uint32_t shape);
+    std::uint32_t pointerEnterSerial() const { return m_enterSerial; }
     wl_data_device_manager* dataDeviceManager() const { return m_dataDeviceManager; }
     zxdg_decoration_manager_v1* decorationManager() const { return m_decorations; }
 

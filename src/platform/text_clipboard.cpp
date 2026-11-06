@@ -187,6 +187,23 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
     std::unique_ptr<DragIcon> icon = nullptr;
     std::function<void()> finished;
     std::optional<FilePayload> files;
+    std::function<void(std::optional<TransferAction>)> actionChanged = nullptr;
+    std::uint32_t action = WL_DATA_DEVICE_MANAGER_DND_ACTION_NONE;
+    bool accepted = false;
+
+    void notifyAction() const {
+      if (!drag || dropped || !actionChanged) {
+        return;
+      }
+      std::optional<TransferAction> selectedAction;
+      if (accepted && action == WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY) {
+        selectedAction = TransferAction::Copy;
+      } else if (accepted && action == WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE) {
+        selectedAction = TransferAction::Move;
+      }
+      const auto callback = actionChanged;
+      callback(selectedAction);
+    }
   };
   wl_display* display = nullptr;
   wl_callback* focusSync = nullptr;
@@ -312,7 +329,14 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
     auto* source = wl_data_device_manager_create_data_source(manager);
     sources.emplace(source, std::move(value));
     static const wl_data_source_listener listener{
-        .target = [](void*, wl_data_source*, const char*) {},
+        .target =
+            [](void* data, wl_data_source* source, const char* mime) {
+              auto& state = *static_cast<State*>(data);
+              if (const auto found = state.sources.find(source); found != state.sources.end()) {
+                found->second.accepted = mime != nullptr;
+                found->second.notifyAction();
+              }
+            },
         .send =
             [](void* data, wl_data_source* source, const char* mime, int fd) {
               auto& state = *static_cast<State*>(data);
@@ -365,7 +389,14 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
                 finished();
               }
             },
-        .action = [](void*, wl_data_source*, std::uint32_t) {}
+        .action =
+            [](void* data, wl_data_source* source, std::uint32_t action) {
+              auto& state = *static_cast<State*>(data);
+              if (const auto found = state.sources.find(source); found != state.sources.end()) {
+                found->second.action = action;
+                found->second.notifyAction();
+              }
+            }
     };
     wl_data_source_add_listener(source, &listener, this);
     for (const auto& [mime, unused] : sources.at(source).data) {
@@ -752,7 +783,8 @@ void files::WaylandTextClipboard::setChangedCallback(std::function<void()> callb
 }
 bool files::WaylandTextClipboard::startDrag(
     FilePayload payload, wl_surface* origin, std::uint32_t pressSerial, const LoadedImageFile* image,
-    std::function<void()> finished, std::optional<TransferAction> forcedAction
+    std::function<void()> finished, std::optional<TransferAction> forcedAction,
+    std::function<void(std::optional<TransferAction>)> actionChanged
 ) {
   if (!m_state->device
       || wl_data_device_manager_get_version(m_state->manager) < 3
@@ -774,7 +806,8 @@ bool files::WaylandTextClipboard::startDrag(
        .drag = true,
        .icon = std::move(icon),
        .finished = std::move(finished),
-       .files = std::move(payload)}
+       .files = std::move(payload),
+       .actionChanged = std::move(actionChanged)}
   );
   const auto actions = forcedAction == TransferAction::Copy ? WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY
       : forcedAction == TransferAction::Move

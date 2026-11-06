@@ -804,8 +804,14 @@ namespace {
       if (m_detachedRoot) {
         host.addChild(std::move(m_detachedRoot));
       }
+      if (m_detachedDragOverlay) {
+        host.addChild(std::move(m_detachedDragOverlay));
+      }
     }
     void unmount() {
+      if (m_dragOverlay && m_dragOverlay->parent()) {
+        m_detachedDragOverlay = m_dragOverlay->parent()->removeChild(m_dragOverlay);
+      }
       if (m_root && m_root->parent()) {
         m_detachedRoot = m_root->parent()->removeChild(m_root);
       }
@@ -3755,6 +3761,7 @@ namespace {
         payload.locations.push_back(target.location);
       }
       const std::weak_ptr<int> lifetime = m_lifetime;
+      const auto cursorSerial = m_connection.extension<files::DesktopIntegration>().pointerEnterSerial();
       m_systemDrag = m_clipboard.startDrag(
           std::move(payload), m_surface->wlSurface(), m_fileDragSerial,
           m_dragArtwork && m_dragArtwork->pixels ? &*m_dragArtwork->pixels : nullptr,
@@ -3766,10 +3773,21 @@ namespace {
           },
           (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0        ? std::optional(files::TransferAction::Copy)
               : (m_connection.keyboardModifiers() & KeyMod::Shift) != 0 ? std::optional(files::TransferAction::Move)
-                                                                        : std::nullopt
+                                                                        : std::nullopt,
+          [this, lifetime, cursorSerial](std::optional<files::TransferAction> action) {
+            if (!lifetime.expired()) {
+              const auto shape = action == files::TransferAction::Copy ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY
+                  : action == files::TransferAction::Move              ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE
+                                                                       : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP;
+              m_connection.extension<files::DesktopIntegration>().setCursorShape(cursorSerial, shape);
+            }
+          }
       );
       if (m_systemDrag) {
         m_dispatcher.cancelPointerCapture();
+        m_connection.extension<files::DesktopIntegration>().setCursorShape(
+            cursorSerial, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP
+        );
         m_surface->requestLayout();
       } else {
         updateDrag();
@@ -3900,6 +3918,7 @@ namespace {
       m_surface->requestLayout();
     }
     void layoutDrag(Renderer& renderer) {
+      m_dragOverlay->setFrameSize(static_cast<float>(m_surface->width()), static_cast<float>(m_surface->height()));
       if (m_drag && !m_systemDrag && !dragCurrent()) {
         cancelDrag();
       }
@@ -6261,14 +6280,20 @@ namespace {
       );
       m_columnDropLine->setZIndex(102);
       m_columnDropLine->setHitTestVisible(false);
+      m_detachedDragOverlay = std::make_unique<Node>();
+      m_dragOverlay = m_detachedDragOverlay.get();
+      m_dragOverlay->setZIndex(80);
+      m_dragOverlay->setParticipatesInLayout(false);
+      m_dragOverlay->setHitTestVisible(false);
+      m_dragOverlay->setAnimationManager(&m_animations);
       auto dragIcon = std::make_unique<files::FileIcon>(m_icons, 40);
       m_dragIcon = dragIcon.get();
       m_dragIcon->setVisible(false);
       m_dragIcon->setParticipatesInLayout(false);
       m_dragIcon->setOpacity(0.85F);
       m_dragIcon->setZIndex(100);
-      m_root->addChild(std::move(dragIcon));
-      m_root->addChild(
+      m_dragOverlay->addChild(std::move(dragIcon));
+      m_dragOverlay->addChild(
           ui::column(
               {.out = &m_dragCount,
                .align = FlexAlign::Center,
@@ -6286,7 +6311,7 @@ namespace {
       );
       m_dragCount->setHitTestVisible(false);
       m_dragCount->setZIndex(101);
-      m_root->addChild(
+      m_dragOverlay->addChild(
           ui::box(
               {.out = &m_placeDropLine,
                .fill = colorSpecFromRole(ColorRole::Primary),
@@ -6297,7 +6322,7 @@ namespace {
       );
       m_placeDropLine->setZIndex(98);
       m_placeDropLine->setHitTestVisible(false);
-      m_root->addChild(
+      m_dragOverlay->addChild(
           ui::box(
               {.out = &m_folderDropHighlight,
                .fill = colorSpecFromRole(ColorRole::Primary, 0.16F),
@@ -6890,6 +6915,8 @@ namespace {
     std::optional<files::EntryId> m_keyboardReveal;
     Node* m_root = nullptr;
     std::unique_ptr<Node> m_detachedRoot;
+    Node* m_dragOverlay = nullptr;
+    std::unique_ptr<Node> m_detachedDragOverlay;
     Flex* m_body = nullptr;
     Flex* m_paneHeader = nullptr;
     Label* m_paneTitle = nullptr;

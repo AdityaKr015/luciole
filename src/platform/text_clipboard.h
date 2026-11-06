@@ -47,7 +47,8 @@ namespace files {
     void setChangedCallback(std::function<void()> callback);
     bool startDrag(
         FilePayload payload, wl_surface* origin, std::uint32_t pressSerial, const LoadedImageFile* image,
-        std::function<void()> finished, std::optional<TransferAction> forcedAction
+        std::function<void()> finished, std::optional<TransferAction> forcedAction,
+        std::function<void(std::optional<TransferAction>)> actionChanged
     );
     const FilePayload* dragFiles() const;
     void refreshDrag();
