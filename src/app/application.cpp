@@ -2106,6 +2106,7 @@ namespace {
         separator();
         add(Action::CutFiles);
         add(Action::CopyFiles);
+        add(Action::PasteFiles);
         entries.push_back(
             {.id = 9003,
              .label = "Copy to Other Pane",
