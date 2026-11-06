@@ -21,9 +21,14 @@ namespace {
   }
 } // namespace
 
-files::FileIconSource files::readFileIcon(GFileInfo* info, const Location& location) {
+files::FileIconSource files::readIconSource(GIcon* icon) {
   FileIconSource result;
-  readIcon(g_file_info_get_icon(info), result);
+  readIcon(icon, result);
+  return result;
+}
+
+files::FileIconSource files::readFileIcon(GFileInfo* info, const Location& location) {
+  auto result = readIconSource(g_file_info_get_icon(info));
   const auto type = g_file_info_get_file_type(info);
   result.names.emplace_back(type == G_FILE_TYPE_DIRECTORY ? "folder" : "text-x-generic");
   result.names.emplace_back("application-octet-stream");

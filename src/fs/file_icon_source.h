@@ -13,5 +13,6 @@ namespace files {
     bool operator==(const FileIconSource&) const = default;
   };
 
+  FileIconSource readIconSource(GIcon* icon);
   FileIconSource readFileIcon(GFileInfo* info, const Location& location);
 } // namespace files

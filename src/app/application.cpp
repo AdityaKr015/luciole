@@ -2801,8 +2801,8 @@ namespace {
       m_surface->requestLayout();
     }
 
-    void showCenteredDialog(std::unique_ptr<Flex> root) {
-      const float width = std::min(588.0F, static_cast<float>(m_surface->width()) - 32.0F);
+    void showCenteredDialog(std::unique_ptr<Flex> root, float preferredWidth = 588.0F) {
+      const float width = std::min(preferredWidth, static_cast<float>(m_surface->width()) - 32.0F);
       UiPhaseScope phase(UiPhase::Layout);
       LayoutConstraints constraints;
       constraints.setExactWidth(width);
@@ -2816,9 +2816,13 @@ namespace {
         return;
       }
       m_dialogHeight = preferredHeight;
+      m_dialogWidth = preferredWidth;
       m_menuDispatcher.setFocusChangeCallback([this](InputArea*, InputArea* focused) {
         if (m_aboutScroll) {
           m_aboutScroll->requestScrollIntoView(focused);
+        }
+        if (m_appChoiceScroll) {
+          m_appChoiceScroll->requestScrollIntoView(focused);
         }
         if (m_menuSurface) {
           m_menuSurface->requestLayout();
@@ -3234,24 +3238,24 @@ namespace {
     }
     void showApplications(const files::DirectoryEntry& entry) {
       Flex* choices = nullptr;
-      auto scroll = ui::scrollView({.viewportPaddingH = 0, .viewportPaddingV = 0, .fillWidth = true, .flexGrow = 1});
-      scroll->setReserveScrollbarGutter(true);
+      ScrollView* choiceScroll = nullptr;
+      auto scroll = ui::scrollView(
+          {.out = &choiceScroll, .viewportPaddingH = 0, .viewportPaddingV = 0, .fillWidth = true, .flexGrow = 1}
+      );
+      scroll->content()->setAlign(FlexAlign::Stretch);
       scroll->content()->addChild(
           ui::column(
               {.out = &choices, .align = FlexAlign::Stretch, .gap = Style::spaceXs},
               ui::label({.text = "Loading applications…", .maxLines = 2})
           )
       );
-      const float width = std::min(440.0F, static_cast<float>(m_surface->width()) - 32);
-      const float height = std::min(380.0F, static_cast<float>(m_surface->height()) - 48);
       auto root = ui::column(
           {.align = FlexAlign::Stretch,
            .gap = Style::spaceMd,
            .padding = Style::spaceMd,
            .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
            .radius = Style::radiusLg,
-           .border = colorSpecFromRole(ColorRole::OutlineVariant),
-           .height = height},
+           .border = colorSpecFromRole(ColorRole::OutlineVariant)},
           ui::row(
               {.align = FlexAlign::Center},
               ui::label({.text = "Open With", .fontWeight = FontWeight::SemiBold, .flexGrow = 1}),
@@ -3259,14 +3263,12 @@ namespace {
           ),
           std::move(scroll)
       );
-      showPopup(
-          std::move(root), nullptr, {(m_surface->width() - width) * 0.5F, (m_surface->height() - height) * 0.5F, 1, 1},
-          width, height
-      );
+      showCenteredDialog(std::move(root), 440.0F);
       if (!m_menuSurface) {
         return;
       }
       m_appChoiceContainer = choices;
+      m_appChoiceScroll = choiceScroll;
       const auto generation = m_menuGeneration;
       const auto request = requestFor({entry});
       const std::weak_ptr<int> lifetime = m_lifetime;
@@ -3288,23 +3290,31 @@ namespace {
               );
             }
             for (const auto& app : apps) {
-              m_appChoiceContainer->addChild(
-                  ui::button(
-                      {.text = app.name,
-                       .contentAlign = ButtonContentAlign::Start,
-                       .variant = ButtonVariant::Ghost,
-                       .onClick =
-                           [this, request, entry, app] {
-                             if (actionState(Action::OpenWith, request).enabled) {
-                               m_launcher.openWith(entry.location, app);
-                             } else {
-                               actionError("The item changed. Select it again.");
-                             }
-                             dismissMenu();
-                           },
-                       .configure = [](Button& button) { button.label()->setUseMarkup(false); }}
-                  )
+              auto button = ui::button(
+                  {.text = app.name,
+                   .controlHeight = Style::controlHeight,
+                   .contentAlign = ButtonContentAlign::Start,
+                   .variant = ButtonVariant::Ghost,
+                   .tooltip = app.name,
+                   .gap = Style::spaceSm,
+                   .onClick =
+                       [this, request, entry, app] {
+                         if (actionState(Action::OpenWith, request).enabled) {
+                           m_launcher.openWith(entry.location, app);
+                         } else {
+                           actionError("The item changed. Select it again.");
+                         }
+                         dismissMenu();
+                       },
+                   .configure = [](Button& button) { button.label()->setUseMarkup(false); }}
               );
+              button->setFillWidth(true);
+              auto source = files::readIconSource(g_app_info_get_icon(app.app.get()));
+              source.names.emplace_back("application-x-executable");
+              auto icon = std::make_unique<files::FileIcon>(m_icons, 24.0F);
+              icon->bind(source, colorSpecFromRole(ColorRole::OnSurface));
+              button->insertChildAt(0, std::move(icon));
+              m_appChoiceContainer->addChild(std::move(button));
             }
             m_menuSurface->requestLayout();
           }
@@ -6381,6 +6391,7 @@ namespace {
     void closeMenu() {
       m_quickPreview = nullptr;
       m_appChoiceContainer = nullptr;
+      m_appChoiceScroll = nullptr;
       m_launcher.cancelApplications();
       if (!m_previewBounds || !previewVisible()) {
         m_preview.clear();
@@ -6432,6 +6443,7 @@ namespace {
       m_aboutScroll = nullptr;
       m_aboutMessage = nullptr;
       m_dialogHeight.reset();
+      m_dialogWidth = 588.0F;
       m_dialogPosition.reset();
       m_menuDispatcher.setFocusChangeCallback({});
       m_menuRoot.reset();
@@ -6473,7 +6485,7 @@ namespace {
         UiPhaseScope phase(UiPhase::Layout);
         if (m_dialogHeight) {
           const auto width =
-              static_cast<std::uint32_t>(std::min(588.0F, static_cast<float>(m_surface->width()) - 32.0F));
+              static_cast<std::uint32_t>(std::min(m_dialogWidth, static_cast<float>(m_surface->width()) - 32.0F));
           LayoutConstraints constraints;
           constraints.setExactWidth(static_cast<float>(width));
           m_dialogHeight = m_menuRoot->measure(m_menuSurface->renderTarget().renderer(), constraints).height;
@@ -6815,6 +6827,7 @@ namespace {
     FilePreviewView* m_previewView = nullptr;
     FilePreviewView* m_quickPreview = nullptr;
     Flex* m_appChoiceContainer = nullptr;
+    ScrollView* m_appChoiceScroll = nullptr;
     std::optional<LayoutRect> m_previewBounds;
     bool m_thumbnailClearing = false;
     std::string m_thumbnailError;
@@ -6832,6 +6845,7 @@ namespace {
     ScrollView* m_aboutScroll = nullptr;
     Label* m_aboutMessage = nullptr;
     std::optional<float> m_dialogHeight;
+    float m_dialogWidth = 588.0F;
     std::optional<std::pair<int, int>> m_dialogPosition;
     files::PinService& m_pins;
     files::FileLauncher m_launcher;
