@@ -692,7 +692,10 @@ namespace {
     void setForeignDrop(std::function<std::optional<std::pair<files::Location, LayoutRect>>(float, float)> callback) {
       m_foreignDrop = std::move(callback);
     }
-    bool popupOwns(wl_surface* surface) const { return m_menuSurface && m_menuSurface->wlSurface() == surface; }
+    bool popupOwns(wl_surface* surface) const {
+      return (m_menuSurface && m_menuSurface->wlSurface() == surface)
+          || (m_documentSurface && m_documentSurface->wlSurface() == surface);
+    }
     bool popup() const { return m_menuSurface != nullptr; }
     bool overlay() const { return m_settingsView || m_archiveView; }
     bool previewVisible() const { return m_savedSettings.showPreview && !overlay(); }
@@ -942,15 +945,19 @@ namespace {
       if (m_menuSurface != nullptr && m_connection.outputForSurface(m_menuSurface->wlSurface()) == output) {
         m_menuSurface->onSurfaceOutputEnter(m_menuSurface->wlSurface(), output);
       }
+      if (m_documentSurface && m_connection.outputForSurface(m_documentSurface->wlSurface()) == output) {
+        m_documentSurface->onSurfaceOutputEnter(m_documentSurface->wlSurface(), output);
+      }
     }
 
     void pointer(const PointerEvent& event) {
       if (m_menuSurface != nullptr && event.type == PointerEvent::Type::Button && event.pressed) {
-        const bool inPopup = event.surface == m_menuSurface->wlSurface()
-            && event.sx >= 0
-            && event.sy >= 0
-            && event.sx < m_menuSurface->width()
-            && event.sy < m_menuSurface->height();
+        const bool inPopup = (m_documentSurface && event.surface == m_documentSurface->wlSurface())
+            || (event.surface == m_menuSurface->wlSurface()
+                && event.sx >= 0
+                && event.sy >= 0
+                && event.sx < m_menuSurface->width()
+                && event.sy < m_menuSurface->height());
         if (!inPopup) {
           m_dispatcher.cancelPointerCapture();
           dismissMenu();
@@ -959,6 +966,7 @@ namespace {
       }
       auto* dispatcher = event.surface == m_surface->wlSurface()                    ? &m_dispatcher
           : m_menuSurface != nullptr && event.surface == m_menuSurface->wlSurface() ? &m_menuDispatcher
+          : m_documentSurface && event.surface == m_documentSurface->wlSurface()    ? &m_documentDispatcher
                                                                                     : nullptr;
       if (dispatcher == nullptr) {
         return;
@@ -1211,6 +1219,9 @@ namespace {
         dispatcher->pointerButton(x, y, event.button, event.pressed, event.serial, event.time, event.touch);
         break;
       case PointerEvent::Type::Axis:
+        if (dispatcher == &m_menuDispatcher && m_documentSurface) {
+          dismissDocumentMenu();
+        }
         if (dispatcher == &m_dispatcher
             && m_viewMode == files::ViewMode::List
             && m_filePane->containsScenePoint(x, y)
@@ -1235,6 +1246,18 @@ namespace {
             event.axisLines, event.axisGestureSerial
         );
         break;
+      }
+      if (dispatcher == &m_documentDispatcher && event.type != PointerEvent::Type::Leave) {
+        m_closeDocumentPending = false;
+      }
+      if (dispatcher == &m_menuDispatcher
+          && (event.type == PointerEvent::Type::Enter || event.type == PointerEvent::Type::Motion)) {
+        if (m_documentRow && m_menu && m_menu->highlightedIndex() == *m_documentRow) {
+          m_documentKeyboard = false;
+          (void)m_menu->activateHighlighted();
+        } else if (m_documentSurface) {
+          dismissDocumentMenu();
+        }
       }
     }
 
@@ -1305,6 +1328,31 @@ namespace {
           }
           return;
         }
+        if (m_documentSurface) {
+          if (!event.pressed) {
+            return;
+          }
+          if (KeySymbol::isEscape(event.sym) || KeySymbol::isLeft(event.sym)) {
+            dismissDocumentMenu();
+          } else if (KeySymbol::isEnter(event.sym)) {
+            if (m_documentMenu->highlightedIndex() >= m_documentMenu->entryCount()) {
+              (void)m_documentMenu->moveHighlight(1);
+            }
+            (void)m_documentMenu->activateHighlighted();
+          } else if (KeySymbol::isUp(event.sym) || KeySymbol::isDown(event.sym)) {
+            (void)m_documentMenu->moveHighlight(KeySymbol::isUp(event.sym) ? -1 : 1);
+            const auto index = m_documentMenu->highlightedIndex();
+            const float top = m_documentMenu->rowTop(index), bottom = m_documentMenu->rowBottom(index);
+            const float offset = m_documentScroll->scrollOffset();
+            if (top < offset) {
+              m_documentScroll->requestScrollToOffset(top);
+            } else if (bottom > offset + m_documentScroll->height()) {
+              m_documentScroll->requestScrollToOffset(bottom - m_documentScroll->height());
+            }
+            m_documentSurface->requestLayout();
+          }
+          return;
+        }
         if (!event.pressed) {
           return;
         }
@@ -1320,7 +1368,11 @@ namespace {
             revealMenuHighlight();
             m_menuSurface->requestRedraw();
           }
-        } else if (KeySymbol::isEnter(event.sym)) {
+        } else if (
+            KeySymbol::isEnter(event.sym)
+            || (KeySymbol::isRight(event.sym) && m_documentRow && m_menu->highlightedIndex() == *m_documentRow)
+        ) {
+          m_documentKeyboard = true;
           (void)m_menu->activateHighlighted();
         }
         return;
@@ -1991,6 +2043,9 @@ namespace {
             *request.folder, action == Action::CreateFolder ? files::CreateKind::Folder : files::CreateKind::EmptyFile
         );
         break;
+      case Action::NewDocument:
+        openDocumentMenu(request);
+        break;
       case Action::SelectAll:
         browser().model().selectAll();
         break;
@@ -2129,7 +2184,8 @@ namespace {
           entries.push_back({.id = 9005, .label = "Close Pane", .shortcut = "Ctrl+Alt+W"});
         }
         add(Action::CreateFolder);
-        add(Action::CreateFile);
+        add(Action::NewDocument);
+        entries.back().hasSubmenu = true;
         add(Action::PasteFiles);
         separator();
         add(Action::SelectAll);
@@ -2229,6 +2285,11 @@ namespace {
         separator();
         add(Action::Properties);
       }
+      const auto document =
+          std::ranges::find(entries, static_cast<int>(Action::NewDocument), &ContextMenuControlEntry::id);
+      const auto documentRow = !id && document != entries.end()
+          ? std::optional<std::size_t>(static_cast<std::size_t>(document - entries.begin()))
+          : std::nullopt;
       showContextMenu(
           std::move(entries),
           [this, request](int action) {
@@ -2260,6 +2321,10 @@ namespace {
           },
           {x, y, 1, 1}
       );
+      if (m_menu && documentRow) {
+        m_documentRow = documentRow;
+        m_menu->setOnSubmenuOpen([this, request](const ContextMenuControlEntry&, float) { openDocumentMenu(request); });
+      }
     }
 
     void openPlaceMenu(const files::Bookmark& bookmark, float x, float y) {
@@ -2538,15 +2603,180 @@ namespace {
     }
 
     bool canCreateItem() const { return actionState(Action::CreateFolder, actionRequest(false)).enabled; }
-    void openCreateItem(files::Location parent, files::CreateKind kind) {
+    void closeDocumentMenu() {
+      if (m_menu) {
+        m_menu->setSubmenuDirection(ContextSubmenuDirection::Right);
+      }
+      ++m_documentGeneration;
+      m_closeDocumentPending = false;
+      m_templates.cancel();
+      m_documentDispatcher.setSceneRoot(nullptr);
+      if (m_documentSurface) {
+        m_documentSurface->setSceneRoot(nullptr);
+      }
+      m_documentRoot.reset();
+      m_documentMenu = nullptr;
+      m_documentScroll = nullptr;
+      m_documentSurface.reset();
+    }
+    void dismissDocumentMenu() {
+      m_closeDocumentPending = true;
+      const auto generation = m_documentGeneration;
+      const std::weak_ptr<int> lifetime = m_lifetime;
+      DeferredCall::callLater([this, lifetime, generation] {
+        if (!lifetime.expired() && generation == m_documentGeneration && m_closeDocumentPending) {
+          closeDocumentMenu();
+        }
+      });
+    }
+    void fillDocumentMenu(const files::ActionRequest& request, files::TemplateListing listing, bool loading = false) {
+      if (!m_documentSurface || !actionState(Action::NewDocument, request).enabled) {
+        return;
+      }
+      auto items = std::make_shared<std::vector<files::DocumentTemplate>>(std::move(listing.items));
+      std::vector<ContextMenuControlEntry> entries{
+          {.id = -1, .label = "Empty File…"}, {.label = "", .separator = true}
+      };
+      for (std::size_t index = 0; index < items->size(); ++index) {
+        entries.push_back({.id = static_cast<int>(index), .label = (*items)[index].label});
+      }
+      if (loading || items->empty() || !listing.error.empty()) {
+        entries.push_back(
+            {.label = loading             ? "Loading templates…"
+                 : !listing.error.empty() ? listing.error
+                                          : "No document templates",
+             .enabled = false}
+        );
+      }
+      if (listing.truncated) {
+        entries.push_back({.label = "Template list limit reached", .enabled = false});
+      }
+      const float contentHeight = ContextMenuControl::preferredHeight(entries, entries.size());
+      const float height = std::min(contentHeight, static_cast<float>(m_surface->height()) - 32.0F);
+      const float width = 300.0F;
+      const bool overflowing = contentHeight > height;
+      m_documentMenu->setMaxVisible(entries.size());
+      m_documentMenu->setEntries(std::move(entries));
+      m_documentMenu->setMenuWidth(width - (overflowing ? Style::scrollbarWidth + Style::scrollbarGap : 0.0F));
+      m_documentMenu->setHighlightedIndex(m_documentKeyboard ? 0 : m_documentMenu->entryCount());
+      m_documentMenu->setOnActivate([this, request, items](const ContextMenuControlEntry& entry) {
+        const auto id = entry.id;
+        const std::weak_ptr<int> lifetime = m_lifetime;
+        dismissMenu();
+        DeferredCall::callLater([this, lifetime, request, items, id] {
+          if (lifetime.expired() || !actionState(Action::NewDocument, request).enabled) {
+            return;
+          }
+          if (id == -1) {
+            openCreateItem(*request.folder, files::CreateKind::EmptyFile);
+          } else if (id >= 0 && static_cast<std::size_t>(id) < items->size()) {
+            openCreateItem(*request.folder, files::CreateKind::Document, (*items)[static_cast<std::size_t>(id)]);
+          }
+        });
+      });
+      m_documentScroll->setReserveScrollbarGutter(overflowing);
+      m_documentScroll->setSize(width, height);
+      (void)m_documentSurface->resize(
+          static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(std::ceil(height)), false
+      );
+      m_documentSurface->requestLayout();
+    }
+    void openDocumentMenu(const files::ActionRequest& request) {
+      m_closeDocumentPending = false;
+      if (m_documentSurface
+          || !m_menuSurface
+          || !m_menu
+          || !m_documentRow
+          || !actionState(Action::NewDocument, request).enabled) {
+        return;
+      }
+      const float top = m_menu->rowTop(*m_documentRow);
+      const float bottom = m_menu->rowBottom(*m_documentRow);
+      const auto menuRect = sceneRect(*m_menu);
+      m_documentSurface = std::make_unique<PopupSurface>(m_connection);
+      m_documentSurface->setRenderContext(&m_renderer);
+      m_documentSurface->setAnimationManager(&m_animations);
+      m_documentSurface->setDismissedCallback([this] { dismissDocumentMenu(); });
+      auto menu = std::make_unique<ContextMenuControl>();
+      m_documentMenu = menu.get();
+      auto scroll = ui::scrollView(
+          {.out = &m_documentScroll, .viewportPaddingH = 0.0F, .viewportPaddingV = 0.0F, .flexGrow = 1.0F}
+      );
+      scroll->content()->addChild(std::move(menu));
+      m_documentRoot = ui::column(
+          {.fill = colorSpecFromRole(ColorRole::SurfaceContainerHigh), .radius = Style::radiusLg}, std::move(scroll)
+      );
+      m_documentRoot->setAnimationManager(&m_animations);
+      m_documentSurface->setSceneRoot(m_documentRoot.get());
+      m_documentDispatcher.setSceneRoot(m_documentRoot.get());
+      m_documentDispatcher.setCursorShapeCallback([this](std::uint32_t serial, std::uint32_t shape) {
+        m_connection.extension<files::DesktopIntegration>().setCursorShape(serial, shape);
+      });
+      m_documentSurface->setConfigureCallback([this](std::uint32_t, std::uint32_t) {
+        if (m_menu) {
+          m_menu->setSubmenuDirection(
+              m_documentSurface->configuredX() < 0 ? ContextSubmenuDirection::Left : ContextSubmenuDirection::Right
+          );
+          m_menuSurface->requestLayout();
+        }
+        m_documentSurface->requestLayout();
+      });
+      m_documentSurface->setPrepareFrameCallback([this](bool, bool) {
+        if (m_documentSurface && m_renderer.makeCurrent(m_documentSurface->renderTarget())) {
+          UiPhaseScope phase(UiPhase::Layout);
+          m_documentRoot->arrange(
+              m_documentSurface->renderTarget().renderer(),
+              {0, 0, static_cast<float>(m_documentSurface->width()), static_cast<float>(m_documentSurface->height())}
+          );
+        }
+      });
+      const PopupSurfaceConfig config{
+          .anchorX = 0,
+          .anchorY = static_cast<int>(std::floor(menuRect.y + top)),
+          .anchorWidth = static_cast<int>(m_menuSurface->width()),
+          .anchorHeight = std::max(1, static_cast<int>(bottom - top)),
+          .width = 300,
+          .height = 84,
+          .anchor = XDG_POSITIONER_ANCHOR_TOP_RIGHT,
+          .gravity = XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT,
+          .constraintAdjustment = XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_FLIP_X
+              | XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X
+              | XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y,
+          .serial = m_popupSerial != 0 ? m_popupSerial : m_connection.lastInputSerial()
+      };
+      if (!m_documentSurface->initializeAsChild(
+              m_menuSurface->xdgSurface(), m_connection.outputForSurface(m_surface->wlSurface()), config
+          )) {
+        closeDocumentMenu();
+        return;
+      }
+      fillDocumentMenu(request, {}, true);
+      const auto generation = ++m_documentGeneration;
+      m_templates.load([this, request, generation](files::TemplateListing listing) {
+        if (generation == m_documentGeneration && m_documentSurface) {
+          fillDocumentMenu(request, std::move(listing));
+        }
+      });
+    }
+    void openCreateItem(
+        files::Location parent, files::CreateKind kind, std::optional<files::DocumentTemplate> source = std::nullopt
+    ) {
       if (!canCreateItem() || browser().model().snapshot().location != parent) {
         actionError("Open an available writable folder to create a file or folder.");
         return;
       }
       const float width = std::min(420.0F, static_cast<float>(m_surface->width()) - 32.0F);
+      const bool document = kind == files::CreateKind::Document;
+      const files::GString display(source ? g_filename_display_name(source->name.c_str()) : nullptr);
       auto editor = std::make_unique<NameEditor>(
-          width, kind == files::CreateKind::Folder ? "New folder" : "New file",
-          kind == files::CreateKind::Folder ? "New Folder" : "New File", "", files::filenameProblem,
+          width,
+          kind == files::CreateKind::Folder ? "New folder"
+              : document                    ? "New document"
+                                            : "New file",
+          source                                  ? display.get()
+              : kind == files::CreateKind::Folder ? "New Folder"
+                                                  : "New File",
+          source ? "From " + source->label : "", files::filenameProblem,
           [this](std::string name) { submitCreateItem(std::move(name)); }, [this] { dismissMenu(); }, "Create",
           "Creating…"
       );
@@ -2564,7 +2794,8 @@ namespace {
         m_createParent = std::move(parent);
         m_creationPreparing = true;
         control->setSaving(true);
-        if (!m_creator.prepare(*m_createParent, kind)) {
+        if (!(source ? m_creator.prepareTemplate(*m_createParent, std::move(*source))
+                     : m_creator.prepare(*m_createParent, kind))) {
           control->showError("Another creation is still finishing.");
         }
       }
@@ -2610,7 +2841,12 @@ namespace {
         m_createEditor->showError(snapshot.error);
         if (std::exchange(m_creationPreparing, false)) {
           m_menuDispatcher.setFocus(m_createEditor->input()->inputArea());
-          m_createEditor->input()->selectAll();
+          if (snapshot.kind == files::CreateKind::Document) {
+            const auto& value = m_createEditor->input()->value();
+            m_createEditor->input()->selectRange(0, files::filenameStemLength(value, false));
+          } else {
+            m_createEditor->input()->selectAll();
+          }
         }
         m_menuSurface->requestLayout();
       }
@@ -5377,7 +5613,9 @@ namespace {
       m_refresh->setTooltip(loading ? "Stop loading" : "Refresh (F5)");
       std::string status;
       if (m_creator.busy()) {
-        const char* kind = m_creator.snapshot().kind == files::CreateKind::Folder ? "folder" : "file";
+        const char* kind = m_creator.snapshot().kind == files::CreateKind::Folder ? "folder"
+            : m_creator.snapshot().kind == files::CreateKind::Document            ? "document"
+                                                                                  : "file";
         status = m_creator.snapshot().status == files::CreateStatus::Creating
             ? std::format("Creating {}…", kind)
             : std::format("Preparing {} creation…", kind);
@@ -6479,6 +6717,8 @@ namespace {
       });
     }
     void closeMenu() {
+      closeDocumentMenu();
+      m_documentRow.reset();
       m_quickPreview = nullptr;
       m_appChoiceContainer = nullptr;
       m_appChoiceScroll = nullptr;
@@ -6690,7 +6930,7 @@ namespace {
       const float gutter = overflowing ? Style::scrollbarWidth + Style::scrollbarGap : 0.0F;
       // The menu has an intrinsic width; reserve the scroller's lane explicitly.
       control->setMenuWidth(width - gutter);
-      control->setOnActivate([this, action = std::move(action)](const ContextMenuControlEntry& entry) {
+      const auto activate = [this, action = std::move(action)](const ContextMenuControlEntry& entry) {
         const int id = entry.id;
         const std::weak_ptr<int> lifetime = m_lifetime;
         dismissMenu();
@@ -6699,7 +6939,8 @@ namespace {
             action(id);
           }
         });
-      });
+      };
+      control->setOnActivate(activate);
       ScrollView* scroll = nullptr;
       auto scrolling = ui::scrollView(
           {.out = &scroll, .viewportPaddingH = 0.0F, .viewportPaddingV = 0.0F, .height = height, .flexGrow = 1.0F}
@@ -6990,6 +7231,7 @@ namespace {
     bool m_trashDirty = false;
     files::RenameService m_renamer;
     files::CreateService m_creator;
+    files::TemplateCatalog m_templates;
     Timer m_operationProgress;
     Button* m_cancelOperation = nullptr;
     Box* m_placeDropLine = nullptr;
@@ -7120,6 +7362,15 @@ namespace {
     std::unique_ptr<PopupSurface> m_menuSurface;
     std::unique_ptr<Flex> m_menuRoot;
     ContextMenuControl* m_menu = nullptr;
+    std::unique_ptr<PopupSurface> m_documentSurface;
+    std::unique_ptr<Flex> m_documentRoot;
+    ContextMenuControl* m_documentMenu = nullptr;
+    ScrollView* m_documentScroll = nullptr;
+    InputDispatcher m_documentDispatcher;
+    std::optional<std::size_t> m_documentRow;
+    std::uint64_t m_documentGeneration = 0;
+    bool m_closeDocumentPending = false;
+    bool m_documentKeyboard = false;
     ScrollView* m_menuScroll = nullptr;
     NameEditor* m_placeEditor = nullptr;
     NameEditor* m_fileRenameEditor = nullptr;

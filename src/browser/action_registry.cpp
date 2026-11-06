@@ -53,6 +53,7 @@ namespace {
        {A::BrowseArchive, "Browse Archive", "", S::Targets},
        {A::CreateFolder, "New Folder…", "Ctrl+Shift+N", S::Location},
        {A::CreateFile, "Empty File…", "", S::Location},
+       {A::NewDocument, "New Document", "", S::Location},
        {A::PinCurrent, "Pin this folder to sidebar", "", S::Location},
        {A::UnpinCurrent, "Unpin this folder", "", S::Location},
        {A::ReloadPins, "Reload pins", ""},
@@ -219,6 +220,7 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
     [[fallthrough]];
   case A::CreateFolder:
   case A::CreateFile:
+  case A::NewDocument:
     if (!native || !c.query.empty() || !ready) {
       return unavailable("Open an available native folder first.");
     }

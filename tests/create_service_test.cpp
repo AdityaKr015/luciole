@@ -35,9 +35,9 @@ namespace {
       while (!done()) {
         TEST_CHECK(std::chrono::steady_clock::now() < deadline);
         std::vector<pollfd> fds;
-        const auto first = source.addPollFds(fds);
+        const auto first = m_source.addPollFds(fds);
         TEST_CHECK(::poll(fds.data(), fds.size(), 1) >= 0);
-        source.dispatch(fds, first);
+        m_source.dispatch(fds, first);
       }
     }
     void
@@ -50,10 +50,153 @@ namespace {
       TEST_CHECK(service.create(name));
       until([&] { return !service.busy(); });
     }
+    files::TemplateListing templates(files::TemplateCatalog& catalog) {
+      std::optional<files::TemplateListing> result;
+      catalog.load([&](auto listing) { result = std::move(listing); });
+      until([&] { return result.has_value(); });
+      return std::move(*result);
+    }
 
   private:
-    GlibPollSource source;
+    GlibPollSource m_source;
   };
+  std::string contents(const fs::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(input), {}};
+  }
+  files::DocumentTemplate documentTemplate(const fs::path& path) {
+    struct stat info{};
+    TEST_CHECK(::lstat(path.c_str(), &info) == 0);
+    return {location(path), path.filename().native(), path.filename().native(), files::templateRevision(info)};
+  }
+  void prepareDocument(Pump& pump, files::CreateService& service, const fs::path& parent, const fs::path& source) {
+    TEST_CHECK(service.prepareTemplate(location(parent), documentTemplate(source)));
+    pump.until([&] { return !service.busy(); });
+    TEST_CHECK(service.canCreate());
+  }
+  void templateCatalog(Pump& pump, const fs::path& home) {
+    const auto root = home / "Templates";
+    fs::create_directories(root / "Work");
+    fs::create_directory(root / ".hidden");
+    std::ofstream(root / "Letter 文.txt") << "letter";
+    std::ofstream(root / "Work/report.txt") << "report";
+    std::ofstream(root / ".hidden/secret") << "hidden";
+    std::ofstream(root / ".hidden-file") << "hidden";
+    fs::create_directory_symlink(root, root / "loop");
+    fs::create_symlink("missing", root / "broken");
+    TEST_CHECK(::mkfifo((root / "pipe").c_str(), 0600) == 0);
+    const std::string raw = std::string("raw-") + static_cast<char>(0xff);
+    std::ofstream(root / raw) << "raw";
+    files::TemplateCatalog catalog;
+    auto listing = pump.templates(catalog);
+    TEST_CHECK(listing.error.empty() && !listing.truncated && listing.items.size() == 3);
+    const auto report = std::ranges::find(listing.items, "Work/report.txt", &files::DocumentTemplate::label);
+    TEST_CHECK(report != listing.items.end() && report->location == location(root / "Work/report.txt"));
+    TEST_CHECK(std::ranges::find(listing.items, raw, &files::DocumentTemplate::name) != listing.items.end());
+    std::ofstream(root / "added.txt") << "new";
+    TEST_CHECK(pump.templates(catalog).items.size() == 4);
+    bool obsolete = false;
+    catalog.load([&](const auto&) { obsolete = true; });
+    catalog.cancel();
+    TEST_CHECK(pump.templates(catalog).items.size() == 4 && !obsolete);
+    fs::rename(root, home / "Saved templates");
+    TEST_CHECK(!pump.templates(catalog).error.empty());
+    fs::create_directory_symlink(home, root);
+    TEST_CHECK(pump.templates(catalog).items.empty() && !pump.templates(catalog).error.empty());
+    fs::remove(root);
+    fs::create_directory(root);
+    TEST_CHECK(pump.templates(catalog).items.empty() && pump.templates(catalog).error.empty());
+    for (int index = 0; index < 260; ++index) {
+      std::ofstream(root / ("Document " + std::to_string(index))) << "bounded";
+    }
+    listing = pump.templates(catalog);
+    TEST_CHECK(listing.truncated && listing.items.size() == 256);
+  }
+  void createsDocuments(Pump& pump) {
+    Fixture fixture;
+    fs::create_directory(fixture.root / "output");
+    const auto source = fixture.root / (std::string("template-") + static_cast<char>(0xff) + ".bin");
+    const std::string binary("contents\0with bytes\xff", 20);
+    std::ofstream(source, std::ios::binary).write(binary.data(), static_cast<std::streamsize>(binary.size()));
+    files::CreateService service;
+    prepareDocument(pump, service, fixture.root / "output", source);
+    pump.create(service, "Document 文.bin");
+    TEST_CHECK(service.snapshot().status == files::CreateStatus::Succeeded);
+    TEST_CHECK(contents(source) == binary && contents(fixture.root / "output/Document 文.bin") == binary);
+    TEST_CHECK(std::distance(fs::directory_iterator(fixture.root / "output"), fs::directory_iterator{}) == 1);
+    prepareDocument(pump, service, fixture.root / "output", source);
+    pump.create(service, "Document 文.bin");
+    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && service.canCreate());
+    TEST_CHECK(contents(fixture.root / "output/Document 文.bin") == binary);
+    fs::create_symlink("missing", fixture.root / "output/link");
+    fs::create_directory(fixture.root / "output/folder");
+    TEST_CHECK(::mkfifo((fixture.root / "output/pipe").c_str(), 0600) == 0);
+    for (const auto* name : {"link", "folder", "pipe"}) {
+      pump.create(service, name);
+      TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && service.canCreate());
+    }
+    TEST_CHECK(fs::is_symlink(fixture.root / "output/link") && fs::is_fifo(fixture.root / "output/pipe"));
+    TEST_CHECK(!service.create("../escaped"));
+    pump.create(service, "retry.bin");
+    TEST_CHECK(service.snapshot().status == files::CreateStatus::Succeeded);
+    TEST_CHECK(contents(fixture.root / "output/retry.bin") == binary);
+    std::ofstream(source, std::ios::trunc);
+    prepareDocument(pump, service, fixture.root / "output", source);
+    pump.create(service, "empty.txt");
+    TEST_CHECK(
+        service.snapshot().status == files::CreateStatus::Succeeded
+        && fs::file_size(fixture.root / "output/empty.txt") == 0
+    );
+    for (const auto& entry : fs::directory_iterator(fixture.root / "output")) {
+      TEST_CHECK(!entry.path().filename().native().starts_with(".noctalia-document-"));
+    }
+  }
+  void staleTemplatesAndCancellation(Pump& pump) {
+    Fixture fixture;
+    fs::create_directory(fixture.root / "output");
+    const auto source = fixture.root / "source.txt";
+    std::ofstream(source) << "original";
+    const auto selected = documentTemplate(source);
+    std::ofstream(source) << "changed";
+    files::CreateService service;
+    TEST_CHECK(service.prepareTemplate(location(fixture.root / "output"), selected));
+    pump.until([&] { return !service.busy(); });
+    TEST_CHECK(!service.canCreate() && service.snapshot().status == files::CreateStatus::Error);
+    prepareDocument(pump, service, fixture.root / "output", source);
+    fs::rename(source, fixture.root / "held");
+    fs::create_symlink("held", source);
+    pump.create(service, "refuse-link.txt");
+    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && fs::is_empty(fixture.root / "output"));
+    fs::remove(source);
+    fs::rename(fixture.root / "held", source);
+    prepareDocument(pump, service, fixture.root / "output", source);
+    fs::rename(source, fixture.root / "held");
+    TEST_CHECK(::mkfifo(source.c_str(), 0600) == 0);
+    pump.create(service, "refuse-pipe.txt");
+    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && fs::is_empty(fixture.root / "output"));
+    fs::remove(source);
+    fs::rename(fixture.root / "held", source);
+    prepareDocument(pump, service, fixture.root / "output", source);
+    std::ofstream(source) << "modified after preparation";
+    pump.create(service, "refuse-change.txt");
+    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && fs::is_empty(fixture.root / "output"));
+    prepareDocument(pump, service, fixture.root / "output", source);
+    fs::rename(fixture.root / "output", fixture.root / "previous");
+    fs::create_directory(fixture.root / "output");
+    pump.create(service, "refuse-parent.txt");
+    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && fs::is_empty(fixture.root / "previous"));
+    prepareDocument(pump, service, fixture.root / "output", source);
+    TEST_CHECK(service.create("maybe.txt"));
+    service.cancel();
+    pump.until([&] { return !service.busy(); });
+    const bool published = service.snapshot().status == files::CreateStatus::Succeeded;
+    TEST_CHECK(published || service.snapshot().status == files::CreateStatus::Cancelled);
+    TEST_CHECK(fs::exists(fixture.root / "output/maybe.txt") == published);
+    TEST_CHECK(
+        std::distance(fs::directory_iterator(fixture.root / "output"), fs::directory_iterator{}) == (published ? 1 : 0)
+    );
+    TEST_CHECK(!service.prepare(location(fixture.root), files::CreateKind::Document));
+  }
   void createsFolders(Pump& pump) {
     Fixture fixture;
     files::CreateService service;
@@ -284,7 +427,15 @@ namespace {
 } // namespace
 int main() {
   try {
+    Fixture home;
+    fs::create_directory(home.root / "config");
+    std::ofstream(home.root / "config/user-dirs.dirs") << "XDG_TEMPLATES_DIR=\"$HOME/Templates\"\n";
+    TEST_CHECK(g_setenv("HOME", home.root.c_str(), TRUE));
+    TEST_CHECK(g_setenv("XDG_CONFIG_HOME", (home.root / "config").c_str(), TRUE));
     Pump pump;
+    templateCatalog(pump, home.root);
+    createsDocuments(pump);
+    staleTemplatesAndCancellation(pump);
     createsFolders(pump);
     createsEmptyFiles(pump);
     collisionsAndRetry(pump);

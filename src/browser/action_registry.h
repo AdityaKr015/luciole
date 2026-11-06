@@ -51,6 +51,7 @@ namespace files {
     BrowseArchive,
     CreateFolder,
     CreateFile,
+    NewDocument,
     PinCurrent,
     UnpinCurrent,
     ReloadPins,

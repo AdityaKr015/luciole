@@ -169,7 +169,7 @@ places_service = declare_dependency(
 )
 
 create_service = declare_dependency(
-  sources: files('src/operations/create_service.cpp'),
+  sources: files('src/operations/create_service.cpp', 'src/operations/template_catalog.cpp'),
   dependencies: filesystem_service,
 )
 

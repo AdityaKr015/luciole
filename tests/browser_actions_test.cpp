@@ -186,6 +186,7 @@ namespace {
         R::state(A::Open, c, request).enabled
         && R::state(A::Rename, c, request).enabled
         && R::state(A::Trash, c, request).enabled
+        && R::state(A::NewDocument, c, request).enabled
     );
     model.select(3);
     TEST_CHECK(R::state(A::Rename, c, request).enabled && request.targets.front().id == 2);
@@ -193,12 +194,17 @@ namespace {
     TEST_CHECK(R::state(A::Open, c, request).enabled);
     c.operationsBusy = true;
     const auto busy = R::state(A::Rename, c, request);
+    TEST_CHECK(!R::state(A::NewDocument, c, request).enabled);
     TEST_CHECK(!busy.enabled && !busy.reason.empty() && R::state(A::Properties, c, request).enabled);
     c.operationsBusy = false;
     data.metadata.filesystem.readOnly = true;
     ++data.generation;
     model.applySnapshot(data);
-    TEST_CHECK(!R::state(A::Rename, c, request).enabled && !R::state(A::CreateFile, c, request).enabled);
+    TEST_CHECK(
+        !R::state(A::Rename, c, request).enabled
+        && !R::state(A::CreateFile, c, request).enabled
+        && !R::state(A::NewDocument, c, request).enabled
+    );
     data.metadata.filesystem.readOnly = false;
     data.entries[1].access.rename = false;
     data.entries[1].access.trash = false;
@@ -214,7 +220,7 @@ namespace {
     data.metadata.access.write = false;
     ++data.generation;
     model.applySnapshot(data);
-    TEST_CHECK(!R::state(A::CreateFolder, c, request).enabled);
+    TEST_CHECK(!R::state(A::CreateFolder, c, request).enabled && !R::state(A::NewDocument, c, request).enabled);
     c.query = "txt";
     TEST_CHECK(!R::state(A::Open, c, request).enabled);
     auto search = R::capture(c);

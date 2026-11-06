@@ -2,13 +2,16 @@
 
 #include "fs/filename.h"
 
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
 #include <filesystem>
+#include <linux/fs.h>
 #include <stdexcept>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 #include <utility>
 
@@ -43,9 +46,32 @@ namespace {
   bool sameIdentity(const struct stat& a, const struct stat& b) {
     return a.st_dev == b.st_dev && a.st_ino == b.st_ino && (a.st_mode & S_IFMT) == (b.st_mode & S_IFMT);
   }
+  struct TemplateSource {
+    files::DocumentTemplate source;
+    Fd file;
+    explicit TemplateSource(files::DocumentTemplate source)
+        : source(std::move(source)), file(
+                                         ::open(
+                                             this->source.location.nativePath().value_or("").c_str(),
+                                             O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK
+                                         )
+                                     ) {
+      requireCurrent();
+    }
+    void requireCurrent() const {
+      Fd current(
+          ::open(source.location.nativePath().value_or("").c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
+      );
+      if (files::templateRevision(metadata(current.get())) != source.revision
+          || files::templateRevision(metadata(file.get())) != source.revision) {
+        throw std::runtime_error("The template changed. Close this dialog and choose it again.");
+      }
+    }
+  };
   struct Target {
     std::string path;
     Fd directory;
+    std::unique_ptr<TemplateSource> source;
     explicit Target(std::string path)
         : path(std::move(path)), directory(::open(this->path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC)) {}
     void requireCurrent() const {
@@ -74,6 +100,97 @@ namespace {
       return "The destination folder is no longer available.";
     }
     return std::strerror(code);
+  }
+  // Private staging keeps incomplete template contents out of the requested destination name.
+  class DocumentStage {
+  public:
+    explicit DocumentStage(int parent) : m_parent(parent) {
+      const files::GString uuid(g_uuid_string_random());
+      m_name = ".noctalia-document-" + std::string(uuid.get());
+      if (::mkdirat(parent, m_name.c_str(), 0700) != 0) {
+        throw std::runtime_error(creationError(errno));
+      }
+      const int fd = ::openat(parent, m_name.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+      if (fd < 0) {
+        const int code = errno;
+        ::unlinkat(parent, m_name.c_str(), AT_REMOVEDIR);
+        throw std::runtime_error(creationError(code));
+      }
+      m_directory = std::make_unique<Fd>(fd);
+    }
+    ~DocumentStage() { (void)clear(); }
+    DocumentStage(const DocumentStage&) = delete;
+    DocumentStage& operator=(const DocumentStage&) = delete;
+    int fd() const { return m_directory->get(); }
+    bool clear() const {
+      struct stat current{}, held{};
+      if (::fstat(fd(), &held) != 0 || ::fstatat(m_parent, m_name.c_str(), &current, AT_SYMLINK_NOFOLLOW) != 0) {
+        return errno == ENOENT;
+      }
+      if (!sameIdentity(current, held)) {
+        return false;
+      }
+      if (::unlinkat(fd(), "document", 0) != 0 && errno != ENOENT) {
+        return false;
+      }
+      return ::unlinkat(m_parent, m_name.c_str(), AT_REMOVEDIR) == 0;
+    }
+
+  private:
+    int m_parent;
+    std::string m_name;
+    std::unique_ptr<Fd> m_directory;
+  };
+  std::optional<bool> copyDocument(const Target& target, const std::string& name, const std::atomic<bool>& cancelled) {
+    auto& source = *target.source;
+    source.requireCurrent();
+    DocumentStage stage(target.directory.get());
+    Fd output(::openat(stage.fd(), "document", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0666));
+    std::array<char, 65536> buffer{};
+    std::uint64_t offset = 0;
+    while (offset < source.source.revision.size) {
+      if (cancelled.load()) {
+        return std::nullopt;
+      }
+      const auto count = ::pread(
+          source.file.get(), buffer.data(),
+          std::min<std::uint64_t>(buffer.size(), source.source.revision.size - offset), static_cast<off_t>(offset)
+      );
+      if (count < 0 && errno == EINTR) {
+        continue;
+      }
+      if (count <= 0) {
+        throw std::runtime_error(count == 0 ? "The template changed while copying." : creationError(errno));
+      }
+      std::size_t written = 0;
+      while (written < static_cast<std::size_t>(count)) {
+        if (cancelled.load()) {
+          return std::nullopt;
+        }
+        const auto size = ::write(output.get(), buffer.data() + written, static_cast<std::size_t>(count) - written);
+        if (size < 0 && errno == EINTR) {
+          continue;
+        }
+        if (size <= 0) {
+          throw std::runtime_error(size == 0 ? "Could not write the new document." : creationError(errno));
+        }
+        written += static_cast<std::size_t>(size);
+      }
+      offset += static_cast<std::uint64_t>(count);
+    }
+    if (output.close() != 0) {
+      throw std::runtime_error("Could not close the new document cleanly.");
+    }
+    source.requireCurrent();
+    target.requireCurrent();
+    if (cancelled.load()) {
+      return std::nullopt;
+    }
+    if (::syscall(SYS_renameat2, stage.fd(), "document", target.directory.get(), name.c_str(), RENAME_NOREPLACE) != 0) {
+      throw std::runtime_error(creationError(errno));
+    }
+    // Publication is complete; cancellation cannot turn it into an uncommitted result.
+    return stage.clear();
   }
 } // namespace
 
@@ -160,19 +277,34 @@ void files::CreateService::cancel() {
   }
 }
 bool files::CreateService::prepare(const Location& parent, CreateKind kind) {
-  if (busy() || (kind != CreateKind::Folder && kind != CreateKind::EmptyFile)) {
+  if (kind != CreateKind::Folder && kind != CreateKind::EmptyFile) {
+    return false;
+  }
+  return prepareTarget(parent, kind, std::nullopt);
+}
+bool files::CreateService::prepareTemplate(const Location& parent, DocumentTemplate source) {
+  return prepareTarget(parent, CreateKind::Document, std::move(source));
+}
+bool files::CreateService::prepareTarget(
+    const Location& parent, CreateKind kind, std::optional<DocumentTemplate> source
+) {
+  if (busy()) {
     return false;
   }
   m_state->target.reset();
   m_state->snapshot = {
       .status = CreateStatus::Preparing, .kind = kind, .parent = parent, .destination = std::nullopt, .error = {}
   };
-  State::launch(m_state, [parent] {
+  State::launch(m_state, [parent, source = std::move(source)] mutable {
     const auto path = parent.nativePath();
     if (!path) {
       throw std::runtime_error("Creating remote files or folders is not supported yet.");
     }
-    return Reply{.target = std::make_shared<Target>(*path), .destination = std::nullopt, .error = {}};
+    auto target = std::make_shared<Target>(*path);
+    if (source) {
+      target->source = std::make_unique<TemplateSource>(std::move(*source));
+    }
+    return Reply{.target = std::move(target), .destination = std::nullopt, .error = {}};
   });
   return true;
 }
@@ -207,6 +339,14 @@ bool files::CreateService::create(std::string name) {
         if (kind == CreateKind::Folder) {
           if (::mkdirat(target->directory.get(), name.c_str(), 0777) != 0) {
             throw std::runtime_error(creationError(errno));
+          }
+        } else if (kind == CreateKind::Document) {
+          const auto clean = copyDocument(*target, name, owner->cancelled);
+          if (!clean) {
+            return Reply{};
+          }
+          if (!*clean) {
+            result.error = "The document was created, but its temporary folder could not be removed.";
           }
         } else {
           // Exclusive creation refuses every existing entry, including dangling links and FIFOs.
