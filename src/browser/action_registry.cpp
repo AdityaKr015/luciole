@@ -273,7 +273,16 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
       return state;
     }
     if (action == A::Rename && !single()) {
-      return unavailable("Select exactly one item to rename.");
+      if (r.targets.size() > 4096) {
+        return unavailable("Select at most 4096 items for batch rename.");
+      }
+      const auto parent = GioPtr<GFile>(g_file_get_parent(r.targets.front().location.file().get()));
+      if (!parent || !all([&](const auto& entry) {
+            const auto other = GioPtr<GFile>(g_file_get_parent(entry.location.file().get()));
+            return entry.identity && other && g_file_equal(parent.get(), other.get());
+          })) {
+        return unavailable("Batch rename requires identified items from one native folder.");
+      }
     }
     if (!all([](const auto& entry) { return entry.location.nativePath().has_value(); })) {
       return unavailable("This operation currently supports native files only.");

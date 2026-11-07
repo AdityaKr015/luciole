@@ -28,6 +28,7 @@
 #include "fs/filename.h"
 #include "noctalia_files_build_info.h"
 #include "operations/archive_service.h"
+#include "operations/batch_rename_service.h"
 #include "operations/create_service.h"
 #include "operations/empty_trash_service.h"
 #include "operations/rename_service.h"
@@ -46,6 +47,7 @@
 #include "system/icon_theme_poll_source.h"
 #include "ui/builders.h"
 #include "ui/controls/archive_view.h"
+#include "ui/controls/batch_rename_dialog.h"
 #include "ui/controls/browser_settings_view.h"
 #include "ui/controls/context_menu.h"
 #include "ui/controls/file_preview_view.h"
@@ -75,6 +77,7 @@
 #include <memory>
 #include <print>
 #include <string>
+#include <unordered_set>
 #include <utility>
 
 namespace {
@@ -350,6 +353,12 @@ namespace {
         m_browserDirty = true;
         m_surface->requestUpdate();
       });
+      m_batchRenamer.setChangedCallback([this] {
+        updateOperationProgress();
+        m_batchRenameDirty = true;
+        m_browserDirty = true;
+        m_surface->requestUpdate();
+      });
       for (auto* adapter : {&m_listAdapter, &m_gridAdapter}) {
         adapter->setCutPredicate([this](const files::Location& location) { return m_clipboard.isCut(location); });
         adapter->setActivationMode(m_activationMode);
@@ -416,6 +425,7 @@ namespace {
       m_emptyTrash.setChangedCallback({});
       m_restore.setChangedCallback({});
       m_renamer.setChangedCallback({});
+      m_batchRenamer.setChangedCallback({});
       m_creator.setChangedCallback({});
       m_browser.setChangedCallback({});
       m_miller.setChangedCallback({});
@@ -448,6 +458,7 @@ namespace {
       return true;
     }
 
+    bool renameBusy() const { return m_renamer.busy() || m_batchRenamer.busy(); }
     bool busy() const {
       return m_thumbnails.clearing()
           || m_preview.busy()
@@ -459,7 +470,7 @@ namespace {
           || m_restore.busy()
           || m_trash.busy()
           || m_emptyTrash.busy()
-          || m_renamer.busy()
+          || renameBusy()
           || m_creator.busy()
           || m_pendingFilePaste;
     }
@@ -473,6 +484,7 @@ namespace {
       m_restore.cancel();
       m_trash.cancel();
       m_renamer.cancel();
+      m_batchRenamer.cancel();
       m_creator.cancel();
     }
 
@@ -973,6 +985,11 @@ namespace {
         return;
       }
       const auto x = static_cast<float>(event.sx), y = static_cast<float>(event.sy);
+      if (dispatcher == &m_menuDispatcher && m_batchRenameDialog) {
+        m_batchRenameDialog->tooltipPointer(
+            x, y, event.type == PointerEvent::Type::Motion || event.type == PointerEvent::Type::Enter
+        );
+      }
       if (dispatcher == &m_dispatcher
           && event.type == PointerEvent::Type::Button
           && event.pressed
@@ -1693,7 +1710,7 @@ namespace {
           .canForward = browser().canForward(),
           .canUp = browser().canUp(),
           .operationsBusy = m_creator.busy()
-              || m_renamer.busy()
+              || renameBusy()
               || m_archives.busy()
               || m_transfers.busy()
               || m_restore.busy()
@@ -2020,7 +2037,11 @@ namespace {
         openEmptyTrash();
         break;
       case Action::Rename:
-        openFileRename(targets.front());
+        if (targets.size() == 1) {
+          openFileRename(targets.front());
+        } else {
+          openBatchRename(targets);
+        }
         break;
       case Action::CreateLink:
         openLinkDialog(targets.front());
@@ -2273,7 +2294,7 @@ namespace {
           add(Action::Restore);
           add(Action::DeletePermanently);
         }
-        if (request.targets.size() == 1 && !trash) {
+        if (!trash) {
           add(Action::Rename);
         }
         if (!trash) {
@@ -2403,7 +2424,7 @@ namespace {
           && !m_trash.busy()
           && !m_trash.canTrash()
           && !m_emptyTrash.pending()
-          && !m_renamer.busy()
+          && !renameBusy()
           && !m_creator.busy();
     }
     void openEmptyTrash(std::optional<std::vector<files::DirectoryEntry>> selection = std::nullopt) {
@@ -2546,8 +2567,14 @@ namespace {
     }
 
     void updateOperationProgress() {
-      if (m_archives.busy() || m_transfers.busy() || m_restore.busy() || m_trash.busy() || m_emptyTrash.busy()) {
+      if (m_batchRenamer.applying()
+          || m_archives.busy()
+          || m_transfers.busy()
+          || m_restore.busy()
+          || m_trash.busy()
+          || m_emptyTrash.busy()) {
         m_operationProgress.startRepeating(std::chrono::milliseconds(100), [this] {
+          m_batchRenameDirty = m_batchRenamer.applying();
           m_browserDirty = true;
           m_surface->requestUpdate();
         });
@@ -2935,6 +2962,89 @@ namespace {
       }
     }
 
+    void openBatchRename(const std::vector<files::DirectoryEntry>& targets) {
+      if (!actionState(Action::Rename, requestFor(targets)).enabled || !targetsCurrent(targets)) {
+        actionError("This selection cannot be renamed right now.");
+        return;
+      }
+      auto root = std::make_unique<BatchRenameDialog>(
+          targets.size(),
+          [this](files::BatchRenameOptions options) { (void)m_batchRenamer.preview(std::move(options)); },
+          [this] { (void)m_batchRenamer.apply(); },
+          [this] {
+            if (m_batchRenamer.applying()) {
+              m_batchRenamer.cancel();
+            } else {
+              dismissMenu();
+            }
+          },
+          [this] { dismissMenu(); }, [this] { m_clipboard.setClipboardText(m_batchRenamer.snapshot().report); },
+          [this] {
+            if (m_menuSurface) {
+              m_menuSurface->requestUpdate();
+            }
+          }
+      );
+      auto* dialog = root.get();
+      const float width = std::min(760.0F, static_cast<float>(m_surface->width()) - 32.0F);
+      const float height = std::min(560.0F, static_cast<float>(m_surface->height()) - 64.0F);
+      root->setSize(width, height);
+      showPopup(
+          std::move(root), nullptr, {(m_surface->width() - width) * 0.5F, (m_surface->height() - height) * 0.5F, 1, 1},
+          width, height
+      );
+      if (m_menuSurface) {
+        m_batchRenameDialog = dialog;
+        m_batchRenameReported = false;
+        m_dialogHeight = height;
+        m_dialogWidth = width;
+        m_menuDispatcher.setFocusChangeCallback([this](InputArea*, InputArea* focused) {
+          if (m_batchRenameDialog) {
+            m_batchRenameDialog->reveal(focused);
+            m_menuSurface->requestLayout();
+          }
+        });
+        m_menuDispatcher.setFocus(dialog->firstInput()->inputArea());
+        dialog->firstInput()->selectAll();
+        if (!m_batchRenamer.prepare(targets)) {
+          actionError("Another rename is still finishing.");
+          dismissMenu();
+        }
+      }
+    }
+    void syncBatchRename() {
+      const auto& snapshot = m_batchRenamer.snapshot();
+      if (m_batchRenameDialog) {
+        m_batchRenameDialog->sync(snapshot, m_batchRenamer.completed(), m_clipboard.available());
+        m_menuSurface->requestLayout();
+      }
+      if (snapshot.phase == files::BatchRenamePhase::Finished && !m_batchRenameReported) {
+        m_batchRenameReported = true;
+        const auto count = std::ranges::count(
+            *snapshot.results, files::BatchRenameOutcome::Renamed, &files::BatchRenameResult::outcome
+        );
+        std::string message = std::format("{} items renamed.", count);
+        const auto problem =
+            std::ranges::find_if(*snapshot.results, [](const auto& result) { return !result.error.empty(); });
+        if (problem != snapshot.results->end()) {
+          message += " " + problem->error;
+        }
+        actionError(std::move(message));
+        if (snapshot.parent == browser().model().snapshot().location) {
+          m_batchReveal.clear();
+          for (const auto& result : *snapshot.results) {
+            if (result.actual) {
+              m_batchReveal.push_back(*result.actual);
+            }
+          }
+          browser().refresh();
+          m_batchRevealContext = browser().contextSerial();
+        }
+      } else if (snapshot.phase == files::BatchRenamePhase::Error && !m_batchRenameDialog) {
+        actionError("Could not rename: " + snapshot.error);
+      }
+    }
+
     bool canFileRename(const files::DirectoryEntry& entry) const {
       return actionState(Action::Rename, requestFor({entry})).enabled;
     }
@@ -2986,7 +3096,7 @@ namespace {
     }
     void syncFileRename() {
       const auto& snapshot = m_renamer.snapshot();
-      if (m_renamer.busy()) {
+      if (renameBusy()) {
         return;
       }
       if (snapshot.status == files::RenameStatus::Succeeded) {
@@ -3986,7 +4096,7 @@ namespace {
           && !m_trash.busy()
           && !m_trash.canTrash()
           && !m_emptyTrash.pending()
-          && !m_renamer.busy()
+          && !renameBusy()
           && !m_creator.busy()
           && std::ranges::all_of(m_drag->entries, [this](const auto& target) {
                const auto* entry = browser().model().entry(target.id);
@@ -4139,7 +4249,7 @@ namespace {
           || m_trash.busy()
           || m_trash.canTrash()
           || m_emptyTrash.pending()
-          || m_renamer.busy()
+          || renameBusy()
           || m_creator.busy()) {
         return;
       }
@@ -5705,6 +5815,9 @@ namespace {
         status = m_creator.snapshot().status == files::CreateStatus::Creating
             ? std::format("Creating {}…", kind)
             : std::format("Preparing {} creation…", kind);
+      } else if (m_batchRenamer.busy()) {
+        status = m_batchRenamer.applying() ? std::format("Renaming… · {} items", m_batchRenamer.completed())
+                                           : "Checking rename preview…";
       } else if (m_renamer.busy()) {
         status = m_renamer.snapshot().status == files::RenameStatus::Renaming ? "Renaming…" : "Preparing rename…";
       } else if (m_restore.busy()) {
@@ -5804,12 +5917,17 @@ namespace {
         const files::GString size(g_format_size_full(*freeBytes, G_FORMAT_SIZE_IEC_UNITS));
         m_freeSpace->setText(std::format("{} free", size.get()));
       }
-      const bool cancellable =
-          m_archives.busy() || m_transfers.busy() || m_restore.busy() || m_trash.busy() || m_emptyTrash.busy();
+      const bool cancellable = m_batchRenamer.applying()
+          || m_archives.busy()
+          || m_transfers.busy()
+          || m_restore.busy()
+          || m_trash.busy()
+          || m_emptyTrash.busy();
       m_cancelOperation->setVisible(cancellable);
       m_cancelOperation->setParticipatesInLayout(cancellable);
       m_cancelOperation->setTooltip(
-          m_restore.busy()          ? "Cancel restoration"
+          m_batchRenamer.applying() ? "Cancel batch rename"
+              : m_restore.busy()    ? "Cancel restoration"
               : m_emptyTrash.busy() ? (m_selectedTrashDelete ? "Cancel deletion" : "Cancel emptying Trash")
               : m_trash.busy()      ? "Cancel move to Trash"
                                     : "Cancel transfer"
@@ -5847,6 +5965,30 @@ namespace {
         const auto found = std::ranges::find(model.rows(), *reveal);
         if (found != model.rows().end()) {
           m_list->scrollToIndex(static_cast<std::size_t>(found - model.rows().begin()));
+        }
+      }
+      if (!m_batchReveal.empty() && snapshot.status != files::DirectoryStatus::Loading) {
+        if (m_batchRevealContext == browser().contextSerial()) {
+          std::unordered_set<std::string> uris;
+          for (const auto& target : m_batchReveal) {
+            uris.insert(target.uri());
+          }
+          std::vector<files::EntryId> ids;
+          for (const auto id : model.rows()) {
+            if (const auto* entry = model.entry(id); entry && uris.contains(entry->location.uri())) {
+              ids.push_back(id);
+            }
+          }
+          browser().model().replaceSelection(ids);
+          if (!ids.empty()) {
+            const auto found = std::ranges::find(model.rows(), ids.front());
+            m_list->scrollToIndex(static_cast<std::size_t>(found - model.rows().begin()));
+          }
+        }
+        // Staging emits several monitor events. Keep reconciling while the results
+        // are open, then leave the final selection under normal user control.
+        if (!m_batchRenameDialog || m_batchRevealContext != browser().contextSerial()) {
+          m_batchReveal.clear();
         }
       }
       if (m_revealTarget && snapshot.status != files::DirectoryStatus::Loading) {
@@ -5980,6 +6122,9 @@ namespace {
       }
       if (std::exchange(m_creationDirty, false)) {
         syncCreation();
+      }
+      if (std::exchange(m_batchRenameDirty, false)) {
+        syncBatchRename();
       }
       if (std::exchange(m_renameDirty, false)) {
         syncFileRename();
@@ -6610,6 +6755,7 @@ namespace {
                        .visible = false,
                        .participatesInLayout = false,
                        .onClick = [this] {
+                         m_batchRenamer.cancel();
                          m_archives.cancel();
                          m_transfers.cancel();
                          m_restore.cancel();
@@ -6833,6 +6979,13 @@ namespace {
           m_dispatcher.setFocus(m_list->focusArea());
         }
       }
+      if (m_batchRenameDialog) {
+        m_batchRenamer.cancel();
+        m_batchRenameDialog = nullptr;
+        if (m_list) {
+          m_dispatcher.setFocus(m_list->focusArea());
+        }
+      }
       if (m_createParent || m_linkDialog) {
         m_creator.cancel();
         if (m_list != nullptr) {
@@ -6907,6 +7060,11 @@ namespace {
               static_cast<std::uint32_t>(std::min(m_dialogWidth, static_cast<float>(m_surface->width()) - 32.0F));
           LayoutConstraints constraints;
           constraints.setExactWidth(static_cast<float>(width));
+          if (m_batchRenameDialog) {
+            m_batchRenameDialog->setSize(
+                static_cast<float>(width), std::min(560.0F, static_cast<float>(m_surface->height()) - 64.0F)
+            );
+          }
           m_dialogHeight = m_menuRoot->measure(m_menuSurface->renderTarget().renderer(), constraints).height;
           const auto height = static_cast<std::uint32_t>(
               std::ceil(std::min(*m_dialogHeight, static_cast<float>(m_surface->height()) - 64.0F))
@@ -6961,6 +7119,9 @@ namespace {
             m_menuSurface->renderTarget().renderer(),
             {0, 0, static_cast<float>(m_menuSurface->width()), static_cast<float>(m_menuSurface->height())}
         );
+        if (m_batchRenameDialog) {
+          m_batchRenameDialog->syncTooltip(m_menuSurface->renderTarget().renderer());
+        }
         if (m_quickPreview) {
           m_quickPreview->sync(
               m_preview.snapshot(), static_cast<float>(m_menuSurface->width()),
@@ -7318,6 +7479,12 @@ namespace {
     Button* m_emptyTrashConfirm = nullptr;
     bool m_trashDirty = false;
     files::RenameService m_renamer;
+    files::BatchRenameService m_batchRenamer;
+    BatchRenameDialog* m_batchRenameDialog = nullptr;
+    bool m_batchRenameDirty = false;
+    bool m_batchRenameReported = false;
+    std::vector<files::Location> m_batchReveal;
+    std::uint64_t m_batchRevealContext = 0;
     files::CreateService m_creator;
     files::TemplateCatalog m_templates;
     Timer m_operationProgress;
