@@ -112,6 +112,7 @@ app_sources = files(
   'src/browser/preview_service.cpp',
   'src/ui/controls/file_preview_view.cpp',
   'src/ui/controls/link_dialog.cpp',
+  'src/ui/controls/permission_editor.cpp',
   'src/ui/controls/batch_rename_dialog.cpp',
   'src/config/view_preference_writer.cpp',
   'src/platform/file_launcher.cpp',
@@ -180,6 +181,11 @@ rename_service = declare_dependency(
   dependencies: filesystem_service,
 )
 
+permission_service = declare_dependency(
+  sources: files('src/operations/permission_service.cpp'),
+  dependencies: filesystem_service,
+)
+
 batch_rename_service = declare_dependency(
   sources: files('src/operations/batch_rename_service.cpp'),
   dependencies: filesystem_service,
@@ -208,7 +214,7 @@ app = executable('noctalia-files',
   build_info,
   completions,
   include_directories: include_directories('src', '.'),
-  dependencies: ui_dependencies + [browser_model, settings_service, state_service, places_service, transfer_service, rename_service, batch_rename_service, create_service, trash_service, archive_service],
+  dependencies: ui_dependencies + [browser_model, settings_service, state_service, places_service, transfer_service, rename_service, batch_rename_service, permission_service, create_service, trash_service, archive_service],
   install: true,
 )
 
@@ -266,6 +272,8 @@ if build_tests
   test('rename-service', rename_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   batch_rename_test = executable('batch-rename-service-test', 'tests/library_test_setup.cpp', 'tests/batch_rename_service_test.cpp', dependencies: batch_rename_service, override_options: ['b_ndebug=false'])
   test('batch-rename-service', batch_rename_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
+  permission_test = executable('permission-service-test', 'tests/library_test_setup.cpp', 'tests/permission_service_test.cpp', dependencies: permission_service, override_options: ['b_ndebug=false'])
+  test('permission-service', permission_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   transfer_test = executable('transfer-service-test', 'tests/library_test_setup.cpp', 'tests/transfer_service_test.cpp', dependencies: transfer_service, override_options: ['b_ndebug=false'])
   test('transfer-service', transfer_test, timeout: 90, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
   places_test = executable('places-test', 'tests/library_test_setup.cpp', 'tests/places_test.cpp', dependencies: places_service, override_options: ['b_ndebug=false'])

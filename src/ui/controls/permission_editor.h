@@ -1,0 +1,30 @@
+#pragma once
+
+#include "operations/permission_service.h"
+#include "ui/controls/flex.h"
+
+#include <array>
+
+class Input;
+class Toggle;
+class Label;
+
+class PermissionEditor final : public Flex {
+public:
+  explicit PermissionEditor(std::function<void()> edited);
+  void sync(const files::PermissionSnapshot& snapshot);
+  bool canApply() const;
+  files::PermissionEdit edit() const;
+  const Node* messageNode() const;
+
+private:
+  void changed();
+  std::uint32_t mode() const;
+  std::array<Toggle*, 12> m_bits{};
+  Input *m_owner = nullptr, *m_group = nullptr;
+  Label *m_mode = nullptr, *m_reason = nullptr, *m_message = nullptr, *m_ids = nullptr;
+  files::PermissionSnapshot m_snapshot;
+  std::string m_initialOwner, m_initialGroup;
+  bool m_syncing = false;
+  std::function<void()> m_edited;
+};

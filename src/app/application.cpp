@@ -31,6 +31,7 @@
 #include "operations/batch_rename_service.h"
 #include "operations/create_service.h"
 #include "operations/empty_trash_service.h"
+#include "operations/permission_service.h"
 #include "operations/rename_service.h"
 #include "operations/restore_service.h"
 #include "operations/transfer_service.h"
@@ -55,6 +56,7 @@
 #include "ui/controls/link_dialog.h"
 #include "ui/controls/miller_view.h"
 #include "ui/controls/name_editor.h"
+#include "ui/controls/permission_editor.h"
 #include "ui/controls/scroll_view.h"
 #include "ui/controls/select_popup_context.h"
 #include "ui/controls/tooltip_presenter.h"
@@ -353,6 +355,11 @@ namespace {
         m_browserDirty = true;
         m_surface->requestUpdate();
       });
+      m_permissions.setChangedCallback([this] {
+        m_permissionDirty = true;
+        m_browserDirty = true;
+        m_surface->requestUpdate();
+      });
       m_batchRenamer.setChangedCallback([this] {
         updateOperationProgress();
         m_batchRenameDirty = true;
@@ -426,6 +433,7 @@ namespace {
       m_restore.setChangedCallback({});
       m_renamer.setChangedCallback({});
       m_batchRenamer.setChangedCallback({});
+      m_permissions.setChangedCallback({});
       m_creator.setChangedCallback({});
       m_browser.setChangedCallback({});
       m_miller.setChangedCallback({});
@@ -458,7 +466,7 @@ namespace {
       return true;
     }
 
-    bool renameBusy() const { return m_renamer.busy() || m_batchRenamer.busy(); }
+    bool renameBusy() const { return m_renamer.busy() || m_batchRenamer.busy() || m_permissions.busy(); }
     bool busy() const {
       return m_thumbnails.clearing()
           || m_preview.busy()
@@ -485,6 +493,7 @@ namespace {
       m_trash.cancel();
       m_renamer.cancel();
       m_batchRenamer.cancel();
+      m_permissions.cancel();
       m_creator.cancel();
     }
 
@@ -2409,7 +2418,8 @@ namespace {
                     .size = std::nullopt,
                     .modifiedSeconds = std::nullopt,
                     .etag = std::nullopt,
-                    .parentDisplayName = {}}}
+                    .parentDisplayName = {}}},
+                  true
               );
             }
           },
@@ -3096,7 +3106,7 @@ namespace {
     }
     void syncFileRename() {
       const auto& snapshot = m_renamer.snapshot();
-      if (renameBusy()) {
+      if (m_renamer.busy()) {
         return;
       }
       if (snapshot.status == files::RenameStatus::Succeeded) {
@@ -3809,15 +3819,44 @@ namespace {
           }
       );
     }
-    void showProperties(const std::vector<files::DirectoryEntry>& targets) {
-      const float width = std::min(440.0F, static_cast<float>(m_surface->width()) - 32.0F);
-      auto body =
-          ui::scrollView({.viewportPaddingH = 0.0F, .viewportPaddingV = 0.0F, .fillWidth = true, .flexGrow = 1.0F});
+    void syncPermissions() {
+      const auto& snapshot = m_permissions.snapshot();
+      if (m_permissionEditor) {
+        m_permissionEditor->sync(snapshot);
+        m_permissionSave->setEnabled(m_permissionEditor->canApply() && !actionContext().operationsBusy);
+        m_permissionSave->setText(snapshot.phase == files::PermissionPhase::Saving ? "Saving…" : "Apply");
+        if (snapshot.error && snapshot.phase == files::PermissionPhase::Ready) {
+          m_permissionTabs->setSelectedIndex(1);
+          m_permissionScroll->requestScrollIntoView(m_permissionEditor->messageNode());
+        }
+        m_menuSurface->requestLayout();
+      }
+      if (snapshot.phase == files::PermissionPhase::Ready && snapshot.applied) {
+        browser().refresh();
+      }
+      if (!m_permissions.busy() && !snapshot.message.empty() && (!m_permissionEditor || snapshot.applied)) {
+        actionError(snapshot.message);
+      }
+    }
+    void showProperties(const std::vector<files::DirectoryEntry>& targets, bool captureCurrentLocation = false) {
+      if (m_permissions.busy()) {
+        actionError("A Properties request is still finishing.");
+        return;
+      }
+      const bool editable = targets.size() == 1;
+      const float width = std::min(editable ? 600.0F : 440.0F, static_cast<float>(m_surface->width()) - 32.0F);
+      ScrollView* scroll = nullptr;
+      auto body = ui::scrollView(
+          {.out = &scroll, .viewportPaddingH = 0.0F, .viewportPaddingV = 0.0F, .fillWidth = true, .flexGrow = 1.0F}
+      );
+      body->setReserveScrollbarGutter(true);
       body->content()->setAlign(FlexAlign::Stretch);
       body->content()->setGap(Style::spaceMd);
+      auto general = ui::column({.align = FlexAlign::Stretch, .gap = Style::spaceMd});
+      auto* generalGroup = general.get();
       const auto literal = [](Label& label) { label.setUseMarkup(false); };
       const auto field = [&](const std::string& name, const std::string& value) {
-        body->content()->addChild(
+        general->addChild(
             ui::row(
                 {.align = FlexAlign::Start, .gap = Style::spaceMd},
                 ui::label(
@@ -3837,7 +3876,7 @@ namespace {
         const auto& entry = targets.front();
         auto icon = std::make_unique<files::FileIcon>(m_icons, 48.0F);
         icon->bind(entry.icon, colorSpecFromRole(ColorRole::OnSurface));
-        body->content()->addChild(
+        general->addChild(
             ui::row(
                 {.align = FlexAlign::Center, .gap = Style::spaceMd}, std::move(icon),
                 ui::column(
@@ -3859,7 +3898,7 @@ namespace {
                 )
             )
         );
-        body->content()->addChild(ui::separator({}));
+        general->addChild(ui::separator({}));
         field("Location", files::locationEditText(entry.location));
         if (entry.location.isTrash()) {
           field("Original", entry.trash.original ? files::locationEditText(*entry.trash.original) : "Unknown");
@@ -3881,6 +3920,22 @@ namespace {
       } else {
         field("Selection", std::format("{} items", targets.size()));
       }
+      body->content()->addChild(std::move(general));
+      PermissionEditor* editor = nullptr;
+      Segmented* tabs = nullptr;
+      Button* save = nullptr;
+      if (editable) {
+        auto permissions = std::make_unique<PermissionEditor>([this] {
+          if (m_permissionEditor && m_permissionSave) {
+            m_permissionSave->setEnabled(m_permissionEditor->canApply() && !actionContext().operationsBusy);
+          }
+          m_menuSurface->requestLayout();
+        });
+        editor = permissions.get();
+        permissions->setVisible(false);
+        permissions->setParticipatesInLayout(false);
+        body->content()->addChild(std::move(permissions));
+      }
       auto root = ui::column(
           {.align = FlexAlign::Stretch,
            .gap = Style::spaceMd,
@@ -3901,18 +3956,81 @@ namespace {
                    .onClick = [this] { dismissMenu(); }}
               )
           ),
+          ui::segmented(
+              {.out = &tabs,
+               .options =
+                   std::vector<ui::SegmentedOption>{
+                       {.label = "General", .glyph = {}, .tooltip = {}},
+                       {.label = "Permissions", .glyph = {}, .tooltip = {}}
+                   },
+               .equalSegmentWidths = true,
+               .visible = editable,
+               .participatesInLayout = editable,
+               .onChange =
+                   [this, generalGroup, editor, scroll](std::size_t index) {
+                     generalGroup->setVisible(index == 0);
+                     generalGroup->setParticipatesInLayout(index == 0);
+                     editor->setVisible(index == 1);
+                     editor->setParticipatesInLayout(index == 1);
+                     scroll->requestScrollToOffset(0);
+                     m_menuSurface->requestLayout();
+                   }}
+          ),
           std::move(body)
       );
+      if (editable) {
+        root->addChild(
+            ui::row(
+                {.align = FlexAlign::Center, .justify = FlexJustify::End, .gap = Style::spaceSm},
+                ui::button({.text = "Close", .variant = ButtonVariant::Ghost, .onClick = [this] { dismissMenu(); }}),
+                ui::button(
+                    {.out = &save,
+                     .text = "Apply",
+                     .enabled = false,
+                     .variant = ButtonVariant::Primary,
+                     .onClick = [this] {
+                       if (m_permissionEditor && !actionContext().operationsBusy) {
+                         (void)m_permissions.apply(m_permissionEditor->edit());
+                       }
+                     }}
+                )
+            )
+        );
+      }
       UiPhaseScope phase(UiPhase::Layout);
-      auto& renderer = m_surface->renderTarget().renderer();
       LayoutConstraints constraints;
       constraints.setExactWidth(width);
-      const float height =
-          std::min(root->measure(renderer, constraints).height, static_cast<float>(m_surface->height()) - 64.0F);
+      const float height = editable ? std::min(600.0F, static_cast<float>(m_surface->height()) - 64.0F)
+                                    : std::min(
+                                          root->measure(m_surface->renderTarget().renderer(), constraints).height,
+                                          static_cast<float>(m_surface->height()) - 64.0F
+                                      );
+      if (editable) {
+        root->setSize(width, height);
+      }
       showPopup(
           std::move(root), nullptr, {(m_surface->width() - width) * 0.5F, (m_surface->height() - height) * 0.5F, 1, 1},
           width, height
       );
+      if (m_menuSurface && editable) {
+        m_permissionEditor = editor;
+        m_permissionTabs = tabs;
+        m_permissionSave = save;
+        m_permissionScroll = scroll;
+        m_dialogWidth = width;
+        m_dialogHeight = height;
+        m_menuDispatcher.setFocusChangeCallback([this](InputArea*, InputArea* focused) {
+          if (m_permissionScroll) {
+            m_permissionScroll->requestScrollIntoView(focused);
+            m_menuSurface->requestLayout();
+          }
+        });
+        if (captureCurrentLocation) {
+          (void)m_permissions.prepare(targets.front().location);
+        } else {
+          (void)m_permissions.prepare(targets.front());
+        }
+      }
     }
 
     void syncTransferConflict() {
@@ -5695,6 +5813,9 @@ namespace {
     }
 
     void syncBrowser() {
+      if (m_permissionEditor) {
+        m_permissionSave->setEnabled(m_permissionEditor->canApply() && !actionContext().operationsBusy);
+      }
       if (m_typeaheadContext != browser().contextSerial() || !browser().model().selectionAvailable()) {
         clearTypeahead();
       }
@@ -5815,6 +5936,9 @@ namespace {
         status = m_creator.snapshot().status == files::CreateStatus::Creating
             ? std::format("Creating {}…", kind)
             : std::format("Preparing {} creation…", kind);
+      } else if (m_permissions.busy()) {
+        status = m_permissions.snapshot().phase == files::PermissionPhase::Saving ? "Saving permissions…"
+                                                                                  : "Reading permissions…";
       } else if (m_batchRenamer.busy()) {
         status = m_batchRenamer.applying() ? std::format("Renaming… · {} items", m_batchRenamer.completed())
                                            : "Checking rename preview…";
@@ -6122,6 +6246,9 @@ namespace {
       }
       if (std::exchange(m_creationDirty, false)) {
         syncCreation();
+      }
+      if (std::exchange(m_permissionDirty, false)) {
+        syncPermissions();
       }
       if (std::exchange(m_batchRenameDirty, false)) {
         syncBatchRename();
@@ -6979,6 +7106,16 @@ namespace {
           m_dispatcher.setFocus(m_list->focusArea());
         }
       }
+      if (m_permissionEditor) {
+        m_permissions.cancel();
+        m_permissionEditor = nullptr;
+        m_permissionTabs = nullptr;
+        m_permissionSave = nullptr;
+        m_permissionScroll = nullptr;
+        if (m_list) {
+          m_dispatcher.setFocus(m_list->focusArea());
+        }
+      }
       if (m_batchRenameDialog) {
         m_batchRenamer.cancel();
         m_batchRenameDialog = nullptr;
@@ -7060,6 +7197,11 @@ namespace {
               static_cast<std::uint32_t>(std::min(m_dialogWidth, static_cast<float>(m_surface->width()) - 32.0F));
           LayoutConstraints constraints;
           constraints.setExactWidth(static_cast<float>(width));
+          if (m_permissionEditor) {
+            m_menuRoot->setSize(
+                static_cast<float>(width), std::min(600.0F, static_cast<float>(m_surface->height()) - 64.0F)
+            );
+          }
           if (m_batchRenameDialog) {
             m_batchRenameDialog->setSize(
                 static_cast<float>(width), std::min(560.0F, static_cast<float>(m_surface->height()) - 64.0F)
@@ -7480,6 +7622,12 @@ namespace {
     bool m_trashDirty = false;
     files::RenameService m_renamer;
     files::BatchRenameService m_batchRenamer;
+    files::PermissionService m_permissions;
+    PermissionEditor* m_permissionEditor = nullptr;
+    Segmented* m_permissionTabs = nullptr;
+    ScrollView* m_permissionScroll = nullptr;
+    Button* m_permissionSave = nullptr;
+    bool m_permissionDirty = false;
     BatchRenameDialog* m_batchRenameDialog = nullptr;
     bool m_batchRenameDirty = false;
     bool m_batchRenameReported = false;
