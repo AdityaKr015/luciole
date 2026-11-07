@@ -909,10 +909,10 @@ namespace {
     }
 
     float sidebarWidth() const {
-      return m_showSidebar
-          ? static_cast<float>(std::min(m_sidebarWidth, sidebarMaximumWidth())) + kSidebarHandleWidth + kWorkspaceInset
-          : 0.0F;
+      return m_showSidebar ? static_cast<float>(std::min(m_sidebarWidth, sidebarMaximumWidth())) + kWorkspaceInset
+                           : 0.0F;
     }
+    float sidebarControlWidth() const { return m_showSidebar ? sidebarWidth() - kSidebarGapInset : 0.0F; }
     void pumpJobs() {
       if (m_root) {
         syncTransferConflict();
@@ -5477,6 +5477,7 @@ namespace {
     }
 
     static constexpr float kSidebarHandleWidth = 6.0F;
+    static constexpr float kSidebarGapInset = (kWorkspaceInset - kSidebarHandleWidth) * 0.5F;
 
     void setSidebarVisible(bool visible, bool persist = true) {
       if (visible == m_showSidebar) {
@@ -5505,8 +5506,8 @@ namespace {
 
     int sidebarMaximumWidth() const {
       return std::clamp(
-          static_cast<int>(m_surface->width()) - 320 - static_cast<int>(kSidebarHandleWidth + kWorkspaceInset * 3),
-          files::kMinSidebarWidth, files::kMaxSidebarWidth
+          static_cast<int>(m_surface->width()) - 320 - static_cast<int>(kWorkspaceInset * 3), files::kMinSidebarWidth,
+          files::kMaxSidebarWidth
       );
     }
 
@@ -5676,7 +5677,13 @@ namespace {
         const float edge = header->x() + (Style::rtl() ? 0.0F : header->width()) - m_detailsOffset;
         handle->arrange(renderer, {edge - 4.0F, 0, 8.0F, m_detailsHeaderViewport->height()});
         auto* line = m_columnResizeLines[index];
-        line->setVisible(handle->hovered() || (m_columnResize && m_columnResize->index == index));
+        const bool active = handle->hovered() || (m_columnResize && m_columnResize->index == index);
+        const bool followed = std::ranges::any_of(m_columnOrder, [this, header](const auto column) {
+          const auto* next = columnHeader(column);
+          return next->visible() && (Style::rtl() ? next->x() < header->x() : next->x() > header->x());
+        });
+        line->setVisible(followed || active);
+        line->setColor(colorSpecFromRole(active ? ColorRole::Primary : ColorRole::OnSurfaceVariant));
         line->arrange(renderer, {3.5F, 4.0F, 1.0F, std::max(0.0F, handle->height() - 8.0F)});
       }
     }
@@ -6627,6 +6634,13 @@ namespace {
         }
         m_titlebar->setVisible(clientHeader);
         m_titlebar->setParticipatesInLayout(clientHeader);
+        const bool details = m_viewMode == files::ViewMode::List;
+        // List headers own their vertical insets so their labels and resize
+        // markers are centered between the pane edge and the header rule.
+        m_paneContentFrame->setPadding(
+            details && !m_paneHeader->visible() ? 0.0F : Style::radiusMd, Style::radiusMd, 0.0F, Style::radiusMd
+        );
+        m_filePane->setPadding(details ? 0.0F : Style::spaceSm, Style::spaceSm, Style::spaceSm, Style::spaceSm);
         m_root->arrange(
             renderer, LayoutRect{0, 0, static_cast<float>(m_surface->width()), static_cast<float>(m_surface->height())}
         );
@@ -6730,6 +6744,7 @@ namespace {
           ui::input(
               {.out = &m_location,
                .placeholder = "Location",
+               .fontSize = Style::fontSizeCaption,
                .frameVisible = false,
                .minLayoutWidth = 72.0F,
                .flexGrow = 1.0F,
@@ -6773,6 +6788,7 @@ namespace {
           ui::input(
               {.out = &m_filterInput,
                .placeholder = "Search files…",
+               .fontSize = Style::fontSizeCaption,
                .controlHeight = Style::controlHeight,
                .horizontalPadding = 0.0F,
                .clearButtonEnabled = true,
@@ -6932,7 +6948,9 @@ namespace {
           ui::column(
               {.out = &m_listHeader, .align = FlexAlign::Stretch},
               ui::row(
-                  {.height = 32.0F},
+                  {.align = FlexAlign::Center,
+                   .paddingV = Style::radiusMd,
+                   .height = Style::controlHeightSm + 2.0F * Style::radiusMd},
                   ui::row(
                       {.out = &m_detailsHeaderViewport,
                        .align = FlexAlign::Stretch,
@@ -7082,7 +7100,8 @@ namespace {
                .clipChildren = true,
                .participatesInLayout = false},
               ui::column(
-                  {.align = FlexAlign::Stretch,
+                  {.out = &m_paneContentFrame,
+                   .align = FlexAlign::Stretch,
                    .flexGrow = 1.0F,
                    .configure =
                        [](Flex& frame) { frame.setPadding(Style::radiusMd, Style::radiusMd, 0.0F, Style::radiusMd); }},
@@ -7172,7 +7191,7 @@ namespace {
       );
       m_root = m_detachedRoot.get();
       m_detachedSidebar = ui::row(
-          {.align = FlexAlign::Stretch}, m_places->parent()->removeChild(m_places),
+          {.align = FlexAlign::Stretch, .gap = kSidebarGapInset}, m_places->parent()->removeChild(m_places),
           m_sidebarResize->parent()->removeChild(m_sidebarResize)
       );
       m_sidebarBundle = m_detachedSidebar.get();
@@ -7223,11 +7242,11 @@ namespace {
         handle->setOnEnter([this](const auto&) { m_surface->requestLayout(); });
         handle->setOnLeave([this] { m_surface->requestLayout(); });
         handle->addChild(
-            ui::box(
+            ui::separator(
                 {.out = &m_columnResizeLines[index],
-                 .fill = colorSpecFromRole(ColorRole::Primary),
+                 .orientation = SeparatorOrientation::VerticalRule,
                  .participatesInLayout = false,
-                 .configure = [](Box& line) { line.setHitTestVisible(false); }}
+                 .configure = [](Separator& line) { line.setHitTestVisible(false); }}
             )
         );
         m_columnResizeHandles[index] = static_cast<InputArea*>(m_detailsHeaderViewport->addChild(std::move(handle)));
@@ -8014,6 +8033,7 @@ namespace {
 
     InputDispatcher m_dispatcher;
     Flex* m_titlebar = nullptr;
+    Flex* m_paneContentFrame = nullptr;
     Input* m_location = nullptr;
     Input* m_filterInput = nullptr;
     Flex* m_searchArea = nullptr;
@@ -8062,7 +8082,7 @@ namespace {
     files::DetailsColumnWidths m_columnWidths = files::kDefaultDetailsColumnWidths;
     std::optional<ColumnResize> m_columnResize;
     std::array<InputArea*, 4> m_columnResizeHandles{};
-    std::array<Box*, 4> m_columnResizeLines{};
+    std::array<Separator*, 4> m_columnResizeLines{};
     Flex* m_detailsHeaderViewport = nullptr;
     Box* m_detailsScrollHost = nullptr;
     Scrollbar* m_detailsScrollbar = nullptr;
@@ -9429,9 +9449,7 @@ namespace {
       const float top = kTabStripHeight + kNavigationToolbarHeight + kWorkspaceInset;
       const float bodyHeight = std::max(1.0F, height - top - kWorkspaceInset);
       const float sidebar = active.sidebarWidth();
-      active.sidebar()->arrange(
-          renderer, {kWorkspaceInset, top, std::max(0.0F, sidebar - kWorkspaceInset), bodyHeight}
-      );
+      active.sidebar()->arrange(renderer, {kWorkspaceInset, top, active.sidebarControlWidth(), bodyHeight});
       const float left = kWorkspaceInset + sidebar;
       const float right = width - kWorkspaceInset;
       const bool split = visible.size() == 2;
