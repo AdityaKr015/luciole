@@ -87,6 +87,8 @@
 
 namespace {
   constexpr float kWorkspaceInset = Style::spaceSm;
+  constexpr float kTabStripHeight = Style::controlHeightSm + 2.0F * Style::spaceXs;
+  constexpr float kNavigationToolbarHeight = 54.0F;
   constexpr float kWorkspaceRadius = Style::radiusXl;
   constexpr float kMinimumPaneWidth = 160.0F;
   constexpr float kMinimumPreviewWidth = 208.0F;
@@ -8124,6 +8126,7 @@ namespace {
       std::vector<std::pair<files::TabId, Button*>> buttons;
       std::map<files::TabId, std::pair<Button*, ColorRole>> closeButtons;
       files::TabId revealedTab = 0;
+      std::uint32_t revealedTabWidth = 0;
       std::vector<std::pair<files::TabId, std::string>> labels;
       std::vector<files::TabId> mounted;
       files::TabId chromeOwner = 0;
@@ -8612,7 +8615,7 @@ namespace {
         if (event.type == PointerEvent::Type::Button && !event.pressed && event.button == BTN_LEFT) {
           const auto tab = *std::exchange(host->pressedTab, std::nullopt);
           if (host->tabDrag) {
-            if (y > 90) {
+            if (y > kTabStripHeight + kNavigationToolbarHeight - Style::spaceXs) {
               defer(host->id, tab, WorkspaceCommand::Detach);
             } else {
               std::size_t index = 0;
@@ -9131,7 +9134,7 @@ namespace {
            .fillHeight = true,
            .flexGrow = 1}
       );
-      auto tabs = ui::row({.align = FlexAlign::Center, .gap = Style::spaceXs, .height = 40.0F});
+      auto tabs = ui::row({.align = FlexAlign::Center, .gap = Style::spaceXs, .height = kTabStripHeight});
       scroll->content()->setDirection(FlexDirection::Horizontal);
       const auto windowId = host.id;
       auto tabPalette = Button::defaultPalette(ButtonVariant::Ghost);
@@ -9142,12 +9145,12 @@ namespace {
         auto tab = ui::button(
             {.out = &button,
              .text = label,
-             .controlHeight = 38.0F,
+             .controlHeight = Style::controlHeightSm,
              .contentAlign = ButtonContentAlign::Start,
              .variant = ButtonVariant::Ghost,
              .customPalette = tabPalette,
-             .minWidth = 112.0F,
-             .maxWidth = 220.0F,
+             .minWidth = 96.0F,
+             .maxWidth = 200.0F,
              .paddingV = 0.0F,
              .paddingH = Style::spaceXs,
              .gap = Style::spaceXs,
@@ -9166,10 +9169,14 @@ namespace {
             ui::button(
                 {.out = &close,
                  .glyph = "x",
-                 .controlHeight = Style::controlHeightSm,
+                 .glyphSize = 14.0F,
+                 .controlHeight = 24.0F,
                  .variant = ButtonVariant::Ghost,
                  .customPalette = closeTabPalette(foreground),
                  .tooltip = "Close tab",
+                 .minWidth = 24.0F,
+                 .maxWidth = 24.0F,
+                 .padding = 0.0F,
                  .onClick = [this, windowId, id] { defer(windowId, id, WorkspaceCommand::Close); },
                  .configure = [](Button& button) { button.setZIndex(2); }}
             )
@@ -9181,6 +9188,7 @@ namespace {
           ui::button(
               {.out = &host.newTabButton,
                .glyph = "plus",
+               .controlHeight = Style::controlHeightSm,
                .variant = ButtonVariant::Ghost,
                .tooltip = "New tab (Ctrl+T)",
                .onClick = [this, windowId] {
@@ -9196,12 +9204,13 @@ namespace {
            .gap = Style::spaceXs,
            .paddingH = Style::spaceSm,
            .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
-           .height = 40.0F,
+           .height = kTabStripHeight,
            .participatesInLayout = false},
           std::move(scroll),
           ui::button(
               {.out = &host.splitButton,
                .glyph = "layout-columns",
+               .controlHeight = Style::controlHeightSm,
                .selected = window.secondary.has_value(),
                .variant = ButtonVariant::Ghost,
                .tooltip = "Split view (F3)",
@@ -9213,21 +9222,26 @@ namespace {
       if (!host.surface.serverDecorated() && !host.surface.fullscreen()) {
         strip->addChild(
             ui::button(
-                {.glyph = "minus", .variant = ButtonVariant::Ghost, .tooltip = "Minimize window", .onClick = [&host] {
-                   host.surface.minimize();
-                 }}
+                {.glyph = "minus",
+                 .controlHeight = Style::controlHeightSm,
+                 .variant = ButtonVariant::Ghost,
+                 .tooltip = "Minimize window",
+                 .onClick = [&host] { host.surface.minimize(); }}
             )
         );
         strip->addChild(
             ui::button(
-                {.glyph = "square", .variant = ButtonVariant::Ghost, .tooltip = "Toggle maximized", .onClick = [&host] {
-                   host.surface.toggleMaximized();
-                 }}
+                {.glyph = "square",
+                 .controlHeight = Style::controlHeightSm,
+                 .variant = ButtonVariant::Ghost,
+                 .tooltip = "Toggle maximized",
+                 .onClick = [&host] { host.surface.toggleMaximized(); }}
             )
         );
         strip->addChild(
             ui::button(
                 {.glyph = "x",
+                 .controlHeight = Style::controlHeightSm,
                  .variant = ButtonVariant::Ghost,
                  .tooltip = "Close window (Ctrl+Shift+W)",
                  .onClick = [&host] { host.surface.close(); }}
@@ -9381,27 +9395,28 @@ namespace {
           close->setCustomPalette(closeTabPalette(foreground));
           role = foreground;
         }
-        if (tab == window.selected && host.revealedTab != tab) {
+        if (tab == window.selected && (host.revealedTab != tab || host.revealedTabWidth != host.surface.width())) {
           host.tabScroll->requestScrollIntoView(tab == window.tabs.back() ? host.newTabButton : button);
           host.revealedTab = tab;
+          host.revealedTabWidth = host.surface.width();
         }
       }
       auto& renderer = host.surface.renderTarget().renderer();
       const auto width = static_cast<float>(host.surface.width()), height = static_cast<float>(host.surface.height());
       host.root->arrange(renderer, {0, 0, width, height});
-      host.strip->arrange(renderer, {0, 0, width, 40});
+      host.strip->arrange(renderer, {0, 0, width, kTabStripHeight});
       host.toolbarNode->setVisible(!active.overlay());
       active.sidebar()->setVisible(!active.overlay());
       if (active.overlay()) {
         host.divider->setVisible(false);
         host.previewDivider->setVisible(false);
         active.setPreviewBounds(std::nullopt);
-        active.prepare({0, 40, width, height - 40}, true, host.root.get());
+        active.prepare({0, kTabStripHeight, width, height - kTabStripHeight}, true, host.root.get());
         syncTooltip(host);
         return;
       }
-      host.toolbarNode->arrange(renderer, {0, 40, width, 54});
-      const float top = 94 + kWorkspaceInset;
+      host.toolbarNode->arrange(renderer, {0, kTabStripHeight, width, kNavigationToolbarHeight});
+      const float top = kTabStripHeight + kNavigationToolbarHeight + kWorkspaceInset;
       const float bodyHeight = std::max(1.0F, height - top - kWorkspaceInset);
       const float sidebar = active.sidebarWidth();
       active.sidebar()->arrange(
