@@ -61,16 +61,11 @@ namespace files {
     InvertSelection,
     SelectPattern,
     ClearSelection,
-    SingleClick,
-    DoubleClick,
-    TypeToSearch,
-    Typeahead,
     Settings,
     About,
     ViewMenu,
     SortMenu,
     SelectionMenu,
-    InteractionMenu,
     CopyPath,
     CopyUri,
     Terminal,
@@ -111,8 +106,6 @@ namespace files {
     bool clipboardAvailable = false;
     bool clipboardHasFiles = false;
     bool terminalAvailable = false;
-    ActivationMode activationMode = ActivationMode::DoubleClick;
-    TypingMode typingMode = TypingMode::Search;
   };
   struct ActionState {
     bool enabled = true;

@@ -1751,9 +1751,7 @@ namespace {
           .showPreview = m_savedSettings.showPreview,
           .clipboardAvailable = m_clipboard.available(),
           .clipboardHasFiles = m_clipboard.hasFiles(),
-          .terminalAvailable = m_terminal.available(),
-          .activationMode = m_activationMode,
-          .typingMode = m_typingMode
+          .terminalAvailable = m_terminal.available()
       };
     }
     files::ActionRequest actionRequest(bool withTargets = true) const {
@@ -2108,24 +2106,6 @@ namespace {
       case Action::SelectPattern:
         openPatternSelection(request);
         break;
-      case Action::SingleClick:
-      case Action::DoubleClick:
-      case Action::TypeToSearch:
-      case Action::Typeahead:
-        if (action == Action::SingleClick || action == Action::DoubleClick) {
-          m_activationMode =
-              action == Action::SingleClick ? files::ActivationMode::SingleClick : files::ActivationMode::DoubleClick;
-        } else {
-          m_typingMode = action == Action::Typeahead ? files::TypingMode::Typeahead : files::TypingMode::Search;
-        }
-        for (auto* adapter : {&m_listAdapter, &m_gridAdapter}) {
-          adapter->onPointerCancel();
-          adapter->setActivationMode(m_activationMode);
-        }
-        if (state.checked != 1) {
-          m_preferences.saveInteraction(m_activationMode, m_typingMode);
-        }
-        break;
       case Action::Settings:
         openSettings();
         break;
@@ -2141,16 +2121,8 @@ namespace {
       case Action::SelectionMenu:
         openSelectionMenu();
         break;
-      case Action::InteractionMenu:
-        openInteractionMenu();
-        break;
       }
-      if (!m_menuSurface
-          && (selectionAction
-              || action == Action::SingleClick
-              || action == Action::DoubleClick
-              || action == Action::TypeToSearch
-              || action == Action::Typeahead)) {
+      if (!m_menuSurface && selectionAction) {
         m_dispatcher.setFocus(m_list->focusArea());
       }
       m_browserDirty = true;
@@ -2241,6 +2213,7 @@ namespace {
         add(Action::InvertSelection);
         add(Action::SelectPattern);
         separator();
+        add(Action::SortMenu);
         add(Action::Refresh);
         if (request.folder && !request.folder->isTrash()) {
           add(m_pins.contains(*request.folder) ? Action::UnpinCurrent : Action::PinCurrent);
@@ -2342,7 +2315,11 @@ namespace {
           : std::nullopt;
       showContextMenu(
           std::move(entries),
-          [this, request](int action) {
+          [this, request, x, y](int action) {
+            if (action == static_cast<int>(Action::SortMenu)) {
+              openSortMenu(LayoutRect{x, y, 1, 1}, false);
+              return;
+            }
             if (action == 9005) {
               if (m_workspaceRequest) {
                 m_workspaceRequest(WorkspaceCommand::ClosePane, std::nullopt);
@@ -6216,8 +6193,6 @@ namespace {
       }
       m_places->sync(snapshot.location);
       const bool loading = snapshot.status == files::DirectoryStatus::Loading;
-      m_refresh->setGlyph(loading ? "square" : "refresh");
-      m_refresh->setTooltip(loading ? "Stop loading" : "Refresh (F5)");
       std::string status;
       if (m_creator.busy()) {
         const char* kind = m_creator.snapshot().kind == files::CreateKind::Folder ? "folder"
@@ -6859,19 +6834,8 @@ namespace {
           std::move(locationArea), std::move(searchArea),
           ui::row(
               {.align = FlexAlign::Center, .gap = Style::spaceXs},
-              ui::button(
-                  {.out = &m_refresh,
-                   .glyph = "refresh",
-                   .variant = ButtonVariant::Ghost,
-                   .onClick =
-                       [this] {
-                         if (browser().model().snapshot().status == files::DirectoryStatus::Loading) {
-                           dispatchAction(Action::Stop);
-                         } else {
-                           dispatchAction(Action::Refresh);
-                         }
-                       }}
-              ),
+              ui::button({.out = &m_sortButton, .glyph = "arrows-sort", .variant = ButtonVariant::Ghost,
+                          .tooltip = "Sort files", .onClick = [this] { openSortMenu(sceneRect(*m_sortButton)); }}),
               ui::segmented(
                   {.out = &m_viewSwitch,
                    .options =
@@ -7660,12 +7624,20 @@ namespace {
       control->setOnActivate(activate);
       ScrollView* scroll = nullptr;
       auto scrolling = ui::scrollView(
-          {.out = &scroll, .viewportPaddingH = 0.0F, .viewportPaddingV = 0.0F, .height = height, .flexGrow = 1.0F}
+          {.out = &scroll,
+           .viewportPaddingH = 0.0F,
+           .viewportPaddingV = 0.0F,
+           .fillWidth = true,
+           .height = height,
+           .flexGrow = 1.0F}
       );
       scrolling->setReserveScrollbarGutter(overflowing);
       scrolling->content()->addChild(std::move(menu));
       auto root = ui::column(
-          {.fill = colorSpecFromRole(ColorRole::SurfaceContainerHigh), .radius = Style::radiusLg}, std::move(scrolling)
+          {.align = FlexAlign::Stretch,
+           .fill = colorSpecFromRole(ColorRole::SurfaceContainerHigh),
+           .radius = Style::radiusLg},
+          std::move(scrolling)
       );
       showPopup(std::move(root), control, anchor, width, height, alignLeft);
       m_menuScroll = scroll;
@@ -7759,7 +7731,10 @@ namespace {
       m_preferences.saveShowHidden(browser().model().filter().showHidden);
     }
 
-    void showActionMenu(std::initializer_list<Action> actions, bool radio = false, bool back = false) {
+    void showActionMenu(
+        std::initializer_list<Action> actions, bool radio = false, bool back = false,
+        std::optional<LayoutRect> anchor = std::nullopt, bool alignLeft = true
+    ) {
       const auto request = actionRequest(false);
       std::vector<ContextMenuControlEntry> entries;
       if (back) {
@@ -7778,35 +7753,19 @@ namespace {
               m_dispatcher.setFocus(m_list->focusArea());
             }
           },
-          sceneRect(*m_menuButton), true
+          anchor.value_or(sceneRect(*m_menuButton)), alignLeft
       );
     }
-    void openSortMenu() {
+    void openSortMenu(std::optional<LayoutRect> anchor = std::nullopt, bool alignLeft = true) {
       showActionMenu(
           {Action::SortName, Action::SortType, Action::SortSize, Action::SortModified, Action::Ascending,
            Action::Descending, Action::FoldersFirst},
-          true, true
+          true, !anchor.has_value(), anchor, alignLeft
       );
     }
     void openSelectionMenu() {
       showActionMenu(
           {Action::SelectAll, Action::InvertSelection, Action::SelectPattern, Action::ClearSelection}, false, true
-      );
-    }
-    void openInteractionMenu() {
-      const auto request = actionRequest(false);
-      std::vector<ContextMenuControlEntry> entries{
-          actionEntry(Action::ViewMenu, request),
-          {.label = "Open items with", .header = true},
-          actionEntry(Action::SingleClick, request, true),
-          actionEntry(Action::DoubleClick, request, true),
-          {.label = "Typing in the file view", .header = true},
-          actionEntry(Action::TypeToSearch, request, true),
-          actionEntry(Action::Typeahead, request, true)
-      };
-      showContextMenu(
-          std::move(entries), [this, request](int id) { dispatchAction(static_cast<Action>(id), request); },
-          sceneRect(*m_menuButton), true
       );
     }
     void openMenu() {
@@ -7821,15 +7780,22 @@ namespace {
           {.label = "", .separator = true}
       };
       const auto request = actionRequest();
+      entries.push_back(actionEntry(Action::Search, request));
       for (const auto action : {Action::Grid, Action::List, Action::Miller}) {
         entries.push_back(actionEntry(action, request, true));
       }
       entries.push_back({.label = "", .separator = true});
-      for (auto action :
-           {Action::SortMenu, Action::SelectionMenu, Action::InteractionMenu, Action::ShowHidden, Action::ShowSidebar,
-            Action::ShowPreview, Action::Search, Action::Settings, Action::About}) {
+      entries.push_back(actionEntry(
+          browser().model().snapshot().status == files::DirectoryStatus::Loading ? Action::Stop : Action::Refresh,
+          request
+      ));
+      for (const auto action :
+           {Action::SortMenu, Action::SelectionMenu, Action::ShowHidden, Action::ShowSidebar, Action::ShowPreview}) {
         entries.push_back(actionEntry(action, request));
       }
+      entries.push_back({.label = "", .separator = true});
+      entries.push_back(actionEntry(Action::Settings, request));
+      entries.push_back(actionEntry(Action::About, request));
       entries.push_back({.label = "", .separator = true});
       entries.push_back(
           {.id = 8998,
@@ -8102,7 +8068,7 @@ namespace {
     Button* m_back = nullptr;
     Button* m_forward = nullptr;
     Button* m_up = nullptr;
-    Button* m_refresh = nullptr;
+    Button* m_sortButton = nullptr;
     std::string m_displayedLocation;
     bool m_browserDirty = true;
     bool m_fileKeyboardFocus = false;

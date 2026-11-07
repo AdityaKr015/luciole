@@ -63,16 +63,11 @@ namespace {
        {A::InvertSelection, "Invert selection", "Ctrl+Shift+I", S::Selection},
        {A::SelectPattern, "Select by pattern…", "Ctrl+S", S::Selection},
        {A::ClearSelection, "Clear selection", "Escape", S::Selection},
-       {A::SingleClick, "Single click", ""},
-       {A::DoubleClick, "Double click", ""},
-       {A::TypeToSearch, "Search subfolders", ""},
-       {A::Typeahead, "Select by typing", ""},
        {A::Settings, "Settings…", "Ctrl+,"},
        {A::About, "About Noctalia Files", ""},
        {A::ViewMenu, "Back", ""},
        {A::SortMenu, "Sort…", ""},
        {A::SelectionMenu, "Selection…", ""},
-       {A::InteractionMenu, "Interaction…", ""},
        {A::CopyPath, "Copy folder path", "", S::Location},
        {A::CopyUri, "Copy folder URI", "", S::Location},
        {A::Terminal, "Open Terminal Here", "", S::Location},
@@ -399,14 +394,6 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
     return {.reason = {}, .checked = c.model.sort().descending ? 1 : 0};
   case A::FoldersFirst:
     return {.reason = {}, .checked = c.model.sort().directoriesFirst ? 1 : 0};
-  case A::SingleClick:
-    return {.reason = {}, .checked = c.activationMode == ActivationMode::SingleClick ? 1 : 0};
-  case A::DoubleClick:
-    return {.reason = {}, .checked = c.activationMode == ActivationMode::DoubleClick ? 1 : 0};
-  case A::TypeToSearch:
-    return {.reason = {}, .checked = c.typingMode == TypingMode::Search ? 1 : 0};
-  case A::Typeahead:
-    return {.reason = {}, .checked = c.typingMode == TypingMode::Typeahead ? 1 : 0};
   case A::Home:
   case A::Root:
   case A::EditLocation:
@@ -415,7 +402,6 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
   case A::ViewMenu:
   case A::SortMenu:
   case A::SelectionMenu:
-  case A::InteractionMenu:
   case A::Settings:
   case A::About:
     return {};
