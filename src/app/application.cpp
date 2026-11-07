@@ -51,6 +51,7 @@
 #include "ui/controls/archive_view.h"
 #include "ui/controls/batch_rename_dialog.h"
 #include "ui/controls/browser_settings_view.h"
+#include "ui/controls/bulk_acl_editor.h"
 #include "ui/controls/context_menu.h"
 #include "ui/controls/file_preview_view.h"
 #include "ui/controls/input.h"
@@ -3835,9 +3836,27 @@ namespace {
           }
       );
     }
+    void showAdvancedPermissions(bool advanced, bool focus = false) {
+      if (!m_permissionBasic || !m_permissionAdvanced) {
+        return;
+      }
+      m_aclActive = advanced;
+      m_permissionBasic->setVisible(!advanced);
+      m_permissionBasic->setParticipatesInLayout(!advanced);
+      m_permissionAdvanced->setVisible(advanced);
+      m_permissionAdvanced->setParticipatesInLayout(advanced);
+      m_permissionSave->setEnabled(propertiesCanApply() && !actionContext().operationsBusy);
+      m_permissionScroll->requestScrollToOffset(0);
+      if (focus) {
+        m_menuDispatcher.setFocus((advanced ? m_permissionAdvancedBack : m_permissionAdvancedOpen)->inputArea());
+      }
+      m_menuSurface->requestLayout();
+    }
     bool propertiesCanApply() const {
-      return m_aclActive && m_aclEditor ? m_aclEditor->canApply()
-                                        : m_permissionEditor && m_permissionEditor->canApply();
+      if (m_aclActive) {
+        return m_aclEditor ? m_aclEditor->canApply() : m_bulkAclEditor && m_bulkAclEditor->canApply();
+      }
+      return m_permissionEditor && m_permissionEditor->canApply();
     }
     void syncPermissions() {
       const auto& snapshot = m_permissions.snapshot();
@@ -3845,6 +3864,9 @@ namespace {
         m_permissionEditor->sync(snapshot);
         if (m_aclEditor) {
           m_aclEditor->sync(snapshot);
+        }
+        if (m_bulkAclEditor) {
+          m_bulkAclEditor->sync(snapshot);
         }
         m_permissionSave->setEnabled(propertiesCanApply() && !actionContext().operationsBusy);
         m_permissionSave->setText(snapshot.phase == files::PermissionPhase::Saving ? "Saving…" : "Apply");
@@ -3887,9 +3909,11 @@ namespace {
           }
         }
         if (snapshot.error && !snapshot.finished && snapshot.phase == files::PermissionPhase::Ready) {
-          m_permissionTabs->setSelectedIndex(snapshot.aclOperation && m_aclEditor ? 2 : 1);
+          m_permissionTabs->setSelectedIndex(1);
+          showAdvancedPermissions(snapshot.aclOperation);
           m_permissionScroll->requestScrollIntoView(
-              snapshot.aclOperation && m_aclEditor ? m_aclEditor->messageNode() : m_permissionEditor->messageNode()
+              snapshot.aclOperation ? (m_aclEditor ? m_aclEditor->messageNode() : m_bulkAclEditor->messageNode())
+                                    : m_permissionEditor->messageNode()
           );
         }
         m_menuSurface->requestLayout();
@@ -3998,6 +4022,9 @@ namespace {
       body->content()->addChild(std::move(general));
       PermissionEditor* editor = nullptr;
       AclEditor* acl = nullptr;
+      BulkAclEditor* bulkAcl = nullptr;
+      Flex *permissionsGroup = nullptr, *basicGroup = nullptr, *advancedGroup = nullptr;
+      Button *advancedOpen = nullptr, *advancedBack = nullptr;
       Segmented* tabs = nullptr;
       Button *save = nullptr, *reportButton = nullptr, *cancelButton = nullptr;
       Label* progress = nullptr;
@@ -4014,21 +4041,62 @@ namespace {
             multiple, folders
         );
         editor = permissions.get();
-        permissions->setVisible(false);
-        permissions->setParticipatesInLayout(false);
-        body->content()->addChild(std::move(permissions));
-        if (!multiple) {
-          auto control = std::make_unique<AclEditor>([this] {
-            if (m_permissionSave) {
-              m_permissionSave->setEnabled(propertiesCanApply() && !actionContext().operationsBusy);
-            }
-            m_menuSurface->requestLayout();
-          });
+        auto basic = ui::column(
+            {.out = &basicGroup, .align = FlexAlign::Stretch, .gap = Style::spaceSm},
+            ui::row(
+                {.justify = FlexJustify::End},
+                ui::button(
+                    {.out = &advancedOpen,
+                     .text = "Advanced permissions…",
+                     .variant = ButtonVariant::Ghost,
+                     .onClick = [this] { showAdvancedPermissions(true, true); }}
+                )
+            ),
+            std::move(permissions)
+        );
+        const auto aclChanged = [this] {
+          if (m_permissionSave) {
+            m_permissionSave->setEnabled(propertiesCanApply() && !actionContext().operationsBusy);
+          }
+          m_menuSurface->requestLayout();
+        };
+        std::unique_ptr<Flex> aclControl;
+        if (multiple) {
+          auto control = std::make_unique<BulkAclEditor>(aclChanged);
+          bulkAcl = control.get();
+          aclControl = std::move(control);
+        } else {
+          auto control = std::make_unique<AclEditor>(aclChanged);
           acl = control.get();
-          control->setVisible(false);
-          control->setParticipatesInLayout(false);
-          body->content()->addChild(std::move(control));
+          aclControl = std::move(control);
         }
+        auto advanced = ui::column(
+            {.out = &advancedGroup,
+             .align = FlexAlign::Stretch,
+             .gap = Style::spaceSm,
+             .visible = false,
+             .participatesInLayout = false},
+            ui::row(
+                {.justify = FlexJustify::Start},
+                ui::button(
+                    {.out = &advancedBack,
+                     .text = "Back to permissions",
+                     .glyph = "chevron-left",
+                     .variant = ButtonVariant::Ghost,
+                     .onClick = [this] { showAdvancedPermissions(false, true); }}
+                )
+            ),
+            ui::label({.text = "Advanced permissions", .fontWeight = FontWeight::SemiBold}), std::move(aclControl)
+        );
+        body->content()->addChild(
+            ui::column(
+                {.out = &permissionsGroup,
+                 .align = FlexAlign::Stretch,
+                 .visible = false,
+                 .participatesInLayout = false},
+                std::move(basic), std::move(advanced)
+            )
+        );
         if (withResults) {
           resultView = std::make_unique<PermissionResultsView>();
           results = resultView.get();
@@ -4046,10 +4114,7 @@ namespace {
       std::vector<ui::SegmentedOption> propertyTabs{
           {.label = "General", .glyph = {}, .tooltip = {}}, {.label = "Permissions", .glyph = {}, .tooltip = {}}
       };
-      if (acl) {
-        propertyTabs.push_back({.label = "ACL", .glyph = {}, .tooltip = {}});
-      }
-      const std::size_t resultTab = acl ? 3 : 2;
+      constexpr std::size_t resultTab = 2;
       if (withResults) {
         propertyTabs.push_back({.label = "Results", .glyph = {}, .tooltip = {}});
       }
@@ -4080,16 +4145,14 @@ namespace {
                .visible = editable,
                .participatesInLayout = editable,
                .onChange =
-                   [this, generalGroup, editor, scroll, results, acl, resultTab](std::size_t index) {
+                   [this, generalGroup, permissionsGroup, scroll, results](std::size_t index) {
                      generalGroup->setVisible(index == 0);
                      generalGroup->setParticipatesInLayout(index == 0);
-                     editor->setVisible(index == 1);
-                     editor->setParticipatesInLayout(index == 1);
-                     m_aclActive = acl && index == 2;
-                     if (acl) {
-                       acl->setVisible(m_aclActive);
-                       acl->setParticipatesInLayout(m_aclActive);
+                     if (permissionsGroup) {
+                       permissionsGroup->setVisible(index == 1);
+                       permissionsGroup->setParticipatesInLayout(index == 1);
                      }
+                     showAdvancedPermissions(false);
                      if (m_permissionSave) {
                        m_permissionSave->setEnabled(propertiesCanApply() && !actionContext().operationsBusy);
                      }
@@ -4139,7 +4202,9 @@ namespace {
                      .variant = ButtonVariant::Primary,
                      .onClick = [this] {
                        if (m_permissionEditor && !actionContext().operationsBusy) {
-                         if (m_aclActive && m_aclEditor) {
+                         if (m_aclActive && m_bulkAclEditor) {
+                           (void)m_permissions.applyAclPatch(m_bulkAclEditor->edit());
+                         } else if (m_aclActive && m_aclEditor) {
                            (void)m_permissions.applyAcl(m_aclEditor->edit());
                          } else if (m_permissionEditor->recursive()) {
                            (void)m_permissions.applyRecursive(m_permissionEditor->recursiveEdit());
@@ -4169,7 +4234,12 @@ namespace {
       );
       if (m_menuSurface && editable) {
         m_permissionEditor = editor;
+        m_permissionBasic = basicGroup;
+        m_permissionAdvanced = advancedGroup;
+        m_permissionAdvancedOpen = advancedOpen;
+        m_permissionAdvancedBack = advancedBack;
         m_aclEditor = acl;
+        m_bulkAclEditor = bulkAcl;
         m_aclActive = false;
         m_permissionResultTab = resultTab;
         m_permissionResults = results;
@@ -7273,7 +7343,10 @@ namespace {
       if (m_permissionEditor) {
         m_permissions.cancel();
         m_permissionEditor = nullptr;
+        m_permissionBasic = m_permissionAdvanced = nullptr;
+        m_permissionAdvancedOpen = m_permissionAdvancedBack = nullptr;
         m_aclEditor = nullptr;
+        m_bulkAclEditor = nullptr;
         m_aclActive = false;
         m_permissionResultTab = 2;
         m_permissionResults = nullptr;
@@ -7808,6 +7881,9 @@ namespace {
     files::PermissionService m_permissions;
     PermissionEditor* m_permissionEditor = nullptr;
     AclEditor* m_aclEditor = nullptr;
+    BulkAclEditor* m_bulkAclEditor = nullptr;
+    Flex *m_permissionBasic = nullptr, *m_permissionAdvanced = nullptr;
+    Button *m_permissionAdvancedOpen = nullptr, *m_permissionAdvancedBack = nullptr;
     bool m_aclActive = false;
     std::size_t m_permissionResultTab = 2;
     PermissionResultsView* m_permissionResults = nullptr;

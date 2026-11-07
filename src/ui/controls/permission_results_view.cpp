@@ -31,6 +31,12 @@ namespace {
           row.info ? std::format("Mode {:04o} · Owner {} · Group {}", row.info->mode, row.info->owner, row.info->group)
                    : "Permissions and ownership unknown"
       );
+      if (row.info && row.info->acl && row.info->acl->supported) {
+        m_metadata->setText(
+            m_metadata->text()
+            + std::format(" · ACL: {} access, {} default", row.info->acl->access.size(), row.info->acl->defaults.size())
+        );
+      }
       m_detail->setText(row.location.uri() + (row.message.empty() ? "" : "\n" + row.message));
       const bool error =
           row.outcome == files::PermissionOutcome::Failed || row.outcome == files::PermissionOutcome::Partial;

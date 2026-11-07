@@ -57,6 +57,7 @@ namespace files {
     bool apply(PermissionEdit edit);
     bool applyRecursive(RecursivePermissionEdit edit);
     bool applyAcl(AclEdit edit);
+    bool applyAclPatch(AclPatchEdit edit);
     void cancel();
     bool busy() const;
     std::size_t completed() const;

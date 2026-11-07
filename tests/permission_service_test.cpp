@@ -852,6 +852,19 @@ namespace {
     std::string contents;
     input >> contents;
     TEST_CHECK(contents == "payload");
+    const auto second = fixture.root / "second";
+    write(second);
+    const auto secondMode = mode(second);
+    prepareBulk(pump, service, {entry(file), entry(second)});
+    files::AclPatchEdit patch;
+    patch.access.entries.push_back({Tag::User, std::to_string(::geteuid()), 4, 7});
+    TEST_CHECK(service.applyAclPatch(patch));
+    pump.settle(service);
+    TEST_CHECK(service.snapshot().error && !service.snapshot().applied && service.snapshot().finished);
+    TEST_CHECK(mode(file) == before && mode(second) == secondMode);
+    for (const auto& row : *service.snapshot().results) {
+      TEST_CHECK(row.outcome == O::Failed && !row.message.empty());
+    }
   }
   void aclEditing(Pump& pump) {
     Fixture f;
@@ -1011,6 +1024,235 @@ namespace {
     pump.settle(service);
     TEST_CHECK(!service.snapshot().applied && aclText(file) == replacement);
   }
+  void setAcl(const fs::path& path, const std::string& text, bool defaults = false) {
+    acl_t acl = ::acl_from_text(text.c_str());
+    TEST_CHECK(acl);
+    const int result = ::acl_set_file(path.c_str(), defaults ? ACL_TYPE_DEFAULT : ACL_TYPE_ACCESS, acl);
+    ::acl_free(acl);
+    TEST_CHECK(result == 0);
+  }
+  void applyPatch(Pump& pump, S& service, files::AclPatchEdit patch) {
+    TEST_CHECK(service.applyAclPatch(std::move(patch)));
+    pump.settle(service);
+    TEST_CHECK(service.snapshot().results);
+  }
+  files::AclPatchEdit userPatch(const std::string& id, unsigned value, unsigned mask = 7) {
+    files::AclPatchEdit patch;
+    patch.access.entries.push_back({Tag::User, id, value, mask});
+    return patch;
+  }
+  void bulkAclRules(Pump& pump) {
+    Fixture f;
+    S service;
+    const auto a = f.root / "a", b = f.root / "b";
+    write(a);
+    write(b);
+    setAcl(a, "u::rw-,u:21000:rw-,u:21001:r--,g::r--,m::r--,o::---");
+    setAcl(b, "u::rw-,u:21000:--x,g::---,g:22000:r-x,m::r-x,o::---");
+    prepareBulk(pump, service, {entry(a), entry(b)});
+    TEST_CHECK(service.snapshot().info && !service.snapshot().info->acl);
+    applyPatch(pump, service, userPatch("21000", 2, 2));
+    TEST_CHECK(!service.snapshot().error && service.snapshot().applied);
+    TEST_CHECK(aclText(a).contains("user:21000:rw-\n") && aclText(a).contains("user:21001:r--\n"));
+    TEST_CHECK(aclText(b).contains("user:21000:-wx\n") && aclText(b).contains("group:22000:r-x\n"));
+    TEST_CHECK(aclText(a).contains("mask::r--\n") && aclText(b).contains("mask::r-x\n"));
+    TEST_CHECK(service.snapshot().results->front().outcome == O::Unchanged);
+    TEST_CHECK(service.snapshot().results->back().outcome == O::Changed);
+    TEST_CHECK(service.snapshot().report.contains("user:21000:-wx effective:--x"));
+    TEST_CHECK(service.snapshot().report.contains("owning group::--- effective:---"));
+    auto recalc = userPatch("21002", 6);
+    recalc.access.maskPolicy = files::AclMaskPolicy::Recalculate;
+    applyPatch(pump, service, recalc);
+    TEST_CHECK(!service.snapshot().error && aclText(a).contains("mask::rw-\n") && aclText(b).contains("mask::rwx\n"));
+    const auto beforeA = aclText(a), beforeB = aclText(b);
+    auto bad = userPatch("21000", 0);
+    bad.access.entries.push_back({Tag::User, "021000", 7, 7});
+    applyPatch(pump, service, bad);
+    TEST_CHECK(service.snapshot().error && !service.snapshot().finished && !service.snapshot().applied);
+    TEST_CHECK(aclText(a) == beforeA && aclText(b) == beforeB);
+    TEST_CHECK(service.snapshot().results->front().outcome == O::Ready);
+    bad = userPatch("noctalia-no-such-account-370917", 7);
+    applyPatch(pump, service, bad);
+    TEST_CHECK(service.snapshot().error && aclText(a) == beforeA && aclText(b) == beforeB);
+    for (unsigned invalid = 0; invalid < 4; ++invalid) {
+      files::AclPatchEdit patch;
+      patch.access.entries.push_back({Tag::Other, {}, 7, 7});
+      if (invalid == 0) {
+        patch.access.entries.push_back({Tag::Owner, {}, {}, 7});
+      } else if (invalid == 1) {
+        patch.access.entries.push_back({Tag::Mask, {}, 7, 7});
+        patch.access.maskPolicy = files::AclMaskPolicy::Recalculate;
+      } else if (invalid == 2) {
+        patch.access.entries.push_back({Tag::User, "4294967295", 7, 7});
+      } else {
+        patch.defaults.entries.push_back({Tag::Other, {}, 7, 7}); // Keep defaults must be unambiguous.
+      }
+      applyPatch(pump, service, patch);
+      TEST_CHECK(service.snapshot().error && !service.snapshot().finished && !service.snapshot().applied);
+      TEST_CHECK(aclText(a) == beforeA && aclText(b) == beforeB);
+    }
+    // Mask removal cannot silently discard named rules or apply another part first.
+    bad = userPatch("21000", 0);
+    bad.access.maskPolicy = files::AclMaskPolicy::RemoveUnused;
+    applyPatch(pump, service, bad);
+    TEST_CHECK(service.snapshot().finished && service.snapshot().error && !service.snapshot().applied);
+    TEST_CHECK(aclText(a) == beforeA && aclText(b) == beforeB);
+    files::AclPatchEdit remove;
+    remove.access.maskPolicy = files::AclMaskPolicy::RemoveUnused;
+    for (const auto* id : {"21000", "21001", "21002"}) {
+      remove.access.entries.push_back({Tag::User, id, {}, 0});
+    }
+    remove.access.entries.push_back({Tag::Group, "22000", {}, 0});
+    applyPatch(pump, service, remove);
+    TEST_CHECK(!service.snapshot().error && !aclText(a).contains("mask::") && !aclText(b).contains("mask::"));
+    // A first named rule receives a conservative mask, rather than recalculation.
+    applyPatch(pump, service, userPatch("21000", 7));
+    TEST_CHECK(!service.snapshot().error && aclText(a).contains("mask::r--\n") && aclText(b).contains("mask::---\n"));
+    pump.apply(service, {.mode = 0020, .owner = {}, .group = {}, .mask = 0020});
+    TEST_CHECK(!service.snapshot().error && aclText(a).contains("user:21000:rwx\n"));
+    applyPatch(pump, service, userPatch("21000", 0, 1));
+    TEST_CHECK(!service.snapshot().error && aclText(a).contains("user:21000:rw-\n"));
+    applyPatch(pump, service, remove);
+    files::AclPatchEdit maskBit;
+    maskBit.access.entries.push_back({Tag::Mask, {}, 1, 1});
+    applyPatch(pump, service, maskBit);
+    TEST_CHECK(!service.snapshot().error && aclText(a).contains("mask::r-x\n"));
+  }
+  void bulkAclDefaults(Pump& pump) {
+    Fixture f;
+    S service;
+    const auto a = f.root / "a", b = f.root / "b", file = f.root / "file";
+    fs::create_directory(a);
+    fs::create_directory(b);
+    write(file);
+    write(a / "existing");
+    const auto child = aclText(a / "existing");
+    TEST_CHECK(::chmod(a.c_str(), 0750) == 0 && ::chmod(b.c_str(), 0700) == 0);
+    setAcl(a, "u::rwx,u:21001:r--,g::r-x,m::r-x,o::---", true);
+    prepareBulk(pump, service, {entry(a), entry(b), entry(file)});
+    files::AclPatchEdit patch;
+    patch.defaultPolicy = files::AclDefaultPolicy::Existing;
+    patch.defaults.entries.push_back({Tag::User, "21000", 6, 7});
+    applyPatch(pump, service, patch);
+    TEST_CHECK(!service.snapshot().error && aclText(a, true).contains("user:21001:r--\n"));
+    TEST_CHECK(aclText(a, true).contains("user:21000:rw-\n") && aclText(b, true).empty());
+    TEST_CHECK(
+        service.snapshot().results->at(1).outcome == O::Skipped
+        && service.snapshot().results->at(2).outcome == O::Skipped
+    );
+    patch.defaultPolicy = files::AclDefaultPolicy::Create;
+    patch.access.entries.push_back({Tag::Other, {}, 1, 1});
+    applyPatch(pump, service, patch);
+    TEST_CHECK(!service.snapshot().error && aclText(b, true).contains("other::--x\n"));
+    TEST_CHECK(aclText(b, true).contains("mask::---\n") && aclText(a, true).contains("mask::r-x\n"));
+    TEST_CHECK(aclText(b, true).contains("group::---\n") && aclText(a, true).contains("group::r-x\n"));
+    TEST_CHECK(aclText(a / "existing") == child);
+    write(b / "new");
+    TEST_CHECK(aclText(b / "new").contains("user:21000:rw-\n"));
+    files::AclPatchEdit invalid;
+    invalid.access.entries.push_back({Tag::Owner, {}, 0, 7});
+    invalid.defaults.maskPolicy = files::AclMaskPolicy::RemoveUnused;
+    invalid.defaultPolicy = files::AclDefaultPolicy::Existing;
+    const auto before = aclText(a);
+    applyPatch(pump, service, invalid);
+    TEST_CHECK(
+        service.snapshot().error && aclText(a) == before
+    ); // Invalid default prevents access write on this folder.
+    files::AclPatchEdit remove;
+    remove.defaultPolicy = files::AclDefaultPolicy::Remove;
+    applyPatch(pump, service, remove);
+    TEST_CHECK(!service.snapshot().error && aclText(a, true).empty() && aclText(b, true).empty());
+    TEST_CHECK(service.snapshot().results->at(2).outcome == O::Skipped);
+  }
+  void bulkAclStaleAndAliases(Pump& pump) {
+    Fixture f;
+    S service;
+    const auto a = f.root / "a", b = f.root / "b", alias = f.root / "alias";
+    write(a);
+    write(b);
+    setAcl(a, "u::rw-,u:21000:rw-,g::r--,m::r--,o::---");
+    fs::create_hard_link(a, alias);
+    prepareBulk(pump, service, {entry(a), entry(alias), entry(b)});
+    applyPatch(pump, service, userPatch("21000", 1, 1));
+    TEST_CHECK(!service.snapshot().error && service.snapshot().results->at(1).outcome == O::Changed);
+    TEST_CHECK(aclText(a) == aclText(alias) && aclText(a).contains("user:21000:rwx\n"));
+    // Mode edits through aliases still adopt this job's updated ACL baseline.
+    pump.apply(service, {.mode = 0020, .owner = {}, .group = {}, .mask = 0020});
+    TEST_CHECK(!service.snapshot().error && aclText(a) == aclText(alias));
+    prepareBulk(pump, service, {entry(a), entry(alias), entry(b)});
+    setAcl(a, "u::rw-,u:21000:---,g::r--,m::rw-,o::---");
+    const auto stale = aclText(a);
+    applyPatch(pump, service, userPatch("21000", 4));
+    TEST_CHECK(service.snapshot().error && aclText(a) == stale && aclText(alias) == stale);
+    TEST_CHECK(
+        service.snapshot().results->at(0).outcome == O::Failed && service.snapshot().results->at(1).outcome == O::Failed
+    );
+    TEST_CHECK(service.snapshot().results->at(2).outcome == O::Changed);
+    prepareBulk(pump, service, {entry(a), entry(b)});
+    fs::rename(a, f.root / "held");
+    write(a);
+    const auto replacement = aclText(a);
+    applyPatch(pump, service, userPatch("21002", 7));
+    TEST_CHECK(service.snapshot().error && aclText(a) == replacement && aclText(f.root / "held") == stale);
+    fs::create_symlink(b, f.root / "link");
+    TEST_CHECK(::mkfifo((f.root / "pipe").c_str(), 0600) == 0);
+    prepareBulk(pump, service, {entry(b), entry(f.root / "link"), entry(f.root / "pipe")});
+    applyPatch(pump, service, userPatch("21003", 4));
+    TEST_CHECK(service.snapshot().error && service.snapshot().results->front().outcome == O::Changed);
+    TEST_CHECK(
+        service.snapshot().results->at(1).outcome == O::Failed && service.snapshot().results->at(2).outcome == O::Failed
+    );
+    // One oversized target does not truncate rules or prevent a different item succeeding.
+    std::string many = "u::rw-,g::r--,m::r--,o::---";
+    for (unsigned i = 0; i < 124; ++i) {
+      many += ",u:" + std::to_string(30000 + i) + ":r--";
+    }
+    setAcl(a, many);
+    prepareBulk(pump, service, {entry(a), entry(b)});
+    const auto full = aclText(a);
+    applyPatch(pump, service, userPatch("21004", 4));
+    TEST_CHECK(
+        service.snapshot().error && aclText(a) == full && service.snapshot().results->back().outcome == O::Changed
+    );
+  }
+  void bulkAclCancellation(Pump& pump) {
+    for (const bool aliases : {false, true}) {
+      Fixture f;
+      S service;
+      std::vector<files::DirectoryEntry> entries;
+      for (unsigned i = 0; i < 256; ++i) {
+        const auto path = f.root / std::to_string(i);
+        if (aliases && i > 0) {
+          fs::create_hard_link(f.root / "0", path);
+        } else {
+          write(path);
+          TEST_CHECK(::chmod(path.c_str(), 0600) == 0);
+        }
+        entries.push_back(entry(path));
+      }
+      prepareBulk(pump, service, entries);
+      TEST_CHECK(service.applyAclPatch(userPatch("21000", 4)));
+      service.cancel();
+      pump.settle(service);
+      TEST_CHECK(service.snapshot().phase == P::Cancelled && !service.snapshot().applied);
+      TEST_CHECK(!aclText(f.root / "0").contains("user:21000:"));
+      prepareBulk(pump, service, entries);
+      TEST_CHECK(service.applyAclPatch(userPatch("21000", 4)));
+      pump.until([&] { return service.completed() > 0 || !service.busy(); });
+      if (service.busy()) {
+        service.cancel();
+      }
+      pump.settle(service);
+      TEST_CHECK(service.snapshot().finished && service.snapshot().applied);
+      for (const auto& row : *service.snapshot().results) {
+        TEST_CHECK(row.info && row.info->acl && row.info->acl->supported);
+        const bool changed = aclText(*row.location.nativePath()).contains("user:21000:r--\n");
+        TEST_CHECK(changed == (row.outcome == O::Changed));
+        TEST_CHECK(row.info->acl->access.size() == (changed ? 5 : 3));
+      }
+      TEST_CHECK(service.snapshot().report.contains("effective:---"));
+    }
+  }
 } // namespace
 int main() {
   supportedSpecialBits = probeSpecialBits();
@@ -1033,6 +1275,10 @@ int main() {
     aclEditing(pump);
     defaultAcls(pump);
     aclStaleSourcesAndCancellation(pump);
+    bulkAclRules(pump);
+    bulkAclDefaults(pump);
+    bulkAclStaleAndAliases(pump);
+    bulkAclCancellation(pump);
   } else {
     unavailableAcl(pump);
   }

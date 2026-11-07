@@ -8,6 +8,7 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <set>
 #include <stdexcept>
 #include <sys/acl.h>
 #include <sys/stat.h>
@@ -198,4 +199,159 @@ void files::writeAcl(int descriptor, bool defaults, const std::vector<AclEntry>&
 }
 bool files::sameAcl(const AclInfo& left, const AclInfo& right) {
   return left.supported && right.supported && left.access == right.access && left.defaults == right.defaults;
+}
+files::AclPatchEdit
+files::normalizeAclPatch(AclPatchEdit edit, const std::function<std::uint32_t(AclTag, const std::string&)>& resolve) {
+  if (edit.defaultPolicy < AclDefaultPolicy::Keep || edit.defaultPolicy > AclDefaultPolicy::Remove) {
+    throw std::runtime_error("Invalid default ACL policy.");
+  }
+  if ((edit.defaultPolicy == AclDefaultPolicy::Keep || edit.defaultPolicy == AclDefaultPolicy::Remove)
+      && (!edit.defaults.entries.empty() || edit.defaults.maskPolicy != AclMaskPolicy::Keep)) {
+    throw std::runtime_error("Choose Edit existing or Create before changing default rules.");
+  }
+  for (auto* list : {&edit.access, &edit.defaults}) {
+    if (list->entries.size() > maxAclEntries
+        || list->maskPolicy < AclMaskPolicy::Keep
+        || list->maskPolicy > AclMaskPolicy::RemoveUnused) {
+      throw std::runtime_error("Invalid ACL patch or too many rules (maximum 128 per list).");
+    }
+    std::set<std::pair<AclTag, std::string>> seen;
+    for (auto& entry : list->entries) {
+      const bool named = entry.tag == AclTag::User || entry.tag == AclTag::Group;
+      if (entry.tag < AclTag::Owner
+          || entry.tag > AclTag::Other
+          || entry.mask > 7
+          || (entry.permissions && (*entry.permissions > 7 || entry.mask == 0))
+          || (!entry.permissions && !named)
+          || (!named && !entry.qualifier.empty())) {
+        throw std::runtime_error("Invalid ACL rule change.");
+      }
+      if (entry.tag == AclTag::Mask && list->maskPolicy != AclMaskPolicy::Keep) {
+        throw std::runtime_error("Choose either mask bit changes or an automatic mask policy.");
+      }
+      if (named) {
+        entry.qualifier = std::to_string(resolve(entry.tag, entry.qualifier));
+        (void)numeric(entry.qualifier);
+      }
+      if (!seen.emplace(entry.tag, entry.qualifier).second) {
+        throw std::runtime_error("Each account or ACL role can be changed only once per list.");
+      }
+    }
+  }
+  return edit;
+}
+files::AclEdit files::patchAcl(const AclInfo& actual, const AclPatchEdit& edit) {
+  if (!actual.supported) {
+    throw std::runtime_error(actual.message.empty() ? "ACL inspection is unavailable." : actual.message);
+  }
+  const auto patch = [](std::vector<AclEntry> entries, const AclListPatch& changes) {
+    for (const auto& change : changes.entries) {
+      auto found = std::ranges::find_if(entries, [&](const auto& entry) {
+        return entry.tag == change.tag && entry.qualifier == change.qualifier;
+      });
+      if (!change.permissions) {
+        if (found != entries.end()) {
+          entries.erase(found);
+        }
+      } else if (found == entries.end()) {
+        const auto group = std::ranges::find(entries, AclTag::OwningGroup, &AclEntry::tag);
+        const auto initial = change.tag == AclTag::Mask && group != entries.end() ? group->permissions : 0U;
+        entries.push_back(
+            {change.tag, change.qualifier, (initial & ~change.mask) | (*change.permissions & change.mask)}
+        );
+      } else {
+        found->permissions = (found->permissions & ~change.mask) | (*change.permissions & change.mask);
+      }
+    }
+    auto mask = std::ranges::find(entries, AclTag::Mask, &AclEntry::tag);
+    const bool named = std::ranges::any_of(entries, [](const auto& entry) {
+      return entry.tag == AclTag::User || entry.tag == AclTag::Group;
+    });
+    const auto group = std::ranges::find(entries, AclTag::OwningGroup, &AclEntry::tag);
+    if (group == entries.end()) {
+      throw std::runtime_error("The owning-group rule is missing.");
+    }
+    std::uint32_t rights = group->permissions;
+    if (changes.maskPolicy == AclMaskPolicy::RemoveUnused) {
+      if (named) {
+        throw std::runtime_error("Cannot remove the mask while named rules remain.");
+      }
+      if (mask != entries.end()) {
+        entries.erase(mask);
+      }
+    } else if (changes.maskPolicy == AclMaskPolicy::Recalculate || (named && mask == entries.end())) {
+      if (changes.maskPolicy == AclMaskPolicy::Recalculate) {
+        for (const auto& entry : entries) {
+          if (entry.tag == AclTag::User || entry.tag == AclTag::Group) {
+            rights |= entry.permissions;
+          }
+        }
+      }
+      if (mask == entries.end()) {
+        entries.push_back({AclTag::Mask, {}, rights});
+      } else {
+        mask->permissions = rights;
+      }
+    }
+    return normalizeAcl(std::move(entries), false, [](AclTag, const std::string& id) { return numeric(id); });
+  };
+  AclEdit result;
+  auto access = actual.access;
+  if (!edit.access.entries.empty() || edit.access.maskPolicy != AclMaskPolicy::Keep) {
+    access = patch(access, edit.access);
+    if (access != actual.access) {
+      result.access = access;
+    }
+  }
+  if (actual.directory && edit.defaultPolicy != AclDefaultPolicy::Keep) {
+    auto defaults = actual.defaults;
+    if (edit.defaultPolicy == AclDefaultPolicy::Remove) {
+      defaults.clear();
+    } else if (!defaults.empty() || edit.defaultPolicy == AclDefaultPolicy::Create) {
+      defaults = patch(defaults.empty() ? access : defaults, edit.defaults);
+    }
+    if (defaults != actual.defaults) {
+      result.defaults = std::move(defaults);
+    }
+  }
+  return result;
+}
+std::string files::describeAcl(const AclInfo& info) {
+  if (!info.supported) {
+    return "  " + info.message + "\n";
+  }
+  const auto permissions = [](std::uint32_t value) {
+    std::string text = "---";
+    for (std::size_t i = 0; i < 3; ++i) {
+      if ((value & (4U >> i)) != 0) {
+        text[i] = "rwx"[i];
+      }
+    }
+    return text;
+  };
+  std::string text;
+  for (const bool defaults : {false, true}) {
+    if (defaults && !info.directory) {
+      continue;
+    }
+    const auto& entries = defaults ? info.defaults : info.access;
+    text += defaults ? "  Default ACL" : "  Access ACL";
+    text += entries.empty() ? ": none\n" : ":\n";
+    const auto mask = std::ranges::find(entries, AclTag::Mask, &AclEntry::tag);
+    for (const auto& entry : entries) {
+      constexpr std::array roles{"owner", "user", "owning group", "group", "mask", "other"};
+      text += "    "
+          + std::string(roles.at(static_cast<std::size_t>(entry.tag)))
+          + ":"
+          + entry.qualifier
+          + ":"
+          + permissions(entry.permissions);
+      if (mask != entries.end()
+          && (entry.tag == AclTag::User || entry.tag == AclTag::OwningGroup || entry.tag == AclTag::Group)) {
+        text += " effective:" + permissions(entry.permissions & mask->permissions);
+      }
+      text += '\n';
+    }
+  }
+  return text;
 }

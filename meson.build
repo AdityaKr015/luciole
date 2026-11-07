@@ -114,6 +114,7 @@ app_sources = files(
   'src/ui/controls/link_dialog.cpp',
   'src/ui/controls/permission_editor.cpp',
   'src/ui/controls/acl_editor.cpp',
+  'src/ui/controls/bulk_acl_editor.cpp',
   'src/ui/controls/recursive_permission_editor.cpp',
   'src/ui/controls/permission_results_view.cpp',
   'src/ui/controls/batch_rename_dialog.cpp',

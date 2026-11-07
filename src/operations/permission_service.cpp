@@ -425,6 +425,7 @@ namespace {
       const auto& info = *row.info;
       if (!snapshot.info) {
         snapshot.info = info;
+        snapshot.info->acl.reset(); // Each item retains its own ACL; there is no common table.
         snapshot.info->reason.clear();
         continue;
       }
@@ -464,6 +465,9 @@ namespace {
         text += "\n  " + row.message;
       }
       text += '\n';
+      if (row.info && row.info->acl) {
+        text += files::describeAcl(*row.info->acl);
+      }
     }
     return text;
   }
@@ -510,6 +514,7 @@ namespace {
     }
     struct OwnChange {
       struct stat value;
+      std::optional<files::AclInfo> acl;
       bool changed;
     };
     const auto complete = [&edit, &recursive](const std::optional<files::PermissionInfo>& info) {
@@ -548,9 +553,18 @@ namespace {
         if (const auto found = aliases.find(key); found != aliases.end()
             && target->current()
             && (found->second.changed || samePermissions(target->baseline, found->second.value))
-            && samePermissions(metadata(target->fd.value), found->second.value)) {
+            && samePermissions(metadata(target->fd.value), found->second.value)
+            && (!target->aclBaseline
+                || !target->aclBaseline->supported
+                || (found->second.acl
+                    && files::sameAcl(files::inspectAcl(target->fd.value), *found->second.acl)
+                    && (found->second.changed || files::sameAcl(*target->aclBaseline, *found->second.acl))))) {
           changedViaAlias = !samePermissions(target->baseline, found->second.value);
           target->baseline = found->second.value;
+          if (target->aclBaseline && found->second.acl) {
+            target->aclBaseline = found->second.acl;
+            target->loadAcl(false);
+          }
         }
         auto itemEdit = edit;
         if (recursive && S_ISDIR(target->baseline.st_mode)) {
@@ -575,7 +589,7 @@ namespace {
         if (!item.error || item.applied) {
           const auto previous = aliases.find(key);
           const bool changed = item.applied || (previous != aliases.end() && previous->second.changed);
-          aliases.insert_or_assign(key, OwnChange{metadata(target->fd.value), changed});
+          aliases.insert_or_assign(key, OwnChange{metadata(target->fd.value), target->aclBaseline, changed});
         }
       } catch (const std::exception& error) {
         row.outcome = O::Failed;
@@ -615,6 +629,10 @@ namespace {
         info.mode = value.st_mode & 07777;
         info.current = target->current();
         info.canMode = info.canOwner = info.canGroup = false;
+        if (target->aclBaseline) {
+          target->loadAcl(false);
+          info.acl = target->aclView;
+        }
         if (row.outcome == O::Changed && !complete(row.info)) {
           row.outcome = O::Partial;
           row.message = "Partially changed through another selected hard link before cancellation.";
@@ -638,6 +656,176 @@ namespace {
           row.message += std::string(" ") + error.what();
         }
       }
+    }
+    bulk->results = rows;
+    reply.finished = true;
+    constexpr std::array labels{"ready", "changed", "unchanged", "failed", "partially changed", "cancelled", "skipped"};
+    for (std::size_t i = 1; i < labels.size(); ++i) {
+      const auto count = std::ranges::count(*rows, static_cast<O>(i), &files::PermissionResult::outcome);
+      if (count != 0) {
+        if (!reply.message.empty()) {
+          reply.message += " · ";
+        }
+        reply.message += std::format("{} {}", count, labels[i]);
+      }
+    }
+    reply.error = std::ranges::any_of(*rows, [](const auto& row) {
+      return row.outcome == O::Failed || row.outcome == O::Partial;
+    });
+    reply.report = report(*rows);
+    return reply;
+  }
+  Reply applyBulkAcl(
+      const std::shared_ptr<Bulk>& bulk, files::AclPatchEdit edit, const std::atomic<bool>& stop,
+      std::atomic<std::size_t>& completed
+  ) {
+    using O = files::PermissionOutcome;
+    auto rows = std::make_shared<std::vector<files::PermissionResult>>(*bulk->results);
+    for (std::size_t i = 0; i < rows->size(); ++i) {
+      if (bulk->targets[i]) {
+        (*rows)[i].outcome = O::Ready;
+        (*rows)[i].message.clear();
+      }
+    }
+    Reply reply{.target = {}, .info = {}, .message = {}, .bulk = bulk, .results = rows, .report = {}};
+    try {
+      edit = files::normalizeAclPatch(std::move(edit), [](files::AclTag tag, const std::string& text) {
+        return accountId(text, tag == files::AclTag::User, "User");
+      });
+    } catch (const std::exception& error) {
+      reply.error = true;
+      reply.message = error.what();
+      for (auto& row : *rows) {
+        if (row.outcome == O::Ready) {
+          row.message = "Not attempted: " + reply.message;
+        }
+      }
+      reply.report = "No changes attempted: " + reply.message + "\n" + report(*rows);
+      return reply;
+    }
+    struct OwnChange {
+      struct stat value;
+      files::AclInfo acl;
+      struct stat initial;
+      files::AclInfo initialAcl;
+      bool changed;
+    };
+    std::map<std::pair<dev_t, ino_t>, OwnChange> aliases;
+    const bool accessRequested = !edit.access.entries.empty() || edit.access.maskPolicy != files::AclMaskPolicy::Keep;
+    const auto satisfied = [](const files::AclInfo& actual, const files::AclEdit& desired) {
+      return actual.supported
+          && (!desired.access || actual.access == *desired.access)
+          && (!desired.defaults || actual.defaults == *desired.defaults);
+    };
+    for (std::size_t i = 0; i < rows->size(); ++i) {
+      auto& row = (*rows)[i];
+      const auto& target = bulk->targets[i];
+      if (stop.load()) {
+        if (target) {
+          row.outcome = O::Cancelled;
+          row.message = "Not attempted; cancelled.";
+        }
+        continue;
+      }
+      if (!target) {
+        row.outcome = O::Failed;
+        completed.fetch_add(1);
+        continue;
+      }
+      try {
+        const auto key = std::pair{target->baseline.st_dev, target->baseline.st_ino};
+        const auto initial = target->baseline;
+        const auto initialAcl = target->aclBaseline;
+        bool changedViaAlias = false;
+        if (const auto found = aliases.find(key); found != aliases.end()
+            && target->aclBaseline
+            && target->current()
+            && samePermissions(metadata(target->fd.value), found->second.value)
+            && files::sameAcl(files::inspectAcl(target->fd.value), found->second.acl)
+            && ((samePermissions(target->baseline, found->second.value)
+                 && files::sameAcl(*target->aclBaseline, found->second.acl))
+                || (found->second.changed
+                    && samePermissions(target->baseline, found->second.initial)
+                    && files::sameAcl(*target->aclBaseline, found->second.initialAcl)))) {
+          changedViaAlias = !samePermissions(target->baseline, found->second.value)
+              || !files::sameAcl(*target->aclBaseline, found->second.acl);
+          target->baseline = found->second.value;
+          target->aclBaseline = found->second.acl;
+          target->loadAcl(false);
+        }
+        target->validate();
+        if (!target->aclView || !target->aclView->editable) {
+          throw std::runtime_error(target->aclView ? target->aclView->message : "ACL editing is unavailable.");
+        }
+        const auto& actual = *target->aclBaseline;
+        const bool skipDefaults =
+            !actual.directory || (edit.defaultPolicy == files::AclDefaultPolicy::Existing && actual.defaults.empty());
+        // Build and validate both desired tables before making either change.
+        auto desired = files::patchAcl(actual, edit);
+        auto item = ::applyAcl(target, desired, stop);
+        row.info = std::move(item.info);
+        row.message = std::move(item.message);
+        const bool changed = item.applied || changedViaAlias;
+        row.outcome = item.error ? (changed ? O::Partial : O::Failed)
+            : changed && (!row.info || !row.info->acl || !satisfied(*row.info->acl, desired)) ? O::Partial
+            : changed                                                                         ? O::Changed
+            : stop.load()                                                                     ? O::Cancelled
+            : !accessRequested && skipDefaults                                                ? O::Skipped
+                                                                                              : O::Unchanged;
+        if (!item.error && changedViaAlias && !item.applied) {
+          row.message = "Updated through another selected hard link.";
+        }
+        if (skipDefaults && edit.defaultPolicy != files::AclDefaultPolicy::Keep) {
+          row.message += actual.directory ? " Default ACL absent; preserved." : " Default ACLs apply only to folders.";
+        }
+        reply.applied = reply.applied || item.applied;
+        if ((!item.error || item.applied) && target->aclBaseline && target->aclBaseline->supported) {
+          const auto previous = aliases.find(key);
+          aliases.insert_or_assign(
+              key,
+              OwnChange{
+                  target->baseline, *target->aclBaseline,
+                  previous == aliases.end() ? initial : previous->second.initial,
+                  previous == aliases.end() ? *initialAcl : previous->second.initialAcl,
+                  item.applied || (previous != aliases.end() && previous->second.changed)
+              }
+          );
+        }
+      } catch (const std::exception& error) {
+        row.outcome = O::Failed;
+        row.message = error.what();
+        target->loadAcl(false);
+        row.info = target->inspect(false);
+      }
+      completed.fetch_add(1);
+    }
+    // Unvisited aliases can already have effects. Report the held inode's actual
+    // tables without adopting an external writer's state as a new baseline.
+    for (std::size_t i = 0; i < rows->size(); ++i) {
+      auto& row = (*rows)[i];
+      const auto& target = bulk->targets[i];
+      if (row.outcome != O::Cancelled || !target) {
+        continue;
+      }
+      const auto value = metadata(target->fd.value);
+      const auto actual = files::inspectAcl(target->fd.value);
+      const auto own = aliases.find({value.st_dev, value.st_ino});
+      if (own != aliases.end()
+          && own->second.changed
+          && target->aclBaseline
+          && samePermissions(target->baseline, own->second.initial)
+          && files::sameAcl(*target->aclBaseline, own->second.initialAcl)
+          && samePermissions(value, own->second.value)
+          && files::sameAcl(actual, own->second.acl)
+          && (!samePermissions(value, target->baseline) || !files::sameAcl(actual, *target->aclBaseline))) {
+        const auto desired = files::patchAcl(*target->aclBaseline, edit);
+        row.outcome = satisfied(actual, desired) ? O::Changed : O::Partial;
+        row.message = "Changed through another selected hard link before cancellation.";
+        completed.fetch_add(1);
+      }
+      target->loadAcl(false);
+      row.info = target->inspect(false);
+      row.info->canMode = row.info->canOwner = row.info->canGroup = false;
     }
     bulk->results = rows;
     reply.finished = true;
@@ -1024,6 +1212,7 @@ bool files::PermissionService::prepare(std::vector<DirectoryEntry> entries) {
           auto& row = (*bulk->results)[i];
           try {
             auto target = prepareTarget(entries[i], false);
+            target->loadAcl(true);
             row.info = target->inspect();
             row.outcome = PermissionOutcome::Ready;
             row.message = row.info->reason;
@@ -1163,6 +1352,27 @@ bool files::PermissionService::applyAcl(AclEdit edit) {
   m_state->snapshot.message.clear();
   State::launch(
       m_state, [owner = m_state, edit = std::move(edit)] { return ::applyAcl(owner->target, edit, owner->stop); }, true
+  );
+  return true;
+}
+bool files::PermissionService::applyAclPatch(AclPatchEdit edit) {
+  if (busy()
+      || m_state->snapshot.phase != PermissionPhase::Ready
+      || !m_state->bulk
+      || (m_state->snapshot.recursive && m_state->snapshot.finished)) {
+    return false;
+  }
+  m_state->snapshot.phase = PermissionPhase::Saving;
+  m_state->snapshot.aclOperation = true;
+  m_state->snapshot.finished = m_state->snapshot.error = m_state->snapshot.applied = false;
+  m_state->snapshot.message.clear();
+  m_state->completed.store(0);
+  State::launch(
+      m_state,
+      [owner = m_state, bulk = m_state->bulk, edit = std::move(edit)] {
+        return applyBulkAcl(bulk, edit, owner->stop, owner->completed);
+      },
+      true
   );
   return true;
 }
