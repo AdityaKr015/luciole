@@ -213,7 +213,10 @@ struct files::ArchiveService::State : std::enable_shared_from_this<State> {
           owner->phase = ArchivePhase::Transferring;
           owner->transferLifetime = owner;
           if (!owner->transfers.start(
-                  {{*outcome->prepared.output}, Location::fromPath(target.parent_path().native()), TransferAction::Move}
+                  {{*outcome->prepared.output},
+                   Location::fromPath(target.parent_path().native()),
+                   TransferAction::Move,
+                   false}
               )) {
             owner->error = "Could not start the archive publication.";
             owner->clean({std::exchange(owner->stage, {})});

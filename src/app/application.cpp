@@ -4316,10 +4316,13 @@ namespace {
             )
         );
       };
-      const auto choose = [this, archive, restore, id = conflict->id](files::TransferConflictChoice choice) {
-        if (restore       ? m_restore.resolve(id, choice)
-                : archive ? m_archives.resolve(id, choice)
-                          : m_transfers.resolve(id, choice)) {
+      const auto applyToAll = std::make_shared<bool>(false);
+      const auto choose = [this, archive, restore, applyToAll,
+                           id = conflict->id](files::TransferConflictChoice choice) {
+        if (restore ? m_restore.resolve(id, choice)
+                : archive
+                ? m_archives.resolve(id, choice)
+                : m_transfers.resolve(id, choice, *applyToAll && choice != files::TransferConflictChoice::Cancel)) {
           m_activeTransferConflict.reset();
           dismissMenu();
         }
@@ -4358,14 +4361,29 @@ namespace {
               )
           ),
           ui::label(
-              {.text = restore ? "Folder replacement is unavailable. Keep both or skip this item."
-                               : "Replace removes the existing folder and its contents.",
+              {.text = restore                      ? "Folder replacement is unavailable. Keep both or skip this item."
+                   : conflict->canMerge && !archive ? "Merge keeps existing contents and asks about conflicting "
+                                                      "children. Replace removes the whole existing folder."
+                                                    : "Replace removes the existing folder and its contents.",
                .fontSize = Style::fontSizeCaption,
                .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
                .maxWidth = width - 24.0F,
                .maxLines = 2,
                .visible = conflict->destinationDirectory,
                .participatesInLayout = conflict->destinationDirectory}
+          ),
+          ui::row(
+              {.align = FlexAlign::Center,
+               .gap = Style::spaceSm,
+               .visible = !archive && !restore && conflict->canApplyToAll,
+               .participatesInLayout = !archive && !restore && conflict->canApplyToAll},
+              ui::toggle({.onChange = [applyToAll](bool checked) { *applyToAll = checked; }}),
+              ui::label(
+                  {.text = conflict->scopeLabel,
+                   .fontSize = Style::fontSizeCaption,
+                   .maxWidth = width - 96.0F,
+                   .maxLines = 2}
+              )
           ),
           ui::row(
               {.align = FlexAlign::Center, .justify = FlexJustify::End, .gap = Style::spaceSm},
@@ -4384,6 +4402,13 @@ namespace {
                    .text = "Keep both",
                    .variant = ButtonVariant::Primary,
                    .onClick = [choose] { choose(files::TransferConflictChoice::KeepBoth); }}
+              ),
+              ui::button(
+                  {.text = "Merge",
+                   .variant = ButtonVariant::Ghost,
+                   .visible = !archive && !restore && conflict->canMerge,
+                   .participatesInLayout = !archive && !restore && conflict->canMerge,
+                   .onClick = [choose] { choose(files::TransferConflictChoice::Merge); }}
               ),
               ui::button(
                   {.text = "Replace",
@@ -4417,6 +4442,40 @@ namespace {
                    : archive ? m_archives.resolve(conflict->id, files::TransferConflictChoice::Cancel)
                              : m_transfers.resolve(conflict->id, files::TransferConflictChoice::Cancel));
       }
+    }
+
+    void retryTransfer() {
+      if (actionContext().operationsBusy || m_transfers.retryable() == 0) {
+        return;
+      }
+      if (m_transfers.action() != files::TransferAction::Move || !m_clipboard.hasFiles()) {
+        (void)m_transfers.retryFailed();
+        return;
+      }
+      const auto job = m_transfers.jobId();
+      const std::weak_ptr<int> lifetime = m_lifetime;
+      m_clipboard.requestFiles([this, lifetime, job](std::optional<files::ClipboardFiles> selection) {
+        if (lifetime.expired() || m_transfers.jobId() != job || actionContext().operationsBusy) {
+          return;
+        }
+        if (selection
+            && selection->payload.cut
+            && std::ranges::any_of(selection->payload.locations, [this](const auto& location) {
+                 return std::ranges::any_of(m_transfers.results(), [&](const auto& result) {
+                   return result.source == location;
+                 });
+               })) {
+          if (!m_clipboard.claimMove(selection->revision)) {
+            return;
+          }
+          m_clipboardTransfer = *selection;
+        }
+        if (!m_transfers.retryFailed()) {
+          if (const auto claimed = std::exchange(m_clipboardTransfer, std::nullopt)) {
+            m_clipboard.finishMove(*claimed, {});
+          }
+        }
+      });
     }
 
     bool
@@ -6281,6 +6340,9 @@ namespace {
           || m_restore.busy()
           || m_trash.busy()
           || m_emptyTrash.busy();
+      const bool retryable = m_transfers.retryable() > 0 && !actionContext().operationsBusy;
+      m_retryTransfer->setVisible(retryable);
+      m_retryTransfer->setParticipatesInLayout(retryable);
       m_cancelOperation->setVisible(cancellable);
       m_cancelOperation->setParticipatesInLayout(cancellable);
       m_cancelOperation->setTooltip(
@@ -7108,6 +7170,15 @@ namespace {
                        .textAlign = TextAlign::End}
                   ),
                   ui::button(
+                      {.out = &m_retryTransfer,
+                       .text = "Retry failed",
+                       .variant = ButtonVariant::Ghost,
+                       .tooltip = "Retry failed items without repeating completed transfers",
+                       .visible = false,
+                       .participatesInLayout = false,
+                       .onClick = [this] { retryTransfer(); }}
+                  ),
+                  ui::button(
                       {.out = &m_cancelOperation,
                        .glyph = "x",
                        .controlHeight = Style::controlHeightSm,
@@ -7759,10 +7830,18 @@ namespace {
             Action::ShowPreview, Action::Search, Action::Settings, Action::About}) {
         entries.push_back(actionEntry(action, request));
       }
+      entries.push_back({.label = "", .separator = true});
+      entries.push_back(
+          {.id = 8998,
+           .label = "Copy transfer report",
+           .enabled = !m_transfers.busy() && !m_transfers.report().empty() && m_clipboard.available()}
+      );
       showContextMenu(
           std::move(entries),
           [this, request](int id) {
-            if (id >= 9000) {
+            if (id == 8998) {
+              m_clipboard.setClipboardText(m_transfers.report());
+            } else if (id >= 9000) {
               if (m_workspaceRequest) {
                 m_workspaceRequest(
                     id == 9000       ? WorkspaceCommand::NewTab
@@ -7902,6 +7981,7 @@ namespace {
     files::TemplateCatalog m_templates;
     Timer m_operationProgress;
     Button* m_cancelOperation = nullptr;
+    Button* m_retryTransfer = nullptr;
     Box* m_placeDropLine = nullptr;
     std::string m_preferenceError;
     std::size_t m_gridZoom = 1;

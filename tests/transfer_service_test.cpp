@@ -57,9 +57,9 @@ namespace {
       while (!done()) {
         TEST_CHECK(std::chrono::steady_clock::now() < deadline);
         std::vector<pollfd> fds;
-        const auto first = source.addPollFds(fds);
+        const auto first = m_source.addPollFds(fds);
         TEST_CHECK(::poll(fds.data(), fds.size(), 1) >= 0);
-        source.dispatch(fds, first);
+        m_source.dispatch(fds, first);
       }
     }
     void
@@ -79,7 +79,7 @@ namespace {
     }
 
   private:
-    GlibPollSource source;
+    GlibPollSource m_source;
   };
   void testMoveAndCopy(Pump& pump) {
     Fixture fixture;
@@ -316,8 +316,295 @@ namespace {
         && read(target.destination("tree/sub/linked")) == "cross filesystem"
         && fs::is_symlink(target.destination("tree/broken"))
     );
+    fs::create_directories(source.source("merge/sub"));
+    fs::create_directories(target.destination("merge/sub"));
+    write(source.source("merge/sub/value"), "cross-filesystem merge");
+    write(target.destination("merge/sub/keep"), "existing");
+    pump.run(
+        service, {location(source.source("merge"))}, target.destination(""), TransferAction::Move,
+        [](const auto&) { return TransferConflictChoice::Merge; }
+    );
+    TEST_CHECK(service.results().front().outcome == TransferOutcome::Moved && !fs::exists(source.source("merge")));
+    TEST_CHECK(
+        read(target.destination("merge/sub/value")) == "cross-filesystem merge"
+        && read(target.destination("merge/sub/keep")) == "existing"
+    );
     source.clean();
     target.clean();
+  }
+  void finish(
+      Pump& pump, files::TransferService& service,
+      const std::function<TransferConflictChoice(const files::TransferConflict&)>& choose, bool all = false
+  ) {
+    std::uint64_t handled = 0;
+    pump.until([&] {
+      if (const auto conflict = service.conflict(); conflict && conflict->id != handled) {
+        handled = conflict->id;
+        TEST_CHECK(service.resolve(conflict->id, choose(*conflict), all));
+      }
+      return !service.busy();
+    });
+  }
+  void testMerge(Pump& pump) {
+    for (const auto action : {TransferAction::Copy, TransferAction::Move}) {
+      Fixture f;
+      files::TransferService service;
+      fs::create_directories(f.source("tree/sub"));
+      fs::create_directories(f.destination("tree/sub"));
+      write(f.source("tree/sub/value"), "incoming");
+      write(f.destination("tree/sub/value"), "old value");
+      write(f.destination("tree/keep"), "destination-only");
+      fs::create_symlink("missing", f.source("tree/broken"));
+      TEST_CHECK(::chmod(f.destination("tree").c_str(), 0750) == 0);
+      int prompts = 0;
+      pump.run(service, {location(f.source("tree"))}, f.destination(""), action, [&](const auto& conflict) {
+        ++prompts;
+        if (conflict.sourceDirectory && conflict.destinationDirectory) {
+          TEST_CHECK(conflict.canMerge);
+          return TransferConflictChoice::Merge;
+        }
+        TEST_CHECK(!conflict.canMerge && conflict.destination == location(f.destination("tree/sub/value")));
+        return TransferConflictChoice::Replace;
+      });
+      TEST_CHECK(
+          prompts == 3
+          && service.results().front().outcome
+              == (action == TransferAction::Copy ? TransferOutcome::Copied : TransferOutcome::Moved)
+      );
+      TEST_CHECK(
+          read(f.destination("tree/sub/value")) == "incoming" && read(f.destination("tree/keep")) == "destination-only"
+      );
+      TEST_CHECK(fs::is_symlink(f.destination("tree/broken")));
+      TEST_CHECK(fs::exists(f.source("tree")) == (action == TransferAction::Copy));
+      TEST_CHECK((fs::status(f.destination("tree")).permissions() & fs::perms::all) == fs::perms(0750));
+      TEST_CHECK(!service.retryFailed() && service.report().contains("/tree/sub/value"));
+      f.clean();
+    }
+  }
+  void testMergeSkipAndCancel(Pump& pump) {
+    for (const auto choice : {TransferConflictChoice::Skip, TransferConflictChoice::Cancel}) {
+      Fixture f;
+      files::TransferService service;
+      fs::create_directories(f.source("tree"));
+      fs::create_directories(f.destination("tree"));
+      write(f.source("tree/a-done"), "done");
+      write(f.source("tree/z-conflict"), "incoming");
+      write(f.destination("tree/z-conflict"), "old");
+      pump.run(
+          service, {location(f.source("tree"))}, f.destination(""), TransferAction::Move,
+          [&](const auto& conflict) { return conflict.canMerge ? TransferConflictChoice::Merge : choice; }
+      );
+      TEST_CHECK(service.results().front().outcome == TransferOutcome::Partial);
+      TEST_CHECK(read(f.destination("tree/a-done")) == "done" && !fs::exists(f.source("tree/a-done")));
+      TEST_CHECK(read(f.destination("tree/z-conflict")) == "old" && read(f.source("tree/z-conflict")) == "incoming");
+      TEST_CHECK(service.retryable() == 0 && service.results().front().children.size() == 2);
+      f.clean();
+    }
+  }
+  void testScopedChoices(Pump& pump) {
+    Fixture f;
+    files::TransferService service;
+    for (const auto* folder : {"a", "b"}) {
+      fs::create_directories(f.source(folder));
+      fs::create_directories(f.destination(folder));
+      write(f.source(std::string(folder) + "/value"), "incoming");
+      write(f.destination(std::string(folder) + "/value"), "existing");
+    }
+    TEST_CHECK(service.start(
+        {{location(f.source("a")), location(f.source("b"))}, location(f.destination("")), TransferAction::Copy}
+    ));
+    int prompts = 0;
+    finish(
+        pump, service,
+        [&](const auto& conflict) {
+          ++prompts;
+          TEST_CHECK(conflict.canApplyToAll && !conflict.scopeLabel.empty());
+          return conflict.canMerge ? TransferConflictChoice::Merge : TransferConflictChoice::KeepBoth;
+        },
+        true
+    );
+    TEST_CHECK(
+        prompts == 2 && read(f.destination("a/value")) == "existing" && read(f.destination("b/value (1)")) == "incoming"
+    );
+    // New jobs do not inherit any policy.
+    prompts = 0;
+    pump.run(service, {location(f.source("a"))}, f.destination(""), TransferAction::Copy, [&](const auto&) {
+      ++prompts;
+      return TransferConflictChoice::Skip;
+    });
+    TEST_CHECK(prompts == 1);
+    write(f.source("x"), "incoming x");
+    write(f.source("y"), "incoming y");
+    write(f.destination("x"), "old x");
+    write(f.destination("y"), "old y");
+    TEST_CHECK(service.start(
+        {{location(f.source("x")), location(f.source("y"))}, location(f.destination("")), TransferAction::Copy}
+    ));
+    std::uint64_t handled = 0;
+    prompts = 0;
+    pump.until([&] {
+      if (const auto c = service.conflict(); c && c->id != handled) {
+        handled = c->id;
+        ++prompts;
+        if (prompts == 1) {
+          write(f.root / "replacement", "foreign");
+          fs::rename(f.root / "replacement", f.destination("x"));
+          TEST_CHECK(service.resolve(c->id, TransferConflictChoice::Replace, true));
+        } else {
+          TEST_CHECK(service.resolve(c->id, TransferConflictChoice::Skip));
+        }
+      }
+      return !service.busy();
+    });
+    TEST_CHECK(prompts == 2 && read(f.destination("x")) == "foreign" && read(f.destination("y")) == "incoming y");
+    f.clean();
+  }
+  void testMergeBindings(Pump& pump) {
+    Fixture f;
+    files::TransferService service;
+    fs::create_directories(f.source("tree"));
+    fs::create_directories(f.destination("tree"));
+    write(f.source("tree/value"), "incoming");
+    write(f.destination("tree/old"), "existing");
+    int prompts = 0;
+    pump.run(service, {location(f.source("tree"))}, f.destination(""), TransferAction::Copy, [&](const auto&) {
+      if (++prompts == 1) {
+        fs::rename(f.destination("tree"), f.destination("held"));
+        fs::create_directory(f.destination("tree"));
+        write(f.destination("tree/foreign"), "foreign");
+        return TransferConflictChoice::Merge;
+      }
+      return TransferConflictChoice::Skip;
+    });
+    TEST_CHECK(
+        prompts == 2 && !fs::exists(f.destination("tree/value")) && read(f.destination("held/old")) == "existing"
+    );
+    fs::remove_all(f.destination("tree"));
+    fs::rename(f.destination("held"), f.destination("tree"));
+    write(f.destination("tree/value"), "old");
+    pump.run(service, {location(f.source("tree"))}, f.destination(""), TransferAction::Copy, [&](const auto& c) {
+      if (c.canMerge) {
+        return TransferConflictChoice::Merge;
+      }
+      fs::rename(f.destination("tree"), f.destination("held"));
+      fs::create_directory_symlink(f.root / "outside", f.destination("tree"));
+      return TransferConflictChoice::Replace;
+    });
+    TEST_CHECK(!fs::exists(f.root / "outside/value") && read(f.destination("held/value")) == "old");
+    TEST_CHECK(service.results().front().outcome != TransferOutcome::Copied);
+    f.clean();
+  }
+  void testMergeLimitsAndNewEntries(Pump& pump) {
+    Fixture f;
+    files::TransferService service;
+    fs::create_directory(f.source("tree"));
+    fs::create_directory(f.destination("tree"));
+    write(f.source("tree/a"), "captured");
+    write(f.destination("tree/a"), "old");
+    pump.run(service, {location(f.source("tree"))}, f.destination(""), TransferAction::Move, [&](const auto& c) {
+      if (c.canMerge) {
+        return TransferConflictChoice::Merge;
+      }
+      write(f.source("tree/new-arrival"), "not captured");
+      return TransferConflictChoice::Replace;
+    });
+    TEST_CHECK(service.results().front().outcome == TransferOutcome::Partial);
+    TEST_CHECK(read(f.source("tree/new-arrival")) == "not captured" && !fs::exists(f.destination("tree/new-arrival")));
+    TEST_CHECK(read(f.destination("tree/a")) == "captured");
+    for (unsigned i = 0; i < 16384; ++i) {
+      write(f.source("tree/" + std::to_string(i)), "x");
+    }
+    pump.run(service, {location(f.source("tree"))}, f.destination(""), TransferAction::Copy, [](const auto&) {
+      return TransferConflictChoice::Merge;
+    });
+    TEST_CHECK(service.results().front().outcome == TransferOutcome::Failed);
+    TEST_CHECK(service.results().front().error.contains("16384") && !fs::exists(f.destination("tree/0")));
+    f.clean();
+  }
+  void testRetry(Pump& pump) {
+    if (::geteuid() == 0) {
+      return; // Permission-denial fixture needs an ordinary process.
+    }
+    for (const auto action : {TransferAction::Copy, TransferAction::Move}) {
+      Fixture f;
+      files::TransferService service;
+      fs::create_directories(f.source("tree"));
+      fs::create_directories(f.destination("tree"));
+      write(f.source("tree/a-done"), "completed");
+      write(f.source("tree/z-failed"), "retry me");
+      write(f.destination("tree/z-failed"), "existing");
+      pump.run(service, {location(f.source("tree"))}, f.destination(""), action, [&](const auto& c) {
+        if (c.canMerge) {
+          return TransferConflictChoice::Merge;
+        }
+        TEST_CHECK(::chmod(f.destination("tree").c_str(), 0555) == 0);
+        return TransferConflictChoice::Replace;
+      });
+      TEST_CHECK(service.results().front().outcome == TransferOutcome::Partial && service.retryable() == 1);
+      struct stat before{}, after{};
+      TEST_CHECK(::stat(f.destination("tree/a-done").c_str(), &before) == 0);
+      TEST_CHECK(::chmod(f.destination("tree").c_str(), 0755) == 0);
+      TEST_CHECK(service.retryFailed());
+      finish(pump, service, [](const auto&) { return TransferConflictChoice::Replace; });
+      TEST_CHECK(
+          service.results().front().outcome
+          == (action == TransferAction::Copy ? TransferOutcome::Copied : TransferOutcome::Moved)
+      );
+      TEST_CHECK(read(f.destination("tree/z-failed")) == "retry me" && service.retryable() == 0);
+      TEST_CHECK(::stat(f.destination("tree/a-done").c_str(), &after) == 0 && before.st_ino == after.st_ino);
+      TEST_CHECK(fs::exists(f.source("tree")) == (action == TransferAction::Copy));
+      f.clean();
+    }
+    {
+      Fixture f;
+      files::TransferService service;
+      fs::create_directories(f.source("tree"));
+      fs::create_directories(f.destination("tree"));
+      write(f.source("tree/a-done"), "completed");
+      write(f.source("tree/z-failed"), "pending");
+      write(f.destination("tree/z-failed"), "old");
+      pump.run(service, {location(f.source("tree"))}, f.destination(""), TransferAction::Move, [&](const auto& c) {
+        if (c.canMerge) {
+          return TransferConflictChoice::Merge;
+        }
+        TEST_CHECK(::chmod(f.destination("tree").c_str(), 0555) == 0);
+        return TransferConflictChoice::Replace;
+      });
+      TEST_CHECK(service.retryable() == 1);
+      TEST_CHECK(service.retryFailed());
+      service.cancel();
+      pump.until([&] { return !service.busy(); });
+      TEST_CHECK(service.results().front().outcome == TransferOutcome::Partial);
+      TEST_CHECK(read(f.destination("tree/a-done")) == "completed" && !fs::exists(f.source("tree/a-done")));
+      TEST_CHECK(read(f.source("tree/z-failed")) == "pending" && read(f.destination("tree/z-failed")) == "old");
+      TEST_CHECK(::chmod(f.destination("tree").c_str(), 0755) == 0);
+      f.clean();
+    }
+    // A failed standalone item retries without replaying a completed sibling.
+    Fixture f;
+    files::TransferService service;
+    write(f.source("a"), "done");
+    write(f.source("b"), "retry");
+    write(f.destination("b"), "old");
+    pump.run(
+        service, {location(f.source("a")), location(f.source("b"))}, f.destination(""), TransferAction::Copy,
+        [&](const auto&) {
+          TEST_CHECK(::chmod(f.destination("").c_str(), 0555) == 0);
+          return TransferConflictChoice::Replace;
+        }
+    );
+    TEST_CHECK(service.retryable() == 1);
+    TEST_CHECK(::chmod(f.destination("").c_str(), 0755) == 0);
+    write(f.root / "new-b", "foreign source");
+    fs::rename(f.root / "new-b", f.source("b"));
+    TEST_CHECK(service.retryFailed());
+    finish(pump, service, [](const auto&) { return TransferConflictChoice::Replace; });
+    TEST_CHECK(service.retryable() == 0 && read(f.destination("b")) == "old" && read(f.destination("a")) == "done");
+    TEST_CHECK(
+        service.results().front().outcome == TransferOutcome::Copied
+        && service.results().back().outcome == TransferOutcome::Failed
+    );
+    f.clean();
   }
 } // namespace
 
@@ -329,6 +616,12 @@ int main() {
     testGuardsAndRaces(pump);
     testCancellationAndNumbering(pump);
     testCrossFilesystem(pump);
+    testMerge(pump);
+    testMergeSkipAndCancel(pump);
+    testScopedChoices(pump);
+    testMergeBindings(pump);
+    testRetry(pump);
+    testMergeLimitsAndNewEntries(pump);
     std::println("Transfer checks passed");
     return 0;
   } catch (const std::exception& error) {

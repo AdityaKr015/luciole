@@ -139,7 +139,10 @@ struct files::RestoreService::State {
         entry.size,
         size,
         entry.modifiedSeconds,
-        modified
+        modified,
+        false,
+        false,
+        {}
     };
     lock.unlock();
     notify(owner);
@@ -255,7 +258,10 @@ std::optional<files::TransferConflict> files::RestoreService::conflict() const {
 bool files::RestoreService::resolve(std::uint64_t id, TransferConflictChoice choice) {
   {
     const std::scoped_lock lock(m_state->mutex);
-    if (!m_state->conflict || m_state->conflict->id != id || m_state->choice) {
+    if (!m_state->conflict
+        || m_state->conflict->id != id
+        || m_state->choice
+        || choice == TransferConflictChoice::Merge) {
       return false;
     }
     m_state->choice = choice;

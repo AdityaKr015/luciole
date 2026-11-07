@@ -1,5 +1,7 @@
 #include "operations/transfer_service.h"
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <cerrno>
 #include <condition_variable>
@@ -7,6 +9,8 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <filesystem>
+#include <format>
+#include <limits>
 #include <linux/fs.h>
 #include <map>
 #include <mutex>
@@ -98,7 +102,7 @@ namespace {
   Fd directory(int parent, const std::string& name) {
     return opened(::openat(parent, name.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
   }
-  std::vector<std::string> children(int fd) {
+  std::vector<std::string> children(int fd, std::size_t limit = std::numeric_limits<std::size_t>::max()) {
     const int duplicate = ::fcntl(fd, F_DUPFD_CLOEXEC, 0);
     if (duplicate < 0) {
       fail("Could not read folder");
@@ -124,6 +128,9 @@ namespace {
       }
       const std::string name(entry->d_name);
       if (name != "." && name != "..") {
+        if (result.size() >= limit) {
+          throw std::runtime_error("The merge exceeds its 16384-item limit. Select smaller folders.");
+        }
         result.push_back(name);
       }
     }
@@ -153,14 +160,16 @@ namespace {
   struct Work {
     std::atomic<bool>& cancelled;
     std::atomic<std::uint64_t>& bytes;
-    std::function<files::TransferConflictChoice(const Source&, const std::string&, const struct stat&)> choose;
+    using Choose = std::function<files::TransferConflictChoice(
+        const Source&, const files::Location&, const std::string&, const struct stat&, bool
+    )>;
+    Choose choose;
+    bool allowMerge = true;
+    std::size_t mergedItems = 0;
     std::map<std::pair<dev_t, ino_t>, struct stat> changedLinks;
     std::vector<char> buffer;
     bool metadataIncomplete = false;
-    Work(
-        std::atomic<bool>& cancelled, std::atomic<std::uint64_t>& bytes,
-        std::function<files::TransferConflictChoice(const Source&, const std::string&, const struct stat&)> choose
-    )
+    Work(std::atomic<bool>& cancelled, std::atomic<std::uint64_t>& bytes, Choose choose)
         : cancelled(cancelled), bytes(bytes), choose(std::move(choose)), buffer(128 * 1024) {}
     struct stat expected(const struct stat& original) const {
       const auto found = changedLinks.find({original.st_dev, original.st_ino});
@@ -456,9 +465,54 @@ namespace {
     }
     return stem + counter + suffix;
   }
+  files::Location childLocation(const files::Location& parent, const std::string& name) {
+    const files::GioPtr<GFile> child(g_file_get_child(parent.file().get(), name.c_str()));
+    const files::GString uri(g_file_get_uri(child.get()));
+    return files::Location::fromUri(uri.get());
+  }
+  struct Destination {
+    files::Location location;
+    struct stat metadata;
+    std::shared_ptr<const Destination> ancestor;
+  };
+  void validateDestination(const Destination& destination) {
+    for (const auto* current = &destination; current; current = current->ancestor.get()) {
+      struct stat value{};
+      const auto path = *current->location.nativePath();
+      const int result = current->ancestor ? ::lstat(path.c_str(), &value) : ::stat(path.c_str(), &value);
+      if (result != 0 || !sameIdentity(value, current->metadata)) {
+        throw std::runtime_error("The destination folder moved or was replaced. Start a new transfer.");
+      }
+    }
+  }
+  struct Node {
+    Node(Source captured, std::shared_ptr<const Destination> target, files::TransferResult outcome, unsigned level = 0)
+        : source(std::move(captured)), destination(std::move(target)), result(std::move(outcome)), depth(level) {}
+    Source source;
+    std::shared_ptr<const Destination> destination;
+    files::TransferResult result;
+    std::vector<std::shared_ptr<Node>> children;
+    bool merging = false;
+    unsigned depth = 0;
+    bool attempted = false;
+    std::shared_ptr<const Destination> mergeTarget;
+  };
+  struct Job {
+    explicit Job(files::TransferRequest transfer) : request(std::move(transfer)) {}
+    files::TransferRequest request;
+    std::vector<std::shared_ptr<Node>> nodes;
+    std::map<std::pair<dev_t, ino_t>, struct stat> changedLinks;
+    std::size_t mergedItems = 0;
+    std::vector<files::TransferResult> outcomes;
+    std::string report;
+  };
+  void execute(Node& node, files::TransferAction action, Work& work, bool retry);
+  files::TransferResult
+  merge(Node& node, int destination, files::TransferAction action, Work& work, const struct stat& existing);
+  void validateBindings(const Source& source, const Destination& destination);
   bool chooseTarget(
       const Source& source, int destination, Work& work, std::string& target, bool& keepBoth, std::uint64_t& number,
-      std::optional<struct stat>& replace
+      std::optional<struct stat>& replace, bool& merging, const Destination& binding, bool forcePrompt = false
   ) {
     for (;;) {
       work.check();
@@ -480,7 +534,18 @@ namespace {
         return true;
       }
       replace.reset();
-      switch (work.choose(source, target, existing)) {
+      validateBindings(source, binding);
+      const auto choice = work.choose(source, binding.location, target, existing, forcePrompt);
+      validateBindings(source, binding);
+      requireUnchanged(work.expected(source.metadata), info(source.parent.get(), source.name));
+      switch (choice) {
+      case files::TransferConflictChoice::Merge:
+        if (!work.allowMerge || !S_ISDIR(source.metadata.st_mode) || !S_ISDIR(existing.st_mode)) {
+          throw std::runtime_error("Only two actual folders can be merged.");
+        }
+        replace = existing;
+        merging = true;
+        return true;
       case files::TransferConflictChoice::Skip:
         return false;
       case files::TransferConflictChoice::Cancel:
@@ -495,9 +560,11 @@ namespace {
       }
     }
   }
-  files::TransferResult transfer(Source& source, int destination, files::TransferAction action, Work& work) {
+  files::TransferResult transfer(Node& node, int destination, files::TransferAction action, Work& work) {
+    auto& source = node.source;
+    const auto& binding = *node.destination;
     using enum files::TransferOutcome;
-    files::TransferResult result{.source = source.location, .error = {}};
+    files::TransferResult result{source.location};
     try {
       work.check();
       source.metadata = work.expected(source.metadata);
@@ -514,14 +581,26 @@ namespace {
         throw std::runtime_error("Special files cannot be transferred.");
       }
       std::string target = source.name;
-      bool keepBoth = sameFolder;
+      bool keepBoth = sameFolder, merging = false, forcePrompt = false;
       std::uint64_t number = 0;
       std::optional<struct stat> replace;
       for (;;) {
-        if (!chooseTarget(source, destination, work, target, keepBoth, number, replace)) {
+        if (!chooseTarget(
+                source, destination, work, target, keepBoth, number, replace, merging, binding, forcePrompt
+            )) {
           result.outcome = Skipped;
           return result;
         }
+        if (merging) {
+          if (!unchanged(*replace, info(destination, target))) {
+            merging = false;
+            replace.reset();
+            forcePrompt = true;
+            continue;
+          }
+          return merge(node, destination, action, work, *replace);
+        }
+        validateBindings(source, binding);
         if (action == files::TransferAction::Copy || replace) {
           break;
         }
@@ -533,6 +612,7 @@ namespace {
             == 0) {
           work.note(info(destination, target));
           result.outcome = Moved;
+          result.destination = childLocation(binding.location, target);
           return result;
         }
         if (errno == EXDEV) {
@@ -556,18 +636,27 @@ namespace {
             if (::fstatat(destination, target.c_str(), &current, AT_SYMLINK_NOFOLLOW) != 0
                 || !unchanged(*replace, current)) {
               replace.reset();
-              if (!chooseTarget(source, destination, work, target, keepBoth, number, replace)) {
+              if (!chooseTarget(source, destination, work, target, keepBoth, number, replace, merging, binding, true)) {
                 result.outcome = Skipped;
                 break;
               }
               continue;
             }
           }
+          if (merging) {
+            // The conflicting folder appeared after staging. No staged item has been published.
+            if (!stage.clear()) {
+              throw std::runtime_error("Could not remove staging before merging: " + stage.name());
+            }
+            return merge(node, destination, action, work, *replace);
+          }
+          validateBindings(source, binding);
+          verifyTree(source.parent.get(), tree, work);
           const auto flags = replace ? RENAME_EXCHANGE : RENAME_NOREPLACE;
           if (::syscall(SYS_renameat2, stage.fd(), "item", destination, target.c_str(), flags) != 0) {
             if (errno == EEXIST || (replace && errno == ENOENT)) {
               replace.reset();
-              if (!chooseTarget(source, destination, work, target, keepBoth, number, replace)) {
+              if (!chooseTarget(source, destination, work, target, keepBoth, number, replace, merging, binding, true)) {
                 result.outcome = Skipped;
                 break;
               }
@@ -576,6 +665,7 @@ namespace {
             fail("Could not place item in destination");
           }
           published = true;
+          result.destination = childLocation(binding.location, target);
           if (replace && !sameContent(*replace, info(stage.fd(), "item"))) {
             stage.retain();
             throw std::runtime_error("The previous destination changed and was retained in " + stage.name());
@@ -602,6 +692,7 @@ namespace {
             : error.what();
       }
       if (!stage.clear()) {
+        result.outcome = Partial;
         result.error += " Previous or temporary items remain in " + stage.name() + " in the destination.";
       }
       if (work.metadataIncomplete && published) {
@@ -613,7 +704,229 @@ namespace {
     } catch (const std::exception& error) {
       result.error = error.what();
     }
+    result.retryable = result.outcome == Failed;
     return result;
+  }
+
+  std::size_t retryCount(const Node& node) {
+    std::size_t count = node.result.retryable ? 1 : 0;
+    for (const auto& child : node.children) {
+      count += retryCount(*child);
+    }
+    return count;
+  }
+  files::TransferResult snapshot(const Node& node) {
+    auto result = node.result;
+    result.children.clear();
+    for (const auto& child : node.children) {
+      result.children.push_back(snapshot(*child));
+    }
+    return result;
+  }
+  void validateBindings(const Source& source, const Destination& destination) {
+    const auto parent = openSourceParent(source);
+    if (!sameIdentity(info(parent.get()), info(source.parent.get()))) {
+      throw std::runtime_error("The source parent moved or was replaced.");
+    }
+    validateDestination(destination);
+  }
+  files::TransferResult
+  merge(Node& node, int destination, files::TransferAction action, Work& work, const struct stat& existing) {
+    using enum files::TransferOutcome;
+    auto& source = node.source;
+    files::TransferResult result{source.location};
+    result.destination = childLocation(node.destination->location, source.name);
+    bool finishedChildren = false;
+    try {
+      work.check();
+      validateBindings(source, *node.destination);
+      auto input = directory(source.parent.get(), source.name);
+      if (!sameIdentity(info(input.get()), source.metadata)
+          || !sameIdentity(info(source.parent.get(), source.name), source.metadata)) {
+        throw std::runtime_error("The source folder changed.");
+      }
+      auto output = directory(destination, source.name);
+      if (!sameIdentity(existing, info(output.get()))) {
+        throw std::runtime_error("The destination folder changed.");
+      }
+      if (hasAncestor(output.get(), source.metadata) || hasAncestor(input.get(), existing)) {
+        throw std::runtime_error("Related or identical folders cannot be merged.");
+      }
+      if (!node.merging) {
+        requireUnchanged(source.metadata, info(input.get()));
+        requireUnchanged(existing, info(destination, source.name));
+        auto names = children(input.get(), 16384 - work.mergedItems);
+        if (node.depth >= 256 || names.size() > 16384 - work.mergedItems) {
+          throw std::runtime_error("The merge exceeds 16384 items or 256 folder levels. Select smaller folders.");
+        }
+        work.mergedItems += names.size();
+        std::ranges::sort(names);
+        const auto childPath = *node.destination->location.nativePath() + "/" + source.name;
+        auto target = std::make_shared<const Destination>(
+            Destination{files::Location::fromPath(childPath), existing, node.destination}
+        );
+        std::vector<std::shared_ptr<Node>> planned;
+        for (const auto& name : names) {
+          work.check();
+          const auto metadata = info(input.get(), name);
+          auto location = files::Location::fromPath(*source.location.nativePath() + "/" + name);
+          Source child{source.index, location, Fd{}, name, metadata, *source.location.nativePath(), info(input.get())};
+          planned.push_back(
+              std::make_shared<Node>(
+                  std::move(child), target, files::TransferResult{location, Cancelled, "Not attempted."}, node.depth + 1
+              )
+          );
+        }
+        requireUnchanged(source.metadata, info(input.get()));
+        node.children = std::move(planned);
+        node.mergeTarget = target;
+        node.merging = true;
+      }
+      // Each child has its own commit boundary. Existing destination directory
+      // metadata and destination-only entries are preserved.
+      for (const auto& child : node.children) {
+        validateBindings(source, *node.destination);
+        validateDestination(*node.mergeTarget);
+        if (!sameIdentity(source.metadata, info(source.parent.get(), source.name))) {
+          throw std::runtime_error("The source folder moved or was replaced.");
+        }
+        execute(*child, action, work, false);
+      }
+      finishedChildren = true;
+      const bool complete = std::ranges::all_of(node.children, [action](const auto& child) {
+        return child->result.outcome == (action == files::TransferAction::Copy ? Copied : Moved);
+      });
+      if (complete) {
+        validateBindings(source, *node.destination);
+        validateDestination(*node.mergeTarget);
+        if (!sameIdentity(source.metadata, info(source.parent.get(), source.name))) {
+          throw std::runtime_error("The source folder moved or was replaced.");
+        }
+        if (action == files::TransferAction::Move) {
+          work.check();
+          if (!children(input.get()).empty()) {
+            throw std::runtime_error("New source entries remain; they were not included in this merge.");
+          }
+          if (::unlinkat(source.parent.get(), source.name.c_str(), AT_REMOVEDIR) != 0) {
+            fail("Could not remove empty merged source folder");
+          }
+          result.outcome = Moved;
+        } else {
+          requireUnchanged(source.metadata, info(input.get()));
+          result.outcome = Copied;
+        }
+        return result;
+      }
+    } catch (const TransferCancelled&) {
+      result.error = "Merge cancelled. Completed child transfers remain applied.";
+    } catch (const std::exception& error) {
+      result.error = error.what();
+      // Only an empty source-folder cleanup can be retried here. Publication or
+      // source-removal partials of individual files are never replayed.
+      result.retryable = finishedChildren
+          && action == files::TransferAction::Move
+          && std::ranges::all_of(node.children, [](const auto& child) { return child->result.outcome == Moved; });
+    }
+    std::size_t done = 0, failed = 0, skipped = 0, cancelled = 0;
+    for (const auto& child : node.children) {
+      const auto value = child->result.outcome;
+      done += value == Moved || value == Copied || value == Partial ? 1 : 0;
+      failed += value == Failed || value == Partial ? 1 : 0;
+      skipped += value == Skipped ? 1 : 0;
+      cancelled += value == Cancelled ? 1 : 0;
+    }
+    result.outcome = done > 0                 ? Partial
+        : failed > 0 || !result.error.empty() ? (work.cancelled.load() ? Cancelled : Failed)
+        : cancelled > 0                       ? Cancelled
+                                              : Skipped;
+    result.retryable = result.retryable || (!node.merging && result.outcome == Failed);
+    if (result.error.empty()) {
+      result.error = std::format(
+          "Merge: {} completed, {} failed/partial, {} skipped, {} cancelled.", done, failed, skipped, cancelled
+      );
+      const auto problem =
+          std::ranges::find_if(node.children, [](const auto& child) { return !child->result.error.empty(); });
+      if (problem != node.children.end()) {
+        result.error += " " + (*problem)->source.location.uri() + ": " + (*problem)->result.error;
+      }
+    }
+    return result;
+  }
+  void execute(Node& node, files::TransferAction action, Work& work, bool retry) {
+    // Completed/skipped/partial leaf operations are terminal. A retry visits only
+    // captured failures, or an existing merge container with failed descendants.
+    if (retry && retryCount(node) == 0) {
+      return;
+    }
+    if (!retry && node.attempted) {
+      return;
+    }
+    if (node.merging && retry) {
+      for (auto& child : node.children) {
+        execute(*child, action, work, true);
+      }
+    }
+    try {
+      work.check();
+      node.source.parent = openSourceParent(node.source);
+      validateBindings(node.source, *node.destination);
+      auto destination =
+          opened(::open(node.destination->location.nativePath()->c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+      if (!sameIdentity(info(destination.get()), node.destination->metadata)) {
+        throw std::runtime_error("The destination folder changed. Start a new transfer.");
+      }
+      if (node.merging) {
+        const auto existing = info(destination.get(), node.source.name);
+        // The child destination retains the original merge target's identity.
+        validateDestination(*node.mergeTarget);
+        node.result = merge(node, destination.get(), action, work, existing);
+      } else {
+        requireUnchanged(work.expected(node.source.metadata), info(node.source.parent.get(), node.source.name));
+        node.result = transfer(node, destination.get(), action, work);
+      }
+    } catch (const TransferCancelled&) {
+      const bool effects = std::ranges::any_of(node.children, [](const auto& child) {
+        return child->result.outcome == files::TransferOutcome::Moved
+            || child->result.outcome == files::TransferOutcome::Copied
+            || child->result.outcome == files::TransferOutcome::Partial;
+      });
+      node.result = {
+          node.source.location, effects ? files::TransferOutcome::Partial : files::TransferOutcome::Cancelled,
+          "Transfer cancelled. Completed child transfers remain applied."
+      };
+    } catch (const std::exception& error) {
+      node.result = {
+          node.source.location, node.merging ? files::TransferOutcome::Partial : files::TransferOutcome::Failed,
+          error.what()
+      };
+    }
+    node.source.parent = Fd{};
+    node.attempted = true;
+  }
+  std::string jobReport(const std::vector<files::TransferResult>& results) {
+    std::string report = "Transfer results\n";
+    constexpr std::array labels{"Moved", "Copied", "Skipped", "Failed", "Cancelled", "Partial"};
+    std::function<void(const files::TransferResult&)> append = [&](const auto& result) {
+      if (report.size() > 16 * 1024 * 1024) {
+        return;
+      }
+      report += result.source.uri()
+          + (result.destination ? " -> " + result.destination->uri() : "")
+          + "\n  "
+          + labels.at(static_cast<std::size_t>(result.outcome));
+      report += result.retryable ? " (retry available)" : "";
+      report += result.error.empty() ? "\n" : "\n  " + result.error + "\n";
+      for (const auto& child : result.children) {
+        append(child);
+      }
+    };
+    for (const auto& result : results) {
+      append(result);
+    }
+    if (report.size() > 16 * 1024 * 1024) {
+      report += "\nReport truncated.\n";
+    }
+    return report;
   }
 
 } // namespace
@@ -631,7 +944,11 @@ struct files::TransferService::State {
   std::condition_variable decision;
   std::optional<TransferConflict> conflict;
   std::optional<TransferConflictChoice> choice;
-  std::uint64_t nextConflict = 0;
+  std::uint64_t nextConflict = 0, jobId = 0;
+  bool applyToAll = false;
+  std::shared_ptr<Job> job;
+  std::size_t retryable = 0;
+  std::string report;
 
   static void notify(const std::shared_ptr<State>& owner) {
     auto* source = g_idle_source_new();
@@ -675,13 +992,20 @@ std::optional<files::TransferConflict> files::TransferService::conflict() const 
   const std::scoped_lock lock(m_state->mutex);
   return m_state->conflict;
 }
-bool files::TransferService::resolve(std::uint64_t id, TransferConflictChoice choice) {
+bool files::TransferService::resolve(std::uint64_t id, TransferConflictChoice choice, bool applyToAll) {
   {
     const std::scoped_lock lock(m_state->mutex);
-    if (!m_state->conflict || m_state->conflict->id != id || m_state->choice) {
+    if (!m_state->conflict
+        || m_state->conflict->id != id
+        || m_state->choice
+        || choice < TransferConflictChoice::Replace
+        || choice > TransferConflictChoice::Merge
+        || (choice == TransferConflictChoice::Merge && !m_state->conflict->canMerge)
+        || (applyToAll && (!m_state->conflict->canApplyToAll || choice == TransferConflictChoice::Cancel))) {
       return false;
     }
     m_state->choice = choice;
+    m_state->applyToAll = applyToAll;
     if (choice == TransferConflictChoice::Cancel) {
       m_state->cancelled.store(true);
     }
@@ -690,13 +1014,22 @@ bool files::TransferService::resolve(std::uint64_t id, TransferConflictChoice ch
   return true;
 }
 
-bool files::TransferService::start(TransferRequest request) {
+std::size_t files::TransferService::retryable() const { return busy() ? 0 : m_state->retryable; }
+const std::string& files::TransferService::report() const { return m_state->report; }
+std::uint64_t files::TransferService::jobId() const { return m_state->jobId; }
+bool files::TransferService::start(TransferRequest request) { return launch(std::move(request), false); }
+bool files::TransferService::retryFailed() {
+  return m_state->job && retryable() > 0 ? launch(m_state->job->request, true) : false;
+}
+bool files::TransferService::launch(TransferRequest request, bool retry) {
   if (busy() || request.sources.empty()) {
     return false;
   }
   struct Request {
     std::shared_ptr<State> owner;
     TransferRequest transfer;
+    std::shared_ptr<Job> job;
+    bool retry;
   };
   m_state->active = true;
   m_state->action = request.action;
@@ -704,16 +1037,34 @@ bool files::TransferService::start(TransferRequest request) {
   m_state->completed.store(0);
   m_state->bytes.store(0);
   m_state->cancelled.store(false);
-  m_state->results.clear();
+  if (!retry) {
+    ++m_state->jobId;
+    m_state->results.clear();
+    m_state->report.clear();
+    m_state->retryable = 0;
+    m_state->job.reset();
+  }
   GioPtr<GTask> task(g_task_new(
       nullptr, nullptr,
       [](GObject*, GAsyncResult* result, gpointer) {
         auto* task = G_TASK(result);
         const auto owner = static_cast<Request*>(g_task_get_task_data(task))->owner;
+        const auto& request = *static_cast<Request*>(g_task_get_task_data(task));
         const std::unique_ptr<std::vector<TransferResult>> outcomes(
             static_cast<std::vector<TransferResult>*>(g_task_propagate_pointer(task, nullptr))
         );
         owner->results = std::move(*outcomes);
+        owner->job = request.job;
+        owner->retryable = 0;
+        for (const auto& node : owner->job->nodes) {
+          if (node) {
+            owner->retryable += retryCount(*node);
+          }
+        }
+        owner->report = std::move(request.job->report);
+        if (owner->retryable == 0) {
+          owner->job.reset();
+        }
         owner->active = false;
         const auto callback = owner->changed;
         if (callback) {
@@ -722,26 +1073,39 @@ bool files::TransferService::start(TransferRequest request) {
       },
       nullptr
   ));
-  g_task_set_task_data(task.get(), new Request{m_state, std::move(request)}, [](gpointer data) {
-    delete static_cast<Request*>(data);
-  });
+  g_task_set_task_data(
+      task.get(), new Request{m_state, std::move(request), retry ? m_state->job : nullptr, retry},
+      [](gpointer data) { delete static_cast<Request*>(data); }
+  );
   g_task_run_in_thread(task.get(), [](GTask* task, gpointer, gpointer data, GCancellable*) {
     auto& request = *static_cast<Request*>(data);
+    if (!request.job) {
+      request.job = std::make_shared<Job>(request.transfer);
+    }
     auto outcomes = std::make_unique<std::vector<TransferResult>>();
     for (const auto& source : request.transfer.sources) {
       outcomes->push_back({source, TransferOutcome::Failed, {}});
     }
     std::vector<bool> processed(outcomes->size(), false);
+    std::map<std::pair<mode_t, mode_t>, TransferConflictChoice> policies;
     Work work{
         request.owner->cancelled, request.owner->bytes,
-        [owner = request.owner, destination = request.transfer.destination](
-            const Source& source, const std::string& target, const struct stat& existing
+        [owner = request.owner, &policies, allowMerge = request.transfer.allowMerge](
+            const Source& source, const Location& destination, const std::string& target, const struct stat& existing,
+            bool forcePrompt
         ) {
+          const auto kind = std::pair{source.metadata.st_mode & S_IFMT, existing.st_mode & S_IFMT};
+          if (!forcePrompt) {
+            if (const auto found = policies.find(kind); found != policies.end()) {
+              return found->second;
+            }
+          }
           const files::GioPtr<GFile> child(g_file_get_child(destination.file().get(), target.c_str()));
           const files::GString uri(g_file_get_uri(child.get()));
           const files::GString name(g_filename_display_name(target.c_str()));
           std::unique_lock lock(owner->mutex);
           owner->choice.reset();
+          owner->applyToAll = false;
           owner->conflict = TransferConflict{
               .id = ++owner->nextConflict,
               .source = source.location,
@@ -759,24 +1123,56 @@ bool files::TransferService::start(TransferRequest request) {
                   ? std::nullopt
                   : std::optional<std::uint64_t>(source.metadata.st_mtim.tv_sec),
               .destinationModified =
-                  existing.st_mtim.tv_sec < 0 ? std::nullopt : std::optional<std::uint64_t>(existing.st_mtim.tv_sec)
+                  existing.st_mtim.tv_sec < 0 ? std::nullopt : std::optional<std::uint64_t>(existing.st_mtim.tv_sec),
+              .canMerge = allowMerge && S_ISDIR(source.metadata.st_mode) && S_ISDIR(existing.st_mode),
+              .canApplyToAll = allowMerge,
+              .scopeLabel = S_ISDIR(source.metadata.st_mode) && S_ISDIR(existing.st_mode)
+                  ? "Apply to remaining folder conflicts in this job"
+                  : "Apply to remaining conflicts of these types in this job"
           };
           lock.unlock();
           State::notify(owner);
           lock.lock();
           owner->decision.wait(lock, [&] { return owner->cancelled.load() || owner->choice.has_value(); });
           const auto choice = owner->cancelled.load() ? TransferConflictChoice::Cancel : *owner->choice;
+          if (owner->applyToAll && choice != TransferConflictChoice::Cancel) {
+            policies.insert_or_assign(kind, choice);
+          }
           owner->conflict.reset();
           owner->choice.reset();
           return choice;
         }
     };
+    work.allowMerge = request.transfer.allowMerge;
+    work.changedLinks = request.job->changedLinks;
+    work.mergedItems = request.job->mergedItems;
+    if (request.retry) {
+      *outcomes = request.job->outcomes;
+      for (const auto& node : request.job->nodes) {
+        if (node) {
+          execute(*node, request.transfer.action, work, true);
+          outcomes->at(node->source.index) = snapshot(*node);
+        }
+        request.owner->completed.fetch_add(1);
+      }
+      request.job->changedLinks = std::move(work.changedLinks);
+      request.job->mergedItems = work.mergedItems;
+      request.job->outcomes = *outcomes;
+      request.job->report = jobReport(*outcomes);
+      g_task_return_pointer(task, outcomes.release(), [](gpointer data) {
+        delete static_cast<std::vector<TransferResult>*>(data);
+      });
+      return;
+    }
+    request.job->nodes.resize(outcomes->size());
     try {
       const auto path = request.transfer.destination.nativePath();
       if (!path) {
         throw std::runtime_error("Transfers to remote folders are not supported yet.");
       }
       auto destination = opened(::open(path->c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+      auto binding =
+          std::make_shared<const Destination>(Destination{request.transfer.destination, info(destination.get()), {}});
       std::vector<Source> sources;
       for (std::size_t index = 0; index < request.transfer.sources.size(); ++index) {
         const auto& location = request.transfer.sources[index];
@@ -858,8 +1254,12 @@ bool files::TransferService::start(TransferRequest request) {
           if (included[i]) {
             (*outcomes)[source.index].outcome = TransferOutcome::Skipped;
           } else {
-            source.parent = openSourceParent(source);
-            (*outcomes)[source.index] = transfer(source, destination.get(), request.transfer.action, work);
+            Source captured{source.index,      source.location,      Fd{}, source.name, source.metadata,
+                            source.parentPath, source.parentMetadata};
+            auto node = std::make_shared<Node>(std::move(captured), binding, (*outcomes)[source.index]);
+            request.job->nodes[source.index] = node;
+            execute(*node, request.transfer.action, work, false);
+            (*outcomes)[source.index] = snapshot(*node);
           }
         } catch (const std::exception& error) {
           (*outcomes)[source.index].error = error.what();
@@ -876,7 +1276,11 @@ bool files::TransferService::start(TransferRequest request) {
         }
       }
     }
+    request.job->changedLinks = std::move(work.changedLinks);
+    request.job->mergedItems = work.mergedItems;
     request.owner->completed.store(outcomes->size());
+    request.job->outcomes = *outcomes;
+    request.job->report = jobReport(*outcomes);
     g_task_return_pointer(task, outcomes.release(), [](gpointer data) {
       delete static_cast<std::vector<TransferResult>*>(data);
     });
