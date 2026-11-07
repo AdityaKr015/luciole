@@ -782,7 +782,6 @@ namespace {
           {roundLeft ? kWorkspaceRadius : 0.0F, roundRight ? kWorkspaceRadius : 0.0F,
            roundRight ? kWorkspaceRadius : 0.0F, roundLeft ? kWorkspaceRadius : 0.0F}
       );
-      m_body->setPadding(Style::radiusMd);
       if (active && !m_active) {
         m_active = true;
         m_dispatcher.setSceneRoot(host);
@@ -7081,46 +7080,52 @@ namespace {
                .fill = colorSpecFromRole(ColorRole::Surface),
                .clipChildren = true,
                .participatesInLayout = false},
-              ui::row(
-                  {.out = &m_paneHeader,
-                   .align = FlexAlign::Center,
-                   .gap = Style::spaceXs,
-                   .paddingH = Style::spaceSm,
-                   .height = 32.0F,
-                   .visible = false,
-                   .participatesInLayout = false},
-                  ui::label(
-                      {.out = &m_paneTitle,
-                       .fontSize = Style::fontSizeCaption,
-                       .maxLines = 1,
-                       .flexGrow = 1,
-                       .configure = [](Label& label) { label.setUseMarkup(false); }}
+              ui::column(
+                  {.align = FlexAlign::Stretch,
+                   .flexGrow = 1.0F,
+                   .configure =
+                       [](Flex& frame) { frame.setPadding(Style::radiusMd, Style::radiusMd, 0.0F, Style::radiusMd); }},
+                  ui::row(
+                      {.out = &m_paneHeader,
+                       .align = FlexAlign::Center,
+                       .gap = Style::spaceXs,
+                       .paddingH = Style::spaceSm,
+                       .height = 32.0F,
+                       .visible = false,
+                       .participatesInLayout = false},
+                      ui::label(
+                          {.out = &m_paneTitle,
+                           .fontSize = Style::fontSizeCaption,
+                           .maxLines = 1,
+                           .flexGrow = 1,
+                           .configure = [](Label& label) { label.setUseMarkup(false); }}
+                      ),
+                      ui::button(
+                          {.glyph = "x",
+                           .glyphSize = Style::baseGlyphSize,
+                           .controlHeight = 24.0F,
+                           .variant = ButtonVariant::Ghost,
+                           .tooltip = "Close pane (Ctrl+Alt+W)",
+                           .padding = Style::spaceXs,
+                           .width = 24.0F,
+                           .onClick =
+                               [this] {
+                                 if (m_workspaceRequest) {
+                                   m_workspaceRequest(WorkspaceCommand::ClosePane, std::nullopt);
+                                 }
+                               }}
+                      )
                   ),
-                  ui::button(
-                      {.glyph = "x",
-                       .glyphSize = Style::baseGlyphSize,
-                       .controlHeight = 24.0F,
-                       .variant = ButtonVariant::Ghost,
-                       .tooltip = "Close pane (Ctrl+Alt+W)",
-                       .padding = Style::spaceXs,
-                       .width = 24.0F,
-                       .onClick =
-                           [this] {
-                             if (m_workspaceRequest) {
-                               m_workspaceRequest(WorkspaceCommand::ClosePane, std::nullopt);
-                             }
-                           }}
+                  ui::row(
+                      {.align = FlexAlign::Stretch, .clipChildren = true, .flexGrow = 1.0F}, std::move(places),
+                      std::move(sidebarResize), std::move(content)
                   )
-              ),
-              ui::row(
-                  {.align = FlexAlign::Stretch, .clipChildren = true, .flexGrow = 1.0F}, std::move(places),
-                  std::move(sidebarResize), std::move(content)
               ),
               ui::row(
                   {.align = FlexAlign::Center,
                    .gap = Style::spaceMd,
-                   .padding = Style::spaceSm,
-                   .fill = colorSpecFromRole(ColorRole::SurfaceContainerLow)},
+                   .paddingV = Style::spaceSm,
+                   .paddingH = Style::spaceSm + Style::spaceXs},
                   ui::label(
                       {.out = &m_status,
                        .maxLines = 1,
