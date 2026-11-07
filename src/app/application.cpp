@@ -8,6 +8,7 @@
 #include "browser/action_registry.h"
 #include "browser/browser_controller.h"
 #include "browser/details_columns.h"
+#include "browser/file_icon.h"
 #include "browser/file_view.h"
 #include "browser/location_presentation.h"
 #include "browser/path_completion.h"
@@ -6857,7 +6858,7 @@ namespace {
           )
       );
 
-      auto places = std::make_unique<files::PlacesSidebar>(m_pins, m_icons);
+      auto places = std::make_unique<files::PlacesSidebar>(m_pins);
       m_places = places.get();
       configurePlacesCallbacks();
       auto sidebarResize = ui::inputArea(

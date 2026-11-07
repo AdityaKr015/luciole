@@ -8,7 +8,7 @@
 namespace files {
   struct UserPlace {
     Bookmark bookmark;
-    std::string iconName;
+    std::string glyphName;
   };
 
   // Read platform user-directory configuration once at startup, outside Render.

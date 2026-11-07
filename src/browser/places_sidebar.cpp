@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <cmath>
 
-files::PlacesSidebar::PlacesSidebar(PinService& pins, FileIconCache& icons) : m_pins(pins), m_icons(icons) {
+files::PlacesSidebar::PlacesSidebar(PinService& pins) : m_pins(pins) {
   setDirection(FlexDirection::Vertical);
   setAlign(FlexAlign::Stretch);
   setMinWidth(static_cast<float>(kDefaultSidebarWidth));
@@ -87,17 +87,14 @@ void files::PlacesSidebar::sync(std::optional<Location> current) {
         && (m_current == row.bookmark.location
             || (row.bookmark.location == Location::trash() && m_current && m_current->isTrash()));
     row.button->setSelected(selected);
-    row.icon->bind(
-        {.names = {row.iconName, "folder"}, .filePath = {}, .desktopFile = {}},
-        colorSpecFromRole(selected ? ColorRole::OnPrimary : ColorRole::OnSurface)
-    );
     highlighted = highlighted || selected;
   }
   markLayoutDirty();
 }
-void files::PlacesSidebar::addRow(const Bookmark& bookmark, const std::string& iconName, std::size_t index) {
+void files::PlacesSidebar::addRow(const Bookmark& bookmark, const std::string& glyph, std::size_t index) {
   auto button = ui::button(
       {.text = bookmark.label,
+       .glyph = glyph,
        .contentAlign = ButtonContentAlign::Start,
        .variant = ButtonVariant::Ghost,
        .paddingH = 8.0F,
@@ -133,12 +130,6 @@ void files::PlacesSidebar::addRow(const Bookmark& bookmark, const std::string& i
       }
     }
   });
-  auto icon = std::make_unique<FileIcon>(m_icons, 24.0F);
-  auto* artwork = icon.get();
-  artwork->bind(
-      {.names = {iconName, "folder"}, .filePath = {}, .desktopFile = {}}, colorSpecFromRole(ColorRole::OnSurface)
-  );
-  raw->insertChildAt(0, std::move(icon));
   raw->setOnRightClickWithPointer([this, bookmark](float x, float y, std::uint32_t, std::uint32_t) {
     cancelDragCandidate();
     if (m_context) {
@@ -180,7 +171,7 @@ void files::PlacesSidebar::addRow(const Bookmark& bookmark, const std::string& i
     m_scroll->requestScrollIntoView(raw);
   });
   raw->inputArea()->setOnFocusLoss([raw] { raw->setKeyboardFocusHint(false); });
-  m_rows.push_back({bookmark, iconName, index, raw, artwork});
+  m_rows.push_back({bookmark, index, raw});
   m_scroll->content()->addChild(std::move(button));
 }
 void files::PlacesSidebar::rebuild() {
@@ -208,7 +199,7 @@ void files::PlacesSidebar::rebuild() {
     const auto known = std::ranges::find_if(m_pins.userPlaces(), [&](const auto& place) {
       return place.bookmark.location == pins[i].location;
     });
-    addRow(pins[i], known == m_pins.userPlaces().end() ? "folder" : known->iconName, i);
+    addRow(pins[i], known == m_pins.userPlaces().end() ? "folder" : known->glyphName, i);
   }
   sync(m_current);
 }

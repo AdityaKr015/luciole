@@ -29,24 +29,24 @@ std::vector<files::UserPlace> files::configuredUserPlaces() {
   struct Special {
     GUserDirectory directory;
     const char* label;
-    const char* icon;
+    const char* glyph;
   };
   constexpr std::array specials{
-      Special{G_USER_DIRECTORY_DESKTOP, "Desktop", "user-desktop"},
-      Special{G_USER_DIRECTORY_DOCUMENTS, "Documents", "folder-documents"},
-      Special{G_USER_DIRECTORY_DOWNLOAD, "Downloads", "folder-download"},
-      Special{G_USER_DIRECTORY_MUSIC, "Music", "folder-music"},
-      Special{G_USER_DIRECTORY_PICTURES, "Pictures", "folder-pictures"},
-      Special{G_USER_DIRECTORY_VIDEOS, "Videos", "folder-videos"},
-      Special{G_USER_DIRECTORY_PUBLIC_SHARE, "Public", "folder-publicshare"},
-      Special{G_USER_DIRECTORY_TEMPLATES, "Templates", "folder-templates"},
+      Special{G_USER_DIRECTORY_DESKTOP, "Desktop", "device-desktop"},
+      Special{G_USER_DIRECTORY_DOCUMENTS, "Documents", "file-text"},
+      Special{G_USER_DIRECTORY_DOWNLOAD, "Downloads", "download"},
+      Special{G_USER_DIRECTORY_MUSIC, "Music", "music"},
+      Special{G_USER_DIRECTORY_PICTURES, "Pictures", "photo"},
+      Special{G_USER_DIRECTORY_VIDEOS, "Videos", "video"},
+      Special{G_USER_DIRECTORY_PUBLIC_SHARE, "Public", "users"},
+      Special{G_USER_DIRECTORY_TEMPLATES, "Templates", "file-plus"},
   };
   std::vector<UserPlace> result;
   std::unordered_set<std::string> seen{Location::fromPath("/").uri()};
   if (const char* home = g_get_home_dir(); home != nullptr && g_path_is_absolute(home)) {
     auto location = Location::fromPath(home);
     seen.insert(location.uri());
-    result.push_back({{.label = "Home", .location = std::move(location)}, "user-home"});
+    result.push_back({{.label = "Home", .location = std::move(location)}, "home"});
   }
   for (const auto& special : specials) {
     const char* path = g_get_user_special_dir(special.directory);
@@ -55,11 +55,11 @@ std::vector<files::UserPlace> files::configuredUserPlaces() {
     }
     auto location = Location::fromPath(path);
     if (seen.insert(location.uri()).second) {
-      result.push_back({{.label = special.label, .location = std::move(location)}, special.icon});
+      result.push_back({{.label = special.label, .location = std::move(location)}, special.glyph});
     }
   }
-  result.push_back({{.label = "Trash", .location = Location::trash()}, "user-trash"});
-  result.push_back({{.label = "File System", .location = Location::fromPath("/")}, "drive-harddisk"});
+  result.push_back({{.label = "Trash", .location = Location::trash()}, "trash"});
+  result.push_back({{.label = "File System", .location = Location::fromPath("/")}, "database"});
   return result;
 }
 

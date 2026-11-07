@@ -92,6 +92,7 @@ void FilePreviewView::sync(
     const files::PreviewSnapshot& snapshot, float width, float height, std::string_view typeLabel, bool quick
 ) {
   setRadii(quick ? Radii(Style::radiusXl) : Radii(0, Style::radiusXl, Style::radiusXl, 0));
+  setPadding(Style::spaceMd, Style::spaceMd, quick ? Style::spaceMd : Style::borderWidth, Style::spaceMd);
   const float budget = std::max(40.0F, width - Style::spaceMd * 2 - Style::scrollbarWidth - Style::scrollbarGap);
   m_heading->setMaxWidth(std::max(1.0F, width - Style::spaceMd * 2 - Style::controlHeightSm - Style::spaceSm));
   for (auto* button : {m_open, m_openWith}) {

@@ -1,6 +1,5 @@
 #pragma once
 
-#include "browser/file_icon.h"
 #include "browser/places.h"
 #include "ui/controls/button.h"
 #include "ui/controls/scroll_view.h"
@@ -8,7 +7,7 @@
 namespace files {
   class PlacesSidebar final : public Flex {
   public:
-    PlacesSidebar(PinService& pins, FileIconCache& icons);
+    explicit PlacesSidebar(PinService& pins);
     void invalidate();
     void sync(std::optional<Location> current);
     void cancelDragCandidate();
@@ -31,15 +30,12 @@ namespace files {
   private:
     struct Row {
       Bookmark bookmark;
-      std::string iconName;
       std::size_t pinIndex = 0;
       Button* button = nullptr;
-      FileIcon* icon = nullptr;
     };
     void rebuild();
-    void addRow(const Bookmark& bookmark, const std::string& icon, std::size_t index);
+    void addRow(const Bookmark& bookmark, const std::string& glyph, std::size_t index);
     PinService& m_pins;
-    FileIconCache& m_icons;
     ScrollView* m_scroll = nullptr;
     Label* m_heading = nullptr;
     std::vector<Row> m_rows;

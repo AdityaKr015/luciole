@@ -10,7 +10,7 @@ namespace files {
     std::string label;
   };
 
-  // Pure URI ancestry; never queries directory contents or reconstructs targets from labels.
+  // URI ancestry with a Home display root; never queries directories or reconstructs targets from labels.
   std::vector<Breadcrumb> locationBreadcrumbs(const Location& location);
   std::string locationEditText(const Location& location);
   Location resolveLocationText(const std::string& text, const Location& base);

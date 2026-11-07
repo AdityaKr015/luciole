@@ -589,6 +589,31 @@ namespace {
   }
 
   void testLocationPresentation() {
+    const fs::path homePath(g_get_home_dir());
+    const auto home = Location::fromPath(homePath.native());
+    const auto homeCrumbs = files::locationBreadcrumbs(home);
+    TEST_CHECK(homeCrumbs.size() == 1 && homeCrumbs.front().label == "Home" && homeCrumbs.front().location == home);
+    const auto inside = Location::fromPath((homePath / "space here" / "<literal> café").native());
+    const auto insideCrumbs = files::locationBreadcrumbs(inside);
+    TEST_CHECK(
+        insideCrumbs.size() == 3
+        && insideCrumbs.front().location == home
+        && insideCrumbs.front().label == "Home"
+        && insideCrumbs[1].label == "space here"
+        && insideCrumbs.back().location == inside
+        && insideCrumbs.back().label == "<literal> café"
+    );
+    TEST_CHECK(files::locationEditText(inside) == (homePath / "space here" / "<literal> café").native());
+    const auto homeRaw = Location::fromPath((homePath / ("raw-" + std::string(1, static_cast<char>(0xff)))).native());
+    const auto rawCrumbs = files::locationBreadcrumbs(homeRaw);
+    TEST_CHECK(rawCrumbs.size() == 2 && rawCrumbs.front().location == home && rawCrumbs.back().location == homeRaw);
+    TEST_CHECK(files::locationEditText(homeRaw) == homeRaw.uri());
+    if (homePath != "/") {
+      const auto sibling =
+          Location::fromPath((homePath.parent_path() / (homePath.filename().native() + "-other")).native());
+      const auto siblingCrumbs = files::locationBreadcrumbs(sibling);
+      TEST_CHECK(siblingCrumbs.front().label == "File System" && siblingCrumbs.back().location == sibling);
+    }
     const auto path = Location::fromPath("/tmp/space here/<literal>/café");
     const auto crumbs = files::locationBreadcrumbs(path);
     TEST_CHECK(

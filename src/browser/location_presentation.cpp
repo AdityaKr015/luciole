@@ -7,12 +7,17 @@
 
 std::vector<files::Breadcrumb> files::locationBreadcrumbs(const Location& location) {
   std::vector<Breadcrumb> result;
+  const char* homePath = g_get_home_dir();
+  const GioPtr<GFile> home(homePath && g_path_is_absolute(homePath) ? g_file_new_for_path(homePath) : nullptr);
   auto current = location.file();
   while (current) {
     const GString uri(g_file_get_uri(current.get()));
     auto parent = GioPtr<GFile>(g_file_get_parent(current.get()));
+    const bool atHome = home && g_file_equal(current.get(), home.get());
     std::string label;
-    if (parent) {
+    if (atHome) {
+      label = "Home";
+    } else if (parent) {
       const GString name(g_file_get_basename(current.get()));
       const GString display(g_filename_display_name(name ? name.get() : uri.get()));
       label = display.get();
@@ -28,7 +33,7 @@ std::vector<files::Breadcrumb> files::locationBreadcrumbs(const Location& locati
       label = host != nullptr && *host != '\0' ? host : "Location";
     }
     result.push_back({.location = Location::fromUri(uri.get()), .label = std::move(label)});
-    if (parent && g_file_equal(current.get(), parent.get())) {
+    if (atHome || (parent && g_file_equal(current.get(), parent.get()))) {
       break;
     }
     current = std::move(parent);
