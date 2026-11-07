@@ -2,6 +2,7 @@
 #include "operations/permission_service.h"
 #include "test_check.h"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -293,6 +294,211 @@ namespace {
     TEST_CHECK(service.snapshot().phase == P::Error);
     TEST_CHECK(mode(file) != 0777);
   }
+  using O = files::PermissionOutcome;
+  void prepareBulk(Pump& pump, S& service, std::vector<files::DirectoryEntry> entries) {
+    TEST_CHECK(service.prepare(std::move(entries)));
+    pump.settle(service);
+    TEST_CHECK(service.snapshot().phase == P::Ready && service.snapshot().multiple && service.snapshot().results);
+  }
+  void bulkMasksAndOwnership(Pump& pump) {
+    Fixture f;
+    S service;
+    const auto a = f.root / "a", b = f.root / "b";
+    write(a);
+    write(b);
+    TEST_CHECK(::chmod(a.c_str(), 04760) == 0 && ::chmod(b.c_str(), 02755) == 0);
+    prepareBulk(pump, service, {entry(a), entry(b)});
+    TEST_CHECK(service.snapshot().mixedMode == (04760U ^ 02755U));
+    TEST_CHECK(!service.snapshot().mixedOwner && !service.snapshot().mixedGroup);
+    pump.apply(service, {.mode = 0100, .owner = {}, .group = {}, .mask = 0104});
+    TEST_CHECK(mode(a) == 04760 && mode(b) == 02751);
+    TEST_CHECK(service.snapshot().results->front().outcome == O::Unchanged);
+    TEST_CHECK(service.snapshot().results->back().outcome == O::Changed);
+    TEST_CHECK(service.snapshot().report.contains("mode 2751"));
+    pump.apply(service, {});
+    TEST_CHECK(!service.snapshot().applied && !service.snapshot().error);
+    for (const auto& row : *service.snapshot().results) {
+      TEST_CHECK(row.outcome == O::Unchanged);
+    }
+    pump.apply(service, {.mode = 07777, .owner = {}, .group = "noctalia-no-such-group-370917", .mask = 07777});
+    TEST_CHECK(service.snapshot().error && !service.snapshot().finished && !service.snapshot().applied);
+    TEST_CHECK(service.snapshot().report.starts_with("No changes attempted:"));
+    for (const auto& row : *service.snapshot().results) {
+      TEST_CHECK(row.outcome == O::Ready);
+    }
+    TEST_CHECK(mode(a) == 04760 && mode(b) == 02751);
+    pump.apply(service, {.mode = 0004, .owner = {}, .group = {}, .mask = 0004});
+    TEST_CHECK(!service.snapshot().error && mode(a) == 04764 && mode(b) == 02755);
+    const int count = ::getgroups(0, nullptr);
+    TEST_CHECK(count >= 0);
+    std::vector<gid_t> groups(static_cast<std::size_t>(count));
+    TEST_CHECK(::getgroups(count, groups.data()) >= 0);
+    for (const auto group : groups) {
+      if (group == metadata(a).st_gid) {
+        continue;
+      }
+      pump.apply(service, {.mode = 0004, .owner = {}, .group = std::to_string(group), .mask = 0004});
+      TEST_CHECK(!service.snapshot().error && metadata(a).st_gid == group && metadata(b).st_gid == group);
+      TEST_CHECK(mode(a) == 0764 && mode(b) == 0755); // Keep does not restore kernel-cleared set-ID bits.
+      std::println("Verified bulk group changes preserve kernel set-ID clearing.");
+      break;
+    }
+    fs::create_directory(f.root / "folder");
+    write(f.root / "folder/child");
+    const auto child = mode(f.root / "folder/child");
+    prepareBulk(pump, service, {entry(f.root / "folder"), entry(a)});
+    pump.apply(service, {.mode = 0, .owner = {}, .group = {}, .mask = 0007});
+    TEST_CHECK((mode(f.root / "folder") & 0007) == 0 && mode(f.root / "folder/child") == child);
+  }
+  void bulkFailuresAndAliases(Pump& pump) {
+    Fixture f;
+    S service;
+    const auto a = f.root / "a", b = f.root / "b";
+    write(a);
+    write(b);
+    TEST_CHECK(::chmod(a.c_str(), 0600) == 0 && ::chmod(b.c_str(), 0600) == 0);
+    prepareBulk(pump, service, {entry(a), entry(b)});
+    fs::rename(a, f.root / "held");
+    write(a);
+    const auto replacement = mode(a);
+    pump.apply(service, {.mode = 0004, .owner = {}, .group = {}, .mask = 0004});
+    TEST_CHECK(service.snapshot().error && service.snapshot().applied && service.snapshot().finished);
+    TEST_CHECK(mode(a) == replacement && mode(f.root / "held") == 0600 && mode(b) == 0604);
+    TEST_CHECK(
+        service.snapshot().results->front().outcome == O::Failed
+        && service.snapshot().results->back().outcome == O::Changed
+    );
+    auto remote = entry(a);
+    remote.location = files::Location::fromUri("sftp://example.invalid/file");
+    auto unknown = entry(b);
+    unknown.identity.reset();
+    prepareBulk(pump, service, {entry(a), unknown, remote});
+    TEST_CHECK(service.snapshot().unknownItems == 1 && service.snapshot().results->back().outcome == O::Failed);
+    pump.apply(service, {.mode = 0002, .owner = {}, .group = {}, .mask = 0002});
+    TEST_CHECK(service.snapshot().error && mode(a) == (replacement | 0002) && mode(b) == 0604);
+    TEST_CHECK(service.snapshot().results->at(1).outcome == O::Failed);
+    fs::create_symlink("a", f.root / "link");
+    prepareBulk(pump, service, {entry(b), entry(f.root / "link")});
+    pump.apply(service, {.mode = 0001, .owner = {}, .group = {}, .mask = 0001});
+    TEST_CHECK(service.snapshot().error && mode(a) == (replacement | 0002) && mode(b) == 0605);
+    TEST_CHECK(service.snapshot().results->back().outcome == O::Failed);
+    fs::create_hard_link(b, f.root / "alias");
+    prepareBulk(pump, service, {entry(b), entry(f.root / "alias")});
+    pump.apply(service, {.mode = 0002, .owner = {}, .group = {}, .mask = 0002});
+    TEST_CHECK(!service.snapshot().error && mode(b) == 0607);
+    TEST_CHECK(
+        service.snapshot().results->front().outcome == O::Changed
+        && service.snapshot().results->back().outcome == O::Changed
+    );
+    TEST_CHECK(service.snapshot().results->back().message.contains("hard link"));
+    pump.apply(service, {.mode = 0, .owner = {}, .group = {}, .mask = 0002});
+    TEST_CHECK(!service.snapshot().error && mode(b) == 0605);
+    prepareBulk(pump, service, {entry(b), entry(f.root / "alias")});
+    fs::remove(f.root / "alias");
+    write(f.root / "alias");
+    const auto aliasMode = mode(f.root / "alias");
+    pump.apply(service, {.mode = 0020, .owner = {}, .group = {}, .mask = 0020});
+    TEST_CHECK(service.snapshot().error && mode(f.root / "alias") == aliasMode && mode(b) == 0625);
+    fs::remove(f.root / "alias");
+    fs::create_hard_link(b, f.root / "alias");
+    pump.apply(service, {.mode = 0020, .owner = {}, .group = {}, .mask = 0020});
+    TEST_CHECK(service.snapshot().error && !service.snapshot().applied);
+    TEST_CHECK(service.snapshot().results->back().outcome == O::Failed);
+    prepareBulk(pump, service, {entry(a), entry(b)});
+    TEST_CHECK(::chmod(a.c_str(), 0400) == 0);
+    pump.apply(service, {.mode = 0010, .owner = {}, .group = {}, .mask = 0010});
+    TEST_CHECK(service.snapshot().error && mode(a) == 0400 && mode(b) == 0635);
+    const auto source = entry(a);
+    TEST_CHECK(!service.prepare(std::vector<files::DirectoryEntry>{}));
+    TEST_CHECK(!service.prepare(std::vector{source}));
+    TEST_CHECK(!service.prepare(std::vector<files::DirectoryEntry>(4097, source)));
+    TEST_CHECK(service.prepare(std::vector{source, source}));
+    pump.settle(service);
+    TEST_CHECK(service.snapshot().phase == P::Error);
+  }
+  void bulkCancellation(Pump& pump) {
+    for (const bool aliases : {false, true}) {
+      Fixture f;
+      S service;
+      constexpr std::size_t count = 256;
+      std::vector<files::DirectoryEntry> entries;
+      write(f.root / "original");
+      TEST_CHECK(::chmod((f.root / "original").c_str(), 0600) == 0);
+      for (std::size_t i = 0; i < count; ++i) {
+        const auto path = f.root / std::to_string(i);
+        if (aliases) {
+          fs::create_hard_link(f.root / "original", path);
+        } else {
+          write(path);
+          TEST_CHECK(::chmod(path.c_str(), 0600) == 0);
+        }
+        entries.push_back(entry(path));
+      }
+      prepareBulk(pump, service, entries);
+      TEST_CHECK(service.apply({.mode = 0004, .owner = {}, .group = {}, .mask = 0004}));
+      pump.until([&] { return service.completed() > 0 || !service.busy(); });
+      if (service.busy()) {
+        service.cancel();
+      }
+      pump.settle(service);
+      TEST_CHECK(service.snapshot().finished && service.snapshot().applied);
+      std::size_t changed = 0;
+      for (const auto& row : *service.snapshot().results) {
+        TEST_CHECK(row.info && row.info->mode == mode(*row.location.nativePath()));
+        TEST_CHECK(row.outcome == O::Changed || row.outcome == O::Cancelled);
+        if (row.outcome == O::Changed) {
+          ++changed;
+        }
+        if (aliases) {
+          TEST_CHECK(row.outcome == O::Changed && row.info->mode == 0604);
+        }
+      }
+      TEST_CHECK(changed > 0 && changed <= count);
+      std::println("Bulk cancellation: aliases={}, changed={} of {}", aliases, changed, count);
+      TEST_CHECK(service.prepare(entries));
+      service.cancel();
+      pump.settle(service);
+      TEST_CHECK(service.snapshot().phase == P::Cancelled);
+    }
+  }
+  void bulkOwnershipCancellation(Pump& pump) {
+    const int count = ::getgroups(0, nullptr);
+    TEST_CHECK(count >= 0);
+    std::vector<gid_t> groups(static_cast<std::size_t>(count));
+    TEST_CHECK(::getgroups(count, groups.data()) >= 0);
+    const auto other = std::ranges::find_if(groups, [](gid_t group) { return group != ::getegid(); });
+    if (other == groups.end()) {
+      return;
+    }
+    Fixture f;
+    S service;
+    std::vector<files::DirectoryEntry> entries;
+    for (std::size_t i = 0; i < 256; ++i) {
+      const auto path = f.root / std::to_string(i);
+      write(path);
+      TEST_CHECK(::chmod(path.c_str(), 04750) == 0);
+      entries.push_back(entry(path));
+    }
+    prepareBulk(pump, service, entries);
+    TEST_CHECK(service.apply({.mode = 0004, .owner = {}, .group = std::to_string(*other), .mask = 0004}));
+    pump.until([&] { return service.completed() > 0 || !service.busy(); });
+    if (service.busy()) {
+      service.cancel();
+    }
+    pump.settle(service);
+    TEST_CHECK(service.snapshot().finished);
+    for (const auto& row : *service.snapshot().results) {
+      const auto value = metadata(*row.location.nativePath());
+      TEST_CHECK(row.info && row.info->mode == (value.st_mode & 07777) && row.info->group == value.st_gid);
+      const bool full = value.st_gid == *other && (value.st_mode & 0004) != 0;
+      const bool untouched = value.st_gid == ::getegid() && (value.st_mode & 07777) == 04750;
+      TEST_CHECK(
+          full            ? row.outcome == O::Changed
+              : untouched ? row.outcome == O::Cancelled
+                          : row.outcome == O::Partial
+      );
+    }
+  }
 } // namespace
 int main() {
   Pump pump;
@@ -300,5 +506,9 @@ int main() {
   ownershipAndValidation(pump);
   linksAndStaleItems(pump);
   cancellationAndLifetime(pump);
+  bulkMasksAndOwnership(pump);
+  bulkFailuresAndAliases(pump);
+  bulkCancellation(pump);
+  bulkOwnershipCancellation(pump);
   std::println("permission service checks passed");
 }

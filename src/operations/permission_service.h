@@ -14,14 +14,29 @@ namespace files {
   struct PermissionEdit {
     std::optional<std::uint32_t> mode;
     std::optional<std::string> owner, group;
+    std::uint32_t mask = 07777; // Only these mode bits change; ownership can independently clear set-ID bits.
+  };
+  enum class PermissionOutcome { Ready, Changed, Unchanged, Failed, Partial, Cancelled };
+  struct PermissionResult {
+    Location location;
+    std::string name;
+    std::optional<PermissionInfo> info;
+    PermissionOutcome outcome = PermissionOutcome::Ready;
+    std::string message;
   };
   struct PermissionSnapshot {
     PermissionPhase phase = PermissionPhase::Idle;
     std::optional<PermissionInfo> info;
     std::string message;
     bool error = false, applied = false;
+    bool multiple = false, finished = false, cancelRequested = false;
+    std::uint32_t mixedMode = 0;
+    bool mixedOwner = false, mixedGroup = false;
+    std::size_t unknownItems = 0;
+    std::shared_ptr<const std::vector<PermissionResult>> results;
+    std::string report;
   };
-  // A native item only. All inspection, account lookup and descriptor-based edits run on a worker.
+  // Native captured items, up to 4096. Inspection, account lookup and descriptor-based edits run on a worker.
   class PermissionService {
   public:
     PermissionService();
@@ -29,10 +44,12 @@ namespace files {
     PermissionService(const PermissionService&) = delete;
     PermissionService& operator=(const PermissionService&) = delete;
     bool prepare(DirectoryEntry entry);
+    bool prepare(std::vector<DirectoryEntry> entries);
     bool prepare(const Location& location); // Capture a Places destination when inspection starts.
     bool apply(PermissionEdit edit);
     void cancel();
     bool busy() const;
+    std::size_t completed() const;
     const PermissionSnapshot& snapshot() const;
     void setChangedCallback(std::function<void()> callback);
 

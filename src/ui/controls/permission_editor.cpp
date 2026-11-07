@@ -2,6 +2,7 @@
 
 #include "ui/builders.h"
 #include "ui/controls/input.h"
+#include "ui/controls/segmented.h"
 #include "ui/controls/toggle.h"
 
 #include <format>
@@ -11,35 +12,65 @@ namespace {
                                                0004, 0002, 0001, 04000, 02000, 01000};
   constexpr float labelWidth = 88.0F, columnWidth = 100.0F;
 } // namespace
-PermissionEditor::PermissionEditor(std::function<void()> edited) : m_edited(std::move(edited)) {
+PermissionEditor::PermissionEditor(std::function<void()> edited, bool multiple)
+    : m_multiple(multiple), m_edited(std::move(edited)) {
   setDirection(FlexDirection::Vertical);
   setAlign(FlexAlign::Stretch);
   setGap(Style::spaceSm);
   addChild(ui::label({.text = "Permissions", .fontWeight = FontWeight::SemiBold}));
-  auto header = ui::row({.align = FlexAlign::Center, .gap = Style::spaceSm});
-  header->addChild(ui::label({.text = "", .minWidth = labelWidth, .maxWidth = labelWidth}));
-  for (const auto* text : {"Read", "Write", "Execute"}) {
-    header->addChild(
-        ui::column(
-            {.align = FlexAlign::Center, .width = columnWidth},
-            ui::label({.text = text, .fontSize = Style::fontSizeCaption})
-        )
-    );
-  }
-  addChild(std::move(header));
-  constexpr std::array names{"Owner", "Group", "Others"};
-  for (std::size_t row = 0; row < names.size(); ++row) {
-    auto controls = ui::row({.align = FlexAlign::Center, .gap = Style::spaceSm});
-    controls->addChild(ui::label({.text = names[row], .minWidth = labelWidth, .maxWidth = labelWidth}));
-    for (std::size_t column = 0; column < 3; ++column) {
-      controls->addChild(
-          ui::column(
-              {.align = FlexAlign::Center, .width = columnWidth},
-              ui::toggle({.out = &m_bits[row * 3 + column], .onChange = [this](bool) { changed(); }})
+  if (multiple) {
+    constexpr std::array names{"Owner read",     "Owner write",   "Owner execute", "Group read",
+                               "Group write",    "Group execute", "Others read",   "Others write",
+                               "Others execute", "Set user ID",   "Set group ID",  "Sticky bit"};
+    for (std::size_t i = 0; i < bits.size(); ++i) {
+      addChild(
+          ui::row(
+              {.align = FlexAlign::Center, .gap = Style::spaceSm},
+              ui::label({.text = names[i], .minWidth = 104.0F, .maxWidth = 104.0F}),
+              ui::segmented(
+                  {.out = &m_choices[i],
+                   .options =
+                       std::vector<ui::SegmentedOption>{
+                           {.label = "Keep", .glyph = {}, .tooltip = {}},
+                           {.label = "Allow", .glyph = {}, .tooltip = {}},
+                           {.label = "Deny", .glyph = {}, .tooltip = {}}
+                       },
+                   .equalSegmentWidths = true,
+                   .flexGrow = 1.0F,
+                   .onChange = [this](std::size_t) { changed(); }}
+              ),
+              ui::label(
+                  {.out = &m_current[i], .fontSize = Style::fontSizeCaption, .minWidth = 72.0F, .maxWidth = 72.0F}
+              )
           )
       );
     }
-    addChild(std::move(controls));
+  } else {
+    auto header = ui::row({.align = FlexAlign::Center, .gap = Style::spaceSm});
+    header->addChild(ui::label({.text = "", .minWidth = labelWidth, .maxWidth = labelWidth}));
+    for (const auto* text : {"Read", "Write", "Execute"}) {
+      header->addChild(
+          ui::column(
+              {.align = FlexAlign::Center, .width = columnWidth},
+              ui::label({.text = text, .fontSize = Style::fontSizeCaption})
+          )
+      );
+    }
+    addChild(std::move(header));
+    constexpr std::array names{"Owner", "Group", "Others"};
+    for (std::size_t row = 0; row < names.size(); ++row) {
+      auto controls = ui::row({.align = FlexAlign::Center, .gap = Style::spaceSm});
+      controls->addChild(ui::label({.text = names[row], .minWidth = labelWidth, .maxWidth = labelWidth}));
+      for (std::size_t column = 0; column < 3; ++column) {
+        controls->addChild(
+            ui::column(
+                {.align = FlexAlign::Center, .width = columnWidth},
+                ui::toggle({.out = &m_bits[row * 3 + column], .onChange = [this](bool) { changed(); }})
+            )
+        );
+      }
+      addChild(std::move(controls));
+    }
   }
   addChild(ui::label({.out = &m_mode, .fontSize = Style::fontSizeCaption}));
   addChild(ui::label({.text = "Ownership", .fontWeight = FontWeight::SemiBold}));
@@ -59,16 +90,18 @@ PermissionEditor::PermissionEditor(std::function<void()> edited) : m_edited(std:
       )
   );
   addChild(ui::label({.out = &m_ids, .fontSize = Style::fontSizeCaption, .maxLines = 2}));
-  addChild(ui::label({.text = "Special permissions", .fontWeight = FontWeight::SemiBold}));
-  constexpr std::array special{"Set user ID", "Set group ID", "Sticky bit"};
-  for (std::size_t i = 0; i < special.size(); ++i) {
-    addChild(
-        ui::row(
-            {.align = FlexAlign::Center, .gap = Style::spaceSm},
-            ui::toggle({.out = &m_bits[i + 9], .onChange = [this](bool) { changed(); }}),
-            ui::label({.text = special[i]})
-        )
-    );
+  if (!multiple) {
+    addChild(ui::label({.text = "Special permissions", .fontWeight = FontWeight::SemiBold}));
+    constexpr std::array special{"Set user ID", "Set group ID", "Sticky bit"};
+    for (std::size_t i = 0; i < special.size(); ++i) {
+      addChild(
+          ui::row(
+              {.align = FlexAlign::Center, .gap = Style::spaceSm},
+              ui::toggle({.out = &m_bits[i + 9], .onChange = [this](bool) { changed(); }}),
+              ui::label({.text = special[i]})
+          )
+      );
+    }
   }
   for (auto** out : {&m_reason, &m_message}) {
     addChild(ui::label({.out = out, .fontSize = Style::fontSizeCaption, .maxLines = 4, .configure = [](Label& label) {
@@ -79,6 +112,9 @@ PermissionEditor::PermissionEditor(std::function<void()> edited) : m_edited(std:
 }
 std::uint32_t PermissionEditor::mode() const {
   std::uint32_t value = 0;
+  if (m_multiple) {
+    return value;
+  }
   for (std::size_t i = 0; i < bits.size(); ++i) {
     if (m_bits[i]->checked()) {
       value |= bits[i];
@@ -92,7 +128,22 @@ files::PermissionEdit PermissionEditor::edit() const {
     return edit;
   }
   const auto& info = *m_snapshot.info;
-  if (info.canMode && mode() != info.mode) {
+  if (m_multiple && info.canMode) {
+    edit.mask = 0;
+    std::uint32_t value = 0;
+    for (std::size_t i = 0; i < bits.size(); ++i) {
+      const auto choice = m_choices[i]->selectedIndex();
+      if (choice != 0) {
+        edit.mask |= bits[i];
+        if (choice == 1) {
+          value |= bits[i];
+        }
+      }
+    }
+    if (edit.mask != 0) {
+      edit.mode = value;
+    }
+  } else if (!m_multiple && info.canMode && mode() != info.mode) {
     edit.mode = mode();
   }
   if (info.canOwner && m_owner->value() != m_initialOwner) {
@@ -109,7 +160,9 @@ bool PermissionEditor::canApply() const {
 }
 void PermissionEditor::changed() {
   if (!m_syncing) {
-    m_mode->setText(std::format("Mode: {:04o}", mode()));
+    if (!m_multiple) {
+      m_mode->setText(std::format("Mode: {:04o}", mode()));
+    }
     m_edited();
   }
 }
@@ -126,27 +179,64 @@ void PermissionEditor::sync(const files::PermissionSnapshot& snapshot) {
   m_snapshot = snapshot;
   const bool ready = snapshot.phase == files::PermissionPhase::Ready && snapshot.info.has_value();
   for (std::size_t i = 0; i < bits.size(); ++i) {
-    if (!keepDraft) {
-      m_bits[i]->setCheckedImmediate(snapshot.info && (snapshot.info->mode & bits[i]) != 0);
+    if (m_multiple) {
+      if (!keepDraft) {
+        m_choices[i]->setSelectedIndex(0);
+      }
+      m_choices[i]->setEnabled(ready && snapshot.info->canMode);
+      m_current[i]->setText(
+          !snapshot.info                             ? "Unknown"
+              : snapshot.unknownItems > 0            ? "Unknown"
+              : (snapshot.mixedMode & bits[i]) != 0  ? "Mixed"
+              : (snapshot.info->mode & bits[i]) != 0 ? "Allowed"
+                                                     : "Denied"
+      );
+      m_current[i]->setColor(colorSpecFromRole(ColorRole::OnSurfaceVariant));
+    } else {
+      if (!keepDraft) {
+        m_bits[i]->setCheckedImmediate(snapshot.info && (snapshot.info->mode & bits[i]) != 0);
+      }
+      m_bits[i]->setEnabled(ready && snapshot.info->canMode);
     }
-    m_bits[i]->setEnabled(ready && snapshot.info->canMode);
   }
   m_owner->setEnabled(ready && snapshot.info->canOwner);
   m_group->setEnabled(ready && snapshot.info->canGroup);
-  m_initialOwner = snapshot.info
+  m_initialOwner = !m_multiple && snapshot.info
       ? (snapshot.info->ownerName.empty() ? std::to_string(snapshot.info->owner) : snapshot.info->ownerName)
       : "";
-  m_initialGroup = snapshot.info
+  m_initialGroup = !m_multiple && snapshot.info
       ? (snapshot.info->groupName.empty() ? std::to_string(snapshot.info->group) : snapshot.info->groupName)
       : "";
   if (!keepDraft) {
     m_owner->setValue(m_initialOwner);
     m_group->setValue(m_initialGroup);
   }
-  m_mode->setText(snapshot.info ? std::format("Mode: {:04o}", mode()) : "Mode: Unknown");
-  m_ids->setText(
-      snapshot.info ? std::format("Owner ID: {} · Group ID: {}", snapshot.info->owner, snapshot.info->group) : ""
+  m_mode->setText(
+      m_multiple          ? std::format(
+                                "{} items · {} with unknown metadata", snapshot.results ? snapshot.results->size() : 0,
+                                snapshot.unknownItems
+                            )
+          : snapshot.info ? std::format("Mode: {:04o}", mode())
+                          : "Mode: Unknown"
   );
+  if (m_multiple) {
+    m_ids->setText(
+        !snapshot.info ? "Owner: Unknown · Group: Unknown"
+                       : std::format(
+                             "Owner: {} · Group: {}",
+                             snapshot.mixedOwner || snapshot.unknownItems > 0 ? "Mixed / unknown"
+                                                                              : std::to_string(snapshot.info->owner),
+                             snapshot.mixedGroup || snapshot.unknownItems > 0 ? "Mixed / unknown"
+                                                                              : std::to_string(snapshot.info->group)
+                         )
+    );
+    m_owner->setPlaceholder("Keep current owner (name or ID to change)");
+    m_group->setPlaceholder("Keep current group (name or ID to change)");
+  } else {
+    m_ids->setText(
+        snapshot.info ? std::format("Owner ID: {} · Group ID: {}", snapshot.info->owner, snapshot.info->group) : ""
+    );
+  }
   std::string reason = snapshot.info ? snapshot.info->reason : "";
   if (snapshot.info && snapshot.info->multipleLinks) {
     reason += " Changes affect all hard links to this file.";
@@ -164,11 +254,11 @@ void PermissionEditor::sync(const files::PermissionSnapshot& snapshot) {
       : snapshot.phase == files::PermissionPhase::Saving                        ? "Saving changes…"
                                                                                 : snapshot.message;
   m_message->setText(message);
-  m_message->setVisible(!message.empty());
-  m_message->setParticipatesInLayout(!message.empty());
+  m_message->setVisible(!m_multiple && !message.empty());
+  m_message->setParticipatesInLayout(!m_multiple && !message.empty());
   m_message->setColor(colorSpecFromRole(snapshot.error ? ColorRole::Error : ColorRole::OnSurfaceVariant));
   m_reason->setColor(colorSpecFromRole(ColorRole::OnSurfaceVariant));
   m_ids->setColor(colorSpecFromRole(ColorRole::OnSurfaceVariant));
   m_syncing = false;
 }
-const Node* PermissionEditor::messageNode() const { return m_message; }
+const Node* PermissionEditor::messageNode() const { return m_multiple ? static_cast<const Node*>(m_group) : m_message; }

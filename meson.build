@@ -113,6 +113,7 @@ app_sources = files(
   'src/ui/controls/file_preview_view.cpp',
   'src/ui/controls/link_dialog.cpp',
   'src/ui/controls/permission_editor.cpp',
+  'src/ui/controls/permission_results_view.cpp',
   'src/ui/controls/batch_rename_dialog.cpp',
   'src/config/view_preference_writer.cpp',
   'src/platform/file_launcher.cpp',
