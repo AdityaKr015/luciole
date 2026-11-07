@@ -9,7 +9,7 @@
 #include <format>
 
 namespace {
-  constexpr std::array outcomes{"Ready", "Changed", "Unchanged", "Failed", "Partially changed", "Cancelled"};
+  constexpr std::array outcomes{"Ready", "Changed", "Unchanged", "Failed", "Partially changed", "Cancelled", "Skipped"};
   class ResultRow final : public Flex {
   public:
     ResultRow() {

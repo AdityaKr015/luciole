@@ -3840,14 +3840,29 @@ namespace {
           m_permissionResults->sync(snapshot.results);
           const bool saving = snapshot.phase == files::PermissionPhase::Saving;
           m_permissionStatus->setText(
-              m_permissions.busy() ? (snapshot.cancelRequested ? "Cancelling…"
-                                                               : std::format(
-                                                                     "{} · {} items completed",
-                                                                     saving ? "Applying changes" : "Reading selection",
-                                                                     m_permissions.completed()
-                                                                 ))
-                                   : snapshot.message
+              m_permissions.busy()
+                  ? (snapshot.cancelRequested ? "Cancelling…"
+                                              : std::format(
+                                                    "{} · {} items completed",
+                                                    m_permissions.collecting() ? "Collecting targets (total unknown)"
+                                                        : saving               ? "Applying changes"
+                                                                               : "Reading selection",
+                                                    m_permissions.completed()
+                                                ))
+                  : snapshot.message
           );
+          if (m_permissions.collecting() && !snapshot.cancelRequested) {
+            m_permissionStatus->setText(
+                std::format("Collecting targets… {} found · total unknown", m_permissions.completed())
+            );
+          }
+          if (snapshot.recursive && m_permissions.busy() && !m_permissions.collecting() && !snapshot.cancelRequested) {
+            m_permissionStatus->setText(
+                std::format(
+                    "Applying changes · {} of {} collected items", m_permissions.completed(), m_permissions.total()
+                )
+            );
+          }
           m_permissionStatus->setColor(
               colorSpecFromRole(snapshot.error ? ColorRole::Error : ColorRole::OnSurfaceVariant)
           );
@@ -3880,6 +3895,13 @@ namespace {
       }
       const bool editable = !targets.empty() && targets.size() <= 4096;
       const bool multiple = targets.size() > 1;
+      const bool folders = std::ranges::any_of(targets, [](const auto& entry) {
+        return entry.type == G_FILE_TYPE_DIRECTORY
+            && !entry.symlink
+            && entry.location.nativePath()
+            && !entry.location.isTrash();
+      });
+      const bool withResults = multiple || folders;
       const float width = std::min(editable ? 600.0F : 440.0F, static_cast<float>(m_surface->width()) - 32.0F);
       ScrollView* scroll = nullptr;
       auto body = ui::scrollView(
@@ -3974,13 +3996,13 @@ namespace {
               }
               m_menuSurface->requestLayout();
             },
-            multiple
+            multiple, folders
         );
         editor = permissions.get();
         permissions->setVisible(false);
         permissions->setParticipatesInLayout(false);
         body->content()->addChild(std::move(permissions));
-        if (multiple) {
+        if (withResults) {
           resultView = std::make_unique<PermissionResultsView>();
           results = resultView.get();
           resultView->setVisible(false);
@@ -3997,7 +4019,7 @@ namespace {
       std::vector<ui::SegmentedOption> propertyTabs{
           {.label = "General", .glyph = {}, .tooltip = {}}, {.label = "Permissions", .glyph = {}, .tooltip = {}}
       };
-      if (multiple) {
+      if (withResults) {
         propertyTabs.push_back({.label = "Results", .glyph = {}, .tooltip = {}});
       }
       auto root = ui::column(
@@ -4045,7 +4067,7 @@ namespace {
           std::move(propertiesBody)
       );
       if (editable) {
-        if (multiple) {
+        if (withResults) {
           root->addChild(
               ui::label({.out = &progress, .fontSize = Style::fontSizeCaption, .maxLines = 2, .configure = literal})
           );
@@ -4058,8 +4080,8 @@ namespace {
                      .text = "Copy report",
                      .enabled = false,
                      .variant = ButtonVariant::Ghost,
-                     .visible = multiple,
-                     .participatesInLayout = multiple,
+                     .visible = withResults,
+                     .participatesInLayout = withResults,
                      .onClick = [this] { m_clipboard.setClipboardText(m_permissions.snapshot().report); }}
                 ),
                 ui::button(
@@ -4078,7 +4100,11 @@ namespace {
                      .variant = ButtonVariant::Primary,
                      .onClick = [this] {
                        if (m_permissionEditor && !actionContext().operationsBusy) {
-                         (void)m_permissions.apply(m_permissionEditor->edit());
+                         if (m_permissionEditor->recursive()) {
+                           (void)m_permissions.applyRecursive(m_permissionEditor->recursiveEdit());
+                         } else {
+                           (void)m_permissions.apply(m_permissionEditor->edit());
+                         }
                        }
                      }}
                 )

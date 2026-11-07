@@ -8,7 +8,7 @@ namespace files {
     std::uint32_t mode = 0, owner = 0, group = 0;
     std::string ownerName, groupName;
     bool canMode = false, canOwner = false, canGroup = false;
-    bool symlink = false, multipleLinks = false, current = true;
+    bool symlink = false, multipleLinks = false, current = true, directory = false;
     std::string reason;
   };
   struct PermissionEdit {
@@ -16,7 +16,12 @@ namespace files {
     std::optional<std::string> owner, group;
     std::uint32_t mask = 07777; // Only these mode bits change; ownership can independently clear set-ID bits.
   };
-  enum class PermissionOutcome { Ready, Changed, Unchanged, Failed, Partial, Cancelled };
+  struct RecursivePermissionEdit {
+    PermissionEdit files; // Owner/group changes apply to files and directories.
+    std::optional<std::uint32_t> directoryMode;
+    std::uint32_t directoryMask = 0;
+  };
+  enum class PermissionOutcome { Ready, Changed, Unchanged, Failed, Partial, Cancelled, Skipped };
   struct PermissionResult {
     Location location;
     std::string name;
@@ -29,7 +34,7 @@ namespace files {
     std::optional<PermissionInfo> info;
     std::string message;
     bool error = false, applied = false;
-    bool multiple = false, finished = false, cancelRequested = false;
+    bool multiple = false, finished = false, cancelRequested = false, recursive = false;
     std::uint32_t mixedMode = 0;
     bool mixedOwner = false, mixedGroup = false;
     std::size_t unknownItems = 0;
@@ -47,9 +52,12 @@ namespace files {
     bool prepare(std::vector<DirectoryEntry> entries);
     bool prepare(const Location& location); // Capture a Places destination when inspection starts.
     bool apply(PermissionEdit edit);
+    bool applyRecursive(RecursivePermissionEdit edit);
     void cancel();
     bool busy() const;
     std::size_t completed() const;
+    bool collecting() const;
+    std::size_t total() const;
     const PermissionSnapshot& snapshot() const;
     void setChangedCallback(std::function<void()> callback);
 

@@ -2,6 +2,7 @@
 
 #include "ui/builders.h"
 #include "ui/controls/input.h"
+#include "ui/controls/recursive_permission_editor.h"
 #include "ui/controls/segmented.h"
 #include "ui/controls/toggle.h"
 
@@ -12,18 +13,44 @@ namespace {
                                                0004, 0002, 0001, 04000, 02000, 01000};
   constexpr float labelWidth = 88.0F, columnWidth = 100.0F;
 } // namespace
-PermissionEditor::PermissionEditor(std::function<void()> edited, bool multiple)
+PermissionEditor::PermissionEditor(std::function<void()> edited, bool multiple, bool folders)
     : m_multiple(multiple), m_edited(std::move(edited)) {
   setDirection(FlexDirection::Vertical);
   setAlign(FlexAlign::Stretch);
   setGap(Style::spaceSm);
-  addChild(ui::label({.text = "Permissions", .fontWeight = FontWeight::SemiBold}));
+  if (folders) {
+    addChild(
+        ui::row(
+            {.align = FlexAlign::Center, .gap = Style::spaceSm},
+            ui::toggle(
+                {.out = &m_recursive,
+                 .onChange =
+                     [this](bool active) {
+                       m_direct->setVisible(!active);
+                       m_direct->setParticipatesInLayout(!active);
+                       m_tree->setVisible(active);
+                       m_tree->setParticipatesInLayout(active);
+                       changed();
+                     }}
+            ),
+            ui::label({.text = "Include folder contents"})
+        )
+    );
+    auto tree = std::make_unique<RecursivePermissionEditor>([this] { changed(); });
+    m_tree = tree.get();
+    tree->setVisible(false);
+    tree->setParticipatesInLayout(false);
+    addChild(std::move(tree));
+  }
+  auto direct = ui::column({.align = FlexAlign::Stretch, .gap = Style::spaceSm});
+  m_direct = direct.get();
+  direct->addChild(ui::label({.text = "Permissions", .fontWeight = FontWeight::SemiBold}));
   if (multiple) {
     constexpr std::array names{"Owner read",     "Owner write",   "Owner execute", "Group read",
                                "Group write",    "Group execute", "Others read",   "Others write",
                                "Others execute", "Set user ID",   "Set group ID",  "Sticky bit"};
     for (std::size_t i = 0; i < bits.size(); ++i) {
-      addChild(
+      direct->addChild(
           ui::row(
               {.align = FlexAlign::Center, .gap = Style::spaceSm},
               ui::label({.text = names[i], .minWidth = 104.0F, .maxWidth = 104.0F}),
@@ -56,7 +83,7 @@ PermissionEditor::PermissionEditor(std::function<void()> edited, bool multiple)
           )
       );
     }
-    addChild(std::move(header));
+    direct->addChild(std::move(header));
     constexpr std::array names{"Owner", "Group", "Others"};
     for (std::size_t row = 0; row < names.size(); ++row) {
       auto controls = ui::row({.align = FlexAlign::Center, .gap = Style::spaceSm});
@@ -69,32 +96,32 @@ PermissionEditor::PermissionEditor(std::function<void()> edited, bool multiple)
             )
         );
       }
-      addChild(std::move(controls));
+      direct->addChild(std::move(controls));
     }
   }
-  addChild(ui::label({.out = &m_mode, .fontSize = Style::fontSizeCaption}));
-  addChild(ui::label({.text = "Ownership", .fontWeight = FontWeight::SemiBold}));
+  direct->addChild(ui::label({.out = &m_mode, .fontSize = Style::fontSizeCaption}));
+  direct->addChild(ui::label({.text = "Ownership", .fontWeight = FontWeight::SemiBold}));
   const auto change = [this](const std::string&) { changed(); };
-  addChild(
+  direct->addChild(
       ui::row(
           {.align = FlexAlign::Center, .gap = Style::spaceSm},
           ui::label({.text = "Owner", .minWidth = labelWidth, .maxWidth = labelWidth}),
           ui::input({.out = &m_owner, .placeholder = "Name or numeric ID", .flexGrow = 1.0F, .onChange = change})
       )
   );
-  addChild(
+  direct->addChild(
       ui::row(
           {.align = FlexAlign::Center, .gap = Style::spaceSm},
           ui::label({.text = "Group", .minWidth = labelWidth, .maxWidth = labelWidth}),
           ui::input({.out = &m_group, .placeholder = "Name or numeric ID", .flexGrow = 1.0F, .onChange = change})
       )
   );
-  addChild(ui::label({.out = &m_ids, .fontSize = Style::fontSizeCaption, .maxLines = 2}));
+  direct->addChild(ui::label({.out = &m_ids, .fontSize = Style::fontSizeCaption, .maxLines = 2}));
   if (!multiple) {
-    addChild(ui::label({.text = "Special permissions", .fontWeight = FontWeight::SemiBold}));
+    direct->addChild(ui::label({.text = "Special permissions", .fontWeight = FontWeight::SemiBold}));
     constexpr std::array special{"Set user ID", "Set group ID", "Sticky bit"};
     for (std::size_t i = 0; i < special.size(); ++i) {
-      addChild(
+      direct->addChild(
           ui::row(
               {.align = FlexAlign::Center, .gap = Style::spaceSm},
               ui::toggle({.out = &m_bits[i + 9], .onChange = [this](bool) { changed(); }}),
@@ -104,10 +131,13 @@ PermissionEditor::PermissionEditor(std::function<void()> edited, bool multiple)
     }
   }
   for (auto** out : {&m_reason, &m_message}) {
-    addChild(ui::label({.out = out, .fontSize = Style::fontSizeCaption, .maxLines = 4, .configure = [](Label& label) {
-                          label.setUseMarkup(false);
-                        }}));
+    direct->addChild(
+        ui::label({.out = out, .fontSize = Style::fontSizeCaption, .maxLines = 4, .configure = [](Label& label) {
+                     label.setUseMarkup(false);
+                   }})
+    );
   }
+  addChild(std::move(direct));
   sync({});
 }
 std::uint32_t PermissionEditor::mode() const {
@@ -155,8 +185,13 @@ files::PermissionEdit PermissionEditor::edit() const {
   return edit;
 }
 bool PermissionEditor::canApply() const {
+  if (recursive()) {
+    return m_tree->canApply();
+  }
   const auto value = edit();
-  return m_snapshot.phase == files::PermissionPhase::Ready && (value.mode || value.owner || value.group);
+  return !(m_snapshot.recursive && m_snapshot.finished)
+      && m_snapshot.phase == files::PermissionPhase::Ready
+      && (value.mode || value.owner || value.group);
 }
 void PermissionEditor::changed() {
   if (!m_syncing) {
@@ -177,7 +212,13 @@ void PermissionEditor::sync(const files::PermissionSnapshot& snapshot) {
       && (snapshot.phase == files::PermissionPhase::Saving
           || (snapshot.phase == files::PermissionPhase::Ready && snapshot.error && !snapshot.applied));
   m_snapshot = snapshot;
-  const bool ready = snapshot.phase == files::PermissionPhase::Ready && snapshot.info.has_value();
+  const bool ready = snapshot.phase == files::PermissionPhase::Ready
+      && snapshot.info.has_value()
+      && !(snapshot.recursive && snapshot.finished);
+  if (m_tree) {
+    m_tree->sync(snapshot);
+    m_recursive->setEnabled(ready);
+  }
   for (std::size_t i = 0; i < bits.size(); ++i) {
     if (m_multiple) {
       if (!keepDraft) {
@@ -261,4 +302,8 @@ void PermissionEditor::sync(const files::PermissionSnapshot& snapshot) {
   m_ids->setColor(colorSpecFromRole(ColorRole::OnSurfaceVariant));
   m_syncing = false;
 }
-const Node* PermissionEditor::messageNode() const { return m_multiple ? static_cast<const Node*>(m_group) : m_message; }
+bool PermissionEditor::recursive() const { return m_recursive && m_recursive->checked(); }
+files::RecursivePermissionEdit PermissionEditor::recursiveEdit() const { return m_tree->edit(); }
+const Node* PermissionEditor::messageNode() const {
+  return recursive() ? m_tree->messageNode() : m_multiple ? static_cast<const Node*>(m_group) : m_message;
+}

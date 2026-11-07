@@ -7,6 +7,8 @@
 #include <filesystem>
 #include <fstream>
 #include <print>
+#include <set>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -499,6 +501,260 @@ namespace {
       );
     }
   }
+  using O = files::PermissionOutcome;
+  files::RecursivePermissionEdit recursiveEdit() {
+    return {
+        .files = {.mode = 0004, .owner = {}, .group = {}, .mask = 0004}, .directoryMode = 0010, .directoryMask = 0010
+    };
+  }
+  void recursiveModes(Pump& pump) {
+    Fixture f;
+    const auto tree = f.root / "tree";
+    fs::create_directories(tree / "child/nested");
+    const auto file = tree / "child/file";
+    const auto nested = tree / "child/nested/value";
+    write(file);
+    write(nested);
+    write(tree / ".hidden");
+    write(f.root / "outside");
+    TEST_CHECK(::chmod(file.c_str(), 0640) == 0 && ::chmod(nested.c_str(), 0600) == 0);
+    TEST_CHECK(::chmod((tree / ".hidden").c_str(), 0600) == 0);
+    fs::create_hard_link(file, tree / "alias");
+    fs::create_symlink(f.root / "outside", tree / "external-link");
+    fs::create_directory_symlink(tree, tree / "cycle");
+    fs::create_symlink(tree / "missing", tree / "broken-link");
+    TEST_CHECK(::mkfifo((tree / "fifo").c_str(), 0600) == 0);
+    const std::string raw = std::string("raw-") + static_cast<char>(0xff);
+    write(tree / raw);
+    const auto outsideMode = mode(f.root / "outside");
+    S service;
+    // A descendant selected before its ancestor is still processed exactly once.
+    TEST_CHECK(service.prepare(std::vector{entry(file), entry(tree / "child"), entry(tree)}));
+    pump.settle(service);
+    TEST_CHECK(service.applyRecursive(recursiveEdit()));
+    pump.settle(service);
+    const auto& snapshot = service.snapshot();
+    TEST_CHECK(snapshot.recursive && snapshot.finished && !snapshot.error && snapshot.applied);
+    TEST_CHECK(mode(file) == 0644 && mode(nested) == 0604 && mode(tree / ".hidden") == 0604);
+    TEST_CHECK(mode(tree / "fifo") == 0604 && mode(f.root / "outside") == outsideMode);
+    TEST_CHECK(mode(tree / "alias") == 0644);
+    std::set<std::string> names;
+    std::size_t links = 0;
+    for (const auto& row : *snapshot.results) {
+      TEST_CHECK(names.insert(row.location.uri()).second);
+      if (row.outcome == O::Skipped) {
+        ++links;
+      } else {
+        TEST_CHECK(row.info && row.info->mode == mode(*row.location.nativePath()));
+      }
+    }
+    TEST_CHECK(links == 3 && snapshot.results->size() == 12);
+    TEST_CHECK(!service.applyRecursive(recursiveEdit()));
+    // Closing parent access must happen after the files have been changed.
+    pump.prepare(service, tree);
+    auto edit = recursiveEdit();
+    edit.files.mode = 0;
+    edit.files.mask = 0004;
+    edit.directoryMode = 0;
+    edit.directoryMask = 0777;
+    TEST_CHECK(service.applyRecursive(edit));
+    pump.settle(service);
+    TEST_CHECK(!service.snapshot().error && mode(tree) == 0);
+    TEST_CHECK(::chmod(tree.c_str(), 0700) == 0);
+    TEST_CHECK(::chmod((tree / "child").c_str(), 0700) == 0);
+    TEST_CHECK(::chmod((tree / "child/nested").c_str(), 0700) == 0);
+    TEST_CHECK(mode(file) == 0640 && mode(nested) == 0600);
+  }
+  void recursiveFailures(Pump& pump) {
+    Fixture f;
+    fs::create_directories(f.root / "tree/blocked");
+    write(f.root / "tree/blocked/value");
+    write(f.root / "tree/good");
+    TEST_CHECK(::chmod((f.root / "tree/good").c_str(), 0600) == 0);
+    S service;
+    pump.prepare(service, f.root / "tree");
+    auto invalid = recursiveEdit();
+    invalid.directoryMode = 010000;
+    TEST_CHECK(service.applyRecursive(invalid));
+    pump.settle(service);
+    TEST_CHECK(service.snapshot().error && !service.snapshot().applied && !service.snapshot().finished);
+    TEST_CHECK(mode(f.root / "tree/good") == 0600);
+    invalid = recursiveEdit();
+    invalid.files.group = "noctalia-no-such-account-370917";
+    TEST_CHECK(service.applyRecursive(invalid));
+    pump.settle(service);
+    TEST_CHECK(service.snapshot().error && !service.snapshot().applied && mode(f.root / "tree/good") == 0600);
+    if (::geteuid() != 0) {
+      TEST_CHECK(::chmod((f.root / "tree/blocked").c_str(), 0000) == 0);
+      TEST_CHECK(service.applyRecursive(recursiveEdit()));
+      pump.settle(service);
+      TEST_CHECK(service.snapshot().error && service.snapshot().applied);
+      TEST_CHECK(mode(f.root / "tree/good") == 0604);
+      TEST_CHECK(std::ranges::any_of(*service.snapshot().results, [](const auto& row) {
+        return row.outcome == O::Failed && row.message.contains("Contents not inspected");
+      }));
+      TEST_CHECK(::chmod((f.root / "tree/blocked").c_str(), 0700) == 0);
+    }
+    // A captured root replaced before Apply must never be recaptured by traversal.
+    pump.prepare(service, f.root / "tree");
+    fs::rename(f.root / "tree", f.root / "held");
+    fs::create_directory(f.root / "replacement");
+    write(f.root / "replacement/value");
+    const auto before = mode(f.root / "replacement/value");
+    fs::create_directory_symlink(f.root / "replacement", f.root / "tree");
+    TEST_CHECK(service.applyRecursive(recursiveEdit()));
+    pump.settle(service);
+    TEST_CHECK(service.snapshot().error && !service.snapshot().applied && mode(f.root / "replacement/value") == before);
+  }
+  void recursiveCancellationAndLimits(Pump& pump) {
+    Fixture f;
+    fs::create_directory(f.root / "tree");
+    for (unsigned i = 0; i < 1024; ++i) {
+      const auto file = f.root / "tree" / std::to_string(i);
+      write(file);
+      TEST_CHECK(::chmod(file.c_str(), 0600) == 0);
+    }
+    S service;
+    pump.prepare(service, f.root / "tree");
+    TEST_CHECK(service.applyRecursive(recursiveEdit()));
+    service.cancel();
+    pump.settle(service);
+    TEST_CHECK(service.snapshot().phase == P::Cancelled && !service.snapshot().applied);
+    for (unsigned i = 0; i < 1024; ++i) {
+      TEST_CHECK(mode(f.root / "tree" / std::to_string(i)) == 0600);
+    }
+    // Exhausting the collection's descriptor budget must mutate nothing.
+    pump.prepare(service, f.root / "tree");
+    struct rlimit saved{};
+    TEST_CHECK(::getrlimit(RLIMIT_NOFILE, &saved) == 0);
+    auto limited = saved;
+    limited.rlim_cur = std::min<rlim_t>(saved.rlim_cur, 128);
+    TEST_CHECK(::setrlimit(RLIMIT_NOFILE, &limited) == 0);
+    TEST_CHECK(service.applyRecursive(recursiveEdit()));
+    pump.settle(service);
+    TEST_CHECK(::setrlimit(RLIMIT_NOFILE, &saved) == 0);
+    TEST_CHECK(service.snapshot().error && !service.snapshot().applied && service.snapshot().finished);
+    TEST_CHECK(service.snapshot().message.contains("file descriptors"));
+    for (unsigned i = 0; i < 1024; ++i) {
+      TEST_CHECK(mode(f.root / "tree" / std::to_string(i)) == 0600);
+    }
+    // Cancel after collection. Completed effects stay represented in the report.
+    pump.prepare(service, f.root / "tree");
+    TEST_CHECK(service.applyRecursive(recursiveEdit()));
+    pump.until([&] { return !service.collecting() || !service.busy(); });
+    if (service.busy()) {
+      service.cancel();
+    }
+    write(f.root / "tree/late-arrival");
+    const auto lateMode = mode(f.root / "tree/late-arrival");
+    pump.settle(service);
+    TEST_CHECK(service.snapshot().finished && service.snapshot().results);
+    for (const auto& row : *service.snapshot().results) {
+      if (row.info) {
+        TEST_CHECK(row.info->mode == mode(*row.location.nativePath()));
+      }
+      if (row.outcome == O::Changed && row.info && !row.info->directory) {
+        TEST_CHECK(row.info->mode == 0604);
+      }
+      if (row.outcome == O::Cancelled && row.info && !row.info->directory) {
+        TEST_CHECK(row.info->mode == 0600);
+      }
+    }
+    TEST_CHECK(mode(f.root / "tree/late-arrival") == lateMode);
+    auto folder = f.root / "deep";
+    fs::create_directory(folder);
+    for (unsigned i = 0; i < 128; ++i) {
+      folder /= "d";
+      fs::create_directory(folder);
+    }
+    pump.prepare(service, f.root / "deep");
+    TEST_CHECK(service.applyRecursive(recursiveEdit()));
+    pump.settle(service);
+    TEST_CHECK(service.snapshot().error && !service.snapshot().applied && service.snapshot().message.contains("128"));
+  }
+  void recursiveOwnership(Pump& pump) {
+    Fixture f;
+    fs::create_directories(f.root / "tree/child");
+    write(f.root / "tree/child/value");
+    const auto file = f.root / "tree/child/value";
+    const int count = ::getgroups(0, nullptr);
+    TEST_CHECK(count >= 0);
+    std::vector<gid_t> groups(static_cast<std::size_t>(count));
+    TEST_CHECK(::getgroups(count, groups.data()) >= 0);
+    groups.insert(groups.begin(), ::getegid());
+    S service;
+    for (const auto group : groups) {
+      TEST_CHECK(::chmod(file.c_str(), 04750) == 0);
+      pump.prepare(service, f.root / "tree");
+      const auto oldGroup = metadata(file).st_gid;
+      auto edit = recursiveEdit();
+      edit.files.owner = std::to_string(::geteuid());
+      edit.files.group = std::to_string(group);
+      TEST_CHECK(service.applyRecursive(edit));
+      pump.settle(service);
+      TEST_CHECK(!service.snapshot().error);
+      for (const auto& path : {f.root / "tree", f.root / "tree/child", file}) {
+        TEST_CHECK(metadata(path).st_gid == group && metadata(path).st_uid == ::geteuid());
+      }
+      TEST_CHECK((mode(file) & 0777) == 0754);
+      if (::geteuid() != 0 && group != oldGroup) {
+        TEST_CHECK((mode(file) & 04000) == 0);
+      }
+      for (const auto& row : *service.snapshot().results) {
+        TEST_CHECK(row.info && row.info->group == group && row.info->mode == mode(*row.location.nativePath()));
+      }
+      if (group != ::getegid()) {
+        break;
+      }
+    }
+    if (::geteuid() != 0) {
+      pump.prepare(service, f.root / "tree");
+      auto denied = recursiveEdit();
+      denied.files.owner = "0";
+      const auto before = mode(file);
+      TEST_CHECK(service.applyRecursive(denied));
+      pump.settle(service);
+      TEST_CHECK(service.snapshot().error && !service.snapshot().applied && mode(file) == before);
+    }
+  }
+  void recursiveReplacementDuringCollection(Pump& pump) {
+    Fixture f;
+    fs::create_directory(f.root / "tree");
+    fs::create_directory(f.root / "outside");
+    for (unsigned i = 0; i < 1024; ++i) {
+      write(f.root / "tree" / std::to_string(i));
+    }
+    write(f.root / "outside/value");
+    const auto before = mode(f.root / "outside/value");
+    S service;
+    pump.prepare(service, f.root / "tree");
+    TEST_CHECK(service.applyRecursive(recursiveEdit()));
+    pump.until([&] { return service.completed() > 0 || !service.busy(); });
+    fs::rename(f.root / "tree", f.root / "held");
+    fs::create_directory_symlink(f.root / "outside", f.root / "tree");
+    pump.settle(service);
+    TEST_CHECK(mode(f.root / "outside/value") == before);
+    for (const auto& row : *service.snapshot().results) {
+      TEST_CHECK(!row.location.nativePath()->contains("outside"));
+    }
+  }
+  void recursiveItemLimit(Pump& pump) {
+    Fixture f;
+    fs::create_directory(f.root / "tree");
+    for (unsigned i = 0; i < 16384; ++i) {
+      write(f.root / "tree" / std::to_string(i));
+    }
+    const auto before = mode(f.root / "tree/0");
+    S service;
+    pump.prepare(service, f.root / "tree");
+    TEST_CHECK(service.applyRecursive(recursiveEdit()));
+    pump.settle(service);
+    TEST_CHECK(service.snapshot().error && !service.snapshot().applied && service.snapshot().finished);
+    TEST_CHECK(service.snapshot().message.contains("16384") || service.snapshot().message.contains("file descriptors"));
+    for (unsigned i = 0; i < 16384; ++i) {
+      TEST_CHECK(mode(f.root / "tree" / std::to_string(i)) == before);
+    }
+  }
 } // namespace
 int main() {
   Pump pump;
@@ -510,5 +766,11 @@ int main() {
   bulkFailuresAndAliases(pump);
   bulkCancellation(pump);
   bulkOwnershipCancellation(pump);
+  recursiveModes(pump);
+  recursiveFailures(pump);
+  recursiveOwnership(pump);
+  recursiveReplacementDuringCollection(pump);
+  recursiveCancellationAndLimits(pump);
+  recursiveItemLimit(pump);
   std::println("permission service checks passed");
 }

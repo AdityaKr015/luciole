@@ -6,6 +6,7 @@
 #include <cerrno>
 #include <charconv>
 #include <cstring>
+#include <dirent.h>
 #include <fcntl.h>
 #include <format>
 #include <grp.h>
@@ -130,14 +131,30 @@ namespace {
     Fd fd;
     struct stat baseline;
     bool identified = false;
+    std::vector<std::shared_ptr<Target>> ancestors;
     explicit Target(files::DirectoryEntry entry)
         : entry(std::move(entry)), path(*this->entry.location.nativePath()),
           fd(::open(path.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC)), baseline(metadata(fd.value)) {}
+    Target(files::DirectoryEntry entry, int descriptor, std::vector<std::shared_ptr<Target>> ancestors)
+        : entry(std::move(entry)), path(*this->entry.location.nativePath()), fd(descriptor),
+          baseline(metadata(fd.value)), identified(true), ancestors(std::move(ancestors)) {
+      this->entry.type = S_ISDIR(baseline.st_mode) ? G_FILE_TYPE_DIRECTORY
+          : S_ISLNK(baseline.st_mode)              ? G_FILE_TYPE_SYMBOLIC_LINK
+          : S_ISREG(baseline.st_mode)              ? G_FILE_TYPE_REGULAR
+                                                   : G_FILE_TYPE_SPECIAL;
+      this->entry.symlink = S_ISLNK(baseline.st_mode);
+      this->entry.identity.reset(); // Identified directly by the held native descriptor.
+    }
     bool current() const {
       struct stat value{};
       return ::lstat(path.c_str(), &value) == 0 && same(value, baseline);
     }
     void validate() const {
+      for (const auto& ancestor : ancestors) {
+        if (!ancestor->current() || !samePermissions(metadata(ancestor->fd.value), ancestor->baseline)) {
+          throw std::runtime_error("A containing folder changed. Reopen Properties.");
+        }
+      }
       if (!identified) {
         throw std::runtime_error("The captured item has no provider identity; editing is unavailable.");
       }
@@ -148,7 +165,7 @@ namespace {
         throw std::runtime_error("Permissions or ownership changed elsewhere. Reopen Properties.");
       }
     }
-    files::PermissionInfo inspect() const {
+    files::PermissionInfo inspect(bool names = true) const {
       const auto value = metadata(fd.value);
       const bool root = ::geteuid() == 0, owned = value.st_uid == ::geteuid();
       struct statvfs filesystem{};
@@ -167,15 +184,20 @@ namespace {
           .symlink = S_ISLNK(value.st_mode),
           .multipleLinks = S_ISREG(value.st_mode) && value.st_nlink > 1,
           .current = valid,
+          .directory = S_ISDIR(value.st_mode),
           .reason = {}
       };
       // Display names are optional; unavailable account services must not hide known IDs/mode.
       try {
-        info.ownerName = accountName(info.owner, true);
+        if (names) {
+          info.ownerName = accountName(info.owner, true);
+        }
       } catch (const std::exception&) {
       }
       try {
-        info.groupName = accountName(info.group, false);
+        if (names) {
+          info.groupName = accountName(info.group, false);
+        }
       } catch (const std::exception&) {
       }
       if (!valid) {
@@ -228,13 +250,16 @@ namespace {
     bool finished = false;
     std::string report;
   };
-  Reply apply(const std::shared_ptr<Target>& target, const files::PermissionEdit& edit, const std::atomic<bool>& stop) {
+  Reply apply(
+      const std::shared_ptr<Target>& target, const files::PermissionEdit& edit, const std::atomic<bool>& stop,
+      bool names = true
+  ) {
     Reply reply{.target = target, .info = {}, .message = {}, .bulk = {}, .results = {}, .report = {}};
     const auto before = metadata(target->fd.value);
     bool mutated = false;
     try {
       target->validate();
-      const auto info = target->inspect();
+      const auto info = target->inspect(names);
       const uid_t owner = edit.owner ? accountId(*edit.owner, true) : before.st_uid;
       const gid_t group = edit.group ? accountId(*edit.group, false) : before.st_gid;
       if ((edit.mask & ~07777U) != 0 || (edit.mode && (*edit.mode & ~07777U) != 0)) {
@@ -290,7 +315,7 @@ namespace {
       reply.message = (reply.applied ? "Some changes were applied. " : "") + std::string(error.what());
       // Stale edits require reopening; do not silently adopt another writer's baseline.
     }
-    reply.info = target->inspect();
+    reply.info = target->inspect(names);
     if (!samePermissions(metadata(target->fd.value), target->baseline)) {
       reply.info->canMode = reply.info->canOwner = reply.info->canGroup = false;
       reply.info->reason = "Permissions or ownership changed elsewhere. Reopen Properties.";
@@ -334,7 +359,7 @@ namespace {
     }
   }
   std::string report(const std::vector<files::PermissionResult>& rows) {
-    constexpr std::array labels{"Ready", "Changed", "Unchanged", "Failed", "Partially changed", "Cancelled"};
+    constexpr std::array labels{"Ready", "Changed", "Unchanged", "Failed", "Partially changed", "Cancelled", "Skipped"};
     std::string text = "Permission results\n";
     for (const auto& row : rows) {
       if (text.size() > 16 * 1024 * 1024) {
@@ -354,12 +379,12 @@ namespace {
   }
   Reply applyBulk(
       const std::shared_ptr<Bulk>& bulk, files::PermissionEdit edit, const std::atomic<bool>& stop,
-      std::atomic<std::size_t>& completed
+      std::atomic<std::size_t>& completed, const std::optional<files::RecursivePermissionEdit>& recursive = std::nullopt
   ) {
     using O = files::PermissionOutcome;
     auto rows = std::make_shared<std::vector<files::PermissionResult>>(*bulk->results);
     for (std::size_t i = 0; i < rows->size(); ++i) {
-      if (bulk->targets[i]) {
+      if (bulk->targets[i] && (*rows)[i].outcome != O::Skipped) {
         (*rows)[i].outcome = O::Ready;
         (*rows)[i].message = (*rows)[i].info ? (*rows)[i].info->reason : "";
       }
@@ -397,23 +422,33 @@ namespace {
       struct stat value;
       bool changed;
     };
-    const auto complete = [&edit](const std::optional<files::PermissionInfo>& info) {
+    const auto complete = [&edit, &recursive](const std::optional<files::PermissionInfo>& info) {
+      const auto mode = recursive && info && info->directory ? recursive->directoryMode : edit.mode;
+      const auto mask = recursive && info && info->directory ? recursive->directoryMask : edit.mask;
       return info
           && (!edit.owner || std::to_string(info->owner) == *edit.owner)
           && (!edit.group || std::to_string(info->group) == *edit.group)
-          && (!edit.mode || ((info->mode ^ *edit.mode) & edit.mask) == 0);
+          && (!mode || ((info->mode ^ *mode) & mask) == 0);
     };
     std::map<std::pair<dev_t, ino_t>, OwnChange> aliases;
     for (std::size_t i = 0; i < rows->size(); ++i) {
       auto& row = (*rows)[i];
-      if (stop.load()) {
-        row.outcome = O::Cancelled;
-        row.message = "Not attempted; cancelled.";
+      const auto& target = bulk->targets[i];
+      if (row.outcome == O::Skipped) {
+        completed.fetch_add(1);
         continue;
       }
-      const auto& target = bulk->targets[i];
+      if (stop.load()) {
+        if (target) {
+          row.outcome = O::Cancelled;
+          row.message = "Not attempted; cancelled.";
+        }
+        continue;
+      }
       if (!target) {
-        row.outcome = O::Failed;
+        if (row.outcome != O::Skipped) {
+          row.outcome = O::Failed;
+        }
         completed.fetch_add(1);
         continue;
       }
@@ -427,7 +462,12 @@ namespace {
           changedViaAlias = !samePermissions(target->baseline, found->second.value);
           target->baseline = found->second.value;
         }
-        auto item = ::apply(target, edit, stop);
+        auto itemEdit = edit;
+        if (recursive && S_ISDIR(target->baseline.st_mode)) {
+          itemEdit.mode = recursive->directoryMode;
+          itemEdit.mask = recursive->directoryMask;
+        }
+        auto item = ::apply(target, itemEdit, stop, !recursive.has_value());
         row.info = std::move(item.info);
         row.message = std::move(item.message);
         row.outcome = item.error ? (item.applied || changedViaAlias ? O::Partial : O::Failed)
@@ -494,9 +534,24 @@ namespace {
         row.message += std::string(" ") + error.what();
       }
     }
+    for (std::size_t i = 0; i < rows->size(); ++i) {
+      auto& row = (*rows)[i];
+      const auto& target = bulk->targets[i];
+      if (row.outcome == O::Skipped && target) {
+        try {
+          row.info = target->inspect(false);
+          if (!samePermissions(metadata(target->fd.value), target->baseline)) {
+            row.message += " Permissions changed through another name.";
+          }
+        } catch (const std::exception& error) {
+          row.info.reset();
+          row.message += std::string(" ") + error.what();
+        }
+      }
+    }
     bulk->results = rows;
     reply.finished = true;
-    constexpr std::array labels{"ready", "changed", "unchanged", "failed", "partially changed", "cancelled"};
+    constexpr std::array labels{"ready", "changed", "unchanged", "failed", "partially changed", "cancelled", "skipped"};
     for (std::size_t i = 1; i < labels.size(); ++i) {
       const auto count = std::ranges::count(*rows, static_cast<O>(i), &files::PermissionResult::outcome);
       if (count != 0) {
@@ -512,6 +567,232 @@ namespace {
     reply.report = report(*rows);
     return reply;
   }
+  // Collection is complete before mutations begin. The item and depth limits also
+  // bound retained descriptors, result memory and the traversal stack.
+  class CollectionLimit final : public std::runtime_error {
+  public:
+    using std::runtime_error::runtime_error;
+  };
+  struct CloseDirectory {
+    void operator()(DIR* directory) const { ::closedir(directory); }
+  };
+  std::uint64_t mountId(int fd) {
+    struct statx value{};
+    if (::statx(fd, "", AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW, STATX_MNT_ID, &value) != 0
+        || (value.stx_mask & STATX_MNT_ID) == 0) {
+      throw std::runtime_error("Cannot identify the filesystem mount boundary.");
+    }
+    return value.stx_mnt_id;
+  }
+  Reply recursiveJob(
+      const std::shared_ptr<Bulk>& roots, files::RecursivePermissionEdit edit, const std::atomic<bool>& stop,
+      std::atomic<std::size_t>& completed, std::atomic<std::size_t>& total, std::atomic<bool>& collecting
+  ) {
+    using O = files::PermissionOutcome;
+    auto plan = std::make_shared<Bulk>();
+    plan->results = std::make_shared<std::vector<files::PermissionResult>>();
+    auto initial = std::make_shared<std::vector<files::PermissionResult>>(*roots->results);
+    for (std::size_t i = 0; i < initial->size(); ++i) {
+      if (roots->targets[i]) {
+        (*initial)[i].outcome = O::Ready;
+        (*initial)[i].message.clear();
+      }
+    }
+    Reply reply{.target = {}, .info = {}, .message = {}, .bulk = roots, .results = initial, .report = {}};
+    try {
+      if ((edit.files.mask & ~07777U) != 0
+          || (edit.files.mode && (*edit.files.mode & ~07777U) != 0)
+          || (edit.directoryMask & ~07777U) != 0
+          || (edit.directoryMode && (*edit.directoryMode & ~07777U) != 0)) {
+        throw std::runtime_error("Permission bits are out of range.");
+      }
+      if (edit.files.owner) {
+        edit.files.owner = std::to_string(accountId(*edit.files.owner, true));
+      }
+      if (edit.files.group) {
+        const auto group = accountId(*edit.files.group, false);
+        if (::geteuid() != 0 && !member(group)) {
+          throw std::runtime_error("You must be a member of the requested group.");
+        }
+        edit.files.group = std::to_string(group);
+      }
+    } catch (const std::exception& error) {
+      reply.error = true;
+      reply.message = error.what();
+      for (auto& row : *initial) {
+        if (row.outcome == O::Ready) {
+          row.message = "Not attempted: " + reply.message;
+        }
+      }
+      reply.report = "No changes attempted: " + reply.message + "\n" + report(*initial);
+      collecting.store(false);
+      return reply;
+    }
+    const auto append = [&](const files::PermissionResult& row, std::shared_ptr<Target> target) {
+      if (plan->results->size() >= 16384) {
+        throw CollectionLimit("The recursive job exceeds 16384 items. Select smaller folders.");
+      }
+      plan->results->push_back(row);
+      plan->targets.push_back(std::move(target));
+    };
+    std::map<std::string, std::size_t> selected;
+    for (std::size_t i = 0; i < roots->results->size(); ++i) {
+      selected.emplace((*roots->results)[i].location.uri(), i);
+    }
+    std::set<std::string> seen;
+    std::set<std::pair<dev_t, ino_t>> directories;
+    std::function<void(std::shared_ptr<Target>, std::uint64_t, std::size_t)> walk;
+    walk = [&](std::shared_ptr<Target> target, std::uint64_t rootMount, std::size_t depth) {
+      if (stop.load() || !seen.insert(target->entry.location.uri()).second) {
+        return;
+      }
+      if (completed.fetch_add(1) >= 16384) {
+        throw CollectionLimit("The recursive job exceeds 16384 items. Select smaller folders.");
+      }
+      files::PermissionResult row{target->entry.location, target->entry.displayName, {}, O::Ready, {}};
+      try {
+        target->validate();
+        row.info = target->inspect(false);
+        if (S_ISLNK(target->baseline.st_mode)) {
+          row.outcome = O::Skipped;
+          row.message = "Symbolic link skipped; its target was not followed.";
+          append(row, std::move(target));
+          return;
+        }
+        if (mountId(target->fd.value) != rootMount) {
+          row.outcome = O::Skipped;
+          row.message = "Mounted subtree skipped.";
+          append(row, std::move(target));
+          return;
+        }
+        if (S_ISDIR(target->baseline.st_mode)) {
+          if (depth >= 128) {
+            throw CollectionLimit("The recursive job exceeds 128 folder levels. Select smaller folders.");
+          }
+          if (!directories.emplace(target->baseline.st_dev, target->baseline.st_ino).second) {
+            row.outcome = O::Skipped;
+            row.message = "Folder already visited; subtree skipped.";
+            append(row, std::move(target));
+            return;
+          }
+          const int descriptor = ::openat(target->fd.value, ".", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+          if (descriptor < 0) {
+            if (errno == EMFILE || errno == ENFILE) {
+              throw CollectionLimit("Not enough file descriptors to collect this job. Select smaller folders.");
+            }
+            throw std::runtime_error("Contents not inspected: " + std::string(std::strerror(errno)));
+          }
+          // fdopendir owns the descriptor only on success.
+          const std::unique_ptr<DIR, CloseDirectory> directory(::fdopendir(descriptor));
+          if (!directory) {
+            const auto message = std::string(std::strerror(errno));
+            ::close(descriptor);
+            throw std::runtime_error(message);
+          }
+          while (!stop.load()) {
+            errno = 0;
+            const auto* child = ::readdir(directory.get());
+            if (!child) {
+              if (errno != 0) {
+                throw std::runtime_error("Contents only partly inspected: " + std::string(std::strerror(errno)));
+              }
+              break;
+            }
+            const std::string name(child->d_name);
+            if (name == "." || name == "..") {
+              continue;
+            }
+            target->validate();
+            auto entry = target->entry;
+            entry.location = files::Location::fromPath(target->path + "/" + name);
+            entry.name = name;
+            const files::GString display(g_filename_display_name(name.c_str()));
+            entry.displayName = display.get();
+            if (const auto found = selected.find(entry.location.uri()); found != selected.end()) {
+              const auto& captured = roots->targets[found->second];
+              if (captured) {
+                captured->ancestors = target->ancestors;
+                captured->ancestors.push_back(target);
+                walk(captured, mountId(captured->fd.value), depth + 1);
+              } else if (seen.insert(entry.location.uri()).second) {
+                append((*roots->results)[found->second], {});
+              }
+              continue;
+            }
+            if (seen.contains(entry.location.uri())) {
+              continue;
+            }
+            const int fd = ::openat(::dirfd(directory.get()), name.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC);
+            if (fd < 0) {
+              if (errno == EMFILE || errno == ENFILE) {
+                throw CollectionLimit("Not enough file descriptors to collect this job. Select smaller folders.");
+              }
+              append({entry.location, entry.displayName, {}, O::Failed, std::strerror(errno)}, {});
+              continue;
+            }
+            auto ancestors = target->ancestors;
+            ancestors.push_back(target);
+            walk(std::make_shared<Target>(std::move(entry), fd, std::move(ancestors)), rootMount, depth + 1);
+          }
+        }
+        // Postorder keeps parent access intact while processing descendants.
+        append(row, std::move(target));
+      } catch (const CollectionLimit&) {
+        throw;
+      } catch (const std::exception& error) {
+        row.outcome = O::Failed;
+        row.message = error.what();
+        append(row, {});
+      }
+    };
+    try {
+      std::vector<std::size_t> order;
+      order.reserve(roots->targets.size());
+      for (std::size_t i = 0; i < roots->targets.size(); ++i) {
+        order.push_back(i);
+      }
+      std::ranges::stable_sort(order, {}, [&](std::size_t index) {
+        return (*roots->results)[index].location.uri().size();
+      });
+      for (const auto i : order) {
+        if (stop.load()) {
+          break;
+        }
+        const auto& target = roots->targets[i];
+        if (target) {
+          // An explicitly selected descendant is reused by its ancestor's walk.
+          // Sorting roots by path length ensures ancestors are visited first.
+          walk(target, mountId(target->fd.value), 0);
+        } else if (seen.insert((*roots->results)[i].location.uri()).second) {
+          append((*roots->results)[i], {});
+        }
+      }
+      if (!stop.load()) {
+        total.store(plan->results->size());
+        completed.store(0);
+        collecting.store(false);
+        reply = applyBulk(plan, edit.files, stop, completed, edit);
+        reply.bulk = roots; // Release collected descriptors when the worker returns.
+        reply.finished = true;
+        return reply;
+      }
+      reply.message = "Cancelled while collecting targets. No changes attempted; total unknown.";
+    } catch (const std::exception& error) {
+      reply.error = true;
+      reply.message = "No changes attempted: " + std::string(error.what());
+    }
+    collecting.store(false);
+    reply.finished = true;
+    reply.results = plan->results;
+    for (auto& row : *reply.results) {
+      if (row.outcome == O::Ready) {
+        row.outcome = O::Cancelled;
+        row.message = "Not attempted; collection did not complete.";
+      }
+    }
+    reply.report = reply.message + "\n" + report(*reply.results);
+    return reply;
+  }
 } // namespace
 
 struct files::PermissionService::State {
@@ -519,6 +800,8 @@ struct files::PermissionService::State {
   std::shared_ptr<Target> target;
   std::shared_ptr<Bulk> bulk;
   std::atomic<std::size_t> completed{0};
+  std::atomic<std::size_t> total{0};
+  std::atomic<bool> collecting{false};
   std::atomic<bool> stop{false};
   bool active = false;
   std::function<void()> changed;
@@ -544,6 +827,7 @@ struct files::PermissionService::State {
           const auto owner = request.owner;
           const std::unique_ptr<Reply> reply(static_cast<Reply*>(g_task_propagate_pointer(G_TASK(result), nullptr)));
           owner->active = false;
+          owner->collecting.store(false);
           owner->snapshot.info = reply->info;
           owner->snapshot.message = reply->message;
           owner->snapshot.error = reply->error;
@@ -591,6 +875,8 @@ files::PermissionService::~PermissionService() {
 }
 bool files::PermissionService::busy() const { return m_state->active; }
 std::size_t files::PermissionService::completed() const { return m_state->completed.load(); }
+bool files::PermissionService::collecting() const { return m_state->collecting.load(); }
+std::size_t files::PermissionService::total() const { return m_state->total.load(); }
 const files::PermissionSnapshot& files::PermissionService::snapshot() const { return m_state->snapshot; }
 void files::PermissionService::setChangedCallback(std::function<void()> callback) {
   m_state->changed = std::move(callback);
@@ -695,13 +981,17 @@ bool files::PermissionService::prepareEntry(DirectoryEntry entry, bool captureCu
   return true;
 }
 bool files::PermissionService::apply(PermissionEdit edit) {
-  if (busy() || (!m_state->target && !m_state->bulk) || m_state->snapshot.phase != PermissionPhase::Ready) {
+  if (busy()
+      || (!m_state->target && !m_state->bulk)
+      || m_state->snapshot.phase != PermissionPhase::Ready
+      || (m_state->snapshot.recursive && m_state->snapshot.finished)) {
     return false;
   }
   const auto& info = m_state->snapshot.info;
   if (!info || (!info->canMode && !info->canOwner && !info->canGroup)) {
     return false;
   }
+  m_state->snapshot.recursive = false;
   if (m_state->bulk) {
     m_state->snapshot.phase = PermissionPhase::Saving;
     m_state->snapshot.finished = false;
@@ -724,6 +1014,42 @@ bool files::PermissionService::apply(PermissionEdit edit) {
       m_state,
       [owner = m_state, target = m_state->target, edit = std::move(edit)] {
         return ::apply(target, edit, owner->stop);
+      },
+      true
+  );
+  return true;
+}
+bool files::PermissionService::applyRecursive(RecursivePermissionEdit edit) {
+  if (busy()
+      || m_state->snapshot.phase != PermissionPhase::Ready
+      || (m_state->snapshot.recursive && m_state->snapshot.finished)
+      || (!m_state->target && !m_state->bulk)) {
+    return false;
+  }
+  auto roots = m_state->bulk;
+  if (!roots) {
+    roots = std::make_shared<Bulk>();
+    roots->targets.push_back(m_state->target);
+    roots->results = std::make_shared<std::vector<PermissionResult>>();
+    roots->results->push_back(
+        {m_state->target->entry.location,
+         m_state->target->entry.displayName,
+         m_state->snapshot.info,
+         PermissionOutcome::Ready,
+         {}}
+    );
+  }
+  m_state->snapshot.phase = PermissionPhase::Saving;
+  m_state->snapshot.recursive = m_state->snapshot.multiple = true;
+  m_state->snapshot.finished = m_state->snapshot.error = m_state->snapshot.applied = false;
+  m_state->snapshot.message.clear();
+  m_state->completed.store(0);
+  m_state->total.store(0);
+  m_state->collecting.store(true);
+  State::launch(
+      m_state,
+      [owner = m_state, roots, edit = std::move(edit)] {
+        return recursiveJob(roots, edit, owner->stop, owner->completed, owner->total, owner->collecting);
       },
       true
   );
