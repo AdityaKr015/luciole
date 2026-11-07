@@ -7740,7 +7740,7 @@ namespace {
     }
 
     void showActionMenu(
-        std::initializer_list<Action> actions, bool radio = false, bool back = false,
+        std::initializer_list<std::optional<Action>> actions, bool radio = false, bool back = false,
         std::optional<LayoutRect> anchor = std::nullopt, bool alignLeft = true
     ) {
       const auto request = actionRequest(false);
@@ -7750,7 +7750,11 @@ namespace {
         entries.push_back({.label = "", .separator = true});
       }
       for (const auto action : actions) {
-        entries.push_back(actionEntry(action, request, radio && action != Action::FoldersFirst));
+        if (action) {
+          entries.push_back(actionEntry(*action, request, radio && *action != Action::FoldersFirst));
+        } else {
+          entries.push_back({.label = "", .separator = true});
+        }
       }
       showContextMenu(
           std::move(entries),
@@ -7766,8 +7770,8 @@ namespace {
     }
     void openSortMenu(std::optional<LayoutRect> anchor = std::nullopt, bool alignLeft = true) {
       showActionMenu(
-          {Action::SortName, Action::SortType, Action::SortSize, Action::SortModified, Action::Ascending,
-           Action::Descending, Action::FoldersFirst},
+          {Action::SortName, Action::SortType, Action::SortSize, Action::SortModified, std::nullopt, Action::Ascending,
+           Action::Descending, std::nullopt, Action::FoldersFirst},
           true, !anchor.has_value(), anchor, alignLeft
       );
     }
