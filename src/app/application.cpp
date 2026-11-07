@@ -47,6 +47,7 @@
 #include "render/scene/input_dispatcher.h"
 #include "system/icon_theme_poll_source.h"
 #include "ui/builders.h"
+#include "ui/controls/acl_editor.h"
 #include "ui/controls/archive_view.h"
 #include "ui/controls/batch_rename_dialog.h"
 #include "ui/controls/browser_settings_view.h"
@@ -707,6 +708,10 @@ namespace {
     void configurationChanged() {
       clearExternalDrop();
       m_blankLocationClick.reset();
+      if (m_menuSurface && m_dialogHeight) {
+        m_dialogResizePending = true;
+        m_menuSurface->requestLayout();
+      }
       if (m_resizingSidebar || m_columnDrag || m_columnResize || (m_millerView && m_millerView->resizing())) {
         m_dispatcher.cancelPointerCapture();
       }
@@ -3830,11 +3835,18 @@ namespace {
           }
       );
     }
+    bool propertiesCanApply() const {
+      return m_aclActive && m_aclEditor ? m_aclEditor->canApply()
+                                        : m_permissionEditor && m_permissionEditor->canApply();
+    }
     void syncPermissions() {
       const auto& snapshot = m_permissions.snapshot();
       if (m_permissionEditor) {
         m_permissionEditor->sync(snapshot);
-        m_permissionSave->setEnabled(m_permissionEditor->canApply() && !actionContext().operationsBusy);
+        if (m_aclEditor) {
+          m_aclEditor->sync(snapshot);
+        }
+        m_permissionSave->setEnabled(propertiesCanApply() && !actionContext().operationsBusy);
         m_permissionSave->setText(snapshot.phase == files::PermissionPhase::Saving ? "Saving…" : "Apply");
         if (m_permissionResults) {
           m_permissionResults->sync(snapshot.results);
@@ -3871,12 +3883,14 @@ namespace {
           m_permissionCancel->setParticipatesInLayout(saving);
           m_permissionCancel->setEnabled(!snapshot.cancelRequested);
           if (snapshot.finished) {
-            m_permissionTabs->setSelectedIndex(2);
+            m_permissionTabs->setSelectedIndex(m_permissionResultTab);
           }
         }
         if (snapshot.error && !snapshot.finished && snapshot.phase == files::PermissionPhase::Ready) {
-          m_permissionTabs->setSelectedIndex(1);
-          m_permissionScroll->requestScrollIntoView(m_permissionEditor->messageNode());
+          m_permissionTabs->setSelectedIndex(snapshot.aclOperation && m_aclEditor ? 2 : 1);
+          m_permissionScroll->requestScrollIntoView(
+              snapshot.aclOperation && m_aclEditor ? m_aclEditor->messageNode() : m_permissionEditor->messageNode()
+          );
         }
         m_menuSurface->requestLayout();
       }
@@ -3983,6 +3997,7 @@ namespace {
       }
       body->content()->addChild(std::move(general));
       PermissionEditor* editor = nullptr;
+      AclEditor* acl = nullptr;
       Segmented* tabs = nullptr;
       Button *save = nullptr, *reportButton = nullptr, *cancelButton = nullptr;
       Label* progress = nullptr;
@@ -3992,7 +4007,7 @@ namespace {
         auto permissions = std::make_unique<PermissionEditor>(
             [this] {
               if (m_permissionEditor && m_permissionSave) {
-                m_permissionSave->setEnabled(m_permissionEditor->canApply() && !actionContext().operationsBusy);
+                m_permissionSave->setEnabled(propertiesCanApply() && !actionContext().operationsBusy);
               }
               m_menuSurface->requestLayout();
             },
@@ -4002,6 +4017,18 @@ namespace {
         permissions->setVisible(false);
         permissions->setParticipatesInLayout(false);
         body->content()->addChild(std::move(permissions));
+        if (!multiple) {
+          auto control = std::make_unique<AclEditor>([this] {
+            if (m_permissionSave) {
+              m_permissionSave->setEnabled(propertiesCanApply() && !actionContext().operationsBusy);
+            }
+            m_menuSurface->requestLayout();
+          });
+          acl = control.get();
+          control->setVisible(false);
+          control->setParticipatesInLayout(false);
+          body->content()->addChild(std::move(control));
+        }
         if (withResults) {
           resultView = std::make_unique<PermissionResultsView>();
           results = resultView.get();
@@ -4019,6 +4046,10 @@ namespace {
       std::vector<ui::SegmentedOption> propertyTabs{
           {.label = "General", .glyph = {}, .tooltip = {}}, {.label = "Permissions", .glyph = {}, .tooltip = {}}
       };
+      if (acl) {
+        propertyTabs.push_back({.label = "ACL", .glyph = {}, .tooltip = {}});
+      }
+      const std::size_t resultTab = acl ? 3 : 2;
       if (withResults) {
         propertyTabs.push_back({.label = "Results", .glyph = {}, .tooltip = {}});
       }
@@ -4049,16 +4080,24 @@ namespace {
                .visible = editable,
                .participatesInLayout = editable,
                .onChange =
-                   [this, generalGroup, editor, scroll, results](std::size_t index) {
+                   [this, generalGroup, editor, scroll, results, acl, resultTab](std::size_t index) {
                      generalGroup->setVisible(index == 0);
                      generalGroup->setParticipatesInLayout(index == 0);
                      editor->setVisible(index == 1);
                      editor->setParticipatesInLayout(index == 1);
+                     m_aclActive = acl && index == 2;
+                     if (acl) {
+                       acl->setVisible(m_aclActive);
+                       acl->setParticipatesInLayout(m_aclActive);
+                     }
+                     if (m_permissionSave) {
+                       m_permissionSave->setEnabled(propertiesCanApply() && !actionContext().operationsBusy);
+                     }
                      if (results) {
-                       results->setVisible(index == 2);
-                       results->setParticipatesInLayout(index == 2);
-                       scroll->setVisible(index != 2);
-                       scroll->setParticipatesInLayout(index != 2);
+                       results->setVisible(index == resultTab);
+                       results->setParticipatesInLayout(index == resultTab);
+                       scroll->setVisible(index != resultTab);
+                       scroll->setParticipatesInLayout(index != resultTab);
                      }
                      scroll->requestScrollToOffset(0);
                      m_menuSurface->requestLayout();
@@ -4100,7 +4139,9 @@ namespace {
                      .variant = ButtonVariant::Primary,
                      .onClick = [this] {
                        if (m_permissionEditor && !actionContext().operationsBusy) {
-                         if (m_permissionEditor->recursive()) {
+                         if (m_aclActive && m_aclEditor) {
+                           (void)m_permissions.applyAcl(m_aclEditor->edit());
+                         } else if (m_permissionEditor->recursive()) {
                            (void)m_permissions.applyRecursive(m_permissionEditor->recursiveEdit());
                          } else {
                            (void)m_permissions.apply(m_permissionEditor->edit());
@@ -4128,6 +4169,9 @@ namespace {
       );
       if (m_menuSurface && editable) {
         m_permissionEditor = editor;
+        m_aclEditor = acl;
+        m_aclActive = false;
+        m_permissionResultTab = resultTab;
         m_permissionResults = results;
         m_permissionReport = reportButton;
         m_permissionCancel = cancelButton;
@@ -5934,7 +5978,7 @@ namespace {
 
     void syncBrowser() {
       if (m_permissionEditor) {
-        m_permissionSave->setEnabled(m_permissionEditor->canApply() && !actionContext().operationsBusy);
+        m_permissionSave->setEnabled(propertiesCanApply() && !actionContext().operationsBusy);
       }
       if (m_typeaheadContext != browser().contextSerial() || !browser().model().selectionAvailable()) {
         clearTypeahead();
@@ -7229,6 +7273,9 @@ namespace {
       if (m_permissionEditor) {
         m_permissions.cancel();
         m_permissionEditor = nullptr;
+        m_aclEditor = nullptr;
+        m_aclActive = false;
+        m_permissionResultTab = 2;
         m_permissionResults = nullptr;
         m_permissionReport = m_permissionCancel = nullptr;
         m_permissionStatus = nullptr;
@@ -7277,6 +7324,7 @@ namespace {
       m_dialogHeight.reset();
       m_dialogWidth = 588.0F;
       m_dialogPosition.reset();
+      m_dialogResizePending = false;
       m_menuDispatcher.setFocusChangeCallback({});
       m_menuRoot.reset();
       m_menu = nullptr;
@@ -7336,6 +7384,7 @@ namespace {
           );
           if (width != m_menuSurface->width() || height != m_menuSurface->height()) {
             (void)m_menuSurface->resize(width, height, false);
+            m_dialogResizePending = true;
           }
           const std::pair<int, int> position{
               static_cast<int>((m_surface->width() - width) / 2), static_cast<int>((m_surface->height() - height) / 2)
@@ -7402,7 +7451,17 @@ namespace {
           );
         }
       });
-      m_menuSurface->setConfigureCallback([this](std::uint32_t, std::uint32_t) { m_menuSurface->requestLayout(); });
+      m_menuSurface->setConfigureCallback([this](std::uint32_t, std::uint32_t) {
+        if (std::exchange(m_dialogResizePending, false)
+            && m_dialogPosition
+            && (m_menuSurface->configuredX() != m_dialogPosition->first
+                || m_menuSurface->configuredY() != m_dialogPosition->second)) {
+          // A parent resize can constrain the first position against its old geometry.
+          // Retry the requested anchor once after receiving that configure.
+          m_dialogPosition.reset();
+        }
+        m_menuSurface->requestLayout();
+      });
       PopupSurfaceConfig config{
           .anchorX = static_cast<int>(anchor.x),
           .anchorY = static_cast<int>(anchor.y),
@@ -7693,6 +7752,7 @@ namespace {
     std::optional<float> m_dialogHeight;
     float m_dialogWidth = 588.0F;
     std::optional<std::pair<int, int>> m_dialogPosition;
+    bool m_dialogResizePending = false;
     files::PinService& m_pins;
     files::FileLauncher m_launcher;
     files::PlacesSidebar* m_places = nullptr;
@@ -7747,6 +7807,9 @@ namespace {
     files::BatchRenameService m_batchRenamer;
     files::PermissionService m_permissions;
     PermissionEditor* m_permissionEditor = nullptr;
+    AclEditor* m_aclEditor = nullptr;
+    bool m_aclActive = false;
+    std::size_t m_permissionResultTab = 2;
     PermissionResultsView* m_permissionResults = nullptr;
     Button *m_permissionReport = nullptr, *m_permissionCancel = nullptr;
     Label* m_permissionStatus = nullptr;

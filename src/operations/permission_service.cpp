@@ -15,6 +15,7 @@
 #include <pwd.h>
 #include <set>
 #include <stdexcept>
+#include <string_view>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <unistd.h>
@@ -81,7 +82,7 @@ namespace {
     }
     return {};
   }
-  std::uint32_t accountId(const std::string& text, bool user) {
+  std::uint32_t accountId(const std::string& text, bool user, std::string_view userRole = "Owner") {
     if (text.empty() || text.size() > 1024 || text.contains('\0')) {
       throw std::runtime_error("Enter an account name or a numeric ID.");
     }
@@ -109,7 +110,7 @@ namespace {
         return record->gr_gid;
       }
     }
-    throw std::runtime_error(user ? "Owner account was not found." : "Group was not found.");
+    throw std::runtime_error(user ? std::format("{} account was not found.", userRole) : "Group was not found.");
   }
   bool member(gid_t group) {
     if (group == ::getegid()) {
@@ -132,6 +133,8 @@ namespace {
     struct stat baseline;
     bool identified = false;
     std::vector<std::shared_ptr<Target>> ancestors;
+    std::optional<files::AclInfo> aclBaseline;
+    std::shared_ptr<const files::AclInfo> aclView;
     explicit Target(files::DirectoryEntry entry)
         : entry(std::move(entry)), path(*this->entry.location.nativePath()),
           fd(::open(path.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC)), baseline(metadata(fd.value)) {}
@@ -164,6 +167,9 @@ namespace {
       if (!samePermissions(metadata(fd.value), baseline)) {
         throw std::runtime_error("Permissions or ownership changed elsewhere. Reopen Properties.");
       }
+      if (aclBaseline && aclBaseline->supported && !files::sameAcl(files::inspectAcl(fd.value), *aclBaseline)) {
+        throw std::runtime_error("Access control changed elsewhere. Reopen Properties.");
+      }
     }
     files::PermissionInfo inspect(bool names = true) const {
       const auto value = metadata(fd.value);
@@ -185,6 +191,7 @@ namespace {
           .multipleLinks = S_ISREG(value.st_mode) && value.st_nlink > 1,
           .current = valid,
           .directory = S_ISDIR(value.st_mode),
+          .acl = aclView,
           .reason = {}
       };
       // Display names are optional; unavailable account services must not hide known IDs/mode.
@@ -212,6 +219,21 @@ namespace {
         info.reason = "Link permissions cannot be edited. Ownership applies to the link itself.";
       }
       return info;
+    }
+    void loadAcl(bool adopt) {
+      auto value = files::inspectAcl(fd.value);
+      const auto basic = inspect(false);
+      value.editable = value.supported
+          && basic.canMode
+          && samePermissions(metadata(fd.value), baseline)
+          && (adopt || (aclBaseline && files::sameAcl(value, *aclBaseline)));
+      if (value.supported && !value.editable) {
+        value.message = basic.reason.empty() ? "Access control changed. Reopen Properties." : basic.reason;
+      }
+      if (adopt) {
+        aclBaseline = value;
+      }
+      aclView = std::make_shared<const files::AclInfo>(std::move(value));
     }
   };
   std::shared_ptr<Target> prepareTarget(const files::DirectoryEntry& entry, bool captureCurrentLocation) {
@@ -315,11 +337,79 @@ namespace {
       reply.message = (reply.applied ? "Some changes were applied. " : "") + std::string(error.what());
       // Stale edits require reopening; do not silently adopt another writer's baseline.
     }
+    if (target->aclBaseline) {
+      target->loadAcl(!reply.error);
+    }
     reply.info = target->inspect(names);
-    if (!samePermissions(metadata(target->fd.value), target->baseline)) {
+    if (!samePermissions(metadata(target->fd.value), target->baseline)
+        || (target->aclBaseline
+            && target->aclBaseline->supported
+            && target->aclView
+            && !files::sameAcl(*target->aclBaseline, *target->aclView))) {
       reply.info->canMode = reply.info->canOwner = reply.info->canGroup = false;
       reply.info->reason = "Permissions or ownership changed elsewhere. Reopen Properties.";
     }
+    return reply;
+  }
+  Reply applyAcl(const std::shared_ptr<Target>& target, files::AclEdit edit, const std::atomic<bool>& stop) {
+    Reply reply{.target = target, .info = {}, .message = {}, .bulk = {}, .results = {}, .report = {}};
+    bool mutated = false;
+    try {
+      target->validate();
+      if (!target->aclView || !target->aclView->editable || !target->aclBaseline) {
+        throw std::runtime_error("ACL editing is unavailable for this captured item.");
+      }
+      if (edit.defaults && !S_ISDIR(target->baseline.st_mode)) {
+        throw std::runtime_error("Only folders support a default ACL.");
+      }
+      const auto resolve = [](files::AclTag tag, const std::string& text) {
+        return accountId(text, tag == files::AclTag::User, "User");
+      };
+      // Both lists must validate before either is written. Masks are explicit.
+      if (edit.access) {
+        edit.access = files::normalizeAcl(std::move(*edit.access), false, resolve);
+      }
+      if (edit.defaults) {
+        edit.defaults = files::normalizeAcl(std::move(*edit.defaults), true, resolve);
+      }
+      for (const bool defaults : {false, true}) {
+        const auto& wanted = defaults ? edit.defaults : edit.access;
+        if (!wanted || stop.load()) {
+          continue;
+        }
+        target->validate();
+        const auto& previous = defaults ? target->aclBaseline->defaults : target->aclBaseline->access;
+        if (*wanted == previous) {
+          continue;
+        }
+        files::writeAcl(target->fd.value, defaults, *wanted);
+        mutated = true;
+        const auto actual = files::inspectAcl(target->fd.value);
+        // Update only our committed metadata. Never retry a failed second write.
+        target->baseline = metadata(target->fd.value);
+        if (!actual.supported) {
+          throw std::runtime_error(actual.message);
+        }
+        target->aclBaseline = actual;
+        if ((defaults ? actual.defaults : actual.access) != *wanted) {
+          throw std::runtime_error("The filesystem did not retain the requested ACL.");
+        }
+      }
+      const bool complete = (!edit.access || *edit.access == target->aclBaseline->access)
+          && (!edit.defaults || *edit.defaults == target->aclBaseline->defaults);
+      reply.error = mutated && !complete;
+      reply.message = stop.load() && !complete
+          ? (mutated ? "Cancelled after applying some ACL changes. Completed changes remain applied."
+                     : "Cancelled before applying ACL changes.")
+          : mutated ? "Access control saved."
+                    : "No changes.";
+    } catch (const std::exception& error) {
+      reply.error = true;
+      reply.message = (mutated ? "Some ACL changes were applied. " : "") + std::string(error.what());
+    }
+    reply.applied = mutated;
+    target->loadAcl(false);
+    reply.info = target->inspect();
     return reply;
   }
   void summarize(files::PermissionSnapshot& snapshot, const std::vector<files::PermissionResult>& rows) {
@@ -840,9 +930,10 @@ struct files::PermissionService::State {
           if (reply->bulk) {
             summarize(owner->snapshot, *reply->results);
           }
-          owner->snapshot.phase = owner->stop.load() && (!request.saving || reply->bulk) ? PermissionPhase::Cancelled
-              : (reply->info || reply->bulk)                                             ? PermissionPhase::Ready
-                                                                                         : PermissionPhase::Error;
+          owner->snapshot.phase = owner->stop.load() && (!request.saving || reply->bulk || owner->snapshot.aclOperation)
+              ? PermissionPhase::Cancelled
+              : (reply->info || reply->bulk) ? PermissionPhase::Ready
+                                             : PermissionPhase::Error;
           if (owner->stop.load()) {
             owner->target.reset();
             owner->bulk.reset();
@@ -972,6 +1063,10 @@ bool files::PermissionService::prepareEntry(DirectoryEntry entry, bool captureCu
         if (owner->stop.load()) {
           return Reply{};
         }
+        target->loadAcl(true);
+        if (target->identified) {
+          target->validate();
+        }
         return Reply{
             .target = target, .info = target->inspect(), .message = {}, .bulk = {}, .results = {}, .report = {}
         };
@@ -992,6 +1087,7 @@ bool files::PermissionService::apply(PermissionEdit edit) {
     return false;
   }
   m_state->snapshot.recursive = false;
+  m_state->snapshot.aclOperation = false;
   if (m_state->bulk) {
     m_state->snapshot.phase = PermissionPhase::Saving;
     m_state->snapshot.finished = false;
@@ -1041,6 +1137,7 @@ bool files::PermissionService::applyRecursive(RecursivePermissionEdit edit) {
   }
   m_state->snapshot.phase = PermissionPhase::Saving;
   m_state->snapshot.recursive = m_state->snapshot.multiple = true;
+  m_state->snapshot.aclOperation = false;
   m_state->snapshot.finished = m_state->snapshot.error = m_state->snapshot.applied = false;
   m_state->snapshot.message.clear();
   m_state->completed.store(0);
@@ -1052,6 +1149,20 @@ bool files::PermissionService::applyRecursive(RecursivePermissionEdit edit) {
         return recursiveJob(roots, edit, owner->stop, owner->completed, owner->total, owner->collecting);
       },
       true
+  );
+  return true;
+}
+
+bool files::PermissionService::applyAcl(AclEdit edit) {
+  if (busy() || m_state->snapshot.phase != PermissionPhase::Ready || !m_state->target || m_state->bulk) {
+    return false;
+  }
+  m_state->snapshot.phase = PermissionPhase::Saving;
+  m_state->snapshot.aclOperation = true;
+  m_state->snapshot.applied = m_state->snapshot.error = false;
+  m_state->snapshot.message.clear();
+  State::launch(
+      m_state, [owner = m_state, edit = std::move(edit)] { return ::applyAcl(owner->target, edit, owner->stop); }, true
   );
   return true;
 }

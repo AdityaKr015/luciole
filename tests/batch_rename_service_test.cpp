@@ -411,14 +411,14 @@ namespace {
           const int original = ::open((f.root / "file0").c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
           if (original >= 0) {
             originalInserted = true;
-            (void)::write(original, "foreign", 7);
+            TEST_CHECK(::write(original, "foreign", 7) == 7);
             ::close(original);
           }
           if (originalInserted) {
             const int target = ::open((f.root / "file256").c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
             if (target >= 0) {
               targetInserted = true;
-              (void)::write(target, "foreign", 7);
+              TEST_CHECK(::write(target, "foreign", 7) == 7);
               ::close(target);
             }
             return;

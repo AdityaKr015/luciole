@@ -113,6 +113,7 @@ app_sources = files(
   'src/ui/controls/file_preview_view.cpp',
   'src/ui/controls/link_dialog.cpp',
   'src/ui/controls/permission_editor.cpp',
+  'src/ui/controls/acl_editor.cpp',
   'src/ui/controls/recursive_permission_editor.cpp',
   'src/ui/controls/permission_results_view.cpp',
   'src/ui/controls/batch_rename_dialog.cpp',
@@ -184,8 +185,8 @@ rename_service = declare_dependency(
 )
 
 permission_service = declare_dependency(
-  sources: files('src/operations/permission_service.cpp'),
-  dependencies: filesystem_service,
+  sources: files('src/operations/permission_service.cpp', 'src/operations/posix_acl.cpp'),
+  dependencies: [filesystem_service, dependency('libacl')],
 )
 
 batch_rename_service = declare_dependency(

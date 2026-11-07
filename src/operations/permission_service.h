@@ -1,6 +1,7 @@
 #pragma once
 
 #include "fs/directory_session.h"
+#include "operations/posix_acl.h"
 
 namespace files {
   enum class PermissionPhase { Idle, Loading, Ready, Saving, Error, Cancelled };
@@ -9,6 +10,7 @@ namespace files {
     std::string ownerName, groupName;
     bool canMode = false, canOwner = false, canGroup = false;
     bool symlink = false, multipleLinks = false, current = true, directory = false;
+    std::shared_ptr<const AclInfo> acl;
     std::string reason;
   };
   struct PermissionEdit {
@@ -35,6 +37,7 @@ namespace files {
     std::string message;
     bool error = false, applied = false;
     bool multiple = false, finished = false, cancelRequested = false, recursive = false;
+    bool aclOperation = false;
     std::uint32_t mixedMode = 0;
     bool mixedOwner = false, mixedGroup = false;
     std::size_t unknownItems = 0;
@@ -53,6 +56,7 @@ namespace files {
     bool prepare(const Location& location); // Capture a Places destination when inspection starts.
     bool apply(PermissionEdit edit);
     bool applyRecursive(RecursivePermissionEdit edit);
+    bool applyAcl(AclEdit edit);
     void cancel();
     bool busy() const;
     std::size_t completed() const;

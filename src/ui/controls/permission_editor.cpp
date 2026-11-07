@@ -6,6 +6,7 @@
 #include "ui/controls/segmented.h"
 #include "ui/controls/toggle.h"
 
+#include <algorithm>
 #include <format>
 
 namespace {
@@ -287,6 +288,14 @@ void PermissionEditor::sync(const files::PermissionSnapshot& snapshot) {
   }
   if (snapshot.info && (snapshot.info->mode & 06000) != 0) {
     reason += " Ownership changes can clear set-user/group-ID bits.";
+  }
+  if (snapshot.info
+      && snapshot.info->acl
+      && snapshot.info->acl->supported
+      && std::ranges::any_of(snapshot.info->acl->access, [](const auto& entry) {
+           return entry.tag == files::AclTag::Mask;
+         })) {
+    reason += " Group mode bits control the ACL mask. Use ACL to see effective rights.";
   }
   m_reason->setText(reason);
   m_reason->setVisible(!reason.empty());

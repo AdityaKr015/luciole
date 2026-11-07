@@ -20,6 +20,7 @@
   harfbuzz,
   libpng,
   libarchive,
+  acl,
   libwebp,
   librsvg,
   gdk-pixbuf,
@@ -133,6 +134,7 @@ stdenv.mkDerivation (finalAttrs: {
     harfbuzz
     libpng
     libarchive
+    acl
     libwebp
     pixbufWithGlycin
     svgWithGlycin
