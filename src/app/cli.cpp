@@ -45,6 +45,9 @@ int files::runCli(std::span<const std::string_view> args) {
   if (!args.empty() && args.front() == "--thumbnail-worker") {
     return runThumbnailWorker(args.subspan(1));
   }
+  if (args.size() == 1 && args.front() == "--file-manager-service") {
+    return runApplication(std::nullopt, true);
+  }
   if (args.size() == 1 && args.front() == "--help") {
     std::print("{}", kHelp);
     return EXIT_SUCCESS;

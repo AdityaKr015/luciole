@@ -91,6 +91,7 @@ completions = configure_file(
 )
 app_sources = files(
   'src/app/application.cpp',
+  'src/app/file_manager_service.cpp',
   'src/app/library_setup.cpp',
   'src/platform/artwork_loader.cpp',
   'src/platform/pixbuf_image_decoder.cpp',
@@ -220,6 +221,13 @@ app = executable('noctalia-files',
   include_directories: include_directories('src', '.'),
   dependencies: ui_dependencies + [browser_model, settings_service, state_service, places_service, transfer_service, rename_service, batch_rename_service, permission_service, create_service, trash_service, archive_service],
   install: true,
+)
+
+configure_file(
+  input: 'assets/dbus/org.freedesktop.FileManager1.service.in',
+  output: 'org.freedesktop.FileManager1.service',
+  configuration: {'bindir': get_option('prefix') / get_option('bindir')},
+  install_dir: get_option('datadir') / 'dbus-1/services',
 )
 
 tests_opt = get_option('tests')

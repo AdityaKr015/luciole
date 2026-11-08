@@ -1,6 +1,7 @@
 #include "app/application.h"
 
 #include "app/deferred_call_poll_source.h"
+#include "app/file_manager_service.h"
 #include "app/glib_poll_source.h"
 #include "app/library_setup.h"
 #include "app/main_loop.h"
@@ -471,6 +472,15 @@ namespace {
         browser().home();
       }
       return true;
+    }
+
+    // Select `items` once the current folder finishes loading; optionally open their Properties.
+    void revealItems(std::vector<files::Location> items, bool properties) {
+      m_revealTargets = std::move(items);
+      m_revealProperties = properties;
+      if (m_list != nullptr) {
+        m_dispatcher.setFocus(m_list->focusArea());
+      }
     }
 
     bool renameBusy() const { return m_renamer.busy() || m_batchRenamer.busy() || m_permissions.busy(); }
@@ -2933,7 +2943,10 @@ namespace {
           m_actionError = "Link created in " + files::locationEditText(*snapshot.parent);
         }
         if (browser().model().snapshot().location == snapshot.parent) {
-          m_revealTarget = snapshot.destination;
+          m_revealTargets.clear();
+          if (snapshot.destination) {
+            m_revealTargets.push_back(*snapshot.destination);
+          }
           browser().refresh();
         }
         if (m_createEditor != nullptr || m_linkDialog != nullptr) {
@@ -3109,7 +3122,10 @@ namespace {
         m_actionError.clear();
         const auto& current = browser().model().snapshot().location;
         if (current && snapshot.source && g_file_has_prefix(snapshot.source->file().get(), current->file().get())) {
-          m_revealTarget = snapshot.destination;
+          m_revealTargets.clear();
+          if (snapshot.destination) {
+            m_revealTargets.push_back(*snapshot.destination);
+          }
           browser().refresh();
         }
         if (m_fileRenameEditor != nullptr) {
@@ -3220,8 +3236,7 @@ namespace {
       }
       const files::GString uri(g_file_get_uri(parent.get()));
       browser().open(files::Location::fromUri(uri.get()));
-      m_revealTarget = location;
-      m_dispatcher.setFocus(m_list->focusArea());
+      revealItems({location}, false);
     }
 
     void applySettings(const files::BrowserSettings& settings, bool force) {
@@ -6395,15 +6410,26 @@ namespace {
           m_batchReveal.clear();
         }
       }
-      if (m_revealTarget && snapshot.status != files::DirectoryStatus::Loading) {
-        const auto target = *std::exchange(m_revealTarget, std::nullopt);
-        const auto found = std::ranges::find_if(model.rows(), [&](files::EntryId id) {
-          const auto* entry = model.entry(id);
-          return entry != nullptr && entry->location == target;
-        });
-        if (found != model.rows().end()) {
-          browser().model().select(*found);
+      if (!m_revealTargets.empty() && snapshot.status != files::DirectoryStatus::Loading) {
+        const auto targets = std::exchange(m_revealTargets, {});
+        const bool properties = std::exchange(m_revealProperties, false);
+        std::vector<files::EntryId> ids;
+        for (const auto id : model.rows()) {
+          if (const auto* entry = model.entry(id); entry && std::ranges::contains(targets, entry->location)) {
+            ids.push_back(id);
+          }
+        }
+        if (!ids.empty() && browser().model().replaceSelection(ids)) {
+          const auto found = std::ranges::find(model.rows(), ids.front());
           m_list->scrollToIndex(static_cast<std::size_t>(found - model.rows().begin()));
+          if (properties) {
+            const std::weak_ptr<int> lifetime = m_lifetime;
+            DeferredCall::callLater([this, lifetime] {
+              if (!lifetime.expired()) {
+                dispatchAction(Action::Properties);
+              }
+            });
+          }
         }
       }
     }
@@ -7907,7 +7933,8 @@ namespace {
     files::PlacesSidebar* m_places = nullptr;
     bool m_placesDirty = true;
     std::string m_actionError;
-    std::optional<files::Location> m_revealTarget;
+    std::vector<files::Location> m_revealTargets;
+    bool m_revealProperties = false;
     std::optional<Drag> m_drag;
     std::shared_ptr<const files::FileIconImage> m_dragArtwork;
     std::uint32_t m_fileDragSerial = 0;
@@ -8280,14 +8307,58 @@ namespace {
       if (!id) {
         throw std::runtime_error("Cannot create a Files window.");
       }
-      newTab(
-          id,
-          initial
-              ? std::optional(
-                    files::Location::fromUri(files::resolveLocationText(*initial, files::Location::fromPath("/")).uri())
-                )
-              : std::nullopt
-      );
+      std::optional<files::Location> location;
+      if (initial) {
+        // Relative arguments (`xdg-open .`) name paths under the launching shell's directory.
+        const files::GString cwd(g_get_current_dir());
+        location = files::resolveLocationText(*initial, files::Location::fromPath(cwd.get()));
+      }
+      newTab(id, std::move(location));
+    }
+    // FileManager1 request: one new window, one tab per folder; items are selected in their parent.
+    void show(const files::FileManagerRequest& request) {
+      std::vector<std::pair<files::Location, std::vector<files::Location>>> groups;
+      for (const auto& location : request.locations) {
+        const files::GioPtr<GFile> parent(
+            request.kind == files::FileManagerRequest::Kind::Folders ? nullptr
+                                                                     : g_file_get_parent(location.file().get())
+        );
+        if (!parent) {
+          groups.emplace_back(location, std::vector<files::Location>{});
+          continue;
+        }
+        const files::GString uri(g_file_get_uri(parent.get()));
+        auto folder = files::Location::fromUri(uri.get());
+        const auto found = std::ranges::find(groups, folder, [](const auto& group) { return group.first; });
+        if (found != groups.end() && !found->second.empty()) {
+          found->second.push_back(location);
+        } else {
+          groups.emplace_back(std::move(folder), std::vector{location});
+        }
+      }
+      const auto window = newWindow();
+      if (!window) {
+        throw std::runtime_error("Cannot create a Files window.");
+      }
+      files::TabId first = 0;
+      for (auto& [folder, items] : groups) {
+        const auto tab = newTab(window, folder);
+        if (!tab) {
+          break;
+        }
+        first = first ? first : tab;
+        if (!items.empty()) {
+          m_pages.at(tab)->revealItems(
+              std::move(items), request.kind == files::FileManagerRequest::Kind::ItemProperties
+          );
+        }
+      }
+      if (first) {
+        select(window, first);
+      }
+    }
+    bool hasWindows() const {
+      return std::ranges::any_of(m_hosts, [](const auto& item) { return item.second->surface.isRunning(); });
     }
     void focus(wl_surface* surface, bool entered) {
       for (const auto& [id, host] : m_hosts) {
@@ -9507,7 +9578,7 @@ namespace {
   };
 } // namespace
 
-int files::runApplication(const std::optional<std::string>& initialLocation) {
+int files::runApplication(const std::optional<std::string>& initialLocation, bool fileManagerActivation) {
   initLogLevelFromEnvironment();
   initializeKeys();
   Input::setValidateKeyMatcher([](std::uint32_t sym, std::uint32_t modifiers) {
@@ -9546,7 +9617,12 @@ int files::runApplication(const std::optional<std::string>& initialLocation) {
     renderer.initialize(graphics);
     WorkspaceApplication application(connection, renderer, textInput, clipboard, config.settings().browser);
     application.imageTextures().initialize(&graphics);
-    application.start(initialLocation);
+    if (!fileManagerActivation) {
+      application.start(initialLocation);
+    }
+    files::FileManagerService fileManager(
+        [&application](const files::FileManagerRequest& request) { application.show(request); }, fileManagerActivation
+    );
     connection.setPointerEventCallback([&application, &desktop](const PointerEvent& event) {
       desktop.pointer(event);
       application.pointer(event);
@@ -9570,7 +9646,16 @@ int files::runApplication(const std::optional<std::string>& initialLocation) {
     icons.setChangeCallback([&application] { application.iconsChanged(); });
     MainLoop loop(
         connection, {&deferred, &timers, &repeat, &glib, &icons, &application.imageTextures()},
-        [&application] { return application.running(); }
+        [&application, &fileManager] {
+          const bool running = application.running();
+          if (fileManager.awaitingRequest()) {
+            return g_stopRequested == 0;
+          }
+          if (!application.hasWindows()) {
+            fileManager.release();
+          }
+          return running;
+        }
     );
     loop.run();
     connection.setOutputChangeCallback({});
