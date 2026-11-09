@@ -93,8 +93,10 @@ namespace {
 
   void parentChainAndHistory() {
     Fixture fixture;
+    std::ofstream(fixture.path / "a" / "nested" / "kept.txt~") << "backup";
     Pump pump;
     BrowserController source({}, false);
+    source.setShowBackups(false);
     const auto current = Location::fromPath((fixture.path / "a" / "nested").native());
     source.open(Location::fromPath(fixture.path.native()));
     pump.ready(source);
@@ -106,12 +108,16 @@ namespace {
     });
     MillerColumns columns;
     columns.start(source);
+    TEST_CHECK(std::ranges::all_of(columns.columns(), [](const auto& column) {
+      return !column->browser->model().filter().showBackups;
+    }));
     TEST_CHECK(columns.columns().front()->browser->model().snapshot().status == DirectoryStatus::Idle);
     pump.loaded(columns);
     TEST_CHECK(
         columns.focused() + 1 == columns.columns().size() && columns.active().model().snapshot().location == current
     );
     TEST_CHECK(columns.columns().front()->location == Location::fromPath("/"));
+    TEST_CHECK(columns.active().model().rows().size() == 1);
     TEST_CHECK(columns.active().model().selection().selected.contains(entry(columns.active(), "kept.txt")));
     const auto viewport = columns.active().takeRestoredViewport();
     TEST_CHECK(viewport && viewport->vertical == 45 && viewport->iconSize == 160);

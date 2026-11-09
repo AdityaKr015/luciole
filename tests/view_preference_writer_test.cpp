@@ -53,6 +53,7 @@ namespace {
         {{P::Density, files::ViewDensity::Compact},
          {P::ShowSizeCaption, false},
          {P::ShowEmblems, true},
+         {P::ShowBackups, true},
          {P::SidebarTree, false},
          {P::ExpandableFolders, true}}
     );
@@ -62,6 +63,7 @@ namespace {
          {P::ShowTypeCaption, true},
          {P::ShowModifiedCaption, true},
          {P::ShowEmblems, false},
+         {P::ShowBackups, false},
          {P::SidebarTree, true},
          {P::ExpandableFolders, false}}
     );
@@ -107,6 +109,7 @@ namespace {
         && loaded
         && loaded->browser.viewMode == files::ViewMode::Grid
         && !loaded->browser.showHidden
+        && !loaded->browser.showBackups
         && loaded->browser.gridIconSize == 64
         && loaded->browser.thumbnails.policy == files::ThumbnailPolicy::All
         && loaded->browser.thumbnails.cacheMiB == 64

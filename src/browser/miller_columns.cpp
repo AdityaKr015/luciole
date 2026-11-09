@@ -11,7 +11,10 @@ void files::MillerColumns::notify() const {
 std::unique_ptr<files::MillerColumns::Column>
 files::MillerColumns::makeColumn(BrowserController& source, const Location& location, bool inheritHistory) {
   auto column = std::make_unique<Column>(Column{
-      ++m_nextId, std::make_unique<BrowserController>(source.model().sort(), source.model().filter().showHidden),
+      ++m_nextId,
+      std::make_unique<BrowserController>(
+          source.model().sort(), source.model().filter().showHidden, source.model().filter().showBackups
+      ),
       location, std::nullopt, defaultWidth
   });
   if (inheritHistory) {

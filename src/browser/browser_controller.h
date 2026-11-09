@@ -19,7 +19,7 @@ namespace files {
 
   class BrowserController {
   public:
-    BrowserController(SortOptions sort, bool showHidden);
+    BrowserController(SortOptions sort, bool showHidden, bool showBackups = true);
     ~BrowserController();
     BrowserController(const BrowserController&) = delete;
     BrowserController& operator=(const BrowserController&) = delete;
@@ -56,6 +56,7 @@ namespace files {
     void refresh();
     void stop();
     void toggleHidden();
+    void setShowBackups(bool showBackups);
     // Programmatic/history changes apply immediately; editor changes use the trailing debounce.
     void setSearchQuery(std::string text);
     void editSearchQuery(std::string text);

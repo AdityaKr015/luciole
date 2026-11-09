@@ -71,7 +71,8 @@ BrowserPage::BrowserPage(
     files::ThumbnailService& thumbnails, files::ViewPreferenceWriter& preferences, OperationHub& hub, files::TabId id
 )
     : m_connection(connection), m_renderer(renderer), m_textInput(textInput), m_animations(animations),
-      m_surface(&surface), m_browser(settings.sort, settings.showHidden), m_icons(icons), m_thumbnails(thumbnails),
+      m_surface(&surface), m_browser(settings.sort, settings.showHidden, settings.showBackups), m_icons(icons),
+      m_thumbnails(thumbnails),
       m_listAdapter(
           m_browser, m_icons, m_thumbnails, files::ViewMode::List, [this] { return m_connection.keyboardModifiers(); },
           [this] { return m_fileKeys.keyboardFocus() && m_list != nullptr && m_list->focusArea()->focused(); }
@@ -301,6 +302,7 @@ files::BrowserSettings BrowserPage::options() const {
   value.columnWidths = m_detailsHeader.columnWidths();
   value.sort = browser().model().sort();
   value.showHidden = browser().model().filter().showHidden;
+  value.showBackups = browser().model().filter().showBackups;
   return value;
 }
 
@@ -1549,6 +1551,12 @@ void BrowserPage::applySettings(const files::BrowserSettings& settings, bool for
       && (force || before.showHidden != settings.showHidden)
       && browser().model().filter().showHidden != settings.showHidden) {
     browser().toggleHidden();
+  }
+  if (force || before.showBackups != settings.showBackups) {
+    m_browser.setShowBackups(settings.showBackups);
+    for (const auto& column : m_miller.columns()) {
+      column->browser->setShowBackups(settings.showBackups);
+    }
   }
   if (force || before.millerColumnWidth != settings.millerColumnWidth) {
     m_miller.defaultWidth = static_cast<float>(settings.millerColumnWidth);

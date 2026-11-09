@@ -215,6 +215,7 @@ namespace files {
   struct FilterOptions {
     bool showHidden = false;
     std::string text; // Literal substring of the display name, folded and normalized.
+    bool showBackups = true;
     bool operator==(const FilterOptions&) const = default;
   };
 } // namespace files

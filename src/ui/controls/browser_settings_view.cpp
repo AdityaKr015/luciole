@@ -98,6 +98,7 @@ BrowserSettingsView::BrowserSettingsView(
   addBool(P::SortDescending, "Reverse order");
   addBool(P::DirectoriesFirst, "Folders first");
   addBool(P::ShowHidden, "Show hidden files");
+  addBool(P::ShowBackups, "Show backup files (*~)");
   section("Behavior");
   addChoice(
       P::ActivationMode, "Open items",

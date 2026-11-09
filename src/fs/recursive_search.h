@@ -11,7 +11,7 @@ namespace files {
     RecursiveSearch(const RecursiveSearch&) = delete;
     RecursiveSearch& operator=(const RecursiveSearch&) = delete;
 
-    void start(const Location& root, const std::string& query, bool showHidden);
+    void start(const Location& root, const std::string& query, bool showHidden, bool showBackups = true);
     void cancel();
     void setChangedCallback(std::function<void()> callback);
     const DirectorySnapshot& snapshot() const;

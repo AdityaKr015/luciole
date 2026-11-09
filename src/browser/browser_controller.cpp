@@ -19,7 +19,7 @@ struct files::BrowserController::ActivationState {
   std::function<void(EntryId, const Location&, std::uint64_t, const std::expected<FileType, FileError>&)> resolved;
 };
 
-files::BrowserController::BrowserController(SortOptions sort, bool showHidden)
+files::BrowserController::BrowserController(SortOptions sort, bool showHidden, bool showBackups)
     : m_activation(std::make_shared<ActivationState>()) {
   m_activation->resolved = [this](
                                EntryId id, const Location& target, std::uint64_t context,
@@ -48,7 +48,7 @@ files::BrowserController::BrowserController(SortOptions sort, bool showHidden)
     }
   };
   m_model.setSort(sort);
-  m_model.setFilter({.showHidden = showHidden, .text = {}});
+  m_model.setFilter({.showHidden = showHidden, .text = {}, .showBackups = showBackups});
   m_model.setChangedCallback([this] {
     if (!m_publishing) {
       m_restoring = false;
@@ -150,7 +150,7 @@ void files::BrowserController::loadVisit() {
     // Browse metadata continues loading independently of the search projection.
     m_session.open(destination);
     m_searchActive = true;
-    m_search.start(destination, query, m_model.filter().showHidden);
+    m_search.start(destination, query, m_model.filter().showHidden, m_model.filter().showBackups);
   }
 }
 void files::BrowserController::open(const Location& location) {
@@ -280,6 +280,18 @@ void files::BrowserController::toggleHidden() {
   }
 }
 
+void files::BrowserController::setShowBackups(bool showBackups) {
+  if (m_model.filter().showBackups == showBackups) {
+    return;
+  }
+  auto filter = m_model.filter();
+  filter.showBackups = showBackups;
+  m_model.setFilter(std::move(filter));
+  if (!m_query.empty()) {
+    refresh();
+  }
+}
+
 void files::BrowserController::cancelSearchTimeout() {
   if (auto* source = std::exchange(m_searchTimeout, nullptr)) {
     g_source_destroy(source);
@@ -318,7 +330,7 @@ void files::BrowserController::startSearch() {
     return;
   }
   m_searchActive = true;
-  m_search.start(*m_session.snapshot().location, m_query, m_model.filter().showHidden);
+  m_search.start(*m_session.snapshot().location, m_query, m_model.filter().showHidden, m_model.filter().showBackups);
 }
 
 void files::BrowserController::publishPendingSearch() {
@@ -536,7 +548,7 @@ void files::BrowserController::duplicateFrom(BrowserController& source) {
   m_history = source.m_history;
   m_historyIndex = source.m_historyIndex;
   m_model.setSort(source.m_model.sort());
-  m_model.setFilter({source.m_model.filter().showHidden, {}});
+  m_model.setFilter({source.m_model.filter().showHidden, {}, source.m_model.filter().showBackups});
   if (!m_history.empty()) {
     loadVisit();
   }

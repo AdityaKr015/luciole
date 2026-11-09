@@ -21,6 +21,7 @@ namespace files {
     TypingMode typingMode = TypingMode::Search;
     ViewMode viewMode = ViewMode::List;
     bool showHidden = false;
+    bool showBackups = true;
     BrowsePresentation presentation;
     int gridIconSize = kDefaultGridIconSize;
     int sidebarWidth = kDefaultSidebarWidth;
@@ -55,6 +56,7 @@ namespace files {
     ActivationMode,
     TypingMode,
     ShowHidden,
+    ShowBackups,
     SortBy,
     SortDescending,
     DirectoriesFirst,
@@ -121,6 +123,7 @@ namespace files {
     static constexpr PreferenceKey<files::ActivationMode> ActivationMode{Id::ActivationMode};
     static constexpr PreferenceKey<files::TypingMode> TypingMode{Id::TypingMode};
     static constexpr PreferenceKey<bool> ShowHidden{Id::ShowHidden};
+    static constexpr PreferenceKey<bool> ShowBackups{Id::ShowBackups};
     static constexpr PreferenceKey<files::SortField> SortBy{Id::SortBy};
     static constexpr PreferenceKey<bool> SortDescending{Id::SortDescending};
     static constexpr PreferenceKey<bool> DirectoriesFirst{Id::DirectoriesFirst};

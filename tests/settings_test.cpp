@@ -44,6 +44,31 @@ namespace {
     return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
   }
 
+  void testBackupPreference() {
+    Fixture fixture;
+    files::ConfigService service(fixture.paths());
+    TEST_CHECK(service.reload());
+    TEST_CHECK(service.settings().browser.showBackups && !service.settings().browser.showHidden);
+    fixture.write("config.toml", "[browser]\nshow_backups = false\nshow_hidden = true\n");
+    TEST_CHECK(service.reload() && !service.settings().browser.showBackups && service.settings().browser.showHidden);
+    const std::array on{files::OverrideEdit{files::BrowserPreference::ShowBackups, true}};
+    TEST_CHECK(service.saveOverrides(on) == files::AtomicWriteState::Durable);
+    files::ConfigService restored(fixture.paths());
+    TEST_CHECK(restored.reload());
+    TEST_CHECK(restored.settings().browser.showBackups && restored.settings().browser.showHidden);
+    const std::array off{files::OverrideEdit{files::BrowserPreference::ShowBackups, false}};
+    TEST_CHECK(restored.saveOverrides(off) == files::AtomicWriteState::Durable);
+    TEST_CHECK(!restored.settings().browser.showBackups && restored.settings().browser.showHidden);
+    const std::array reset{files::OverrideEdit{files::BrowserPreference::ShowBackups, std::nullopt}};
+    TEST_CHECK(restored.saveOverrides(reset) == files::AtomicWriteState::Durable);
+    TEST_CHECK(!restored.settings().browser.showBackups && restored.settings().browser.showHidden);
+    TEST_CHECK(!read(fixture.paths().overrides).contains("show_backups"));
+    for (const auto* value : {"'false'", "0", "[]"}) {
+      fixture.write("config.toml", std::format("[browser]\nshow_backups = {}\n", value));
+      TEST_CHECK(!restored.reload() && !restored.settings().browser.showBackups);
+    }
+  }
+
   void testPresentationSettings() {
     using P = files::BrowserPreference;
     using State = files::AtomicWriteState;
@@ -907,6 +932,7 @@ int main() {
   try {
     testSchemaAndDiagnostics();
     testPresentationSettings();
+    testBackupPreference();
     testMillerSettings();
     testMillerParents();
     testLayersAndReload();

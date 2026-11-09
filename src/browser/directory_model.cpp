@@ -2,6 +2,7 @@
 
 #include "browser/entry_details.h"
 #include "browser/selection_tools.h"
+#include "fs/file_visibility.h"
 #include "fs/name_matching.h"
 
 #include <algorithm>
@@ -183,7 +184,9 @@ void files::DirectoryModel::rebuildProjection() {
   m_rows.clear();
   m_rows.reserve(m_snapshot.entries.size());
   for (const auto& entry : m_snapshot.entries) {
-    if ((!entry.hidden || m_filter.showHidden) && m_presentations.at(entry.id).filterKey.contains(m_filterKey)) {
+    if ((!entry.hidden || m_filter.showHidden)
+        && (m_filter.showBackups || !isEditorBackup(entry.name, entry.type))
+        && m_presentations.at(entry.id).filterKey.contains(m_filterKey)) {
       m_rows.push_back(entry.id);
     }
   }

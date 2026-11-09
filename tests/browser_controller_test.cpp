@@ -75,6 +75,49 @@ namespace {
     throw std::runtime_error("missing browser fixture entry: " + name);
   }
 
+  void testBackupPolicyAndSearch() {
+    Fixture fixture;
+    std::ofstream(fixture.path / "file~") << "backup";
+    std::ofstream(fixture.path / "file.bak") << "ordinary extension";
+    std::ofstream(fixture.path / ".hidden~") << "hidden backup";
+    std::ofstream(fixture.path / "child" / "inside~") << "nested backup";
+    fs::create_directory(fixture.path / "cache~");
+    std::ofstream(fixture.path / "cache~" / "inside") << "normal child of tilde directory";
+    Pump pump;
+    BrowserController browser({}, false);
+    browser.open(Location::fromPath(fixture.path.native()));
+    pump.ready(browser);
+    const auto visible = [&](const BrowserController& value, const std::string& name) {
+      return std::ranges::any_of(value.model().rows(), [&](auto id) { return value.model().entry(id)->name == name; });
+    };
+    TEST_CHECK(visible(browser, "file~") && !visible(browser, ".hidden~"));
+    browser.model().select(id(browser, "file~"));
+    browser.setShowBackups(false);
+    TEST_CHECK(!visible(browser, "file~") && browser.model().selection().selected.empty());
+    TEST_CHECK(visible(browser, "file.bak") && visible(browser, "cache~"));
+    browser.toggleHidden();
+    TEST_CHECK(visible(browser, ".hidden") && !visible(browser, ".hidden~"));
+    browser.setSearchQuery("inside");
+    pump.ready(browser);
+    TEST_CHECK(browser.model().rows().size() == 2 && !visible(browser, "inside~"));
+    TEST_CHECK(std::ranges::any_of(browser.model().rows(), [&](auto id) {
+      return browser.model().entry(id)->location == Location::fromPath((fixture.path / "cache~" / "inside").native());
+    }));
+    BrowserController duplicate({}, false);
+    duplicate.duplicateFrom(browser);
+    pump.ready(duplicate);
+    TEST_CHECK(!duplicate.model().filter().showBackups && duplicate.model().rows().size() == 2);
+    browser.setShowBackups(true);
+    pump.ready(browser);
+    TEST_CHECK(browser.model().rows().size() == 3 && visible(browser, "inside~"));
+    TEST_CHECK(!duplicate.model().filter().showBackups && !visible(duplicate, "inside~"));
+    browser.setSearchQuery({});
+    pump.ready(browser);
+    TEST_CHECK(visible(browser, ".hidden~"));
+    browser.toggleHidden();
+    TEST_CHECK(visible(browser, "file~") && !visible(browser, ".hidden~"));
+  }
+
   void testActionContextsAndFileLinks() {
     Fixture fixture;
     Pump pump;
@@ -644,6 +687,7 @@ int main() {
     testNavigation();
     testFailureAndLiveUpdates();
     testRecursiveSearch();
+    testBackupPolicyAndSearch();
     testSearchLifetimeAndPartialFailure();
     testLocationPresentation();
     testHistoryState();

@@ -54,6 +54,41 @@ namespace {
     TEST_CHECK(model.selectedIds() == expected);
   }
 
+  void testBackupVisibility() {
+    auto hidden = entry(3, ".hidden"), hiddenBackup = entry(4, ".hidden~");
+    hidden.hidden = hiddenBackup.hidden = true;
+    auto renamed = entry(2, "notes.txt~");
+    renamed.displayName = "A normal label";
+    auto ordinary = entry(10, "ordinary.txt");
+    ordinary.displayName = "A label ending~";
+    auto raw = entry(9, "raw-\xff~");
+    raw.name = std::string("raw-\xff~");
+    raw.displayName = "raw bytes";
+    DirectoryModel model;
+    model.applySnapshot(snapshot(
+        {entry(1, "notes.txt"), renamed, hidden, hiddenBackup, entry(5, "directory~", files::FileType::Directory),
+         entry(6, "notes.bak"), entry(7, "link~", files::FileType::Symlink), entry(8, "café-<literal>-文~"), raw,
+         ordinary}
+    ));
+    TEST_CHECK(model.rows().size() == 8 && model.filter().showBackups);
+    TEST_CHECK(model.select(2));
+    model.setFilter({.showHidden = false, .text = {}, .showBackups = false});
+    TEST_CHECK(model.rows().size() == 4 && model.selection().selected.empty());
+    for (const auto id : {1, 5, 6, 10}) {
+      TEST_CHECK(std::ranges::contains(model.rows(), id));
+    }
+    for (const auto id : {2, 3, 4, 7, 8, 9}) {
+      TEST_CHECK(!std::ranges::contains(model.rows(), id));
+    }
+    TEST_CHECK(model.entry(2)->name == "notes.txt~" && model.entry(2)->displayName == "A normal label");
+    model.setFilter({.showHidden = true, .text = {}, .showBackups = false});
+    TEST_CHECK(
+        model.rows().size() == 5 && std::ranges::contains(model.rows(), 3) && !std::ranges::contains(model.rows(), 4)
+    );
+    model.setFilter({.showHidden = true, .text = {}, .showBackups = true});
+    TEST_CHECK(model.rows().size() == 10 && model.selection().selected.empty());
+  }
+
   void testSortAndMetadata() {
     DirectoryModel model;
     auto data = snapshot(
@@ -526,6 +561,7 @@ int main() {
     testTypeSort();
     testSelectionSummary();
     testFiltering();
+    testBackupVisibility();
     testSelectionAndAnchors();
     testBulkSelection();
     testSnapshotReconciliation();

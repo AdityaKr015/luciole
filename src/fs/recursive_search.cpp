@@ -1,5 +1,6 @@
 #include "fs/recursive_search.h"
 
+#include "fs/file_visibility.h"
 #include "fs/gio_interop.h"
 #include "fs/name_matching.h"
 
@@ -44,6 +45,7 @@ struct files::RecursiveSearch::State : std::enable_shared_from_this<State> {
     std::unordered_set<std::string> visited;
     std::string query;
     bool showHidden = false;
+    bool showBackups = true;
     ~Scan() { closeEnumerator(enumerator.get()); }
   };
   struct Request {
@@ -171,6 +173,9 @@ struct files::RecursiveSearch::State : std::enable_shared_from_this<State> {
     const GString uri(g_file_get_uri(child.get()));
     const auto location = Location::fromUri(uri.get());
     const auto type = fileType(g_file_info_get_file_type(info));
+    if (!scan->showBackups && isEditorBackup(name, type)) {
+      return;
+    }
     const bool symlink = g_file_info_get_is_symlink(info);
     if (type == FileType::Directory && !symlink) {
       const char* identity = g_file_info_get_attribute_string(info, G_FILE_ATTRIBUTE_ID_FILE);
@@ -229,7 +234,7 @@ void files::RecursiveSearch::setChangedCallback(std::function<void()> callback) 
 }
 const files::DirectorySnapshot& files::RecursiveSearch::snapshot() const { return m_state->snapshot; }
 std::size_t files::RecursiveSearch::skippedFolders() const { return m_state->skipped; }
-void files::RecursiveSearch::start(const Location& root, const std::string& query, bool showHidden) {
+void files::RecursiveSearch::start(const Location& root, const std::string& query, bool showHidden, bool showBackups) {
   const auto destination = root; // NOLINT(performance-unnecessary-copy-initialization)
   const auto state = m_state;
   state->cancel();
@@ -237,6 +242,7 @@ void files::RecursiveSearch::start(const Location& root, const std::string& quer
   scan->query = foldedDisplayText(query);
   scan->root = destination;
   scan->showHidden = showHidden;
+  scan->showBackups = showBackups;
   scan->pending.push_back({destination, 0});
   state->active = scan;
   state->snapshot = {
