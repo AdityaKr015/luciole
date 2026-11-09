@@ -11,7 +11,8 @@ pkgs.mkShell {
     wayland-scanner
     llvmPackages_23.clang-tools
     llvmPackages_23.libclang
-    noctalia-files.archivePython
+    python3
+    noctalia-files.sevenzipSdk
     nixfmt
     statix
     deadnix
@@ -19,7 +20,6 @@ pkgs.mkShell {
     xdg-terminal-exec
     ffmpeg
     poppler-utils
-    _7zz
   ];
 
   shellHook = ''

@@ -99,10 +99,12 @@ void ArchiveController::changed(OperationJob& job) {
 }
 
 void ArchiveController::onFrame() {
-  syncPassword();
   if (std::exchange(m_dirty, false)) {
     sync();
   }
+  // Creating the archive overlay closes old popups. Present a fast worker's
+  // password request afterward so that creation cannot cancel the new dialog.
+  syncPassword();
 }
 
 files::Location ArchiveController::destination(const files::Location& source) {

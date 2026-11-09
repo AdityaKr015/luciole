@@ -88,13 +88,40 @@ completions = configure_file(
   output: 'noctalia_files_completions.h',
   configuration: completion_config,
 )
-metadata_config = configuration_data()
-metadata_config.set('SEVENZIP_METADATA', fs.read('src/operations/archive_sevenzip_metadata.py'))
-sevenzip_metadata = configure_file(
-  input: 'src/operations/archive_sevenzip_metadata.h.in',
-  output: 'noctalia_files_sevenzip_metadata.h',
-  configuration: metadata_config,
-)
+# SDK headers are a build dependency only; the worker loads the system engine.
+sevenzip_sdk = dependency('7zip-sdk', required: false)
+sevenzip_include = get_option('sevenzip_sdk_dir')
+sevenzip_library = get_option('sevenzip_library')
+if sevenzip_include == ''
+  if not sevenzip_sdk.found()
+    error('Provide system 7-Zip SDK headers with -Dsevenzip_sdk_dir=... or 7zip-sdk.pc')
+  endif
+  sevenzip_include = sevenzip_sdk.get_variable(pkgconfig: 'includedir')
+endif
+if sevenzip_library == ''
+  if not sevenzip_sdk.found()
+    error('Provide the absolute system 7z.so path with -Dsevenzip_library=...')
+  endif
+  sevenzip_library = sevenzip_sdk.get_variable(pkgconfig: 'sevenzip_library')
+endif
+if not fs.is_absolute(sevenzip_include) or not fs.is_file(sevenzip_include / 'CPP/7zip/Archive/IArchive.h')
+  error('sevenzip_sdk_dir must name an absolute system SDK root containing CPP/7zip/Archive/IArchive.h')
+endif
+if not fs.is_absolute(sevenzip_library) or not fs.is_file(sevenzip_library)
+  error('sevenzip_library must name an existing absolute system 7z.so')
+endif
+sevenzip_headers = declare_dependency(include_directories: include_directories(sevenzip_include, is_system: true))
+worker_config = configuration_data()
+worker_config.set_quoted('NOCTALIA_FILES_SEVENZIP_LIBRARY', sevenzip_library)
+worker_header = configure_file(input: 'src/operations/archive_worker_config.h.in',
+  output: 'noctalia_files_archive_worker_config.h', configuration: worker_config)
+archive_worker = executable('noctalia-files-archive-worker',
+  'src/operations/archive_sevenzip_worker.cpp', worker_header,
+  include_directories: include_directories(sevenzip_include, is_system: true),
+  dependencies: [gio, dependency('nlohmann_json'), cpp.find_library('dl')],
+  # ASan reserves a huge virtual address space, incompatible with the child AS limit.
+  # The application/parent remain instrumented. The worker is checked separately.
+  override_options: ['b_sanitize=none'], install: true)
 src_inc = include_directories('src')
 
 # One static library per module. A module's dependencies list only the modules
@@ -181,7 +208,6 @@ browser_dep = declare_dependency(link_with: browser_lib, include_directories: sr
 
 libacl = dependency('libacl')
 operations_lib = static_library('files-operations',
-  sevenzip_metadata,
   files(
     'src/operations/archive_icons.cpp',
     'src/operations/archive_input.cpp',
@@ -213,10 +239,10 @@ operations_lib = static_library('files-operations',
     'src/operations/trash_service.cpp',
   ),
   include_directories: src_inc,
-  dependencies: [fs_dep, libacl, libarchive, liblzma, dependency('threads')],
+  dependencies: [fs_dep, libacl, libarchive, liblzma, dependency('threads'), dependency('nlohmann_json')],
 )
 operations_dep = declare_dependency(link_with: operations_lib, include_directories: src_inc,
-  dependencies: [fs_dep, libacl, libarchive, liblzma, dependency('threads')],
+  dependencies: [fs_dep, libacl, libarchive, liblzma, dependency('threads'), dependency('nlohmann_json')],
 )
 
 libpng = dependency('libpng')
@@ -367,6 +393,7 @@ app = executable('noctalia-files',
   include_directories: include_directories('src', '.'),
   dependencies: [ui_dep, clipboard_dep, platform_dep, imaging_dep, system_dep, event_loop_dep, browser_dep,
     config_dep, operations_dep, thumbnails_dep, noctalia_ui_dep, wayland_client, dependency('threads')],
+  link_depends: archive_worker,
   install: true,
 )
 

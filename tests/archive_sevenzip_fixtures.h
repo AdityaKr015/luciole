@@ -171,4 +171,13 @@ namespace sevenzip_fixtures {
       "9Vzh2IFEndUJrCOxphSg28RkKHBLFwYrAQlgAAcLAQABJAbxBwESUw/j0Oou4Cxuncf5HVKHelpHDFkAAA==",
       true
   };
+  // Own 7-Zip 26.04 payload; public password: " fixture-🌙 ".
+  inline constexpr Fixture astralHeader{
+      "astral-header",
+      "N3q8ryccAARG5tIgoAAAAAAAAAA8AAAAAAAAAMJmdIm9l4N4h4MLsQJxN4db3s8RsELcBn759sPv1+5rq/yPtoI8rzzouzjz4A74"
+      "4B9WU4vb/pP6C1LxlNWaUFYkiGsVsJmZ4jff5EBZj9EEefkZ1QLMi+ifxHGoLkUYE2Lyqrq8ynKH0EojVR1uG1VXwaHjKflax2aO"
+      "4ImSqn/0Mcn6JQsytjjgjAgiJrojr75bWhwKEAiOEjGJxpnVpewtQI2rFwYgAQmAgAAHCwEAAiQG8QcBElMP8xyrbHBnJyONqmwn"
+      "L7tdsCMDAQEFXQAQAAABAAxzdgoBnfPyUQAA",
+      true
+  };
 } // namespace sevenzip_fixtures

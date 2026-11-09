@@ -7,7 +7,8 @@ test_table = [
   {'name': 'input-lifetime', 'deps': [noctalia_ui_dep]},
   {'name': 'tab-workspace', 'deps': [browser_dep]},
   {'name': 'job-routing', 'deps': [browser_dep]},
-  {'name': 'archive-service', 'deps': [operations_dep, event_loop_dep], 'timeout': 90, 'env': gio_env},
+  {'name': 'sevenzip-abi', 'deps': [model_dep, sevenzip_headers]},
+  {'name': 'archive-service', 'deps': [operations_dep, event_loop_dep], 'timeout': 90, 'env': gio_env + ['NOCTALIA_FILES_ARCHIVE_WORKER=' + archive_worker.full_path()]},
   {'name': 'thumbnail', 'deps': [thumbnails_dep, imaging_dep, event_loop_dep, dependency('libwebp')],
     'timeout': 90, 'env': gio_env},
   {'name': 'preview-service', 'deps': [thumbnails_dep, ui_dep], 'env': gio_env},
@@ -51,6 +52,7 @@ foreach entry : test_table
     name.replace('-', '_') + '_test.cpp',
     dependencies: entry['deps'] + [noctalia_ui_dep],
     override_options: ['b_ndebug=false'],
+    link_depends: name == 'archive-service' ? [archive_worker] : [],
   )
   if 'wrapper' in entry
     test(name, python, args: [entry['wrapper'], exe], timeout: entry.get('timeout', 30), env: entry.get('env', []))

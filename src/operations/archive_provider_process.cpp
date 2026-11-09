@@ -30,7 +30,7 @@ namespace {
     }
     const rlimit cpu{limits.seconds, limits.seconds}, memory{768U * 1024U * 1024U, 768U * 1024U * 1024U},
         file{limits.bytes, limits.bytes}, core{0, 0};
-    // The external provider is not ASan-instrumented, including in an ASan Files build.
+    // The decoder worker is uninstrumented even when its Files parent uses ASan.
     if (::setrlimit(RLIMIT_CPU, &cpu) < 0
         || ::setrlimit(RLIMIT_AS, &memory) < 0
         || ::setrlimit(RLIMIT_FSIZE, &file) < 0

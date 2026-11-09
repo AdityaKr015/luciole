@@ -2,6 +2,7 @@
   lib,
   stdenv,
   fetchurl,
+  writeTextDir,
   meson,
   ninja,
   pkg-config,
@@ -41,7 +42,14 @@
   buildRevision ? "unknown",
 }:
 let
-  archivePython = python3.withPackages (ps: [ ps.py7zr ]);
+  sevenzipSdk = writeTextDir "lib/pkgconfig/7zip-sdk.pc" ''
+    includedir=${_7zz.src}
+    sevenzip_library=${_7zz.lib}/lib/7z.so
+    Name: 7zip-sdk
+    Description: System 7-Zip SDK headers and runtime location
+    Version: ${_7zz.version}
+    Cflags: -I${_7zz.src}
+  '';
   pixbufWithGlycin = gdk-pixbuf.overrideAttrs (previous: {
     # 2.44.8 requires Glycin 2.2; the pinned collection provides its 2.1 API.
     version = "2.44.6";
@@ -118,7 +126,7 @@ stdenv.mkDerivation (finalAttrs: {
     meson
     ninja
     pkg-config
-    archivePython
+    python3
     wayland-scanner
     autoAddDriverRunpath
     makeWrapper
@@ -147,6 +155,7 @@ stdenv.mkDerivation (finalAttrs: {
     stb
     nlohmann_json
     tomlplusplus
+    sevenzipSdk
   ];
 
   # GNU LTO archives need the compiler's plugin-aware tools.
@@ -163,8 +172,6 @@ stdenv.mkDerivation (finalAttrs: {
           xdg-terminal-exec
           ffmpeg
           poppler-utils
-          _7zz
-          archivePython
         ]
       }" \
       --suffix GIO_EXTRA_MODULES : "${gvfs}/lib/gio/modules" \
@@ -181,7 +188,7 @@ stdenv.mkDerivation (finalAttrs: {
     (lib.mesonOption "build_revision" buildRevision)
   ];
   passthru.glycinLoaders = glycin-loaders;
-  passthru.archivePython = archivePython;
+  passthru.sevenzipSdk = sevenzipSdk;
 
   meta = {
     description = "A native Wayland file manager using Noctalia rendering and controls (in development)";

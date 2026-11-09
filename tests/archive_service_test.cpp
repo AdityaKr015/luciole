@@ -1080,7 +1080,16 @@ namespace {
       TEST_CHECK(service.providePassword(request.id, " café secret "));
     }
     wait(service, pump);
+    if (service.error()) {
+      std::println(stderr, "Literal 7z inspection: {}", service.error()->message);
+    }
     TEST_CHECK(!service.error() && service.catalog()->encrypted);
+    if (!encryptedHeader) {
+      const auto emptyOutput = fixture.root / "clear-empty-member";
+      TEST_CHECK(service.extract(location(source), location(emptyOutput), {"empty"}));
+      wait(service, pump);
+      TEST_CHECK(!service.error() && !service.passwordRequest() && fs::file_size(emptyOutput / "empty") == 0);
+    }
     TEST_CHECK(service.extract(location(source), location(output)));
     const auto request = passwordRequest(service, pump);
     TEST_CHECK(service.providePassword(request.id, " café secret "));
@@ -1270,8 +1279,8 @@ namespace {
     wait(service, pump);
     TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
   }
-  void testSevenZipHeaderOverlay(const Fixture& fixture) {
-    const auto source = fixture.root / "overlay.7z";
+  void testSevenZipCatalogSource(const Fixture& fixture) {
+    const auto source = fixture.root / "native-catalog.7z";
     const auto original = fixtureBytes(encryptedHeaderFixture());
     write(source, original);
     files::archive_work::Progress progress;
@@ -1279,44 +1288,42 @@ namespace {
     files::archive_work::Input input(location(source), work);
     files::archive_work::Passwords passwords;
     passwords.values.emplace_back("fixture-pass");
-    const auto plain = files::archive_work::decodeSevenZipHeader(input, work, passwords);
     const auto stamp = input.fingerprint();
-    input.setSevenZipHeader(plain);
-    TEST_CHECK(input.hasSevenZipHeader() && input.fingerprint() == stamp);
-    TEST_CHECK(input.seek(0, SEEK_END) == static_cast<std::int64_t>(original.size() + plain.size()));
-    input.seek(static_cast<std::int64_t>(original.size()) - 16, SEEK_SET);
-    std::array<char, 64> crossing{};
-    TEST_CHECK(input.read(crossing) == crossing.size());
-    TEST_CHECK(std::string_view(crossing.data(), 16) == std::string_view(original).substr(original.size() - 16));
-    TEST_CHECK(std::string_view(crossing.data() + 16, 48) == std::string_view(plain.data(), 48));
+    const auto catalog = files::archive_work::sevenZipCatalog(input, work, passwords);
+    TEST_CHECK(catalog.size() == 3 && catalog[1].index == 1 && catalog[1].path == "folder/first.txt");
+    TEST_CHECK(input.seek(0, SEEK_END) == static_cast<std::int64_t>(original.size()));
     const auto fd = input.duplicateSingle();
     std::array<char, 32> signature{};
     TEST_CHECK(::pread(fd.get(), signature.data(), signature.size(), 0) == static_cast<ssize_t>(signature.size()));
     TEST_CHECK(std::string_view(signature.data(), signature.size()) == std::string_view(original).substr(0, 32));
-    input.seek(-static_cast<std::int64_t>(plain.size()), SEEK_END);
-    std::vector<char> decoded(plain.size());
-    TEST_CHECK(input.read(decoded) == decoded.size() && decoded == plain);
-    TEST_CHECK(input.read(decoded) == 0);
-    bool rejected = false;
-    try {
-      input.setSevenZipHeader(plain);
-    } catch (const files::FileErrorException&) {
-      rejected = true;
-    }
-    TEST_CHECK(rejected && read(source) == original && fs::is_empty(fixture.root / "tmp"));
+    input.unchanged();
+    TEST_CHECK(input.fingerprint() == stamp && read(source) == original && fs::is_empty(fixture.root / "tmp"));
+  }
+  void testSevenZipAstral(const Fixture& fixture, Pump& pump) {
+    const auto source = fixture.root / "astral.7z", output = fixture.root / "astral-output";
+    write(source, fixtureBytes(sevenzip_fixtures::astralHeader));
+    files::ArchiveService service;
+    TEST_CHECK(service.extract(location(source), location(output)));
+    const auto request = passwordRequest(service, pump);
+    TEST_CHECK(service.providePassword(request.id, " fixture-🌙 "));
+    wait(service, pump);
+    TEST_CHECK(!service.error() && read(output / "📁/astral-🌙.txt") == "astral payload\n");
   }
   int headerWithoutTools() {
     Fixture fixture;
     Pump pump;
     const auto source = fixture.root / "header.7z";
     write(source, fixtureBytes(encryptedHeaderFixture()));
+    TEST_CHECK(::setenv("NOCTALIA_FILES_ARCHIVE_WORKER", "/nonexistent/noctalia-files-archive-worker", 1) == 0);
     for (unsigned mode = 0; mode < 2; ++mode) {
       if (mode == 1) {
         const auto tools = fixture.root / "tools";
         fs::create_directory(tools);
-        write(tools / "python3", "#!/bin/sh\nexit 69\n");
-        fs::permissions(tools / "python3", fs::perms::owner_all);
-        TEST_CHECK(::setenv("PATH", tools.c_str(), 1) == 0);
+        write(tools / "noctalia-files-archive-worker", "#!/bin/sh\nexit 69\n");
+        fs::permissions(tools / "noctalia-files-archive-worker", fs::perms::owner_all);
+        TEST_CHECK(
+            ::setenv("NOCTALIA_FILES_ARCHIVE_WORKER", (tools / "noctalia-files-archive-worker").c_str(), 1) == 0
+        );
       }
       files::ArchiveService service;
       TEST_CHECK(service.inspect(location(source)));
@@ -1332,7 +1339,7 @@ namespace {
     fs::create_directory(tools);
     write(source, fixtureBytes(sevenzip_fixtures::literal));
     // This fake provider has no subprocesses of its own. Secrets are public test data.
-    write(tools / "7zz", R"sh(#!/bin/sh
+    write(tools / "noctalia-files-archive-worker", R"sh(#!/bin/sh
 for argument do
   case "$argument" in *fixture-pass*) exit 7;; esac
 done
@@ -1344,6 +1351,9 @@ IFS= read -r secret
 [ "$secret" = fixture-pass ] || exit 7
 case "$NF_SEVENZIP_TEST_MODE" in
   short) printf x;;
+  json-version) printf '{"version":2,"entries":[]}';;
+  json-index) printf '{"version":1,"entries":[{"index":-1}]}';;
+  json-fields) printf '{"version":1,"entries":[{"index":0,"size":0,"mode":420,"path":"x"}]}';;
   oversize) printf 'this is more than twelve bytes';;
   corrupt) exit 2;;
   memory) exit 8;;
@@ -1351,8 +1361,8 @@ case "$NF_SEVENZIP_TEST_MODE" in
   *) exit 7;;
 esac
 )sh");
-    fs::permissions(tools / "7zz", fs::perms::owner_all);
-    TEST_CHECK(::setenv("PATH", tools.c_str(), 1) == 0);
+    fs::permissions(tools / "noctalia-files-archive-worker", fs::perms::owner_all);
+    TEST_CHECK(::setenv("NOCTALIA_FILES_ARCHIVE_WORKER", (tools / "noctalia-files-archive-worker").c_str(), 1) == 0);
     TEST_CHECK(::setenv("NF_SEVENZIP_TEST_MARKER", marker.c_str(), 1) == 0);
     const files::ArchiveEntry entry{
         .path = "same.txt", .parent = {}, .name = "same.txt", .displayName = {}, .size = 12, .link = {}
@@ -1409,6 +1419,21 @@ esac
         errno = 0;
         TEST_CHECK(::kill(std::stoi(read(marker)), 0) == -1 && errno == ESRCH);
       }
+    }
+    for (const auto* mode : {"short", "json-version", "json-index", "json-fields"}) {
+      TEST_CHECK(::setenv("NF_SEVENZIP_TEST_MODE", mode, 1) == 0);
+      files::archive_work::Progress progress;
+      files::archive_work::Work work{{}, {}, progress, files::archive_work::Clock::now() + 2s, {}};
+      files::archive_work::Input input(location(source), work);
+      files::archive_work::Passwords passwords;
+      passwords.values.emplace_back("fixture-pass");
+      bool rejected = false;
+      try {
+        (void)files::archive_work::sevenZipCatalog(input, work, passwords);
+      } catch (const files::FileErrorException& error) {
+        rejected = error.error().kind == files::FileErrorKind::InvalidArgument;
+      }
+      TEST_CHECK(rejected && !progress.passwordNeeded.load() && fs::is_empty(fixture.root / "tmp"));
     }
     return 0;
   }
@@ -1817,6 +1842,7 @@ esac
     TEST_CHECK(service.inspect(location(source)));
     wait(service, pump);
     TEST_CHECK(!service.error() && service.catalog()->encrypted);
+    TEST_CHECK(::setenv("NOCTALIA_FILES_ARCHIVE_WORKER", "/nonexistent/noctalia-files-archive-worker", 1) == 0);
     TEST_CHECK(service.extract(location(source), location(destination)));
     wait(service, pump);
     TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Unavailable);
@@ -1905,7 +1931,8 @@ int main(int argc, char** argv) {
     testSevenZipLiteralNames(fixture, pump);
     testSevenZipLiteralNames(fixture, pump, true);
     testEncryptedHeaderFailures(fixture, pump);
-    testSevenZipHeaderOverlay(fixture);
+    testSevenZipCatalogSource(fixture);
+    testSevenZipAstral(fixture, pump);
     testSevenZipCompressedHeader(fixture, pump);
     testSevenZipClearDataHeader(fixture, pump);
     testEncryptedSevenZipBoundaries(fixture, pump);

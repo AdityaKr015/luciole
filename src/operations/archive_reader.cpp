@@ -28,6 +28,13 @@ namespace {
     std::string filename, original;
     std::unique_ptr<struct archive, decltype(&archive_read_free)> value{archive_read_new(), &archive_read_free};
     std::array<char, 65536> buffer{};
+    std::optional<std::vector<SevenZipMember>> sevenzip;
+    std::size_t memberPosition = 0;
+    std::unique_ptr<struct archive_entry, decltype(&archive_entry_free)> nativeEntry{
+        archive_entry_new(), &archive_entry_free
+    };
+    bool nativeSevenZip() const { return sevenzip.has_value(); }
+    std::uint32_t memberIndex() const { return sevenzip->at(memberPosition - 1).index; }
     Reader(const Location& source, Work& request, const Passwords* passwords = nullptr, bool raw = false)
         : work(request), keys(passwords), input(source, request), filename(native(source)),
           original(input.fingerprint()) {
@@ -149,18 +156,27 @@ namespace {
     }
     bool next(struct archive_entry*& entry) {
       work.check();
+      if (sevenzip) {
+        if (memberPosition == sevenzip->size()) {
+          return false;
+        }
+        const auto& member = sevenzip->at(memberPosition++);
+        archive_entry_clear(nativeEntry.get());
+        archive_entry_set_pathname(nativeEntry.get(), member.path.c_str());
+        archive_entry_set_filetype(nativeEntry.get(), member.directory ? AE_IFDIR : AE_IFREG);
+        archive_entry_set_perm(nativeEntry.get(), static_cast<mode_t>(member.mode));
+        archive_entry_set_size(nativeEntry.get(), static_cast<la_int64_t>(member.size));
+        archive_entry_set_is_data_encrypted(nativeEntry.get(), member.encrypted);
+        entry = nativeEntry.get();
+        return true;
+      }
       const auto before = archive_filter_bytes(value.get(), -1);
       const auto status = archive_read_next_header(value.get(), &entry);
       const auto format = archive_format(value.get()) & ARCHIVE_FORMAT_BASE_MASK;
       if (archive_read_has_encrypted_entries(value.get()) > 0) {
-        if (format == ARCHIVE_FORMAT_7ZIP && status != ARCHIVE_OK && status != ARCHIVE_EOF) {
-          if (input.hasSevenZipHeader()) {
-            throwFileError(FileErrorKind::Unsupported, "Encrypted 7z link metadata is not supported yet.");
-          }
+        if (format == ARCHIVE_FORMAT_7ZIP) {
           const Passwords empty;
-          input.setSevenZipHeader(decodeSevenZipHeader(input, work, keys ? *keys : empty));
-          value.reset(archive_read_new());
-          initialize(keys, false);
+          sevenzip = sevenZipCatalog(input, work, keys ? *keys : empty);
           return next(entry);
         }
         if (format == ARCHIVE_FORMAT_RAR || format == ARCHIVE_FORMAT_RAR_V5) {
@@ -189,7 +205,11 @@ namespace {
       }
       return true;
     }
-    void skip() { requireArchive(archive_read_data_skip(value.get()), value.get(), work); }
+    void skip() {
+      if (!sevenzip) {
+        requireArchive(archive_read_data_skip(value.get()), value.get(), work);
+      }
+    }
   };
   void validateCompression(Reader& archive) {
     bool needsValidation = false;
@@ -234,6 +254,9 @@ namespace {
     std::map<std::string, std::size_t> known;
     std::set<std::string> explicitNames;
     std::size_t metadata = 0;
+    const auto initialExpanded = reader.work.expanded;
+    const auto initialCount = reader.work.count;
+    bool nativeCatalog = false;
     const auto add = [&](ArchiveEntry entry) {
       metadata += entry.path.size() + entry.link.size() + entry.name.size();
       if (metadata > reader.work.limits.maxMetadataBytes || result->entries.size() >= reader.work.limits.maxEntries) {
@@ -245,6 +268,17 @@ namespace {
     };
     struct archive_entry* header = nullptr;
     while (reader.next(header)) {
+      if (reader.nativeSevenZip() && !nativeCatalog) {
+        // Libarchive can discover encryption after yielding earlier clear entries.
+        // Validate the complete typed catalog once, without duplicate accounting.
+        nativeCatalog = true;
+        result->entries.clear();
+        known.clear();
+        explicitNames.clear();
+        metadata = 0;
+        reader.work.expanded = initialExpanded;
+        reader.work.count = initialCount;
+      }
       result->encrypted = result->encrypted || archive_entry_is_encrypted(header) > 0;
       reader.work.item();
       const auto path = safePath(bounded(archive_entry_pathname(header)), reader.work);
@@ -266,7 +300,7 @@ namespace {
       entry.encrypted = archive_entry_is_data_encrypted(header) > 0;
       const auto type = archive_entry_filetype(header);
       const bool unsupportedType = type != AE_IFREG || archive_entry_hardlink(header);
-      const bool hiddenLink = reader.input.hasSevenZipHeader() && type != AE_IFDIR && unsupportedType;
+      const bool hiddenLink = reader.nativeSevenZip() && type != AE_IFDIR && unsupportedType;
       if ((hiddenLink || (entry.encrypted && unsupportedType))
           && (archive_format(reader.value.get()) & ARCHIVE_FORMAT_BASE_MASK) == ARCHIVE_FORMAT_7ZIP) {
         throwFileError(FileErrorKind::Unsupported, "Encrypted 7z link metadata is not supported yet.");
@@ -342,7 +376,7 @@ namespace {
       }
     }
     validateLinks(links, reader.work);
-    result->encrypted = result->encrypted || reader.input.hasSevenZipHeader();
+    result->encrypted = result->encrypted || reader.nativeSevenZip();
     result->expandedBytes = reader.work.expanded;
     result->format = archive_format_name(reader.value.get()) ? archive_format_name(reader.value.get()) : "Archive";
     validateCompression(reader);
@@ -438,6 +472,7 @@ files::archive_work::Prepared files::archive_work::extract(
   // Capture the container's decode budget before applying the smaller limit
   // to the selected member's staged output. Other TAR members still stream by.
   Reader reader(source, work, &passwords);
+  reader.sevenzip = scan.sevenzip;
   if (reader.original != contents->stamp) {
     throwFileError(FileErrorKind::Changed, "Archive changed before extraction.");
   }
@@ -523,9 +558,8 @@ files::archive_work::Prepared files::archive_work::extract(
               O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600
           )
       );
-      if ((entry.encrypted || reader.input.hasSevenZipHeader())
-          && (archive_format(reader.value.get()) & ARCHIVE_FORMAT_BASE_MASK) == ARCHIVE_FORMAT_7ZIP) {
-        extractEncryptedSevenZip(reader.input, output.get(), entry, work, passwords, total);
+      if (reader.nativeSevenZip()) {
+        extractEncryptedSevenZip(reader.input, output.get(), entry, work, passwords, total, reader.memberIndex());
         reader.skip();
       } else {
         extractData(reader, output.get(), total, entry.size);

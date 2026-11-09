@@ -1,3 +1,5 @@
 option('tests', type: 'feature', value: 'auto', description: 'Build tests (auto: unsanitized debug builds)')
 option('native_optimizations', type: 'boolean', value: false, description: 'Optimize for the build machine CPU')
 option('build_revision', type: 'string', value: 'unknown', description: 'Explicit build revision metadata')
+option('sevenzip_sdk_dir', type: 'string', value: '', description: 'System 7-Zip 23-26 SDK source/include root (or use 7zip-sdk.pc)')
+option('sevenzip_library', type: 'string', value: '', description: 'Absolute system 7z.so path (or use 7zip-sdk.pc)')

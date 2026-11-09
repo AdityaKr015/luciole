@@ -1,7 +1,6 @@
 #include "operations/archive_sevenzip_provider.h"
 
-#include "fs/gio_interop.h"
-#include "operations/archive_provider_process.h"
+#include "operations/archive_sevenzip_metadata.h"
 
 #include <ranges>
 #include <unistd.h>
@@ -10,17 +9,10 @@ namespace {
   using namespace files;
   using namespace files::archive_work;
   bool attempt(
-      const char* executable, Input& input, int output, const ArchiveEntry& entry, Work& work, std::string_view password
+      std::uint32_t index, Input& input, int output, const ArchiveEntry& entry, Work& work, std::string_view password
   ) {
     work.check();
-    if (const auto problem = archivePasswordProblem(password, ArchiveFormat::SevenZip)) {
-      throwFileError(FileErrorKind::InvalidArgument, *problem);
-    }
-    const std::string include = "-i!" + entry.path;
-    const char* const argv[]{executable,        "x",         "-so",  "-t7z", "-bd", "-bb0",   "-bso0",         "-bse0",
-                             "-bsp0",           "-sccUTF-8", "-spd", "-ssc", "-r-", "-mmt=1", include.c_str(), "--",
-                             "/proc/self/fd/3", nullptr};
-    const auto status = runArchiveProvider(input, output, *entry.size, work, password, argv);
+    const auto status = runSevenZip(input, output, *entry.size, work, password, index);
     if (status == 2) {
       return false;
     }
@@ -41,17 +33,19 @@ namespace {
 } // namespace
 
 void files::archive_work::extractEncryptedSevenZip(
-    Input& input, int output, const ArchiveEntry& entry, Work& work, const Passwords& passwords, std::uint64_t& total
+    Input& input, int output, const ArchiveEntry& entry, Work& work, const Passwords& passwords, std::uint64_t& total,
+    std::uint32_t index
 ) {
-  const GString executable(g_find_program_in_path("7zz"));
-  if (!executable) {
-    throwFileError(FileErrorKind::Unavailable, "Encrypted 7z extraction requires the 7zz program.");
-  }
   if (!entry.size || *entry.size > work.limits.maxExpandedBytes - total) {
     throwFileError(FileErrorKind::Unsupported, "Encrypted 7z member size is unknown or exceeds the output limit.");
   }
+  if (passwords.values.empty() && !entry.encrypted && attempt(index, input, output, entry, work, {})) {
+    total += *entry.size;
+    work.progress.bytes.store(total);
+    return;
+  }
   for (const auto& password : passwords.values | std::views::reverse) {
-    if (attempt(executable.get(), input, output, entry, work, password)) {
+    if (attempt(index, input, output, entry, work, password)) {
       total += *entry.size;
       work.progress.bytes.store(total);
       return;
