@@ -256,58 +256,221 @@ namespace {
     wait(service, pump);
     TEST_CHECK(service.error() && !fs::exists(fixture.root / "link-limit"));
   }
-  void testEncryptedAndWriteFailure(const Fixture& fixture, Pump& pump) {
-    const auto path = fixture.root / "encrypted.zip";
+  void
+  encryptedZip(const fs::path& path, std::string_view encryption = "aes256", const std::string& name = "secret.txt") {
     const std::unique_ptr<struct archive, decltype(&archive_write_free)> writer(
         archive_write_new(), &archive_write_free
     );
+    TEST_CHECK(archive_write_set_format_zip(writer.get()) == ARCHIVE_OK);
     TEST_CHECK(
-        archive_write_set_format_zip(writer.get()) == ARCHIVE_OK
-        && archive_write_set_options(writer.get(), "zip:encryption=aes256") == ARCHIVE_OK
-        && archive_write_set_passphrase(writer.get(), "test password") == ARCHIVE_OK
+        archive_write_set_options(writer.get(), ("zip:encryption=" + std::string(encryption)).c_str()) == ARCHIVE_OK
     );
+    TEST_CHECK(archive_write_set_passphrase(writer.get(), "test password") == ARCHIVE_OK);
     TEST_CHECK(archive_write_open_filename(writer.get(), path.c_str()) == ARCHIVE_OK);
     const std::unique_ptr<struct archive_entry, decltype(&archive_entry_free)> entry(
         archive_entry_new(), &archive_entry_free
     );
-    archive_entry_set_pathname(entry.get(), "secret.txt");
+    archive_entry_set_pathname(entry.get(), name.c_str());
     archive_entry_set_filetype(entry.get(), AE_IFREG);
     archive_entry_set_perm(entry.get(), 0600);
     archive_entry_set_size(entry.get(), 6);
-    TEST_CHECK(
-        archive_write_header(writer.get(), entry.get()) == ARCHIVE_OK
-        && archive_write_data(writer.get(), "secret", 6) == 6
-        && archive_write_close(writer.get()) == ARCHIVE_OK
-    );
+    TEST_CHECK(archive_write_header(writer.get(), entry.get()) == ARCHIVE_OK);
+    TEST_CHECK(archive_write_data(writer.get(), "secret", 6) == 6);
+    TEST_CHECK(archive_write_close(writer.get()) == ARCHIVE_OK);
+  }
+  files::ArchivePasswordRequest passwordRequest(files::ArchiveService& service, Pump& pump) {
+    pump.until([&] { return service.passwordRequest().has_value() || !service.busy(); });
+    TEST_CHECK(service.busy() && service.phase() == files::ArchivePhase::WaitingPassword && !service.error());
+    TEST_CHECK(service.passwordRequest());
+    return *service.passwordRequest();
+  }
+  void testEncryptedRead(const Fixture& fixture, Pump& pump) {
+    for (const std::string encryption : {"aes256", "zipcrypt"}) {
+      const auto path = fixture.root / (encryption + ".zip");
+      encryptedZip(path, encryption);
+      files::ArchiveService service;
+      TEST_CHECK(service.inspect(location(path)));
+      wait(service, pump);
+      TEST_CHECK(!service.error() && service.catalog() && service.catalog()->encrypted);
+      TEST_CHECK(service.catalog()->entries.size() == 1 && !service.passwordRequest());
+      TEST_CHECK(service.openMember("secret.txt"));
+      const auto first = passwordRequest(service, pump);
+      TEST_CHECK(first.source == location(path) && !first.retry);
+      TEST_CHECK(!service.providePassword(first.id + 1, "test password"));
+      TEST_CHECK(!service.providePassword(first.id, ""));
+      TEST_CHECK(!service.providePassword(first.id, std::string(1025, 'x')));
+      TEST_CHECK(!service.providePassword(first.id, std::string("x\0y", 3)));
+      TEST_CHECK(!service.inspect(location(path)));
+      TEST_CHECK(service.providePassword(first.id, "wrong password"));
+      const auto retry = passwordRequest(service, pump);
+      TEST_CHECK(retry.id != first.id && retry.retry);
+      TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
+      TEST_CHECK(!service.providePassword(first.id, "test password"));
+      TEST_CHECK(service.providePassword(retry.id, "test password"));
+      wait(service, pump);
+      TEST_CHECK(!service.error() && !service.passwordRequest());
+      const auto opened = service.takeOpenedFile();
+      TEST_CHECK(opened && read(*opened->nativePath()) == "secret");
+      struct stat mode{};
+      TEST_CHECK(::stat(opened->nativePath()->c_str(), &mode) == 0 && (mode.st_mode & 0111) == 0);
+      service.shutdown();
+      wait(service, pump);
+      TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
+    }
+  }
+  void testEncryptedCreation(const Fixture& fixture, Pump& pump) {
+    TEST_CHECK(files::archiveEncryptionAvailable());
+    const auto source = fixture.root / "encrypted-source.txt";
+    const auto output = fixture.root / "created-encrypted.zip";
+    write(source, "encrypted payload");
     files::ArchiveService service;
-    TEST_CHECK(service.extract(location(path), location(fixture.root / "encrypted-output")));
+    TEST_CHECK(!service.compress({location(source)}, location(output), files::ArchiveFormat::Tar, "test password"));
+    TEST_CHECK(
+        !service.compress({location(source)}, location(output), files::ArchiveFormat::Zip, std::string(1025, 'x'))
+    );
+    TEST_CHECK(!fs::exists(output));
+    TEST_CHECK(service.compress({location(source)}, location(output), files::ArchiveFormat::Zip, "test password"));
     wait(service, pump);
-    TEST_CHECK(service.error() && !fs::exists(fixture.root / "encrypted-output"));
+    TEST_CHECK(!service.error() && read(source) == "encrypted payload");
+    // Read independently through the system provider; the writer must not emit plaintext ZIP data.
+    const std::unique_ptr<struct archive, decltype(&archive_read_free)> reader(archive_read_new(), &archive_read_free);
+    TEST_CHECK(archive_read_support_format_zip(reader.get()) == ARCHIVE_OK);
+    TEST_CHECK(archive_read_open_filename(reader.get(), output.c_str(), 65536) == ARCHIVE_OK);
+    struct archive_entry* entry = nullptr;
+    TEST_CHECK(archive_read_next_header(reader.get(), &entry) == ARCHIVE_OK && archive_entry_is_encrypted(entry) > 0);
+    char bytes[32]{};
+    TEST_CHECK(archive_read_data(reader.get(), bytes, sizeof(bytes)) < 0);
+    const auto destination = fixture.root / "decrypted";
+    TEST_CHECK(service.extract(location(output), location(destination)));
+    const auto request = passwordRequest(service, pump);
+    TEST_CHECK(service.providePassword(request.id, "test password"));
+    wait(service, pump);
+    TEST_CHECK(!service.error() && read(destination / source.filename()) == "encrypted payload");
     const auto file = fixture.root / "not-a-folder";
     write(file, "untouched");
     TEST_CHECK(service.compress({location(file)}, location(file / "failure.tar"), files::ArchiveFormat::Tar));
     wait(service, pump);
     TEST_CHECK(service.error() && read(file) == "untouched");
   }
+  void testPasswordCancellationAndChanges(const Fixture& fixture, Pump& pump) {
+    const auto source = fixture.root / "cancel-encrypted.zip";
+    encryptedZip(source);
+    const auto output = fixture.root / "cancel-encrypted-output";
+    files::ArchiveService service;
+    TEST_CHECK(service.extract(location(source), location(output)));
+    const auto request = passwordRequest(service, pump);
+    TEST_CHECK(fs::is_empty(fixture.root / "tmp") && !fs::exists(output));
+    service.cancel();
+    wait(service, pump);
+    TEST_CHECK(
+        service.error() && service.error()->kind == files::FileErrorKind::Cancelled && !service.passwordRequest()
+    );
+    TEST_CHECK(!service.providePassword(request.id, "test password"));
+    TEST_CHECK(service.extract(location(source), location(output)));
+    const auto next = passwordRequest(service, pump);
+    TEST_CHECK(next.id != request.id && !next.retry);
+    const auto replacement = fixture.root / "replacement-encrypted.zip";
+    encryptedZip(replacement);
+    fs::rename(replacement, source);
+    TEST_CHECK(service.providePassword(next.id, "test password"));
+    wait(service, pump);
+    TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Changed);
+    TEST_CHECK(!fs::exists(output) && fs::is_empty(fixture.root / "tmp"));
+    TEST_CHECK(service.extract(location(source), location(output)));
+    const auto cancelAfterAnswer = passwordRequest(service, pump);
+    TEST_CHECK(service.providePassword(cancelAfterAnswer.id, "test password"));
+    service.cancel();
+    wait(service, pump);
+    TEST_CHECK(service.error() && !fs::exists(output) && fs::is_empty(fixture.root / "tmp"));
+    {
+      auto owner = std::make_unique<files::ArchiveService>();
+      TEST_CHECK(owner->extract(location(source), location(output)));
+      (void)passwordRequest(*owner, pump);
+      owner.reset();
+    }
+    TEST_CHECK(!fs::exists(output) && fs::is_empty(fixture.root / "tmp"));
+  }
+  void testEncryptedBoundaries(const Fixture& fixture, Pump& pump) {
+    const auto hostile = fixture.root / "encrypted-hostile.zip";
+    encryptedZip(hostile, "aes256", "../escape");
+    files::ArchiveService service;
+    TEST_CHECK(service.extract(location(hostile), location(fixture.root / "hostile-output")));
+    wait(service, pump);
+    TEST_CHECK(service.error() && !service.passwordRequest() && !fs::exists(fixture.root / "escape"));
+    const auto source = fixture.root / "encrypted-limited.zip";
+    encryptedZip(source);
+    files::ArchiveLimits limits;
+    limits.maxExpandedBytes = 1;
+    files::ArchiveService limited(limits);
+    TEST_CHECK(limited.extract(location(source), location(fixture.root / "limited-output")));
+    wait(limited, pump);
+    TEST_CHECK(limited.error() && !limited.passwordRequest() && !fs::exists(fixture.root / "limited-output"));
+    const auto output = fixture.root / "encrypted-conflict";
+    fs::create_directory(output);
+    write(output / "existing", "preserved");
+    TEST_CHECK(service.extract(location(source), location(output)));
+    const auto request = passwordRequest(service, pump);
+    TEST_CHECK(service.providePassword(request.id, "test password"));
+    pump.until([&] { return service.conflict().has_value() || !service.busy(); });
+    TEST_CHECK(service.conflict());
+    TEST_CHECK(service.resolve(service.conflict()->id, files::TransferConflictChoice::Cancel));
+    wait(service, pump);
+    TEST_CHECK(read(output / "existing") == "preserved" && !fs::exists(output / "secret.txt"));
+    TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
+  }
+  void testEncryptedCorruption(const Fixture& fixture, Pump& pump) {
+    const auto source = fixture.root / "corrupt-encrypted.zip";
+    encryptedZip(source);
+    auto bytes = read(source);
+    const auto u16 = [&](std::size_t offset) {
+      return static_cast<unsigned char>(bytes.at(offset)) | (static_cast<unsigned char>(bytes.at(offset + 1)) << 8);
+    };
+    const std::size_t data = 30 + u16(26) + u16(28);
+    // AES-256's 16-byte salt and 2-byte password verifier precede ciphertext.
+    bytes.at(data + 18) = static_cast<char>(static_cast<unsigned char>(bytes.at(data + 18)) ^ 1U);
+    write(source, bytes);
+    const auto output = fixture.root / "corrupt-encrypted-output";
+    files::ArchiveService service;
+    TEST_CHECK(service.extract(location(source), location(output)));
+    const auto request = passwordRequest(service, pump);
+    TEST_CHECK(service.providePassword(request.id, "test password"));
+    wait(service, pump);
+    TEST_CHECK(service.error() && !service.passwordRequest());
+    TEST_CHECK(!fs::exists(output) && fs::is_empty(fixture.root / "tmp"));
+  }
   int boundedWriteFailure() {
     Fixture fixture;
     const auto source = fixture.root / "large.txt";
-    write(source, std::string(8192, 'a'));
+    std::string data(8192, '\0');
+    std::uint32_t seed = 17;
+    for (auto& byte : data) {
+      seed ^= seed << 13;
+      seed ^= seed >> 17;
+      seed ^= seed << 5;
+      byte = static_cast<char>(seed & 255U);
+    }
+    write(source, data);
     std::signal(SIGXFSZ, SIG_IGN);
     const rlimit limit{1024, 1024};
     TEST_CHECK(::setrlimit(RLIMIT_FSIZE, &limit) == 0);
-    files::archive_work::Progress progress;
     const files::CancelToken cancel;
-    bool failed = false;
-    try {
-      auto prepared = files::archive_work::compress(
-          {location(source)}, location(fixture.root / "out.tar"), files::ArchiveFormat::Tar, {}, cancel, progress
-      );
-      (void)files::archive_work::cleanup({prepared.stage});
-    } catch (const std::exception&) {
-      failed = true;
+    for (const auto format : {files::ArchiveFormat::Tar, files::ArchiveFormat::Zip}) {
+      files::archive_work::Progress progress;
+      files::archive_work::Passwords passwords;
+      if (format == files::ArchiveFormat::Zip) {
+        passwords.values.emplace_back("test password");
+      }
+      bool failed = false;
+      try {
+        auto prepared = files::archive_work::compress(
+            {location(source)}, location(fixture.root / "failed-output"), format, {}, cancel, progress, passwords
+        );
+        (void)files::archive_work::cleanup({prepared.stage});
+      } catch (const std::exception&) {
+        failed = true;
+      }
+      TEST_CHECK(failed && !fs::exists(fixture.root / "failed-output") && fs::is_empty(fixture.root / "tmp"));
     }
-    TEST_CHECK(failed && !fs::exists(fixture.root / "out.tar") && fs::is_empty(fixture.root / "tmp"));
     return 0;
   }
   void testCancelAndDestruction(const Fixture& fixture, Pump& pump) {
@@ -340,7 +503,11 @@ int main(int argc, char** argv) {
     testLimitsAndTruncation(fixture, pump);
     testLinksAndSelection(fixture, pump);
     testHardlinkOutputLimit(fixture, pump);
-    testEncryptedAndWriteFailure(fixture, pump);
+    testEncryptedRead(fixture, pump);
+    testEncryptedCreation(fixture, pump);
+    testPasswordCancellationAndChanges(fixture, pump);
+    testEncryptedBoundaries(fixture, pump);
+    testEncryptedCorruption(fixture, pump);
     testCancelAndDestruction(fixture, pump);
     files::GioPtr<GSubprocess> child(
         g_subprocess_new(G_SUBPROCESS_FLAGS_NONE, nullptr, "/proc/self/exe", "--bounded-write-failure", nullptr)

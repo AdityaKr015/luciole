@@ -13,7 +13,7 @@
 namespace files {
   enum class ArchiveFormat { Zip, Tar, TarGzip };
   enum class ArchiveEntryKind { File, Directory, Symlink, Hardlink };
-  enum class ArchivePhase { Idle, Reading, Compressing, Extracting, Transferring, Cleaning };
+  enum class ArchivePhase { Idle, Reading, Compressing, Extracting, Transferring, Cleaning, WaitingPassword };
   struct ArchiveFormatInfo {
     ArchiveFormat format;
     std::string_view label;
@@ -32,6 +32,7 @@ namespace files {
     std::string stamp, format;
     std::vector<ArchiveEntry> entries;
     std::uint64_t expandedBytes = 0;
+    bool encrypted = false;
   };
   struct ArchiveLimits {
     std::uint64_t maxArchiveBytes = 4ULL * 1024 * 1024 * 1024;
@@ -42,6 +43,13 @@ namespace files {
     std::chrono::seconds maxTime{120};
   };
   std::span<const ArchiveFormatInfo> archiveFormats();
+  bool archiveEncryptionAvailable();
+  std::optional<std::string> archivePasswordProblem(std::string_view password);
+  struct ArchivePasswordRequest {
+    std::uint64_t id;
+    Location source;
+    bool retry;
+  };
 
   // One archive job, including staged publication through the existing transfer service.
   class ArchiveService {
@@ -51,7 +59,8 @@ namespace files {
     ArchiveService(const ArchiveService&) = delete;
     ArchiveService& operator=(const ArchiveService&) = delete;
     bool inspect(Location source);
-    bool compress(std::vector<Location> sources, Location destinationFile, ArchiveFormat format);
+    bool
+    compress(std::vector<Location> sources, Location destinationFile, ArchiveFormat format, std::string password = {});
     // `expected` is a catalog of `source` read earlier, by this or another instance; extraction fails when the
     // archive no longer matches it. Without one, the catalog this instance read is used.
     bool extract(
@@ -71,6 +80,8 @@ namespace files {
     const std::vector<TransferResult>& results() const;
     std::optional<TransferConflict> conflict() const;
     bool resolve(std::uint64_t id, TransferConflictChoice choice);
+    std::optional<ArchivePasswordRequest> passwordRequest() const;
+    bool providePassword(std::uint64_t id, std::string password);
     void setChangedCallback(std::function<void()> callback);
 
   private:

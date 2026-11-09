@@ -10,6 +10,18 @@
 
 struct files::ArchiveService::State : std::enable_shared_from_this<State> {
   enum class Operation { Inspect, Compress, Extract, Open };
+  struct Request {
+    Operation operation;
+    std::vector<Location> sources;
+    std::optional<Location> destination;
+    ArchiveFormat format;
+    std::vector<std::string> selected;
+    std::shared_ptr<const ArchiveCatalog> expected;
+    std::shared_ptr<archive_work::Passwords> passwords;
+  };
+  std::optional<Request> request;
+  std::optional<ArchivePasswordRequest> password;
+  std::uint64_t nextPassword = 0;
   ArchiveLimits limits;
   archive_work::Progress progress;
   ArchivePhase phase = ArchivePhase::Idle;
@@ -154,7 +166,8 @@ struct files::ArchiveService::State : std::enable_shared_from_this<State> {
   }
   bool start(
       Operation operation, std::vector<Location> sources, const std::optional<Location>& destination,
-      ArchiveFormat format, std::vector<std::string> selected, std::shared_ptr<const ArchiveCatalog> known = nullptr
+      ArchiveFormat format, std::vector<std::string> selected, std::shared_ptr<const ArchiveCatalog> known = nullptr,
+      std::shared_ptr<archive_work::Passwords> passwords = nullptr
   ) {
     if (phase != ArchivePhase::Idle || closing || sources.empty()) {
       return false;
@@ -174,32 +187,65 @@ struct files::ArchiveService::State : std::enable_shared_from_this<State> {
       known = catalog;
     }
     auto expected = (known && known->source == sources.front()) ? std::move(known) : nullptr;
+    progress.sourceStamp.clear();
+    password.reset();
     if (operation == Operation::Inspect) {
       catalog.reset();
-      phase = ArchivePhase::Reading;
-    } else {
-      phase = operation == Operation::Compress ? ArchivePhase::Compressing : ArchivePhase::Extracting;
     }
+    request = Request{
+        operation,
+        std::move(sources),
+        destination,
+        format,
+        std::move(selected),
+        std::move(expected),
+        passwords ? std::move(passwords) : std::make_shared<archive_work::Passwords>()
+    };
+    launch();
+    return true;
+  }
+  void launch() {
+    const auto& task = *request;
+    const auto operation = task.operation;
+    const auto destination = task.destination;
+    progress.bytes.store(0);
+    progress.items.store(0);
+    progress.passwordNeeded.store(false);
+    phase = operation == Operation::Inspect ? ArchivePhase::Reading
+        : operation == Operation::Compress  ? ArchivePhase::Compressing
+                                            : ArchivePhase::Extracting;
     // progress outlives the work: the done callback holds the state until after the work returns.
     runJob<archive_work::Prepared>(
-        [limits = limits, progress = &progress, token = cancel, operation, sources = std::move(sources), destination,
-         format, selected = std::move(selected), expected = std::move(expected)] {
-          if (operation == Operation::Inspect) {
-            auto prepared = archive_work::inspect(sources.front(), limits, token, *progress);
+        [limits = limits, progress = &progress, token = cancel, task] {
+          if (task.operation == Operation::Inspect) {
+            auto prepared = archive_work::inspect(task.sources.front(), limits, token, *progress);
             assignArchiveIcons(*prepared.catalog);
             return prepared;
           }
-          if (operation == Operation::Compress) {
-            return archive_work::compress(sources, *destination, format, limits, token, *progress);
+          if (task.operation == Operation::Compress) {
+            return archive_work::compress(
+                task.sources, *task.destination, task.format, limits, token, *progress, *task.passwords
+            );
           }
           return archive_work::extract(
-              sources.front(), *destination, selected, expected, operation == Operation::Open, limits, token, *progress
+              task.sources.front(), *task.destination, task.selected, task.expected, task.operation == Operation::Open,
+              limits, token, *progress, *task.passwords
           );
         },
         [owner = shared_from_this(), token = cancel, operation,
          destination](JobResult<archive_work::Prepared> outcome) {
           owner->stopTimer();
           owner->error = outcome ? std::nullopt : std::optional(outcome.error());
+          if (!owner->closing && !token.cancelled() && !outcome && owner->progress.passwordNeeded.load()) {
+            owner->password = ArchivePasswordRequest{
+                ++owner->nextPassword, owner->request->sources.front(), !owner->request->passwords->values.empty()
+            };
+            owner->error.reset();
+            owner->phase = ArchivePhase::WaitingPassword;
+            owner->notify();
+            return;
+          }
+          owner->request.reset();
           if (owner->closing || token.cancelled()) {
             if (!owner->error) {
               owner->error = FileError{FileErrorKind::Cancelled, "Archive operation cancelled."};
@@ -220,7 +266,6 @@ struct files::ArchiveService::State : std::enable_shared_from_this<State> {
     );
     startTimer();
     notify();
-    return true;
   }
 };
 files::ArchiveService::ArchiveService(ArchiveLimits limits) : m_state(std::make_shared<State>(limits)) {
@@ -238,8 +283,21 @@ files::ArchiveService::~ArchiveService() {
 bool files::ArchiveService::inspect(Location source) {
   return m_state->start(State::Operation::Inspect, {std::move(source)}, std::nullopt, ArchiveFormat::Zip, {});
 }
-bool files::ArchiveService::compress(std::vector<Location> sources, Location destination, ArchiveFormat format) {
-  return m_state->start(State::Operation::Compress, std::move(sources), std::move(destination), format, {});
+bool files::ArchiveService::compress(
+    std::vector<Location> sources, Location destination, ArchiveFormat format, std::string password
+) {
+  auto passwords = std::make_shared<archive_work::Passwords>();
+  if (!password.empty()) {
+    passwords->values.push_back(std::move(password));
+    if (archivePasswordProblem(passwords->values.back())
+        || format != ArchiveFormat::Zip
+        || !archiveEncryptionAvailable()) {
+      return false;
+    }
+  }
+  return m_state->start(
+      State::Operation::Compress, std::move(sources), std::move(destination), format, {}, nullptr, std::move(passwords)
+  );
 }
 bool files::ArchiveService::extract(
     Location source, Location destination, std::vector<std::string> selected,
@@ -261,6 +319,12 @@ bool files::ArchiveService::openMember(const std::string& path) {
 void files::ArchiveService::cancel() {
   m_state->cancel.cancel();
   m_state->transfers.cancel();
+  if (m_state->phase == ArchivePhase::WaitingPassword) {
+    m_state->request.reset();
+    m_state->password.reset();
+    m_state->error = FileError{FileErrorKind::Cancelled, "Archive operation cancelled."};
+    m_state->clean({});
+  }
 }
 void files::ArchiveService::shutdown() {
   if (m_state->closing) {
@@ -290,4 +354,29 @@ bool files::ArchiveService::resolve(std::uint64_t id, TransferConflictChoice cho
 }
 void files::ArchiveService::setChangedCallback(std::function<void()> callback) {
   m_state->changed = std::move(callback);
+}
+
+std::optional<files::ArchivePasswordRequest> files::ArchiveService::passwordRequest() const {
+  return m_state->password;
+}
+bool files::ArchiveService::providePassword(std::uint64_t id, std::string password) {
+  archive_work::Passwords incoming;
+  incoming.values.push_back(std::move(password));
+  auto& value = incoming.values.back();
+  if (!m_state->password
+      || m_state->password->id != id
+      || m_state->phase != ArchivePhase::WaitingPassword
+      || value.empty()
+      || archivePasswordProblem(value)) {
+    return false;
+  }
+  auto& passwords = m_state->request->passwords->values;
+  if (passwords.size() >= 8) {
+    ::explicit_bzero(passwords.front().data(), passwords.front().size());
+    passwords.erase(passwords.begin());
+  }
+  passwords.push_back(std::move(value));
+  m_state->password.reset();
+  m_state->launch();
+  return true;
 }

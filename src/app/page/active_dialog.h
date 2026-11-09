@@ -26,6 +26,7 @@ public:
     QuickPreview,
     Applications,
     TransferConflict,
+    ArchivePassword,
   };
 
   // Takes the popup content. It counts as a plain menu until bind() names it.

@@ -22,7 +22,7 @@ namespace {
     std::unique_ptr<struct archive, decltype(&archive_read_free)> value{archive_read_new(), &archive_read_free};
     std::array<char, 65536> buffer{};
     std::uint64_t readBytes = 0;
-    Reader(const Location& source, Work& request)
+    Reader(const Location& source, Work& request, const Passwords* passwords = nullptr)
         : work(request), input(opened(::open(native(source).c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK))),
           filename(native(source)) {
       const auto info = statFd(input.get());
@@ -32,6 +32,11 @@ namespace {
         throwFileError(FileErrorKind::Unsupported, "Archive is empty, special, or exceeds the input-size limit.");
       }
       original = stamp(info);
+      if (work.progress.sourceStamp.empty()) {
+        work.progress.sourceStamp = original;
+      } else if (work.progress.sourceStamp != original) {
+        throwFileError(FileErrorKind::Changed, "The archive changed while waiting for its password. Start again.");
+      }
       if (!value) {
         throwFileError(FileErrorKind::Other, "Could not initialize the archive reader.");
       }
@@ -41,6 +46,21 @@ namespace {
       if (archive_zlib_version()) {
         requireArchive(archive_read_support_filter_gzip(value.get()), value.get(), work);
       }
+      if (passwords) {
+        for (const auto& password : passwords->values) {
+          requireArchive(archive_read_add_passphrase(value.get(), password.c_str()), value.get(), work);
+        }
+      }
+      requireArchive(
+          archive_read_set_passphrase_callback(
+              value.get(), this,
+              [](struct archive*, void* data) -> const char* {
+                static_cast<Reader*>(data)->work.progress.passwordNeeded.store(true);
+                return nullptr;
+              }
+          ),
+          value.get(), work
+      );
       requireArchive(
           archive_read_set_seek_callback(
               value.get(),
@@ -108,9 +128,6 @@ namespace {
         return false;
       }
       requireArchive(status, value.get(), work);
-      if (archive_entry_is_encrypted(entry) > 0) {
-        throwFileError(FileErrorKind::Unsupported, "Encrypted archives are not supported yet.");
-      }
       return true;
     }
     void skip() { requireArchive(archive_read_data_skip(value.get()), value.get(), work); }
@@ -133,6 +150,7 @@ namespace {
     };
     struct archive_entry* header = nullptr;
     while (reader.next(header)) {
+      result->encrypted = result->encrypted || archive_entry_is_encrypted(header) > 0;
       reader.work.item();
       const auto path = safePath(bounded(archive_entry_pathname(header)), reader.work);
       if (path.empty()) {
@@ -300,11 +318,11 @@ files::archive_work::Prepared files::archive_work::inspect(
 files::archive_work::Prepared files::archive_work::extract(
     const Location& source, const Location& destination, const std::vector<std::string>& selected,
     const std::shared_ptr<const ArchiveCatalog>& expected, bool open, ArchiveLimits limits, const CancelToken& cancel,
-    Progress& progress
+    Progress& progress, const Passwords& passwords
 ) {
   const ArchiveLocale locale;
   auto work = workFor(limits, cancel, progress);
-  Reader scan(source, work);
+  Reader scan(source, work, &passwords);
   auto contents = ::catalog(scan);
   if (expected && (expected->source != source || expected->stamp != contents->stamp)) {
     throwFileError(FileErrorKind::Changed, "The archive changed. Reload its contents before extracting.");
@@ -378,7 +396,7 @@ files::archive_work::Prepared files::archive_work::extract(
       bodies.insert(body(path));
     }
   }
-  Reader reader(source, work);
+  Reader reader(source, work, &passwords);
   if (reader.original != contents->stamp) {
     throwFileError(FileErrorKind::Changed, "Archive changed before extraction.");
   }

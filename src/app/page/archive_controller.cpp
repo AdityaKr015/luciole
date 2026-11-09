@@ -1,6 +1,7 @@
 #include "app/page/archive_controller.h"
 
 #include "app/operation_hub.h"
+#include "app/page/active_dialog.h"
 #include "app/page/page_context.h"
 #include "browser/browser_controller.h"
 #include "browser/location_presentation.h"
@@ -13,6 +14,7 @@
 #include "operations/archive_service.h"
 #include "platform/desktop_integration.h"
 #include "platform/file_launcher.h"
+#include "render/scene/input_area.h"
 #include "render/scene/input_dispatcher.h"
 #include "ui/controls/archive_view.h"
 #include "ui/controls/file_error_text.h"
@@ -97,6 +99,7 @@ void ArchiveController::changed(OperationJob& job) {
 }
 
 void ArchiveController::onFrame() {
+  syncPassword();
   if (std::exchange(m_dirty, false)) {
     sync();
   }
@@ -130,8 +133,9 @@ void ArchiveController::openDialog(
       + (formats.empty() ? ".zip" : std::string(formats.front().suffix));
   auto root = std::make_unique<ArchiveDialog>(
       compress, name, files::locationEditText(compress ? base : destination(source)),
-      [this, sources = std::move(sources), selected = std::move(selected), base,
-       compress](const std::string& name, const std::string& path, files::ArchiveFormat format) -> std::string {
+      [this, sources = std::move(sources), selected = std::move(selected), base, compress](
+          const std::string& name, const std::string& path, files::ArchiveFormat format, const std::string& password
+      ) -> std::string {
         if (path.empty()) {
           return "Enter a destination folder.";
         }
@@ -152,7 +156,7 @@ void ArchiveController::openDialog(
         }
         const bool started = compress
             ? m_page.jobs().create<files::ArchiveService>()->service<files::ArchiveService>().compress(
-                  sources, destination, format
+                  sources, destination, format, password
               )
             : extract(sources.front(), destination, selected);
         if (!started) {
@@ -180,6 +184,66 @@ void ArchiveController::openDialog(
     // The dialog keeps the page's default dialog width.
     m_page.setDialogSize(588.0F, height);
     m_page.menuDispatcher().setFocus(dialog->focusArea());
+    m_page.menuDispatcher().setFocusChangeCallback([this](InputArea*, InputArea* focused) {
+      if (auto* form = dynamic_cast<ArchiveDialog*>(m_page.activeDialog().root())) {
+        form->reveal(focused);
+      }
+    });
+  }
+}
+
+void ArchiveController::syncPassword() {
+  if (!m_page.popupAvailable()) {
+    return;
+  }
+  if (m_passwordDialog) {
+    const auto* job = m_page.jobs().find(m_passwordDialog->job);
+    const auto pending = job ? job->service<files::ArchiveService>().passwordRequest() : std::nullopt;
+    if (!pending || pending->id != m_passwordDialog->request) {
+      m_passwordDialog.reset();
+      m_page.dismissMenu();
+    }
+    return;
+  }
+  if (m_page.menuSurface()) {
+    return;
+  }
+  auto* job = m_page.jobs().oldest([](const OperationJob& candidate) {
+    return candidate.kind() == JobKind::Archive
+        && candidate.service<files::ArchiveService>().passwordRequest().has_value();
+  });
+  const auto request = job ? job->service<files::ArchiveService>().passwordRequest() : std::nullopt;
+  if (!request) {
+    return;
+  }
+  const PasswordDialog active{job->id(), request->id};
+  auto root = std::make_unique<ArchivePasswordDialog>(
+      request->source.displayName().value_or("Archive"), request->retry,
+      [this, active](std::string password) {
+        auto* owner = m_page.jobs().find(active.job);
+        if (owner && owner->service<files::ArchiveService>().providePassword(active.request, std::move(password))) {
+          m_passwordDialog.reset();
+          m_page.dismissMenu();
+          return true;
+        }
+        return false;
+      },
+      [this] { m_page.dismissMenu(); }
+  );
+  auto* dialog = root.get();
+  m_page.showCenteredDialog(std::move(root), 464.0F);
+  if (m_page.menuSurface()) {
+    m_passwordDialog = active;
+    m_page.activeDialog().bind(ActiveDialog::Kind::ArchivePassword, [this] {
+      if (const auto active = std::exchange(m_passwordDialog, std::nullopt)) {
+        if (auto* owner = m_page.jobs().find(active->job)) {
+          owner->cancel();
+        }
+      }
+    });
+    m_page.menuDispatcher().setFocus(dialog->focusArea());
+  } else {
+    job->cancel();
   }
 }
 

@@ -10,21 +10,39 @@
 class Label;
 class Button;
 class Input;
+class ScrollView;
 class ArchiveDialog final : public Flex {
 public:
   ArchiveDialog(
       bool compress, std::string name, std::string destination,
-      std::function<std::string(const std::string&, const std::string&, files::ArchiveFormat)> submit,
+      std::function<std::string(const std::string&, const std::string&, files::ArchiveFormat, const std::string&)>
+          submit,
       std::function<void()> cancel
+  );
+  InputArea* focusArea() const;
+  void reveal(const Node* node);
+
+private:
+  void submit();
+  Input *m_name = nullptr, *m_destination = nullptr;
+  Input *m_password = nullptr, *m_confirmation = nullptr;
+  ScrollView* m_scroll = nullptr;
+  Label* m_error = nullptr;
+  std::size_t m_format = 0;
+  std::function<std::string(const std::string&, const std::string&, files::ArchiveFormat, const std::string&)> m_submit;
+};
+class ArchivePasswordDialog final : public Flex {
+public:
+  ArchivePasswordDialog(
+      std::string name, bool retry, std::function<bool(std::string)> submit, std::function<void()> cancel
   );
   InputArea* focusArea() const;
 
 private:
   void submit();
-  Input *m_name = nullptr, *m_destination = nullptr;
+  Input* m_password = nullptr;
   Label* m_error = nullptr;
-  std::size_t m_format = 0;
-  std::function<std::string(const std::string&, const std::string&, files::ArchiveFormat)> m_submit;
+  std::function<bool(std::string)> m_submit;
 };
 class ArchiveView final : public Flex {
 public:

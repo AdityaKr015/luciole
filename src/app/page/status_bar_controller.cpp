@@ -105,6 +105,7 @@ std::string StatusBarController::operationStatus() const {
     const auto& archives = job->service<files::ArchiveService>();
     const files::GString size(g_format_size_full(archives.bytes(), G_FORMAT_SIZE_IEC_UNITS));
     const char* phase = archives.phase() == files::ArchivePhase::Reading ? "Reading archive"
+        : archives.phase() == files::ArchivePhase::WaitingPassword       ? "Waiting for archive password"
         : archives.phase() == files::ArchivePhase::Compressing           ? "Compressing"
         : archives.phase() == files::ArchivePhase::Cleaning              ? "Cleaning temporary files"
         : archives.phase() == files::ArchivePhase::Transferring          ? "Publishing archive output"

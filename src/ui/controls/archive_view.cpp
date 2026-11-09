@@ -396,7 +396,7 @@ void ArchiveView::doLayout(Renderer& renderer) {
 
 ArchiveDialog::ArchiveDialog(
     bool compress, std::string name, std::string destination,
-    std::function<std::string(const std::string&, const std::string&, files::ArchiveFormat)> submit,
+    std::function<std::string(const std::string&, const std::string&, files::ArchiveFormat, const std::string&)> submit,
     std::function<void()> cancel
 )
     : m_submit(std::move(submit)) {
@@ -408,16 +408,22 @@ ArchiveDialog::ArchiveDialog(
   setRadius(Style::radiusLg);
   setBorder(colorSpecFromRole(ColorRole::OutlineVariant), 1);
   addChild(ui::label({.text = compress ? "Compress" : "Extract Archive", .fontWeight = FontWeight::SemiBold}));
+  auto scroll =
+      ui::scrollView({.out = &m_scroll, .viewportPaddingH = 0.0F, .viewportPaddingV = 0.0F, .flexGrow = 1.0F});
+  scroll->setReserveScrollbarGutter(true);
+  scroll->content()->setDirection(FlexDirection::Vertical);
+  scroll->content()->setAlign(FlexAlign::Stretch);
+  auto body = ui::column({.align = FlexAlign::Stretch, .gap = Style::spaceSm});
   if (compress) {
-    addChild(ui::label({.text = "Archive name"}));
-    addChild(ui::input({.out = &m_name, .value = std::move(name), .onSubmit = [this](const std::string&) {
-                          this->submit();
-                        }}));
+    body->addChild(ui::label({.text = "Archive name"}));
+    body->addChild(ui::input({.out = &m_name, .value = std::move(name), .onSubmit = [this](const std::string&) {
+                                this->submit();
+                              }}));
     std::vector<ui::SegmentedOption> options;
     for (const auto& format : files::archiveFormats()) {
       options.push_back({.label = std::string(format.label), .glyph = {}, .tooltip = {}});
     }
-    addChild(
+    body->addChild(
         ui::segmented(
             {.options = std::move(options), .equalSegmentWidths = true, .onChange = [this](std::size_t index) {
                const auto formats = files::archiveFormats();
@@ -429,16 +435,25 @@ ArchiveDialog::ArchiveDialog(
                m_format = index;
                value += formats[index].suffix;
                m_name->setValue(value);
+               if (m_password) {
+                 const bool enabled = formats[index].format == files::ArchiveFormat::Zip;
+                 m_password->setValue("");
+                 m_confirmation->setValue("");
+                 m_password->setEnabled(enabled);
+                 m_confirmation->setEnabled(enabled);
+               }
              }}
         )
     );
   }
-  addChild(ui::label({.text = compress ? "Destination folder" : "New output folder"}));
-  addChild(ui::input({.out = &m_destination, .value = std::move(destination), .onSubmit = [this](const std::string&) {
-                        this->submit();
-                      }}));
+  body->addChild(ui::label({.text = compress ? "Destination folder" : "New output folder"}));
+  body->addChild(
+      ui::input({.out = &m_destination, .value = std::move(destination), .onSubmit = [this](const std::string&) {
+                   this->submit();
+                 }})
+  );
   if (!compress) {
-    addChild(
+    body->addChild(
         ui::label(
             {.text = "Extract into a new folder. Existing folders require a conflict decision.",
              .fontSize = Style::fontSizeCaption,
@@ -447,6 +462,26 @@ ArchiveDialog::ArchiveDialog(
         )
     );
   }
+  if (compress && files::archiveEncryptionAvailable()) {
+    body->addChild(ui::label({.text = "Password (optional, ZIP only)"}));
+    body->addChild(ui::input({.out = &m_password, .passwordMode = true, .onSubmit = [this](const std::string&) {
+                                this->submit();
+                              }}));
+    body->addChild(ui::label({.text = "Confirm password"}));
+    body->addChild(ui::input({.out = &m_confirmation, .passwordMode = true, .onSubmit = [this](const std::string&) {
+                                this->submit();
+                              }}));
+    body->addChild(
+        ui::label(
+            {.text = "ZIP AES-256 protects file contents. File names remain visible.",
+             .fontSize = Style::fontSizeCaption,
+             .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
+             .maxLines = 2}
+        )
+    );
+  }
+  scroll->content()->addChild(std::move(body));
+  addChild(std::move(scroll));
   addChild(ui::label({.out = &m_error, .color = colorSpecFromRole(ColorRole::Error), .height = 40.0F, .maxLines = 2}));
   addChild(
       ui::row(
@@ -459,10 +494,79 @@ ArchiveDialog::ArchiveDialog(
   );
 }
 void ArchiveDialog::submit() {
-  m_error->setText(m_submit(
+  if (m_password) {
+    const auto& password = m_password->value();
+    if (const auto problem = files::archivePasswordProblem(password)) {
+      m_error->setText(*problem);
+      return;
+    }
+    if (password != m_confirmation->value()) {
+      m_error->setText("Passwords do not match.");
+      return;
+    }
+  }
+  const auto error = m_submit(
       m_name ? m_name->value() : "", m_destination->value(),
-      files::archiveFormats().empty() ? files::ArchiveFormat::Zip : files::archiveFormats()[m_format].format
-  ));
+      files::archiveFormats().empty() ? files::ArchiveFormat::Zip : files::archiveFormats()[m_format].format,
+      m_password ? m_password->value() : ""
+  );
+  m_error->setText(error);
+  if (error.empty() && m_password) {
+    m_password->setValue("");
+    m_confirmation->setValue("");
+  }
   markLayoutDirty();
 }
 InputArea* ArchiveDialog::focusArea() const { return (m_name ? m_name : m_destination)->inputArea(); }
+void ArchiveDialog::reveal(const Node* node) { m_scroll->requestScrollIntoView(node); }
+
+ArchivePasswordDialog::ArchivePasswordDialog(
+    std::string name, bool retry, std::function<bool(std::string)> submit, std::function<void()> cancel
+)
+    : m_submit(std::move(submit)) {
+  setDirection(FlexDirection::Vertical);
+  setAlign(FlexAlign::Stretch);
+  setGap(Style::spaceSm);
+  setPadding(Style::spaceMd);
+  setFill(colorSpecFromRole(ColorRole::SurfaceContainer));
+  setRadius(Style::radiusLg);
+  setBorder(colorSpecFromRole(ColorRole::OutlineVariant), Style::borderWidth);
+  addChild(ui::label({.text = "Archive password", .fontWeight = FontWeight::SemiBold}));
+  addChild(ui::label({.text = std::move(name), .maxLines = 2, .configure = [](Label& label) {
+                        label.setUseMarkup(false);
+                      }}));
+  addChild(
+      ui::label(
+          {.text = retry ? "That password did not unlock all selected files. Try another password."
+                         : "Enter the password to unlock the selected files.",
+           .fontSize = Style::fontSizeCaption,
+           .color = colorSpecFromRole(retry ? ColorRole::Error : ColorRole::OnSurfaceVariant),
+           .maxLines = 2}
+      )
+  );
+  addChild(ui::input({.out = &m_password, .passwordMode = true, .onSubmit = [this](const std::string&) {
+                        this->submit();
+                      }}));
+  addChild(ui::label({.out = &m_error, .color = colorSpecFromRole(ColorRole::Error), .maxLines = 2}));
+  addChild(
+      ui::row(
+          {.align = FlexAlign::Center, .justify = FlexJustify::End, .gap = Style::spaceSm},
+          ui::button({.text = "Cancel", .variant = ButtonVariant::Ghost, .onClick = std::move(cancel)}),
+          ui::button({.text = "Unlock", .variant = ButtonVariant::Primary, .onClick = [this] { this->submit(); }})
+      )
+  );
+}
+void ArchivePasswordDialog::submit() {
+  const auto& password = m_password->value();
+  if (password.empty()) {
+    m_error->setText("Enter a password.");
+  } else if (const auto problem = files::archivePasswordProblem(password)) {
+    m_error->setText(*problem);
+  } else if (m_submit(password)) {
+    m_password->setValue("");
+  } else {
+    m_error->setText("This password request is no longer active.");
+  }
+  markLayoutDirty();
+}
+InputArea* ArchivePasswordDialog::focusArea() const { return m_password->inputArea(); }

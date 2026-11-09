@@ -56,6 +56,11 @@ private:
   OperationJob* shown() const;
   void deferClose();
   void sync();
+  void syncPassword();
+  struct PasswordDialog {
+    std::uint64_t job, request;
+  };
+  std::optional<PasswordDialog> m_passwordDialog;
 
   PageContext& m_page;
   // The archive browser's job: reads the catalog and opens members. Compress and extract jobs are separate.
