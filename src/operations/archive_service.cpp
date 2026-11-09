@@ -154,7 +154,7 @@ struct files::ArchiveService::State : std::enable_shared_from_this<State> {
   }
   bool start(
       Operation operation, std::vector<Location> sources, const std::optional<Location>& destination,
-      ArchiveFormat format, std::vector<std::string> selected
+      ArchiveFormat format, std::vector<std::string> selected, std::shared_ptr<const ArchiveCatalog> known = nullptr
   ) {
     if (phase != ArchivePhase::Idle || closing || sources.empty()) {
       return false;
@@ -170,7 +170,10 @@ struct files::ArchiveService::State : std::enable_shared_from_this<State> {
     progress.bytes.store(0);
     progress.items.store(0);
     cancel = CancelToken{};
-    auto expected = (catalog && catalog->source == sources.front()) ? catalog : nullptr;
+    if (!known) {
+      known = catalog;
+    }
+    auto expected = (known && known->source == sources.front()) ? std::move(known) : nullptr;
     if (operation == Operation::Inspect) {
       catalog.reset();
       phase = ArchivePhase::Reading;
@@ -238,9 +241,13 @@ bool files::ArchiveService::inspect(Location source) {
 bool files::ArchiveService::compress(std::vector<Location> sources, Location destination, ArchiveFormat format) {
   return m_state->start(State::Operation::Compress, std::move(sources), std::move(destination), format, {});
 }
-bool files::ArchiveService::extract(Location source, Location destination, std::vector<std::string> selected) {
+bool files::ArchiveService::extract(
+    Location source, Location destination, std::vector<std::string> selected,
+    std::shared_ptr<const ArchiveCatalog> expected
+) {
   return m_state->start(
-      State::Operation::Extract, {std::move(source)}, std::move(destination), ArchiveFormat::Zip, std::move(selected)
+      State::Operation::Extract, {std::move(source)}, std::move(destination), ArchiveFormat::Zip, std::move(selected),
+      std::move(expected)
   );
 }
 bool files::ArchiveService::openMember(const std::string& path) {

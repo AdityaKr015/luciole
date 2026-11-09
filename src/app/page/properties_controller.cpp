@@ -1,5 +1,6 @@
 #include "app/page/properties_controller.h"
 
+#include "app/operation_hub.h"
 #include "app/page/active_dialog.h"
 #include "app/page/page_context.h"
 #include "browser/browser_controller.h"
@@ -30,12 +31,30 @@
 #include <utility>
 #include <vector>
 
-PropertiesController::PropertiesController(
-    PageContext& page, files::PermissionService& permissions, files::FileIconCache& icons
-)
-    : m_page(page), m_permissions(permissions), m_icons(icons) {}
+PropertiesController::PropertiesController(PageContext& page, files::FileIconCache& icons)
+    : m_page(page), m_icons(icons) {}
 
-void PropertiesController::progressTick() { m_dirty = m_permissions.busy(); }
+void PropertiesController::progressTick() { m_dirty = m_job && m_job->running(); }
+
+void PropertiesController::changed(OperationJob& job) {
+  if (&job == m_job.get()) {
+    m_dirty = true;
+    return;
+  }
+  // A job whose dialog closed: report its outcome once.
+  const auto& permissions = job.service<files::PermissionService>();
+  const auto& snapshot = permissions.snapshot();
+  if (permissions.busy() || !job.takeResult()) {
+    return;
+  }
+  if ((snapshot.phase == files::PermissionPhase::Ready || snapshot.phase == files::PermissionPhase::Cancelled)
+      && snapshot.applied) {
+    m_page.browser().refresh();
+  }
+  if (const auto status = permissionStatusText(snapshot); !status.empty()) {
+    m_page.actionError(status);
+  }
+}
 
 void PropertiesController::onFrame() {
   if (std::exchange(m_dirty, false)) {
@@ -93,7 +112,11 @@ bool PropertiesController::canApply() const {
 }
 
 void PropertiesController::sync() {
-  const auto& snapshot = m_permissions.snapshot();
+  if (!m_job) {
+    return;
+  }
+  const auto& permissions = m_job->service<files::PermissionService>();
+  const auto& snapshot = permissions.snapshot();
   if (m_permissionEditor) {
     m_permissionEditor->sync(snapshot);
     if (m_aclEditor) {
@@ -108,33 +131,31 @@ void PropertiesController::sync() {
       m_permissionResults->sync(snapshot.results);
       const bool saving = snapshot.phase == files::PermissionPhase::Saving;
       m_permissionStatus->setText(
-          m_permissions.busy()
+          permissions.busy()
               ? (snapshot.cancelRequested ? "Cancelling…"
                                           : std::format(
                                                 "{} · {} items completed",
-                                                m_permissions.collecting() ? "Collecting targets (total unknown)"
-                                                    : saving               ? "Applying changes"
-                                                                           : "Reading selection",
-                                                m_permissions.completed()
+                                                permissions.collecting() ? "Collecting targets (total unknown)"
+                                                    : saving             ? "Applying changes"
+                                                                         : "Reading selection",
+                                                permissions.completed()
                                             ))
               : permissionStatusText(snapshot)
       );
-      if (m_permissions.collecting() && !snapshot.cancelRequested) {
+      if (permissions.collecting() && !snapshot.cancelRequested) {
         m_permissionStatus->setText(
-            std::format("Collecting targets… {} found · total unknown", m_permissions.completed())
+            std::format("Collecting targets… {} found · total unknown", permissions.completed())
         );
       }
-      if (snapshot.recursive && m_permissions.busy() && !m_permissions.collecting() && !snapshot.cancelRequested) {
+      if (snapshot.recursive && permissions.busy() && !permissions.collecting() && !snapshot.cancelRequested) {
         m_permissionStatus->setText(
-            std::format("Applying changes · {} of {} collected items", m_permissions.completed(), m_permissions.total())
+            std::format("Applying changes · {} of {} collected items", permissions.completed(), permissions.total())
         );
       }
       m_permissionStatus->setColor(
           colorSpecFromRole(snapshot.failed() ? ColorRole::Error : ColorRole::OnSurfaceVariant)
       );
-      m_permissionReport->setEnabled(
-          !m_permissions.busy() && !snapshot.report.empty() && m_page.clipboard().available()
-      );
+      m_permissionReport->setEnabled(!permissions.busy() && !snapshot.report.empty() && m_page.clipboard().available());
       m_permissionCancel->setVisible(saving);
       m_permissionCancel->setParticipatesInLayout(saving);
       m_permissionCancel->setEnabled(!snapshot.cancelRequested);
@@ -157,7 +178,7 @@ void PropertiesController::sync() {
     m_page.browser().refresh();
   }
   if (const auto status = permissionStatusText(snapshot);
-      !m_permissions.busy() && !status.empty() && (!m_permissionEditor || snapshot.applied)) {
+      !permissions.busy() && !status.empty() && (!m_permissionEditor || snapshot.applied)) {
     m_page.actionError(status);
   }
 }
@@ -362,7 +383,9 @@ PropertiesController::Body PropertiesController::buildBody(
 }
 
 void PropertiesController::show(const std::vector<files::DirectoryEntry>& targets, bool captureCurrentLocation) {
-  if (m_permissions.busy()) {
+  if (m_page.jobs().newest([](const OperationJob& job) {
+        return job.kind() == JobKind::Permission && job.running();
+      })) {
     m_page.actionError("A Properties request is still finishing.");
     return;
   }
@@ -459,7 +482,14 @@ void PropertiesController::show(const std::vector<files::DirectoryEntry>& target
                  .variant = ButtonVariant::Ghost,
                  .visible = withResults,
                  .participatesInLayout = withResults,
-                 .onClick = [this] { m_page.clipboard().setClipboardText(m_permissions.snapshot().report); }}
+                 .onClick =
+                     [this] {
+                       if (m_job) {
+                         m_page.clipboard().setClipboardText(
+                             m_job->service<files::PermissionService>().snapshot().report
+                         );
+                       }
+                     }}
             ),
             ui::button(
                 {.out = &cancelButton,
@@ -467,20 +497,26 @@ void PropertiesController::show(const std::vector<files::DirectoryEntry>& target
                  .variant = ButtonVariant::Ghost,
                  .visible = false,
                  .participatesInLayout = false,
-                 .onClick = [this] { m_permissions.cancel(); }}
+                 .onClick =
+                     [this] {
+                       if (m_job) {
+                         m_job->cancel();
+                       }
+                     }}
             ),
             ui::button({.text = "Close", .variant = ButtonVariant::Ghost, .onClick = [this] { m_page.dismissMenu(); }}),
             ui::button(
                 {.out = &save, .text = "Apply", .enabled = false, .variant = ButtonVariant::Primary, .onClick = [this] {
-                   if (m_permissionEditor && !m_page.operationsBusy()) {
-                     if (m_aclActive && m_bulkAclEditor) {
-                       (void)m_permissions.applyAclPatch(m_bulkAclEditor->edit());
-                     } else if (m_aclActive && m_aclEditor) {
-                       (void)m_permissions.applyAcl(m_aclEditor->edit());
-                     } else if (m_permissionEditor->recursive()) {
-                       (void)m_permissions.applyRecursive(m_permissionEditor->recursiveEdit());
-                     } else {
-                       (void)m_permissions.apply(m_permissionEditor->edit());
+                   if (m_permissionEditor && m_job && !m_page.operationsBusy()) {
+                     auto& permissions = m_job->service<files::PermissionService>();
+                     const bool started = m_aclActive && m_bulkAclEditor
+                         ? permissions.applyAclPatch(m_bulkAclEditor->edit())
+                         : m_aclActive && m_aclEditor ? permissions.applyAcl(m_aclEditor->edit())
+                         : m_permissionEditor->recursive()
+                         ? permissions.applyRecursive(m_permissionEditor->recursiveEdit())
+                         : permissions.apply(m_permissionEditor->edit());
+                     if (started) {
+                       m_page.jobs().follow(*m_job);
                      }
                    }
                  }}
@@ -508,7 +544,10 @@ void PropertiesController::show(const std::vector<files::DirectoryEntry>& target
       if (!m_permissionEditor) {
         return;
       }
-      m_permissions.cancel();
+      // Saving goes on for the page that takes the job over once this page left its window.
+      if (const auto job = std::exchange(m_job, nullptr); job && (m_page.jobs().attached() || !job->running())) {
+        job->cancel();
+      }
       m_permissionEditor = nullptr;
       m_permissionBasic = m_permissionAdvanced = nullptr;
       m_permissionAdvancedOpen = m_permissionAdvancedBack = nullptr;
@@ -547,12 +586,14 @@ void PropertiesController::show(const std::vector<files::DirectoryEntry>& target
         m_page.menuSurface()->requestLayout();
       }
     });
+    m_job = m_page.jobs().create<files::PermissionService>(JobScope::Page);
+    auto& permissions = m_job->service<files::PermissionService>();
     if (captureCurrentLocation) {
-      (void)m_permissions.prepare(targets.front().location);
+      (void)permissions.prepare(targets.front().location);
     } else if (multiple) {
-      (void)m_permissions.prepare(targets);
+      (void)permissions.prepare(targets);
     } else {
-      (void)m_permissions.prepare(targets.front());
+      (void)permissions.prepare(targets.front());
     }
   }
 }

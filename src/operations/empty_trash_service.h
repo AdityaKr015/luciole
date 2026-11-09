@@ -25,6 +25,7 @@ namespace files {
     std::optional<FileError> error;
     std::optional<std::uint64_t> size = std::nullopt;
     bool sizeIncomplete = false;
+    bool selection = false; // Deletes selected Trash items instead of emptying Trash.
   };
 
   // Only the standard Trash root and its immediate items are accepted.

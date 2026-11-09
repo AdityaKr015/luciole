@@ -1,5 +1,6 @@
 #include "app/page/batch_rename_controller.h"
 
+#include "app/operation_hub.h"
 #include "app/page/active_dialog.h"
 #include "app/page/page_context.h"
 #include "browser/browser_controller.h"
@@ -21,8 +22,7 @@
 #include <unordered_set>
 #include <utility>
 
-BatchRenameController::BatchRenameController(PageContext& page, files::BatchRenameService& service)
-    : m_page(page), m_service(service) {}
+BatchRenameController::BatchRenameController(PageContext& page) : m_page(page) {}
 
 void BatchRenameController::open(const std::vector<files::DirectoryEntry>& targets) {
   if (!m_page.actionState(files::BrowserAction::Rename, m_page.requestFor(targets)).enabled
@@ -31,16 +31,30 @@ void BatchRenameController::open(const std::vector<files::DirectoryEntry>& targe
     return;
   }
   auto root = std::make_unique<BatchRenameDialog>(
-      targets.size(), [this](files::BatchRenameOptions options) { (void)m_service.preview(std::move(options)); },
-      [this] { (void)m_service.apply(); },
+      targets.size(),
+      [this](files::BatchRenameOptions options) {
+        if (m_job) {
+          (void)m_job->service<files::BatchRenameService>().preview(std::move(options));
+        }
+      },
       [this] {
-        if (m_service.applying()) {
-          m_service.cancel();
+        if (m_job && m_job->service<files::BatchRenameService>().apply()) {
+          m_page.jobs().follow(*m_job);
+        }
+      },
+      [this] {
+        if (m_job && m_job->service<files::BatchRenameService>().applying()) {
+          m_job->cancel();
         } else {
           m_page.dismissMenu();
         }
       },
-      [this] { m_page.dismissMenu(); }, [this] { m_page.clipboard().setClipboardText(m_service.snapshot().report); },
+      [this] { m_page.dismissMenu(); },
+      [this] {
+        if (m_job) {
+          m_page.clipboard().setClipboardText(m_job->service<files::BatchRenameService>().snapshot().report);
+        }
+      },
       [this] {
         if (auto* surface = m_page.menuSurface()) {
           surface->requestUpdate();
@@ -60,10 +74,14 @@ void BatchRenameController::open(const std::vector<files::DirectoryEntry>& targe
     m_dialog = dialog;
     m_page.activeDialog().bind(ActiveDialog::Kind::BatchRename, [this] {
       if (m_dialog) {
-        m_service.cancel();
+        // Renaming goes on for the page that takes the job over once this page left its window.
+        if (m_page.jobs().attached() || !m_job->service<files::BatchRenameService>().applying()) {
+          m_job->cancel();
+        }
         m_dialog = nullptr;
         m_page.focusFileList();
       }
+      m_job.reset();
     });
     m_reported = false;
     m_page.setDialogSize(width, height);
@@ -75,29 +93,47 @@ void BatchRenameController::open(const std::vector<files::DirectoryEntry>& targe
     });
     m_page.menuDispatcher().setFocus(dialog->firstInput()->inputArea());
     dialog->firstInput()->selectAll();
-    if (!m_service.prepare(targets)) {
+    m_job = m_page.jobs().create<files::BatchRenameService>(JobScope::Page);
+    if (!m_job->service<files::BatchRenameService>().prepare(targets)) {
       m_page.actionError("Another rename is still finishing.");
       m_page.dismissMenu();
     }
   }
 }
 
-void BatchRenameController::progressTick() { m_dirty = m_service.applying(); }
+void BatchRenameController::progressTick() {
+  m_dirty = m_job && m_job->service<files::BatchRenameService>().applying();
+}
+
+void BatchRenameController::changed(OperationJob& job) {
+  if (&job == m_job.get()) {
+    m_dirty = true;
+  } else if (!job.running() && job.takeResult()) {
+    // A job whose dialog closed.
+    report(job.service<files::BatchRenameService>().snapshot());
+  }
+}
 
 void BatchRenameController::onFrame() {
-  if (std::exchange(m_dirty, false)) {
+  if (std::exchange(m_dirty, false) && m_job) {
     sync();
   }
 }
 
 void BatchRenameController::sync() {
-  const auto& snapshot = m_service.snapshot();
+  const auto& service = m_job->service<files::BatchRenameService>();
+  const auto& snapshot = service.snapshot();
   if (m_dialog) {
-    m_dialog->sync(snapshot, m_service.completed(), m_page.clipboard().available());
+    m_dialog->sync(snapshot, service.completed(), m_page.clipboard().available());
     m_page.menuSurface()->requestLayout();
   }
-  if (snapshot.phase == files::BatchRenamePhase::Finished && !m_reported) {
-    m_reported = true;
+  if (snapshot.phase == files::BatchRenamePhase::Finished && !std::exchange(m_reported, true)) {
+    report(snapshot);
+  }
+}
+
+void BatchRenameController::report(const files::BatchRenameSnapshot& snapshot) {
+  if (snapshot.phase == files::BatchRenamePhase::Finished) {
     const auto count =
         std::ranges::count(*snapshot.results, files::BatchRenameOutcome::Renamed, &files::BatchRenameResult::outcome);
     std::string message = std::format("{} items renamed.", count);
@@ -118,7 +154,7 @@ void BatchRenameController::sync() {
       browser.refresh();
       m_revealContext = browser.contextSerial();
     }
-  } else if (snapshot.phase == files::BatchRenamePhase::Error && !m_dialog) {
+  } else if (snapshot.phase == files::BatchRenamePhase::Error) {
     m_page.actionError("Could not rename: " + files::fileErrorText(snapshot.error));
   }
 }

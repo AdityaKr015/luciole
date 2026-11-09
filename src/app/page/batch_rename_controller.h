@@ -3,14 +3,16 @@
 #include "fs/location.h"
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace files {
-  class BatchRenameService;
+  struct BatchRenameSnapshot;
   struct DirectoryEntry;
 } // namespace files
 
 class BatchRenameDialog;
+class OperationJob;
 class PageContext;
 class Renderer;
 class VirtualGridView;
@@ -18,11 +20,11 @@ class VirtualGridView;
 // Batch rename dialog: preview, apply and report a rename of several items, then select the results.
 class BatchRenameController {
 public:
-  BatchRenameController(PageContext& page, files::BatchRenameService& service);
+  explicit BatchRenameController(PageContext& page);
 
   void open(const std::vector<files::DirectoryEntry>& targets);
-  // Service change: sync on the next frame.
-  void markDirty() { m_dirty = true; }
+  // Owned batch rename job change: sync the dialog on the next frame, or report a job whose dialog closed.
+  void changed(OperationJob& job);
   // Operation progress tick: keep syncing while the rename applies.
   void progressTick();
   // Frame slot in BrowserPage::prepareFrame().
@@ -37,9 +39,11 @@ public:
 
 private:
   void sync();
+  void report(const files::BatchRenameSnapshot& snapshot);
 
   PageContext& m_page;
-  files::BatchRenameService& m_service;
+  // The dialog's job: previews, then applies the rename.
+  std::shared_ptr<OperationJob> m_job;
   BatchRenameDialog* m_dialog = nullptr;
   bool m_dirty = false;
   bool m_reported = false;

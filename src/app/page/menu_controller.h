@@ -17,7 +17,6 @@ namespace files {
   class PathCompletion;
   class PinService;
   class TerminalLauncher;
-  class TransferService;
   struct Bookmark;
 } // namespace files
 
@@ -28,6 +27,7 @@ class LocationBarController;
 class PageContext;
 class PropertiesController;
 class RenameController;
+class TransferController;
 class ScrollView;
 
 // Context menus: the file, place, view, sort, selection, columns and breadcrumb menus, and keyboard navigation of
@@ -35,9 +35,10 @@ class ScrollView;
 class MenuController {
 public:
   MenuController(
-      PageContext& page, files::PinService& pins, files::TransferService& transfers, files::TerminalLauncher& terminal,
-      files::PathCompletion& siblingCompletion, CreateController& creator, RenameController& renamer,
-      PropertiesController& properties, DetailsHeaderController& columns, LocationBarController& locationBar
+      PageContext& page, files::PinService& pins, TransferController& transferController,
+      files::TerminalLauncher& terminal, files::PathCompletion& siblingCompletion, CreateController& creator,
+      RenameController& renamer, PropertiesController& properties, DetailsHeaderController& columns,
+      LocationBarController& locationBar
   );
 
   // Shows `entries` on the popup; activating an entry closes the menu and then calls `action` with its id.
@@ -74,7 +75,7 @@ private:
 
   PageContext& m_page;
   files::PinService& m_pins;
-  files::TransferService& m_transfers;
+  TransferController& m_transferController;
   files::TerminalLauncher& m_terminal;
   files::PathCompletion& m_siblingCompletion;
   CreateController& m_creator;

@@ -1,23 +1,14 @@
 #include "app/page/status_bar_controller.h"
 
+#include "app/operation_hub.h"
 #include "app/page/file_keyboard_controller.h"
 #include "app/page/page_context.h"
 #include "app/page/settings_controller.h"
 #include "app/page/transfer_controller.h"
-#include "app/page/trash_controller.h"
 #include "app/workspace_layout.h"
 #include "browser/browser_controller.h"
 #include "browser/places.h"
 #include "fs/gio_ptr.h"
-#include "operations/archive_service.h"
-#include "operations/batch_rename_service.h"
-#include "operations/create_service.h"
-#include "operations/empty_trash_service.h"
-#include "operations/permission_service.h"
-#include "operations/rename_service.h"
-#include "operations/restore_service.h"
-#include "operations/transfer_service.h"
-#include "operations/trash_service.h"
 #include "ui/builders.h"
 #include "ui/palette.h"
 
@@ -26,16 +17,10 @@
 #include <utility>
 
 StatusBarController::StatusBarController(
-    PageContext& page, files::CreateService& creator, files::PermissionService& permissions,
-    files::BatchRenameService& batchRenamer, files::RenameService& renamer, files::RestoreService& restore,
-    files::EmptyTrashService& emptyTrash, files::TrashService& trash, files::ArchiveService& archives,
-    files::TransferService& transfers, files::PinService& pins, TrashController& trashController,
-    TransferController& transferController, SettingsController& settings, FileKeyboardController& keys
+    PageContext& page, files::PinService& pins, TransferController& transferController, SettingsController& settings,
+    FileKeyboardController& keys
 )
-    : m_page(page), m_creator(creator), m_permissions(permissions), m_batchRenamer(batchRenamer), m_renamer(renamer),
-      m_restore(restore), m_emptyTrash(emptyTrash), m_trash(trash), m_archives(archives), m_transfers(transfers),
-      m_pins(pins), m_trashController(trashController), m_transferController(transferController), m_settings(settings),
-      m_keys(keys) {}
+    : m_page(page), m_pins(pins), m_transferController(transferController), m_settings(settings), m_keys(keys) {}
 
 std::unique_ptr<Flex> StatusBarController::build() {
   return ui::row(
@@ -69,54 +54,73 @@ std::unique_ptr<Flex> StatusBarController::buildNotice() {
 }
 
 std::string StatusBarController::operationStatus() const {
-  std::string status;
-  if (m_creator.busy()) {
-    const char* kind = m_creator.snapshot().kind == files::CreateKind::Folder ? "folder"
-        : m_creator.snapshot().kind == files::CreateKind::Document            ? "document"
-        : m_creator.snapshot().kind == files::CreateKind::SymbolicLink
-            || m_creator.snapshot().kind == files::CreateKind::HardLink
-        ? "link"
-        : "file";
-    status = m_creator.snapshot().status == files::CreateStatus::Creating ? std::format("Creating {}…", kind)
-                                                                          : std::format("Preparing {} creation…", kind);
-  } else if (m_permissions.busy()) {
-    status = m_permissions.snapshot().phase == files::PermissionPhase::Saving ? "Saving permissions…"
-                                                                              : "Reading permissions…";
-  } else if (m_batchRenamer.busy()) {
-    status = m_batchRenamer.applying() ? std::format("Renaming… · {} items", m_batchRenamer.completed())
-                                       : "Checking rename preview…";
-  } else if (m_renamer.busy()) {
-    status = m_renamer.snapshot().status == files::RenameStatus::Renaming ? "Renaming…" : "Preparing rename…";
-  } else if (m_restore.busy()) {
-    status = std::format("Restoring… · {} of {} items", m_restore.completed(), m_restore.total());
-  } else if (m_emptyTrash.busy()) {
-    status = m_emptyTrash.snapshot().status == files::EmptyTrashStatus::Preparing ? "Reading Trash…"
-        : m_emptyTrash.snapshot().status == files::EmptyTrashStatus::Ready
+  const auto* job = m_page.jobs().newest([](const OperationJob& candidate) { return candidate.running(); });
+  if (!job) {
+    return {};
+  }
+  switch (job->kind()) {
+  case JobKind::Create: {
+    const auto& snapshot = job->service<files::CreateService>().snapshot();
+    const char* kind = snapshot.kind == files::CreateKind::Folder                                          ? "folder"
+        : snapshot.kind == files::CreateKind::Document                                                     ? "document"
+        : snapshot.kind == files::CreateKind::SymbolicLink || snapshot.kind == files::CreateKind::HardLink ? "link"
+                                                                                                           : "file";
+    return snapshot.status == files::CreateStatus::Creating ? std::format("Creating {}…", kind)
+                                                            : std::format("Preparing {} creation…", kind);
+  }
+  case JobKind::Permission:
+    return job->service<files::PermissionService>().snapshot().phase == files::PermissionPhase::Saving
+        ? "Saving permissions…"
+        : "Reading permissions…";
+  case JobKind::BatchRename: {
+    const auto& renamer = job->service<files::BatchRenameService>();
+    return renamer.applying() ? std::format("Renaming… · {} items", renamer.completed()) : "Checking rename preview…";
+  }
+  case JobKind::Rename:
+    return job->service<files::RenameService>().snapshot().status == files::RenameStatus::Renaming
+        ? "Renaming…"
+        : "Preparing rename…";
+  case JobKind::Restore: {
+    const auto& restore = job->service<files::RestoreService>();
+    return std::format("Restoring… · {} of {} items", restore.completed(), restore.total());
+  }
+  case JobKind::EmptyTrash: {
+    const auto& emptyTrash = job->service<files::EmptyTrashService>();
+    const auto& snapshot = emptyTrash.snapshot();
+    return snapshot.status == files::EmptyTrashStatus::Preparing ? "Reading Trash…"
+        : snapshot.status == files::EmptyTrashStatus::Ready
         ? "Calculating Trash size…"
         : std::format(
-              "{}… · {} of {} items", m_trashController.selectedDelete() ? "Deleting from Trash" : "Emptying Trash",
-              m_emptyTrash.completed(), m_emptyTrash.snapshot().results.size()
+              "{}… · {} of {} items", snapshot.selection ? "Deleting from Trash" : "Emptying Trash",
+              emptyTrash.completed(), snapshot.results.size()
           );
-  } else if (m_trash.busy()) {
-    status = m_trash.snapshot().status == files::TrashStatus::Preparing
+  }
+  case JobKind::Trash: {
+    const auto& trash = job->service<files::TrashService>();
+    return trash.snapshot().status == files::TrashStatus::Preparing
         ? "Preparing move to Trash…"
-        : std::format("Moving to Trash… · {} of {} items", m_trash.completed(), m_trash.snapshot().results.size());
-  } else if (m_archives.busy()) {
-    const files::GString size(g_format_size_full(m_archives.bytes(), G_FORMAT_SIZE_IEC_UNITS));
-    const char* phase = m_archives.phase() == files::ArchivePhase::Reading ? "Reading archive"
-        : m_archives.phase() == files::ArchivePhase::Compressing           ? "Compressing"
-        : m_archives.phase() == files::ArchivePhase::Cleaning              ? "Cleaning temporary files"
-        : m_archives.phase() == files::ArchivePhase::Transferring          ? "Publishing archive output"
-                                                                           : "Extracting archive";
-    status = std::format("{}… · {} entries · {}", phase, m_archives.items(), size.get());
-  } else if (m_transfers.busy()) {
-    const files::GString size(g_format_size(m_transfers.bytes()));
-    status = std::format(
-        "{} {} of {} items · {}", m_transfers.action() == files::TransferAction::Copy ? "Copying" : "Moving",
-        m_transfers.completed(), m_transfers.total(), size.get()
+        : std::format("Moving to Trash… · {} of {} items", trash.completed(), trash.snapshot().results.size());
+  }
+  case JobKind::Archive: {
+    const auto& archives = job->service<files::ArchiveService>();
+    const files::GString size(g_format_size_full(archives.bytes(), G_FORMAT_SIZE_IEC_UNITS));
+    const char* phase = archives.phase() == files::ArchivePhase::Reading ? "Reading archive"
+        : archives.phase() == files::ArchivePhase::Compressing           ? "Compressing"
+        : archives.phase() == files::ArchivePhase::Cleaning              ? "Cleaning temporary files"
+        : archives.phase() == files::ArchivePhase::Transferring          ? "Publishing archive output"
+                                                                         : "Extracting archive";
+    return std::format("{}… · {} entries · {}", phase, archives.items(), size.get());
+  }
+  case JobKind::Transfer: {
+    const auto& transfers = job->service<files::TransferService>();
+    const files::GString size(g_format_size(transfers.bytes()));
+    return std::format(
+        "{} {} of {} items · {}", transfers.action() == files::TransferAction::Copy ? "Copying" : "Moving",
+        transfers.completed(), transfers.total(), size.get()
     );
   }
-  return status;
+  }
+  return {};
 }
 
 void StatusBarController::sync(bool miller) {
@@ -195,7 +199,7 @@ void StatusBarController::sync(bool miller) {
     const files::GString size(g_format_size_full(*freeBytes, G_FORMAT_SIZE_IEC_UNITS));
     m_freeSpace->setText(std::format("{} free", size.get()));
   }
-  m_transferController.syncOperationButtons(m_trashController.selectedDelete());
+  m_transferController.syncOperationButtons();
   m_notice->setText(
       snapshot.error
               || loading

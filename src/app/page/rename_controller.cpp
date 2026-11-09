@@ -1,5 +1,6 @@
 #include "app/page/rename_controller.h"
 
+#include "app/operation_hub.h"
 #include "app/page/active_dialog.h"
 #include "app/page/page_context.h"
 #include "browser/browser_controller.h"
@@ -26,8 +27,7 @@ namespace {
   }
 } // namespace
 
-RenameController::RenameController(PageContext& page, files::RenameService& renamer, files::PinService& pins)
-    : m_page(page), m_renamer(renamer), m_pins(pins) {}
+RenameController::RenameController(PageContext& page, files::PinService& pins) : m_page(page), m_pins(pins) {}
 
 bool RenameController::canFileRename(const files::DirectoryEntry& entry) const {
   return m_page.actionState(files::BrowserAction::Rename, m_page.requestFor({entry})).enabled;
@@ -56,9 +56,13 @@ void RenameController::openFileRename(files::DirectoryEntry target) {
   if (m_page.menuSurface() != nullptr) {
     m_page.activeDialog().bind(ActiveDialog::Kind::FileRename, [this] {
       if (m_fileRenameTarget) {
-        m_renamer.cancel();
+        // Renaming goes on for the page that takes the job over once this page left its window.
+        if (m_page.jobs().attached() || !m_job->running()) {
+          m_job->cancel();
+        }
         m_page.focusFileList();
       }
+      m_job.reset();
       m_fileRenameEditor = nullptr;
       m_fileRenameTarget.reset();
       m_fileRenamePreparing = false;
@@ -67,41 +71,55 @@ void RenameController::openFileRename(files::DirectoryEntry target) {
     m_fileRenameTarget = std::move(target);
     m_fileRenamePreparing = true;
     control->setSaving(true);
-    if (!m_renamer.prepare(m_fileRenameTarget->location)) {
+    m_job = m_page.jobs().create<files::RenameService>(JobScope::Page);
+    if (!m_job->service<files::RenameService>().prepare(m_fileRenameTarget->location)) {
       control->showError("Another rename is still finishing.");
     }
   }
 }
 
 void RenameController::submitFileRename(std::string name) {
-  if (m_fileRenameEditor == nullptr || !m_fileRenameTarget) {
+  if (m_fileRenameEditor == nullptr || !m_fileRenameTarget || !m_job) {
     return;
   }
   if (!m_page.targetsCurrent({*m_fileRenameTarget})) {
     m_fileRenameEditor->showError("The item changed. Close this editor and try again.");
     return;
   }
-  if (!m_renamer.rename(std::move(name))) {
+  auto& renamer = m_job->service<files::RenameService>();
+  if (!renamer.rename(std::move(name))) {
     m_fileRenameEditor->showError(
-        m_renamer.snapshot().error ? files::nameErrorText(*m_renamer.snapshot().error)
-                                   : "The item is unavailable. Reopen Rename."
+        renamer.snapshot().error ? files::nameErrorText(*renamer.snapshot().error)
+                                 : "The item is unavailable. Reopen Rename."
     );
   } else {
+    m_page.jobs().follow(*m_job);
     m_fileRenameEditor->setSaving(true);
   }
 }
 
-void RenameController::onFrame() {
-  if (std::exchange(m_dirty, false)) {
-    syncFileRename();
+void RenameController::changed(OperationJob& job) {
+  if (&job == m_job.get()) {
+    m_dirty = true;
+  } else if (!job.running() && job.takeResult()) {
+    // A job whose editor closed.
+    syncFileRename(job);
   }
 }
 
-void RenameController::syncFileRename() {
-  const auto& snapshot = m_renamer.snapshot();
-  if (m_renamer.busy()) {
+void RenameController::onFrame() {
+  if (std::exchange(m_dirty, false) && m_job) {
+    syncFileRename(*m_job);
+  }
+}
+
+void RenameController::syncFileRename(const OperationJob& job) {
+  const auto& renamer = job.service<files::RenameService>();
+  const auto& snapshot = renamer.snapshot();
+  if (renamer.busy()) {
     return;
   }
+  const bool editor = &job == m_job.get() && m_fileRenameEditor != nullptr;
   if (snapshot.status == files::RenameStatus::Succeeded) {
     m_page.setActionMessage({});
     auto& browser = m_page.browser();
@@ -114,11 +132,11 @@ void RenameController::syncFileRename() {
       m_page.revealOnReload(std::move(reveal));
       browser.refresh();
     }
-    if (m_fileRenameEditor != nullptr) {
+    if (editor) {
       m_fileRenameEditor = nullptr;
       m_page.dismissMenu();
     }
-  } else if (m_fileRenameEditor == nullptr) {
+  } else if (!editor) {
     if (snapshot.status == files::RenameStatus::Error) {
       m_page.actionError("Could not rename: " + renameErrorText(snapshot.error));
     }

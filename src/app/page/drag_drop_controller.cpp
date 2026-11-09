@@ -1,5 +1,6 @@
 #include "app/page/drag_drop_controller.h"
 
+#include "app/operation_hub.h"
 #include "app/page/location_bar_controller.h"
 #include "app/page/page_context.h"
 #include "app/page/sidebar_controller.h"
@@ -8,7 +9,6 @@
 #include "browser/miller_columns.h"
 #include "browser/places.h"
 #include "cursor-shape-v1-client-protocol.h"
-#include "operations/transfer_service.h"
 #include "platform/desktop_integration.h"
 #include "render/animation/animation_manager.h"
 #include "render/scene/input_dispatcher.h"
@@ -29,11 +29,10 @@
 
 DragDropController::DragDropController(
     PageContext& page, InputDispatcher& dispatcher, WaylandConnection& connection, files::PinService& pins,
-    files::TransferService& transfers, TransferController& transferController, files::ThumbnailService& thumbnails,
-    files::FileIconCache& icons, files::MillerColumns& miller, SidebarController& sidebar,
-    LocationBarController& locationBar
+    TransferController& transferController, files::ThumbnailService& thumbnails, files::FileIconCache& icons,
+    files::MillerColumns& miller, SidebarController& sidebar, LocationBarController& locationBar
 )
-    : m_page(page), m_dispatcher(dispatcher), m_connection(connection), m_pins(pins), m_transfers(transfers),
+    : m_page(page), m_dispatcher(dispatcher), m_connection(connection), m_pins(pins),
       m_transferController(transferController), m_thumbnails(thumbnails), m_icons(icons), m_miller(miller),
       m_sidebar(sidebar), m_locationBar(locationBar) {}
 
@@ -270,12 +269,12 @@ bool DragDropController::dragCurrent() const {
   if (m_drag->sourcePin) {
     return m_pins.editable() && m_pins.contains(*m_drag->sourcePin);
   }
-  return m_page.fileJobsIdle() && std::ranges::all_of(m_drag->entries, [this](const auto& target) {
-           const auto* entry = m_page.browser().model().entry(target.id);
-           return entry != nullptr
-               && entry->location == target.location
-               && std::ranges::contains(m_page.browser().model().rows(), target.id);
-         });
+  return !m_page.jobs().busy() && std::ranges::all_of(m_drag->entries, [this](const auto& target) {
+    const auto* entry = m_page.browser().model().entry(target.id);
+    return entry != nullptr
+        && entry->location == target.location
+        && std::ranges::contains(m_page.browser().model().rows(), target.id);
+  });
 }
 
 bool DragDropController::validDropFolder(const files::Location& destination) const {
@@ -411,7 +410,7 @@ std::optional<std::size_t> DragDropController::pinDropSlot() const {
 }
 
 void DragDropController::startFileDrag(const std::vector<files::EntryId>& ids) {
-  if (ids.empty() || !m_page.fileJobsIdle()) {
+  if (ids.empty() || m_page.jobs().busy()) {
     return;
   }
   Drag drag;
@@ -680,8 +679,8 @@ void DragDropController::finishDrag() {
       sources.push_back(entry.location);
     }
     m_page.setActionMessage({});
-    (void)m_transfers.start(
-        {std::move(sources), target->location, copy ? files::TransferAction::Copy : files::TransferAction::Move}
+    m_transferController.transfer(
+        std::move(sources), target->location, copy ? files::TransferAction::Copy : files::TransferAction::Move
     );
   } else if (slot) {
     m_sidebar.pinFolders(drag.bookmarks, *slot);

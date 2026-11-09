@@ -130,6 +130,13 @@ WorkspaceApplication::WorkspaceApplication(
       page->iconsReady();
     }
   });
+  m_thumbnails.setOptions(m_defaults.thumbnails);
+  m_thumbnails.setChangedCallback([this] {
+    for (auto& [id, page] : m_pages) {
+      (void)id;
+      page->thumbnailsChanged();
+    }
+  });
   m_pins.reload();
 }
 
@@ -142,6 +149,7 @@ WorkspaceApplication::~WorkspaceApplication() {
   m_preferences.setChangedCallback({});
   m_pins.setChangedCallback({});
   m_icons.setChangedCallback({});
+  m_thumbnails.setChangedCallback({});
   for (auto& [id, host] : m_hosts) {
     (void)id;
     releaseChrome(*host);
@@ -259,12 +267,7 @@ bool WorkspaceApplication::running() {
       if (host->tooltip) {
         host->tooltip->dismiss();
       }
-      releaseChrome(*host);
-      for (auto tab : host->mounted) {
-        m_pages.at(tab)->hide();
-        m_pages.at(tab)->unmount();
-      }
-      host->mounted.clear();
+      // Leave the workspace before the pages close their dialogs, so a job that applies changes keeps running.
       if (auto found = m_model.windows().find(id); found != m_model.windows().end()) {
         const auto tabs = found->second.tabs;
         for (auto tab : tabs) {
@@ -272,10 +275,22 @@ bool WorkspaceApplication::running() {
         }
         m_model.removeWindow(id);
       }
+      releaseChrome(*host);
+      for (auto tab : host->mounted) {
+        m_pages.at(tab)->hide();
+        m_pages.at(tab)->unmount();
+      }
+      host->mounted.clear();
     }
     live |= host->surface.isRunning();
   }
-  bool busy = false;
+  // Without a window every job is cancelled, as closing the last window always did; the application exits once
+  // they stop.
+  if (!live) {
+    m_hub.shutdown();
+  }
+  m_hub.update(m_focused);
+  bool busy = m_hub.busy() || m_thumbnails.clearing();
   for (auto& [id, page] : m_pages) {
     if (!live) {
       page->shutdown();
@@ -289,7 +304,6 @@ bool WorkspaceApplication::running() {
           break;
         }
       }
-      page->pumpJobs();
     }
     bool visible = false;
     for (const auto& [window, host] : m_hosts) {
@@ -301,13 +315,7 @@ bool WorkspaceApplication::running() {
     }
     busy |= page->busy();
   }
-  if (m_cacheClearOwner && !m_pages.at(*m_cacheClearOwner)->clearingThumbnails()) {
-    m_cacheClearOwner.reset();
-    for (auto& [id, page] : m_pages) {
-      (void)id;
-      page->pauseThumbnails(false);
-    }
-  }
+  // Closed pages go now: their jobs belong to the hub, which already handed them to another page.
   std::vector<files::TabId> retired;
   for (auto& [id, page] : m_pages) {
     const auto tab = m_model.tabFor(id);
@@ -317,13 +325,9 @@ bool WorkspaceApplication::running() {
     const bool mounted = std::ranges::any_of(m_hosts, [id](const auto& item) {
       return std::ranges::contains(item.second->mounted, id);
     });
-    if (!referenced && !mounted && !page->busy()) {
+    if (!referenced && !mounted) {
       page->shutdown();
-      if (!page->busy()) {
-        retired.push_back(id);
-      } else {
-        busy = true;
-      }
+      retired.push_back(id);
     }
   }
   for (auto id : retired) {
@@ -779,20 +783,8 @@ files::TabId WorkspaceApplication::createPage(
                                                : m_defaults;
   auto page = std::make_unique<BrowserPage>(
       m_connection, m_renderer, m_input, settings, m_clipboard, host.surface, m_animations, m_pins, m_icons,
-      m_preferences
+      m_thumbnails, m_preferences, m_hub, id
   );
-  page->setWorkspaceId(id);
-  page->setClearThumbnails([this, id] {
-    if (m_cacheClearOwner) {
-      return;
-    }
-    for (auto& [pageId, page] : m_pages) {
-      (void)pageId;
-      page->pauseThumbnails(true);
-    }
-    m_cacheClearOwner = id;
-    m_pages.at(id)->clearThumbnails();
-  });
   page->setHasOther([this, id] {
     const auto owner = m_model.owner(id);
     return owner && m_model.other(*owner).has_value();
@@ -843,9 +835,6 @@ files::TabId WorkspaceApplication::createPage(
     page->duplicateFrom(*m_pages.at(duplicate));
   }
   m_pages.emplace(id, std::move(page));
-  if (m_cacheClearOwner) {
-    m_pages.at(id)->pauseThumbnails(true);
-  }
   host.labels.clear();
   host.surface.requestLayout();
   return id;

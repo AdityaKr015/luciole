@@ -21,6 +21,7 @@ class AnimationManager;
 class ContextMenuControl;
 class LinkDialog;
 class NameEditor;
+class OperationJob;
 class PageContext;
 class RenderContext;
 class ScrollView;
@@ -30,8 +31,8 @@ class WaylandConnection;
 class CreateController {
 public:
   CreateController(
-      PageContext& page, files::CreateService& creator, files::TemplateCatalog& templates,
-      WaylandConnection& connection, RenderContext& renderer, AnimationManager& animations
+      PageContext& page, files::TemplateCatalog& templates, WaylandConnection& connection, RenderContext& renderer,
+      AnimationManager& animations
   );
 
   void openCreateItem(
@@ -40,8 +41,8 @@ public:
   void openLinkDialog(const files::DirectoryEntry& target);
   // Opens the template submenu next to the context menu row given to attachDocumentMenu().
   void openDocumentMenu(const files::ActionRequest& request);
-  // Service change: sync on the next frame.
-  void markDirty() { m_dirty = true; }
+  // Owned creation job change: sync the dialog on the next frame, or report a job whose dialog closed.
+  void changed(OperationJob& job);
   // Frame slot in BrowserPage::prepareFrame().
   void onFrame();
 
@@ -70,11 +71,12 @@ private:
   void dismissDocumentMenu();
   void fillDocumentMenu(const files::ActionRequest& request, files::TemplateListing listing, bool loading = false);
   void submitCreateItem(std::string name);
-  void sync();
+  void sync(const OperationJob& job);
   void closeCreation();
 
   PageContext& m_page;
-  files::CreateService& m_creator;
+  // The create or link dialog's job: checks the destination, then creates the item.
+  std::shared_ptr<OperationJob> m_job;
   files::TemplateCatalog& m_templates;
   WaylandConnection& m_connection;
   RenderContext& m_renderer;

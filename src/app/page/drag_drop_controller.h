@@ -20,7 +20,6 @@ namespace files {
   class MillerColumns;
   class PinService;
   class ThumbnailService;
-  class TransferService;
   struct FileIconImage;
 } // namespace files
 
@@ -44,9 +43,8 @@ class DragDropController {
 public:
   DragDropController(
       PageContext& page, InputDispatcher& dispatcher, WaylandConnection& connection, files::PinService& pins,
-      files::TransferService& transfers, TransferController& transferController, files::ThumbnailService& thumbnails,
-      files::FileIconCache& icons, files::MillerColumns& miller, SidebarController& sidebar,
-      LocationBarController& locationBar
+      TransferController& transferController, files::ThumbnailService& thumbnails, files::FileIconCache& icons,
+      files::MillerColumns& miller, SidebarController& sidebar, LocationBarController& locationBar
   );
 
   // True while a file or place drag runs.
@@ -118,7 +116,6 @@ private:
   InputDispatcher& m_dispatcher;
   WaylandConnection& m_connection;
   files::PinService& m_pins;
-  files::TransferService& m_transfers;
   TransferController& m_transferController;
   files::ThumbnailService& m_thumbnails;
   files::FileIconCache& m_icons;

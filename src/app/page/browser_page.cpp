@@ -66,10 +66,10 @@ BrowserPage::BrowserPage(
     WaylandConnection& connection, RenderContext& renderer, TextInputService& textInput,
     const files::BrowserSettings& settings, files::WaylandTextClipboard& clipboard, files::WindowSurface& surface,
     AnimationManager& animations, files::PinService& pins, files::FileIconCache& icons,
-    files::ViewPreferenceWriter& preferences
+    files::ThumbnailService& thumbnails, files::ViewPreferenceWriter& preferences, OperationHub& hub, files::TabId id
 )
     : m_connection(connection), m_renderer(renderer), m_textInput(textInput), m_animations(animations),
-      m_surface(&surface), m_browser(settings.sort, settings.showHidden), m_icons(icons),
+      m_surface(&surface), m_browser(settings.sort, settings.showHidden), m_icons(icons), m_thumbnails(thumbnails),
       m_listAdapter(
           m_browser, m_icons, m_thumbnails, files::ViewMode::List, [this] { return m_connection.keyboardModifiers(); },
           [this] { return m_fileKeys.keyboardFocus() && m_list != nullptr && m_list->focusArea()->focused(); }
@@ -78,8 +78,8 @@ BrowserPage::BrowserPage(
           m_browser, m_icons, m_thumbnails, files::ViewMode::Grid, [this] { return m_connection.keyboardModifiers(); },
           [this] { return m_fileKeys.keyboardFocus() && m_list != nullptr && m_list->focusArea()->focused(); }
       ),
-      m_preferences(preferences), m_savedSettings(settings), m_pins(pins), m_viewMode(settings.viewMode),
-      m_clipboard(clipboard) {
+      m_preferences(preferences), m_savedSettings(settings), m_pins(pins), m_hub(hub), m_jobs(hub, id),
+      m_viewMode(settings.viewMode), m_clipboard(clipboard), m_workspaceId(id) {
   if (m_preferences.settings()) {
     m_savedSettings = m_preferences.settings()->browser;
   }
@@ -87,21 +87,14 @@ BrowserPage::BrowserPage(
       std::ranges::find(files::kGridIconSizes, settings.gridIconSize) - files::kGridIconSizes.begin()
   );
   browser().setViewDefaults(settings.viewMode, settings.gridIconSize);
-  m_thumbnails.setOptions(settings.thumbnails);
   m_preview.setChangedCallback([this] {
     m_surface->requestLayout();
     if (m_menuSurface) {
       m_menuSurface->requestLayout();
     }
   });
-  m_thumbnails.setChangedCallback([this] {
-    if (m_thumbnailClearing != m_thumbnails.clearing() || m_thumbnailError != m_thumbnails.error()) {
-      m_thumbnailClearing = m_thumbnails.clearing();
-      m_thumbnailError = m_thumbnails.error();
-      m_settingsController.markDirty();
-    }
-    m_surface->requestLayout();
-  });
+  m_thumbnailClearing = m_thumbnails.clearing();
+  m_thumbnailError = m_thumbnails.error();
   m_browser.setCaptureViewport([this] {
     files::BrowseViewport viewport{.mode = m_viewMode, .iconSize = static_cast<int>(gridIconSize())};
     if (m_list) {
@@ -145,58 +138,6 @@ BrowserPage::BrowserPage(
     m_browserDirty = true;
     m_surface->requestUpdate();
   });
-  m_archives.setChangedCallback([this] {
-    m_transferController.updateOperationProgress();
-    m_archiveController.changed();
-    m_browserDirty = true;
-    m_surface->requestUpdate();
-  });
-  m_transfers.setChangedCallback([this] {
-    m_transferController.updateOperationProgress();
-    m_transferController.changed();
-    m_browserDirty = true;
-    m_surface->requestUpdate();
-  });
-  m_emptyTrash.setChangedCallback([this] {
-    m_transferController.updateOperationProgress();
-    m_trashController.markEmptyTrashDirty();
-    m_browserDirty = true;
-    m_surface->requestUpdate();
-  });
-  m_restore.setChangedCallback([this] {
-    m_transferController.updateOperationProgress();
-    m_trashController.restoreChanged();
-    m_browserDirty = true;
-    m_surface->requestUpdate();
-  });
-  m_trash.setChangedCallback([this] {
-    m_transferController.updateOperationProgress();
-    m_trashController.markTrashDirty();
-    m_browserDirty = true;
-    m_surface->requestUpdate();
-  });
-  m_creator.setChangedCallback([this] {
-    m_createController.markDirty();
-    m_browserDirty = true;
-    m_surface->requestUpdate();
-  });
-  m_renamer.setChangedCallback([this] {
-    m_renameController.markDirty();
-    m_browserDirty = true;
-    m_surface->requestUpdate();
-  });
-  m_permissions.setChangedCallback([this] {
-    m_transferController.updateOperationProgress();
-    m_propertiesController.markDirty();
-    m_browserDirty = true;
-    m_surface->requestUpdate();
-  });
-  m_batchRenamer.setChangedCallback([this] {
-    m_transferController.updateOperationProgress();
-    m_batchRename.markDirty();
-    m_browserDirty = true;
-    m_surface->requestUpdate();
-  });
   for (auto* adapter : {&m_listAdapter, &m_gridAdapter}) {
     adapter->setCutPredicate([this](const files::Location& location) { return m_clipboard.isCut(location); });
     adapter->setActivationMode(m_activationMode);
@@ -215,6 +156,7 @@ BrowserPage::BrowserPage(
         [this] { m_dragDrop.cancelFileDrag(); }
     );
   }
+  m_hub.attach(m_workspaceId, *this);
 }
 
 files::BrowserController& BrowserPage::browser() { return m_miller.enabled() ? m_miller.active() : m_browser; }
@@ -248,24 +190,14 @@ void BrowserPage::focusMiller(std::size_t index, bool reveal) {
 }
 
 BrowserPage::~BrowserPage() {
+  m_hub.detach(m_workspaceId);
   m_dragDrop.stop();
   m_transferController.stopProgress();
-  m_archives.setChangedCallback({});
-  m_transfers.setChangedCallback({});
-  m_transferController.settle();
-  m_trash.setChangedCallback({});
-  m_emptyTrash.setChangedCallback({});
-  m_restore.setChangedCallback({});
-  m_renamer.setChangedCallback({});
-  m_batchRenamer.setChangedCallback({});
-  m_permissions.setChangedCallback({});
-  m_creator.setChangedCallback({});
   m_browser.setChangedCallback({});
   m_miller.setChangedCallback({});
   m_miller.setFileActivatedCallback({});
   m_browser.setFileActivatedCallback({});
   m_launcher.setChangedCallback({});
-  m_thumbnails.setChangedCallback({});
   m_preview.setChangedCallback({});
   m_preview.clear();
   closeMenu();
@@ -299,21 +231,11 @@ void BrowserPage::revealItems(std::vector<files::Location> items, bool propertie
   }
 }
 
-bool BrowserPage::renameBusy() const { return m_renamer.busy() || m_batchRenamer.busy() || m_permissions.busy(); }
-
 bool BrowserPage::busy() const {
-  return m_thumbnails.clearing()
-      || m_preview.busy()
+  return m_preview.busy()
       || m_preferences.busy()
       || m_pins.busy()
       || m_launcher.busy()
-      || m_archives.busy()
-      || m_transfers.busy()
-      || m_restore.busy()
-      || m_trash.busy()
-      || m_emptyTrash.busy()
-      || renameBusy()
-      || m_creator.busy()
       || m_transferController.pastePending();
 }
 
@@ -321,15 +243,50 @@ void BrowserPage::shutdown() {
   m_preview.clear();
   m_transferController.cancelPaste();
   m_launcher.cancelApplications();
-  m_archives.shutdown();
-  m_transfers.cancel();
-  m_emptyTrash.cancel();
-  m_restore.cancel();
-  m_trash.cancel();
-  m_renamer.cancel();
-  m_batchRenamer.cancel();
-  m_permissions.cancel();
-  m_creator.cancel();
+}
+
+void BrowserPage::jobChanged(OperationJob& job) {
+  m_transferController.updateOperationProgress();
+  switch (job.kind()) {
+  case JobKind::Transfer:
+    m_transferController.transferChanged(job);
+    break;
+  case JobKind::Archive:
+    m_archiveController.changed(job);
+    break;
+  case JobKind::Trash:
+    m_trashController.trashChanged(job);
+    break;
+  case JobKind::Restore:
+    m_trashController.restoreChanged(job);
+    break;
+  case JobKind::EmptyTrash:
+    m_trashController.emptyTrashChanged(job);
+    break;
+  case JobKind::Rename:
+    m_renameController.changed(job);
+    break;
+  case JobKind::BatchRename:
+    m_batchRename.changed(job);
+    break;
+  case JobKind::Permission:
+    m_propertiesController.changed(job);
+    break;
+  case JobKind::Create:
+    m_createController.changed(job);
+    break;
+  }
+  m_browserDirty = true;
+  m_surface->requestUpdate();
+}
+
+void BrowserPage::thumbnailsChanged() {
+  if (m_thumbnailClearing != m_thumbnails.clearing() || m_thumbnailError != m_thumbnails.error()) {
+    m_thumbnailClearing = m_thumbnails.clearing();
+    m_thumbnailError = m_thumbnails.error();
+    m_settingsController.markDirty();
+  }
+  m_surface->requestLayout();
 }
 
 files::BrowserSettings BrowserPage::options() const {
@@ -399,8 +356,6 @@ void BrowserPage::reusePlacesFrom(BrowserPage& previous) { m_sidebar.reuseFrom(p
 
 void BrowserPage::workspaceError(const std::string& message) { actionError(message); }
 
-void BrowserPage::setWorkspaceId(files::TabId id) { m_workspaceId = id; }
-
 bool BrowserPage::owns(const Node* node) const {
   for (; node; node = node->parent()) {
     if (node == m_root || node == m_toolbar || node == m_sidebar.bundle()) {
@@ -442,22 +397,6 @@ void BrowserPage::open(const files::Location& location) { browser().open(locatio
 
 void BrowserPage::setWorkspaceRequest(std::function<void(WorkspaceCommand, std::optional<files::Location>)> callback) {
   m_workspaceRequest = std::move(callback);
-}
-
-void BrowserPage::setClearThumbnails(std::function<void()> callback) { m_clearThumbnails = std::move(callback); }
-
-void BrowserPage::clearThumbnails() { m_thumbnails.clearCache(); }
-
-bool BrowserPage::clearingThumbnails() const { return m_thumbnails.clearing(); }
-
-void BrowserPage::pauseThumbnails(bool pause) {
-  m_cachePaused = pause;
-  auto options = m_savedSettings.thumbnails;
-  if (pause) {
-    options.policy = files::ThumbnailPolicy::Never;
-  }
-  m_thumbnails.setOptions(options);
-  m_surface->requestLayout();
 }
 
 void BrowserPage::configurationChanged() {
@@ -605,10 +544,9 @@ void BrowserPage::hide() {
             ? std::optional(browser().model().rows()[*m_list->firstVisibleIndex()])
             : std::nullopt
     };
+    // Releasing the cells lets the shared ThumbnailService evict this page's thumbnails at its next endFrame().
     m_list->setAdapter(nullptr);
     m_millerView->suspend();
-    m_thumbnails.invalidate();
-    m_thumbnails.synchronizeSources({});
     m_thumbnailContext = 0;
     m_thumbnailRevision = 0;
   }
@@ -1135,18 +1073,10 @@ files::ActionContext BrowserPage::actionContext() const {
       .canBack = browser().canBack(),
       .canForward = browser().canForward(),
       .canUp = browser().canUp(),
-      .operationsBusy = m_creator.busy()
-          || renameBusy()
-          || m_archives.busy()
-          || m_transfers.busy()
-          || m_restore.busy()
-          || m_trash.busy()
-          || m_trash.canTrash()
-          || m_emptyTrash.pending()
-          || m_transferController.pastePending(),
+      .operationsBusy = m_jobs.busy() || m_transferController.pastePending(),
       .pinsEditable = m_pins.editable(),
       .pinsBusy = m_pins.busy(),
-      .canEmptyTrash = fileJobsIdle(),
+      .canEmptyTrash = !m_jobs.busy(),
       .pinned = [this](const auto& location) { return m_pins.contains(location); },
       .viewMode = m_viewMode,
       .showSidebar = m_sidebar.visible(),
@@ -1549,16 +1479,7 @@ void BrowserPage::revealOnReload(std::vector<files::Location> targets) { m_revea
 
 void BrowserPage::restorePlaceFocus(files::Location location) { m_sidebar.focusPlace(std::move(location)); }
 
-bool BrowserPage::fileJobsIdle() const {
-  return !m_archives.busy()
-      && !m_transfers.busy()
-      && !m_restore.busy()
-      && !m_trash.busy()
-      && !m_trash.canTrash()
-      && !m_emptyTrash.pending()
-      && !renameBusy()
-      && !m_creator.busy();
-}
+PageJobs& BrowserPage::jobs() { return m_jobs; }
 
 void BrowserPage::requestSync() {
   m_browserDirty = true;
@@ -1673,7 +1594,7 @@ void BrowserPage::applySettings(const files::BrowserSettings& settings, bool for
   if (m_settingsController.open()) {
     m_detailsHeader.applySettings(before, settings, force);
   }
-  if (!m_cachePaused && (force || before.thumbnails != settings.thumbnails)) {
+  if (force || before.thumbnails != settings.thumbnails) {
     m_thumbnails.setOptions(settings.thumbnails);
   }
   if (before.millerShowParents != settings.millerShowParents && m_miller.enabled()) {
@@ -2445,7 +2366,7 @@ void BrowserPage::focusFileList() {
 
 bool BrowserPage::active() const { return m_active; }
 
-bool BrowserPage::thumbnailsPaused() const { return m_cachePaused; }
+bool BrowserPage::thumbnailsPaused() const { return m_thumbnails.clearing(); }
 
 const files::BrowserSettings& BrowserPage::settings() const { return m_savedSettings; }
 

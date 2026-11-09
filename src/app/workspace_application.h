@@ -1,8 +1,10 @@
 #pragma once
 
 #include "app/file_manager_service.h"
+#include "app/operation_hub.h"
 #include "app/page/browser_page.h"
 #include "browser/tab_workspace.h"
+#include "thumbnails/thumbnail_service.h"
 
 #include <csignal>
 #include <map>
@@ -98,10 +100,13 @@ private:
   files::ViewPreferenceWriter m_preferences;
   files::PinService m_pins;
   files::FileIconCache m_icons;
+  // One thumbnail pipeline for every page.
+  files::ThumbnailService m_thumbnails;
   files::TabWorkspace m_model;
+  // File jobs outlive the page that started them; pages must go before the hub.
+  OperationHub m_hub{m_model};
   std::map<files::TabId, std::unique_ptr<BrowserPage>> m_pages;
   std::map<files::WindowId, std::unique_ptr<Host>> m_hosts;
   files::WindowId m_focused = 0;
-  std::optional<files::TabId> m_cacheClearOwner;
   std::shared_ptr<int> m_lifetime = std::make_shared<int>(0);
 };

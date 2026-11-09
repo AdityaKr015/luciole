@@ -1,5 +1,6 @@
 #include "app/page/create_controller.h"
 
+#include "app/operation_hub.h"
 #include "app/page/active_dialog.h"
 #include "app/page/page_context.h"
 #include "browser/browser_controller.h"
@@ -38,11 +39,10 @@ namespace {
 } // namespace
 
 CreateController::CreateController(
-    PageContext& page, files::CreateService& creator, files::TemplateCatalog& templates, WaylandConnection& connection,
-    RenderContext& renderer, AnimationManager& animations
+    PageContext& page, files::TemplateCatalog& templates, WaylandConnection& connection, RenderContext& renderer,
+    AnimationManager& animations
 )
-    : m_page(page), m_creator(creator), m_templates(templates), m_connection(connection), m_renderer(renderer),
-      m_animations(animations) {}
+    : m_page(page), m_templates(templates), m_connection(connection), m_renderer(renderer), m_animations(animations) {}
 
 bool CreateController::canCreateItem() const {
   return m_page.actionState(files::BrowserAction::CreateFolder, m_page.requestFor({})).enabled;
@@ -314,15 +314,17 @@ void CreateController::openCreateItem(
     m_createParent = std::move(parent);
     m_creationPreparing = true;
     control->setSaving(true);
-    if (!(source ? m_creator.prepareTemplate(*m_createParent, std::move(*source))
-                 : m_creator.prepare(*m_createParent, kind))) {
+    m_job = m_page.jobs().create<files::CreateService>(JobScope::Page);
+    auto& creator = m_job->service<files::CreateService>();
+    if (!(source ? creator.prepareTemplate(*m_createParent, std::move(*source))
+                 : creator.prepare(*m_createParent, kind))) {
       control->showError("Another creation is still finishing.");
     }
   }
 }
 
 void CreateController::submitCreateItem(std::string name) {
-  if (m_createEditor == nullptr || !m_createParent) {
+  if (m_createEditor == nullptr || !m_createParent || !m_job) {
     return;
   }
   auto& browser = m_page.browser();
@@ -330,12 +332,14 @@ void CreateController::submitCreateItem(std::string name) {
     m_createEditor->showError("The destination changed. Close this dialog and try again.");
     return;
   }
-  if (m_creator.create(std::move(name))) {
+  auto& creator = m_job->service<files::CreateService>();
+  if (creator.create(std::move(name))) {
+    m_page.jobs().follow(*m_job);
     m_createEditor->setSaving(true);
   } else {
     m_createEditor->showError(
-        m_creator.snapshot().error ? createErrorText(m_creator.snapshot().error)
-                                   : "The destination is unavailable. Close this dialog and try again."
+        creator.snapshot().error ? createErrorText(creator.snapshot().error)
+                                 : "The destination is unavailable. Close this dialog and try again."
     );
   }
 }
@@ -358,17 +362,19 @@ void CreateController::openLinkDialog(const files::DirectoryEntry& target) {
       width, files::locationEditText(target.location), "Link to " + target.displayName, files::locationEditText(base),
       target.type == files::FileType::Regular && !target.symlink,
       [this, base](std::string name, const std::string& path, files::CreateKind kind) {
-        if (!m_linkDialog) {
+        if (!m_linkDialog || !m_job) {
           return;
         }
         try {
           const auto parent = files::resolveLocationText(path, base);
-          if (m_creator.createLink(parent, std::move(name), kind)) {
+          auto& creator = m_job->service<files::CreateService>();
+          if (creator.createLink(parent, std::move(name), kind)) {
+            m_page.jobs().follow(*m_job);
             m_linkDialog->setSaving(true);
           } else {
             m_linkDialog->showError(
-                m_creator.snapshot().error ? createErrorText(m_creator.snapshot().error)
-                                           : "The source is unavailable. Close this dialog and try again."
+                creator.snapshot().error ? createErrorText(creator.snapshot().error)
+                                         : "The source is unavailable. Close this dialog and try again."
             );
           }
         } catch (const std::exception& error) {
@@ -401,27 +407,41 @@ void CreateController::openLinkDialog(const files::DirectoryEntry& target) {
       }
     });
     dialog->setSaving(true);
-    if (!m_creator.prepareLink(target)) {
+    m_job = m_page.jobs().create<files::CreateService>(JobScope::Page);
+    if (!m_job->service<files::CreateService>().prepareLink(target)) {
       dialog->setSaving(false);
       dialog->showError("Another creation is still finishing.");
     }
   }
 }
 
-void CreateController::onFrame() {
-  if (std::exchange(m_dirty, false)) {
-    sync();
+void CreateController::changed(OperationJob& job) {
+  if (&job == m_job.get()) {
+    m_dirty = true;
+  } else if (!job.running() && job.takeResult()) {
+    // A job whose dialog closed.
+    sync(job);
   }
 }
 
-void CreateController::sync() {
-  if (m_creator.busy()) {
+void CreateController::onFrame() {
+  if (std::exchange(m_dirty, false) && m_job) {
+    sync(*m_job);
+  }
+}
+
+void CreateController::sync(const OperationJob& job) {
+  const auto& creator = job.service<files::CreateService>();
+  if (creator.busy()) {
     return;
   }
-  const auto& snapshot = m_creator.snapshot();
+  const bool dialog = &job == m_job.get();
+  auto* createEditor = dialog ? m_createEditor : nullptr;
+  auto* linkDialog = dialog ? m_linkDialog : nullptr;
+  const auto& snapshot = creator.snapshot();
   if (snapshot.status == files::CreateStatus::Succeeded || snapshot.status == files::CreateStatus::Partial) {
     auto message = createErrorText(snapshot.error);
-    if (m_linkDialog && !snapshot.error && snapshot.parent) {
+    if (linkDialog && !snapshot.error && snapshot.parent) {
       message = "Link created in " + files::locationEditText(*snapshot.parent);
     }
     m_page.setActionMessage(std::move(message));
@@ -434,32 +454,32 @@ void CreateController::sync() {
       m_page.revealOnReload(std::move(reveal));
       browser.refresh();
     }
-    if (m_createEditor != nullptr || m_linkDialog != nullptr) {
+    if (createEditor != nullptr || linkDialog != nullptr) {
       m_createEditor = nullptr;
       m_page.dismissMenu();
     }
-  } else if (m_linkDialog) {
-    m_linkDialog->setSaving(false);
-    m_linkDialog->showError(createErrorText(snapshot.error));
+  } else if (linkDialog) {
+    linkDialog->setSaving(false);
+    linkDialog->showError(createErrorText(snapshot.error));
     if (std::exchange(m_linkPreparing, false)) {
-      m_page.menuDispatcher().setFocus(m_linkDialog->nameInput()->inputArea());
-      m_linkDialog->nameInput()->selectAll();
+      m_page.menuDispatcher().setFocus(linkDialog->nameInput()->inputArea());
+      linkDialog->nameInput()->selectAll();
     }
     m_page.menuSurface()->requestLayout();
-  } else if (m_createEditor == nullptr) {
+  } else if (createEditor == nullptr) {
     if (snapshot.status == files::CreateStatus::Error) {
       m_page.actionError("Could not create: " + createErrorText(snapshot.error));
     }
   } else if (snapshot.status == files::CreateStatus::Ready || snapshot.status == files::CreateStatus::Error) {
-    m_createEditor->setSaving(false);
-    m_createEditor->showError(createErrorText(snapshot.error));
+    createEditor->setSaving(false);
+    createEditor->showError(createErrorText(snapshot.error));
     if (std::exchange(m_creationPreparing, false)) {
-      m_page.menuDispatcher().setFocus(m_createEditor->input()->inputArea());
+      m_page.menuDispatcher().setFocus(createEditor->input()->inputArea());
       if (snapshot.kind == files::CreateKind::Document) {
-        const auto& value = m_createEditor->input()->value();
-        m_createEditor->input()->selectRange(0, files::filenameStemLength(value, false));
+        const auto& value = createEditor->input()->value();
+        createEditor->input()->selectRange(0, files::filenameStemLength(value, false));
       } else {
-        m_createEditor->input()->selectAll();
+        createEditor->input()->selectAll();
       }
     }
     m_page.menuSurface()->requestLayout();
@@ -468,9 +488,13 @@ void CreateController::sync() {
 
 void CreateController::closeCreation() {
   if (m_createParent || m_linkDialog) {
-    m_creator.cancel();
+    // Creating goes on for the page that takes the job over once this page left its window.
+    if (m_job && (m_page.jobs().attached() || !m_job->running())) {
+      m_job->cancel();
+    }
     m_page.focusFileList();
   }
+  m_job.reset();
   m_createEditor = nullptr;
   m_linkDialog = nullptr;
   m_linkPreparing = false;

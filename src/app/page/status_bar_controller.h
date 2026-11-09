@@ -6,16 +6,7 @@
 #include <string>
 
 namespace files {
-  class ArchiveService;
-  class BatchRenameService;
-  class CreateService;
-  class EmptyTrashService;
-  class PermissionService;
   class PinService;
-  class RenameService;
-  class RestoreService;
-  class TransferService;
-  class TrashService;
 } // namespace files
 
 class FileKeyboardController;
@@ -24,18 +15,14 @@ class Label;
 class PageContext;
 class SettingsController;
 class TransferController;
-class TrashController;
 
-// The status bar and the empty-folder notice: progress of the running file operation, the last action message,
-// folder and selection counts, free space, and the notice shown in place of an empty file list.
+// The status bar and the empty-folder notice: progress of the newest running job the page owns, the last action
+// message, folder and selection counts, free space, and the notice shown in place of an empty file list.
 class StatusBarController {
 public:
   StatusBarController(
-      PageContext& page, files::CreateService& creator, files::PermissionService& permissions,
-      files::BatchRenameService& batchRenamer, files::RenameService& renamer, files::RestoreService& restore,
-      files::EmptyTrashService& emptyTrash, files::TrashService& trash, files::ArchiveService& archives,
-      files::TransferService& transfers, files::PinService& pins, TrashController& trashController,
-      TransferController& transferController, SettingsController& settings, FileKeyboardController& keys
+      PageContext& page, files::PinService& pins, TransferController& transferController, SettingsController& settings,
+      FileKeyboardController& keys
   );
 
   // The last action message; shown unless an operation runs.
@@ -59,17 +46,7 @@ private:
   std::string operationStatus() const;
 
   PageContext& m_page;
-  files::CreateService& m_creator;
-  files::PermissionService& m_permissions;
-  files::BatchRenameService& m_batchRenamer;
-  files::RenameService& m_renamer;
-  files::RestoreService& m_restore;
-  files::EmptyTrashService& m_emptyTrash;
-  files::TrashService& m_trash;
-  files::ArchiveService& m_archives;
-  files::TransferService& m_transfers;
   files::PinService& m_pins;
-  TrashController& m_trashController;
   TransferController& m_transferController;
   SettingsController& m_settings;
   FileKeyboardController& m_keys;

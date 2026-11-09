@@ -1,13 +1,11 @@
 #include "app/page/trash_controller.h"
 
+#include "app/operation_hub.h"
 #include "app/page/active_dialog.h"
 #include "app/page/page_context.h"
 #include "browser/browser_controller.h"
 #include "core/ui_phase.h"
 #include "fs/gio_ptr.h"
-#include "operations/empty_trash_service.h"
-#include "operations/restore_service.h"
-#include "operations/trash_service.h"
 #include "platform/desktop_integration.h"
 #include "render/scene/input_dispatcher.h"
 #include "ui/builders.h"
@@ -25,10 +23,7 @@
 #include <string>
 #include <utility>
 
-TrashController::TrashController(
-    PageContext& page, files::TrashService& trash, files::EmptyTrashService& emptyTrash, files::RestoreService& restore
-)
-    : m_page(page), m_trash(trash), m_emptyTrash(emptyTrash), m_restore(restore) {}
+TrashController::TrashController(PageContext& page) : m_page(page) {}
 
 bool TrashController::canTrashItems(const std::vector<files::DirectoryEntry>& targets) const {
   return m_page.actionState(files::BrowserAction::Trash, m_page.requestFor(targets)).enabled;
@@ -45,7 +40,8 @@ void TrashController::trashItems(const std::vector<files::DirectoryEntry>& targe
   for (const auto& target : targets) {
     sources.push_back(target.location);
   }
-  if (!m_trash.prepare(*m_page.browser().model().snapshot().location, std::move(sources))) {
+  const auto job = m_page.jobs().create<files::TrashService>();
+  if (!job->service<files::TrashService>().prepare(*m_page.browser().model().snapshot().location, std::move(sources))) {
     m_page.actionError("Another Trash operation is still finishing.");
   }
 }
@@ -53,14 +49,15 @@ void TrashController::trashItems(const std::vector<files::DirectoryEntry>& targe
 void TrashController::restore(const std::vector<files::DirectoryEntry>& targets) {
   m_page.cancelDrag();
   m_page.setActionMessage({});
-  if (!m_restore.start(targets)) {
+  if (!m_page.jobs().create<files::RestoreService>()->service<files::RestoreService>().start(targets)) {
     m_page.actionError("Could not start restoring the selection.");
   }
 }
 
-void TrashController::restoreChanged() {
-  if (!m_restore.busy()) {
-    const auto& results = m_restore.results();
+void TrashController::restoreChanged(OperationJob& job) {
+  const auto& restore = job.service<files::RestoreService>();
+  if (!restore.busy() && job.takeResult()) {
+    const auto& results = restore.results();
     const auto count = [&](files::RestoreOutcome outcome) {
       return std::ranges::count(results, outcome, &files::RestoreResult::outcome);
     };
@@ -84,7 +81,7 @@ void TrashController::restoreChanged() {
 }
 
 void TrashController::openEmptyTrash(std::optional<std::vector<files::DirectoryEntry>> selection) {
-  if (!m_page.fileJobsIdle()) {
+  if (m_page.jobs().busy()) {
     m_page.actionError("Another file operation is still finishing.");
     return;
   }
@@ -148,70 +145,48 @@ void TrashController::openEmptyTrash(std::optional<std::vector<files::DirectoryE
   );
   if (m_page.menuSurface() != nullptr) {
     m_page.activeDialog().bind(ActiveDialog::Kind::EmptyTrash, [this] {
-      if (std::exchange(m_emptyTrashDialog, false)) {
-        m_emptyTrash.cancel();
+      if (const auto job = std::exchange(m_emptyTrash, nullptr)) {
+        job->cancel();
       }
       m_emptyTrashMessage = nullptr;
       m_emptyTrashSize = nullptr;
       m_emptyTrashConfirm = nullptr;
     });
-    m_emptyTrashDialog = true;
-    m_selectedDelete = selection.has_value();
+    m_emptyTrash = m_page.jobs().create<files::EmptyTrashService>(JobScope::Page);
     m_emptyTrashMessage = message;
     m_emptyTrashSize = size;
     m_emptyTrashConfirm = confirm;
     m_page.menuDispatcher().setFocus(cancel->inputArea());
-    if (!(selection ? m_emptyTrash.prepareSelection(std::move(*selection)) : m_emptyTrash.prepare())) {
+    auto& emptyTrash = m_emptyTrash->service<files::EmptyTrashService>();
+    if (!(selection ? emptyTrash.prepareSelection(std::move(*selection)) : emptyTrash.prepare())) {
       message->setText("Another Trash deletion is still finishing.");
     }
   }
 }
 
 void TrashController::confirmEmptyTrash() {
-  if (!m_emptyTrashDialog || !m_emptyTrash.empty()) {
+  if (!m_emptyTrash || !m_emptyTrash->service<files::EmptyTrashService>().empty()) {
     return;
   }
+  m_page.jobs().follow(*m_emptyTrash);
   m_emptyTrashConfirm->setEnabled(false);
-  m_emptyTrashDialog = false;
+  m_emptyTrash.reset();
   m_page.dismissMenu();
 }
 
 void TrashController::onFrame() {
-  if (std::exchange(m_trashDirty, false)) {
-    syncTrash();
-  }
   if (std::exchange(m_emptyTrashDirty, false)) {
     syncEmptyTrash();
   }
 }
 
-void TrashController::syncEmptyTrash() {
-  const auto& snapshot = m_emptyTrash.snapshot();
-  if (m_emptyTrashDialog && m_emptyTrashMessage != nullptr) {
-    if (snapshot.status == files::EmptyTrashStatus::Ready) {
-      const auto count = snapshot.results.size();
-      m_emptyTrashMessage->setText(
-          count == 0 ? "Trash is already empty."
-                     : std::format(
-                           "Permanently delete {} item{} and their contents? This cannot be undone.", count,
-                           count == 1 ? "" : "s"
-                       )
-      );
-      m_emptyTrashConfirm->setEnabled(m_emptyTrash.canEmpty());
-    } else if (snapshot.status == files::EmptyTrashStatus::Error) {
-      m_emptyTrashMessage->setText("Could not read Trash: " + files::fileErrorText(snapshot.error));
-      m_emptyTrashConfirm->setEnabled(false);
-    }
-    std::string sizeText = "Size: calculating…";
-    if (snapshot.size) {
-      const files::GString value(g_format_size_full(*snapshot.size, G_FORMAT_SIZE_IEC_UNITS));
-      sizeText = std::format("Size: {}{}", snapshot.sizeIncomplete ? "at least " : "", value.get());
-    } else if (!m_emptyTrash.busy()) {
-      sizeText = "Size unavailable";
-    }
-    m_emptyTrashSize->setText(sizeText);
-    m_page.menuSurface()->requestLayout();
-  } else if (snapshot.status == files::EmptyTrashStatus::Finished) {
+void TrashController::emptyTrashChanged(OperationJob& job) {
+  if (&job == m_emptyTrash.get()) {
+    m_emptyTrashDirty = true;
+    return;
+  }
+  const auto& snapshot = job.service<files::EmptyTrashService>().snapshot();
+  if (snapshot.status == files::EmptyTrashStatus::Finished && job.takeResult()) {
     const auto count = [&](files::EmptyTrashOutcome outcome) {
       return std::ranges::count(snapshot.results, outcome, &files::EmptyTrashResult::outcome);
     };
@@ -235,19 +210,53 @@ void TrashController::syncEmptyTrash() {
     if (const auto& location = browser.model().snapshot().location; location && location->isTrash()) {
       browser.open(files::Location::trash());
     }
-  } else if (snapshot.status == files::EmptyTrashStatus::Error) {
+  } else if (snapshot.status == files::EmptyTrashStatus::Error && job.takeResult()) {
     m_page.actionError(
-        std::string(m_selectedDelete ? "Could not delete selected items: " : "Could not empty Trash: ")
+        std::string(snapshot.selection ? "Could not delete selected items: " : "Could not empty Trash: ")
         + files::fileErrorText(snapshot.error)
     );
   }
 }
 
-void TrashController::syncTrash() {
-  const auto& snapshot = m_trash.snapshot();
-  if (snapshot.status == files::TrashStatus::Ready) {
-    (void)m_trash.trash();
-  } else if (snapshot.status == files::TrashStatus::Error) {
+void TrashController::syncEmptyTrash() {
+  if (!m_emptyTrash || m_emptyTrashMessage == nullptr) {
+    return;
+  }
+  const auto& emptyTrash = m_emptyTrash->service<files::EmptyTrashService>();
+  const auto& snapshot = emptyTrash.snapshot();
+  if (snapshot.status == files::EmptyTrashStatus::Ready) {
+    const auto count = snapshot.results.size();
+    m_emptyTrashMessage->setText(
+        count == 0 ? "Trash is already empty."
+                   : std::format(
+                         "Permanently delete {} item{} and their contents? This cannot be undone.", count,
+                         count == 1 ? "" : "s"
+                     )
+    );
+    m_emptyTrashConfirm->setEnabled(emptyTrash.canEmpty());
+  } else if (snapshot.status == files::EmptyTrashStatus::Error) {
+    m_emptyTrashMessage->setText("Could not read Trash: " + files::fileErrorText(snapshot.error));
+    m_emptyTrashConfirm->setEnabled(false);
+  }
+  std::string sizeText = "Size: calculating…";
+  if (snapshot.size) {
+    const files::GString value(g_format_size_full(*snapshot.size, G_FORMAT_SIZE_IEC_UNITS));
+    sizeText = std::format("Size: {}{}", snapshot.sizeIncomplete ? "at least " : "", value.get());
+  } else if (!emptyTrash.busy()) {
+    sizeText = "Size unavailable";
+  }
+  m_emptyTrashSize->setText(sizeText);
+  m_page.menuSurface()->requestLayout();
+}
+
+void TrashController::trashChanged(OperationJob& job) {
+  const auto& trash = job.service<files::TrashService>();
+  const auto& snapshot = trash.snapshot();
+  // OperationHub::update() starts a prepared move.
+  if (trash.busy() || trash.canTrash() || !job.takeResult()) {
+    return;
+  }
+  if (snapshot.status == files::TrashStatus::Error) {
     m_page.actionError("Could not move to Trash: " + files::fileErrorText(snapshot.error));
   } else if (snapshot.status == files::TrashStatus::Cancelled) {
     m_page.actionError("Move to Trash cancelled.");
@@ -275,7 +284,7 @@ void TrashController::syncTrash() {
 }
 
 void TrashController::layoutDialog() {
-  if (!m_emptyTrashDialog) {
+  if (!m_emptyTrash) {
     return;
   }
   auto& surface = m_page.surface();

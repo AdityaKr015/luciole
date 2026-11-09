@@ -52,7 +52,12 @@ namespace files {
     ArchiveService& operator=(const ArchiveService&) = delete;
     bool inspect(Location source);
     bool compress(std::vector<Location> sources, Location destinationFile, ArchiveFormat format);
-    bool extract(Location source, Location destinationFolder, std::vector<std::string> selected = {});
+    // `expected` is a catalog of `source` read earlier, by this or another instance; extraction fails when the
+    // archive no longer matches it. Without one, the catalog this instance read is used.
+    bool extract(
+        Location source, Location destinationFolder, std::vector<std::string> selected = {},
+        std::shared_ptr<const ArchiveCatalog> expected = nullptr
+    );
     bool openMember(const std::string& path);
     void cancel();
     void shutdown();

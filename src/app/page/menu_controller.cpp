@@ -7,6 +7,7 @@
 #include "app/page/page_context.h"
 #include "app/page/properties_controller.h"
 #include "app/page/rename_controller.h"
+#include "app/page/transfer_controller.h"
 #include "browser/browser_controller.h"
 #include "browser/location_presentation.h"
 #include "browser/path_completion.h"
@@ -16,7 +17,6 @@
 #include "core/input/key_modifiers.h"
 #include "core/input/key_symbols.h"
 #include "fs/archive_type.h"
-#include "operations/transfer_service.h"
 #include "platform/desktop_integration.h"
 #include "platform/terminal_launcher.h"
 #include "render/scene/input_dispatcher.h"
@@ -34,13 +34,14 @@
 using Action = files::BrowserAction;
 
 MenuController::MenuController(
-    PageContext& page, files::PinService& pins, files::TransferService& transfers, files::TerminalLauncher& terminal,
-    files::PathCompletion& siblingCompletion, CreateController& creator, RenameController& renamer,
-    PropertiesController& properties, DetailsHeaderController& columns, LocationBarController& locationBar
+    PageContext& page, files::PinService& pins, TransferController& transferController,
+    files::TerminalLauncher& terminal, files::PathCompletion& siblingCompletion, CreateController& creator,
+    RenameController& renamer, PropertiesController& properties, DetailsHeaderController& columns,
+    LocationBarController& locationBar
 )
-    : m_page(page), m_pins(pins), m_transfers(transfers), m_terminal(terminal), m_siblingCompletion(siblingCompletion),
-      m_creator(creator), m_renamer(renamer), m_properties(properties), m_columns(columns), m_locationBar(locationBar) {
-}
+    : m_page(page), m_pins(pins), m_transferController(transferController), m_terminal(terminal),
+      m_siblingCompletion(siblingCompletion), m_creator(creator), m_renamer(renamer), m_properties(properties),
+      m_columns(columns), m_locationBar(locationBar) {}
 
 ContextMenuControlEntry
 MenuController::actionEntry(Action action, const files::ActionRequest& request, bool radio) const {
@@ -617,13 +618,13 @@ void MenuController::openMenu() {
   entries.push_back(
       {.id = 8998,
        .label = "Copy transfer report",
-       .enabled = !m_transfers.busy() && !m_transfers.report().empty() && m_page.clipboard().available()}
+       .enabled = !m_transferController.report().empty() && m_page.clipboard().available()}
   );
   showContextMenu(
       std::move(entries),
       [this, request](int id) {
         if (id == 8998) {
-          m_page.clipboard().setClipboardText(m_transfers.report());
+          m_page.clipboard().setClipboardText(std::string(m_transferController.report()));
         } else if (id >= 9000) {
           m_page.requestWorkspace(
               id == 9000       ? WorkspaceCommand::NewTab

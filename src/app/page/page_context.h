@@ -25,6 +25,7 @@ class ContextMenuControl;
 class Flex;
 class InputDispatcher;
 class MillerView;
+class PageJobs;
 class PopupSurface;
 class VirtualGridView;
 
@@ -32,16 +33,23 @@ class VirtualGridView;
 //
 // A controller (`page/<feature>_controller.{h,cpp}`) owns one feature of the page:
 // - its widget pointers, dirty flag and feature state;
-// - references to the services it drives, which BrowserPage still owns and passes to its constructor;
+// - references to the page-local services it drives, which BrowserPage owns and passes to its constructor;
 // - its open*/submit* entry points and sync(), which applies the service snapshot to its widgets.
 //
-// Frame order: the service's changed callback (BrowserPage constructor) calls the controller's markDirty().
-// BrowserPage::prepareFrame() calls onFrame() at the feature's fixed slot in the dirty -> sync sequence, and
-// onFrame() runs sync() only when the flag was set. Keep that slot so syncs run in the same order every frame.
+// File jobs belong to the application's OperationHub, one service instance per job. A controller starts one
+// with jobs().create<Service>() and observes the jobs the page owns, which include jobs taken over from a closed
+// page: BrowserPage::jobChanged() hands every owned job change to the controller of its kind. A job that only
+// feeds a dialog is created with JobScope::Page and released with jobs().follow() once it applies changes.
+//
+// Frame order: a service's changed callback (BrowserPage constructor or jobChanged()) calls the controller's
+// markDirty(). BrowserPage::prepareFrame() calls onFrame() at the feature's fixed slot in the dirty -> sync
+// sequence, and onFrame() runs sync() only when the flag was set. Keep that slot so syncs run in the same order
+// every frame.
 //
 // Dialogs: show the root with showPopup(). If menuSurface() exists afterwards, keep the widget pointers and
 // call activeDialog().bind(kind, onClose). onClose is the only teardown path: closeMenu() runs it whatever
-// closed the popup, and it cancels the job and drops the pointers.
+// closed the popup, and it cancels the dialog's job and drops the pointers. When the page left its window
+// (!jobs().attached()), a job that already applies changes keeps running for the page that takes it over.
 //
 // Input, layout and scene hooks that the page cannot route generically yet are small controller methods the
 // page calls at the original spot.
@@ -54,7 +62,8 @@ public:
   virtual bool targetsCurrent(const std::vector<files::DirectoryEntry>& targets) = 0;
   // True while the request's folder, targets or selection for `scope` still match the page.
   virtual bool requestCurrent(const files::ActionRequest& request, files::ActionScope scope) const = 0;
-  // True while a file operation runs or waits; actions that start one are disabled meanwhile.
+  // True while a job the page owns runs or waits (see PageJobs::busy()), or a paste waits for the clipboard;
+  // actions that start a job are disabled meanwhile.
   virtual bool operationsBusy() const = 0;
   // True while the page is shown in its window.
   virtual bool visible() const = 0;
@@ -64,8 +73,8 @@ public:
   virtual void setActionMessage(std::string message) = 0;
   // Selects `targets` once the current folder reloads.
   virtual void revealOnReload(std::vector<files::Location> targets) = 0;
-  // True while no file job runs or waits to start; a pending paste does not count.
-  virtual bool fileJobsIdle() const = 0;
+  // The file jobs this page starts and owns.
+  virtual PageJobs& jobs() = 0;
   // Cancels a file or place drag in progress.
   virtual void cancelDrag() = 0;
   virtual files::WaylandTextClipboard& clipboard() = 0;

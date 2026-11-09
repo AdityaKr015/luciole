@@ -1,18 +1,12 @@
 #include "app/page/transfer_controller.h"
 
+#include "app/operation_hub.h"
 #include "app/page/active_dialog.h"
 #include "app/page/page_context.h"
 #include "browser/browser_controller.h"
 #include "browser/location_presentation.h"
 #include "core/ui_phase.h"
 #include "fs/gio_ptr.h"
-#include "operations/archive_service.h"
-#include "operations/batch_rename_service.h"
-#include "operations/empty_trash_service.h"
-#include "operations/permission_service.h"
-#include "operations/restore_service.h"
-#include "operations/transfer_service.h"
-#include "operations/trash_service.h"
 #include "platform/desktop_integration.h"
 #include "render/scene/input_dispatcher.h"
 #include "ui/builders.h"
@@ -28,14 +22,14 @@
 #include <utility>
 #include <vector>
 
-TransferController::TransferController(
-    PageContext& page, files::TransferService& transfers, files::ArchiveService& archives,
-    files::RestoreService& restore, files::TrashService& trash, files::EmptyTrashService& emptyTrash,
-    files::BatchRenameService& batchRenamer, files::PermissionService& permissions, std::function<void()> progressTick
-)
-    : m_page(page), m_transfers(transfers), m_archives(archives), m_restore(restore), m_trash(trash),
-      m_emptyTrash(emptyTrash), m_batchRenamer(batchRenamer), m_permissions(permissions),
-      m_progressTick(std::move(progressTick)) {}
+namespace {
+  bool arrived(const files::TransferResult& result) {
+    return result.outcome == files::TransferOutcome::Moved || result.outcome == files::TransferOutcome::Copied;
+  }
+} // namespace
+
+TransferController::TransferController(PageContext& page, std::function<void()> progressTick)
+    : m_page(page), m_progressTick(std::move(progressTick)) {}
 
 void TransferController::paste(const files::ActionRequest& request) {
   m_pendingFilePaste = true;
@@ -55,18 +49,18 @@ void TransferController::paste(const files::ActionRequest& request) {
     if (m_page.operationsBusy()) {
       return;
     }
-    if (selection->payload.cut) {
-      if (!m_page.clipboard().claimMove(selection->revision)) {
-        return;
-      }
-      m_clipboardTransfer = *selection;
+    const bool cut = selection->payload.cut;
+    if (cut && !m_page.clipboard().claimMove(selection->revision)) {
+      return;
     }
-    if (!startPayloadTransfer(
-            selection->payload, *request.folder,
-            selection->payload.cut ? files::TransferAction::Move : files::TransferAction::Copy
-        )) {
-      if (const auto claimed = std::exchange(m_clipboardTransfer, std::nullopt)) {
-        m_page.clipboard().finishMove(*claimed, {});
+    const auto job = startPayloadTransfer(
+        selection->payload, *request.folder, cut ? files::TransferAction::Move : files::TransferAction::Copy
+    );
+    if (cut) {
+      if (job) {
+        finishMove(*job, std::move(*selection));
+      } else {
+        m_page.clipboard().finishMove(*selection, {});
       }
     }
   });
@@ -83,65 +77,89 @@ void TransferController::transferTo(
   for (const auto& target : request.targets) {
     sources.push_back(target.location);
   }
-  if (!sources.empty() && !m_transfers.busy()) {
-    (void)m_transfers.start(
-        {std::move(sources), destination, copy ? files::TransferAction::Copy : files::TransferAction::Move}
-    );
+  if (!sources.empty()) {
+    transfer(std::move(sources), destination, copy ? files::TransferAction::Copy : files::TransferAction::Move);
   }
+}
+
+void TransferController::transfer(
+    std::vector<files::Location> sources, const files::Location& destination, files::TransferAction action
+) {
+  (void)start({std::move(sources), destination, action});
+}
+
+std::shared_ptr<OperationJob> TransferController::start(files::TransferRequest request) {
+  auto job = m_page.jobs().create<files::TransferService>();
+  if (!job->service<files::TransferService>().start(std::move(request))) {
+    return nullptr;
+  }
+  return job;
+}
+
+void TransferController::finishMove(OperationJob& job, files::ClipboardFiles selection) {
+  job.whenIdle([&clipboard = m_page.clipboard(), selection = std::move(selection)](OperationJob& done) {
+    clipboard.finishMove(selection, done.service<files::TransferService>().results());
+  });
 }
 
 void TransferController::receiveDrop(
     files::FilePayload payload, const files::Location& destination, files::TransferAction action,
     files::DropCompletion finish
 ) {
-  m_dropCompletion = std::move(finish);
-  if (!startPayloadTransfer(std::move(payload), destination, action)) {
-    std::exchange(m_dropCompletion, {})(false);
+  const auto job = startPayloadTransfer(std::move(payload), destination, action);
+  if (!job) {
+    finish(false);
+    return;
   }
+  job->whenIdle([finish = std::move(finish)](OperationJob& done) {
+    const auto& results = done.service<files::TransferService>().results();
+    finish(!results.empty() && std::ranges::all_of(results, arrived));
+  });
 }
 
-void TransferController::changed() {
-  if (!m_archives.busy() && !m_transfers.busy()) {
-    const auto& results = m_transfers.results();
-    const auto done = std::ranges::count_if(results, [](const auto& item) {
-      return item.outcome == files::TransferOutcome::Moved || item.outcome == files::TransferOutcome::Copied;
-    });
-    std::string message = std::format(
-        "{} item{} {}", done, done == 1 ? "" : "s",
-        m_transfers.action() == files::TransferAction::Copy ? "copied" : "moved"
-    );
-    if (const auto error = std::ranges::find_if(results, [](const auto& item) { return item.error.has_value(); });
-        error != results.end()) {
-      message +=
-          std::format(" · {}: {}", error->source.displayName().value_or("Item"), files::fileErrorText(*error->error));
-    }
-    m_page.setActionMessage(std::move(message));
-    if (const auto selection = std::exchange(m_clipboardTransfer, std::nullopt)) {
-      m_page.clipboard().finishMove(*selection, results);
-    }
-    if (auto finish = std::exchange(m_dropCompletion, {})) {
-      finish(!results.empty() && std::ranges::all_of(results, [](const auto& item) {
-        return item.outcome == files::TransferOutcome::Moved || item.outcome == files::TransferOutcome::Copied;
-      }));
-    }
-    m_page.browser().refresh();
+void TransferController::transferChanged(OperationJob& job) {
+  const auto& transfers = job.service<files::TransferService>();
+  if (transfers.busy() || !job.takeResult()) {
+    return;
   }
+  const auto& results = transfers.results();
+  const auto done = std::ranges::count_if(results, arrived);
+  std::string message = std::format(
+      "{} item{} {}", done, done == 1 ? "" : "s", transfers.action() == files::TransferAction::Copy ? "copied" : "moved"
+  );
+  if (const auto error = std::ranges::find_if(results, [](const auto& item) { return item.error.has_value(); });
+      error != results.end()) {
+    message +=
+        std::format(" · {}: {}", error->source.displayName().value_or("Item"), files::fileErrorText(*error->error));
+  }
+  m_page.setActionMessage(std::move(message));
+  m_page.browser().refresh();
 }
 
 void TransferController::syncConflict() {
   if (!m_page.popupAvailable()) {
     return;
   }
-  const bool archive = m_archives.conflict().has_value();
-  const bool restore = m_restore.conflict().has_value();
-  const auto conflict = restore ? m_restore.conflict() : archive ? m_archives.conflict() : m_transfers.conflict();
-  if (m_activeConflict && !conflict) {
-    m_page.dismissMenu();
+  if (m_activeConflict) {
+    const auto* shown = m_page.jobs().find(m_activeConflict->job);
+    const auto pending = shown ? shown->conflict() : std::nullopt;
+    if (!pending || pending->id != m_activeConflict->conflict) {
+      m_activeConflict.reset();
+      m_page.dismissMenu();
+    }
     return;
   }
-  if (!conflict || m_page.menuSurface() != nullptr) {
+  if (m_page.menuSurface() != nullptr) {
     return;
   }
+  auto* job = m_page.jobs().oldest([](const OperationJob& candidate) { return candidate.conflict().has_value(); });
+  const auto conflict = job ? job->conflict() : std::nullopt;
+  if (!conflict) {
+    return;
+  }
+  const bool archive = job->kind() == JobKind::Archive;
+  const bool restore = job->kind() == JobKind::Restore;
+  const ActiveConflict active{.job = job->id(), .conflict = conflict->id};
   auto& surface = m_page.surface();
   const float width = std::min(520.0F, static_cast<float>(surface.width()) - 32.0F);
   auto facts = [&](const std::string& title, bool folder, std::optional<std::uint64_t> bytes,
@@ -177,11 +195,10 @@ void TransferController::syncConflict() {
     );
   };
   const auto applyToAll = std::make_shared<bool>(false);
-  const auto choose = [this, archive, restore, applyToAll, id = conflict->id](files::TransferConflictChoice choice) {
-    if (restore ? m_restore.resolve(id, choice)
-            : archive
-            ? m_archives.resolve(id, choice)
-            : m_transfers.resolve(id, choice, *applyToAll && choice != files::TransferConflictChoice::Cancel)) {
+  const auto choose = [this, applyToAll, active](files::TransferConflictChoice choice) {
+    auto* owner = m_page.jobs().find(active.job);
+    if (owner
+        && owner->resolve(active.conflict, choice, *applyToAll && choice != files::TransferConflictChoice::Cancel)) {
       m_activeConflict.reset();
       m_page.dismissMenu();
     }
@@ -290,85 +307,105 @@ void TransferController::syncConflict() {
   );
   if (m_page.menuSurface() != nullptr) {
     m_page.activeDialog().bind(ActiveDialog::Kind::TransferConflict, [this] {
-      if (const auto id = std::exchange(m_activeConflict, std::nullopt)) {
-        (void)(m_conflictRestore       ? m_restore.resolve(*id, files::TransferConflictChoice::Cancel)
-                   : m_conflictArchive ? m_archives.resolve(*id, files::TransferConflictChoice::Cancel)
-                                       : m_transfers.resolve(*id, files::TransferConflictChoice::Cancel));
+      if (const auto shown = std::exchange(m_activeConflict, std::nullopt)) {
+        if (auto* owner = m_page.jobs().find(shown->job)) {
+          (void)owner->resolve(shown->conflict, files::TransferConflictChoice::Cancel);
+        }
       }
     });
-    m_activeConflict = conflict->id;
-    m_conflictArchive = archive;
-    m_conflictRestore = restore;
+    m_activeConflict = active;
     m_page.menuDispatcher().setFocus(keepBoth->inputArea());
   } else {
-    (void)(restore       ? m_restore.resolve(conflict->id, files::TransferConflictChoice::Cancel)
-               : archive ? m_archives.resolve(conflict->id, files::TransferConflictChoice::Cancel)
-                         : m_transfers.resolve(conflict->id, files::TransferConflictChoice::Cancel));
+    (void)job->resolve(conflict->id, files::TransferConflictChoice::Cancel);
   }
 }
 
+OperationJob* TransferController::latestTransfer() const {
+  return m_page.jobs().newest([](const OperationJob& job) { return job.kind() == JobKind::Transfer && job.ran(); });
+}
+
+OperationJob* TransferController::cancelTarget() const {
+  return m_page.jobs().newest([](const OperationJob& job) { return job.cancellable(); });
+}
+
+std::string_view TransferController::report() const {
+  const auto* job = latestTransfer();
+  if (!job || job->running()) {
+    return {};
+  }
+  return job->service<files::TransferService>().report();
+}
+
 void TransferController::retry() {
-  if (m_page.operationsBusy() || m_transfers.retryable() == 0) {
+  auto* job = latestTransfer();
+  if (m_page.operationsBusy() || !job || job->service<files::TransferService>().retryable() == 0) {
     return;
   }
-  if (m_transfers.action() != files::TransferAction::Move || !m_page.clipboard().hasFiles()) {
-    (void)m_transfers.retryFailed();
+  auto& transfers = job->service<files::TransferService>();
+  if (transfers.action() != files::TransferAction::Move || !m_page.clipboard().hasFiles()) {
+    (void)transfers.retryFailed();
     return;
   }
-  const auto job = m_transfers.jobId();
+  const auto id = job->id();
+  const auto run = transfers.jobId();
   const std::weak_ptr<int> lifetime = m_lifetime;
-  m_page.clipboard().requestFiles([this, lifetime, job](std::optional<files::ClipboardFiles> selection) {
-    if (lifetime.expired() || m_transfers.jobId() != job || m_page.operationsBusy()) {
+  m_page.clipboard().requestFiles([this, lifetime, id, run](std::optional<files::ClipboardFiles> selection) {
+    if (lifetime.expired() || m_page.operationsBusy()) {
       return;
     }
-    if (selection
-        && selection->payload.cut
-        && std::ranges::any_of(selection->payload.locations, [this](const auto& location) {
-             return std::ranges::any_of(m_transfers.results(), [&](const auto& result) {
-               return result.source == location;
-             });
-           })) {
-      if (!m_page.clipboard().claimMove(selection->revision)) {
-        return;
-      }
-      m_clipboardTransfer = *selection;
+    auto* job = m_page.jobs().find(id);
+    if (!job || job->service<files::TransferService>().jobId() != run) {
+      return;
     }
-    if (!m_transfers.retryFailed()) {
-      if (const auto claimed = std::exchange(m_clipboardTransfer, std::nullopt)) {
-        m_page.clipboard().finishMove(*claimed, {});
+    auto& transfers = job->service<files::TransferService>();
+    const bool claim = selection
+        && selection->payload.cut
+        && std::ranges::any_of(selection->payload.locations, [&transfers](const auto& location) {
+                         return std::ranges::any_of(transfers.results(), [&](const auto& result) {
+                           return result.source == location;
+                         });
+                       });
+    if (claim && !m_page.clipboard().claimMove(selection->revision)) {
+      return;
+    }
+    if (!transfers.retryFailed()) {
+      if (claim) {
+        m_page.clipboard().finishMove(*selection, {});
       }
+    } else if (claim) {
+      finishMove(*job, std::move(*selection));
     }
   });
 }
 
-bool TransferController::startPayloadTransfer(
+std::shared_ptr<OperationJob> TransferController::startPayloadTransfer(
     files::FilePayload payload, const files::Location& destination, files::TransferAction action
 ) {
   if (payload.locations.empty()
       || !destination.nativePath()
       || std::ranges::any_of(payload.locations, [](const auto& location) { return !location.nativePath(); })) {
     m_page.actionError("File transfers currently support native files and folders outside Trash.");
-    return false;
+    return nullptr;
   }
   m_page.setActionMessage({});
-  if (!m_transfers.start({std::move(payload.locations), destination, action})) {
+  auto job = start({std::move(payload.locations), destination, action});
+  if (!job) {
     m_page.actionError("Another file transfer is still finishing.");
-    return false;
   }
-  return true;
+  return job;
 }
 
 void TransferController::updateOperationProgress() {
-  if (m_permissions.busy()
-      || m_batchRenamer.applying()
-      || m_archives.busy()
-      || m_transfers.busy()
-      || m_restore.busy()
-      || m_trash.busy()
-      || m_emptyTrash.busy()) {
-    m_operationProgress.startRepeating(std::chrono::milliseconds(100), [this] { m_progressTick(); });
-  } else {
+  if (!m_page.jobs().newest([](const OperationJob& job) {
+        return job.cancellable() || (job.kind() == JobKind::Permission && job.running());
+      })) {
     m_operationProgress.stop();
+  } else if (!m_operationProgress.active()) {
+    // The tick checks again: a job that moved to another page sends this page no further change.
+    m_operationProgress.startRepeating(std::chrono::milliseconds(100), [this] {
+      m_progressTick();
+      updateOperationProgress();
+    });
   }
 }
 
@@ -394,44 +431,35 @@ std::unique_ptr<Button> TransferController::buildCancelButton() {
        .visible = false,
        .participatesInLayout = false,
        .onClick = [this] {
-         m_batchRenamer.cancel();
-         m_archives.cancel();
-         m_transfers.cancel();
-         m_restore.cancel();
-         m_trash.cancel();
-         m_emptyTrash.cancel();
+         if (auto* job = cancelTarget()) {
+           job->cancel();
+         }
        }}
   );
 }
 
-void TransferController::syncOperationButtons(bool selectedTrashDelete) {
-  const bool cancellable = m_batchRenamer.applying()
-      || m_archives.busy()
-      || m_transfers.busy()
-      || m_restore.busy()
-      || m_trash.busy()
-      || m_emptyTrash.busy();
-  const bool retryable = m_transfers.retryable() > 0 && !m_page.operationsBusy();
+void TransferController::syncOperationButtons() {
+  const auto* cancel = cancelTarget();
+  const auto* latest = latestTransfer();
+  const bool retryable =
+      latest && latest->service<files::TransferService>().retryable() > 0 && !m_page.operationsBusy();
   m_retryTransfer->setVisible(retryable);
   m_retryTransfer->setParticipatesInLayout(retryable);
-  m_cancelOperation->setVisible(cancellable);
-  m_cancelOperation->setParticipatesInLayout(cancellable);
+  m_cancelOperation->setVisible(cancel != nullptr);
+  m_cancelOperation->setParticipatesInLayout(cancel != nullptr);
+  if (!cancel) {
+    return;
+  }
+  const auto kind = cancel->kind();
   m_cancelOperation->setTooltip(
-      m_batchRenamer.applying() ? "Cancel batch rename"
-          : m_restore.busy()    ? "Cancel restoration"
-          : m_emptyTrash.busy() ? (selectedTrashDelete ? "Cancel deletion" : "Cancel emptying Trash")
-          : m_trash.busy()      ? "Cancel move to Trash"
-                                : "Cancel transfer"
+      kind == JobKind::BatchRename   ? "Cancel batch rename"
+          : kind == JobKind::Restore ? "Cancel restoration"
+          : kind == JobKind::EmptyTrash
+          ? (cancel->service<files::EmptyTrashService>().snapshot().selection ? "Cancel deletion"
+                                                                              : "Cancel emptying Trash")
+          : kind == JobKind::Trash ? "Cancel move to Trash"
+                                   : "Cancel transfer"
   );
 }
 
 void TransferController::stopProgress() { m_operationProgress.stop(); }
-
-void TransferController::settle() {
-  if (m_clipboardTransfer) {
-    m_page.clipboard().finishMove(*m_clipboardTransfer, m_transfers.results());
-  }
-  if (m_dropCompletion) {
-    m_dropCompletion(false);
-  }
-}

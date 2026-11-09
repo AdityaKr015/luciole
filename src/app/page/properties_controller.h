@@ -1,11 +1,11 @@
 #pragma once
 
 #include <cstddef>
+#include <memory>
 #include <vector>
 
 namespace files {
   class FileIconCache;
-  class PermissionService;
   struct DirectoryEntry;
 } // namespace files
 
@@ -15,6 +15,7 @@ class BulkAclEditor;
 class Button;
 class Flex;
 class Label;
+class OperationJob;
 class PageContext;
 class PermissionEditor;
 class PermissionResultsView;
@@ -24,12 +25,12 @@ class Segmented;
 // The Properties dialog: general facts, and for up to 4096 items the permission and ACL editors with their results.
 class PropertiesController {
 public:
-  PropertiesController(PageContext& page, files::PermissionService& permissions, files::FileIconCache& icons);
+  PropertiesController(PageContext& page, files::FileIconCache& icons);
 
   // `captureCurrentLocation` reads the permissions of the first target's location instead of its listed entry.
   void show(const std::vector<files::DirectoryEntry>& targets, bool captureCurrentLocation = false);
-  // Service change: sync on the next frame.
-  void markDirty() { m_dirty = true; }
+  // Owned permission job change: sync the dialog on the next frame, or report a job whose dialog closed.
+  void changed(OperationJob& job);
   // Operation progress tick: keep syncing while permissions are read or applied.
   void progressTick();
   // Frame slot in BrowserPage::prepareFrame().
@@ -53,7 +54,8 @@ private:
   void sync();
 
   PageContext& m_page;
-  files::PermissionService& m_permissions;
+  // The dialog's job: reads the targets, then applies changes.
+  std::shared_ptr<OperationJob> m_job;
   files::FileIconCache& m_icons;
   PermissionEditor* m_permissionEditor = nullptr;
   AclEditor* m_aclEditor = nullptr;

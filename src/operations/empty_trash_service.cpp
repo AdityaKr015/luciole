@@ -240,7 +240,12 @@ bool files::EmptyTrashService::prepareTargets(std::optional<std::vector<Director
   m_state->token = CancelToken{};
   m_state->completed.store(0);
   m_state->snapshot = {
-      .status = EmptyTrashStatus::Preparing, .results = {}, .error = {}, .size = std::nullopt, .sizeIncomplete = false
+      .status = EmptyTrashStatus::Preparing,
+      .results = {},
+      .error = {},
+      .size = std::nullopt,
+      .sizeIncomplete = false,
+      .selection = selection.has_value()
   };
   State::launch<Targets>(
       m_state,

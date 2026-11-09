@@ -1,5 +1,6 @@
 #include "app/page/archive_controller.h"
 
+#include "app/operation_hub.h"
 #include "app/page/page_context.h"
 #include "browser/browser_controller.h"
 #include "browser/location_presentation.h"
@@ -23,11 +24,10 @@
 #include <utility>
 
 ArchiveController::ArchiveController(
-    PageContext& page, files::ArchiveService& archives, files::FileLauncher& launcher, files::FileIconCache& icons,
-    WaylandConnection& connection, InputDispatcher& dispatcher
+    PageContext& page, files::FileLauncher& launcher, files::FileIconCache& icons, WaylandConnection& connection,
+    InputDispatcher& dispatcher
 )
-    : m_page(page), m_archives(archives), m_launcher(launcher), m_icons(icons), m_connection(connection),
-      m_dispatcher(dispatcher) {}
+    : m_page(page), m_launcher(launcher), m_icons(icons), m_connection(connection), m_dispatcher(dispatcher) {}
 
 void ArchiveController::compress(const std::vector<files::DirectoryEntry>& targets) {
   std::vector<files::Location> sources;
@@ -41,13 +41,16 @@ void ArchiveController::compress(const std::vector<files::DirectoryEntry>& targe
 void ArchiveController::extractTo(const files::Location& archive) { openDialog({archive}, {}, false); }
 
 void ArchiveController::extractHere(const files::Location& archive) {
-  if (!m_archives.extract(archive, destination(archive))) {
+  if (!extract(archive, destination(archive), {})) {
     m_page.actionError("Could not start extraction.");
   }
 }
 
 void ArchiveController::browse(const files::Location& archive) {
-  if (m_archives.inspect(archive)) {
+  if (!m_browser) {
+    m_browser = m_page.jobs().create<files::ArchiveService>(JobScope::Page);
+  }
+  if (m_browser->service<files::ArchiveService>().inspect(archive)) {
     m_source = archive;
     m_wanted = true;
     m_dirty = true;
@@ -56,14 +59,33 @@ void ArchiveController::browse(const files::Location& archive) {
   }
 }
 
-void ArchiveController::changed() {
+bool ArchiveController::extract(
+    const files::Location& source, const files::Location& destination, std::vector<std::string> selected
+) {
+  // The archive browser's catalog of `source`, if any, guards against a changed archive.
+  auto expected = m_browser ? m_browser->service<files::ArchiveService>().catalog() : nullptr;
+  return m_page.jobs().create<files::ArchiveService>()->service<files::ArchiveService>().extract(
+      source, destination, std::move(selected), std::move(expected)
+  );
+}
+
+OperationJob* ArchiveController::shown() const {
+  auto* running =
+      m_page.jobs().newest([](const OperationJob& job) { return job.kind() == JobKind::Archive && job.running(); });
+  return running ? running : m_browser.get();
+}
+
+void ArchiveController::changed(OperationJob& job) {
+  auto& archives = job.service<files::ArchiveService>();
   m_dirty = true;
-  if (auto file = m_archives.takeOpenedFile()) {
-    m_launcher.open(*file);
+  if (&job == m_browser.get()) {
+    if (auto file = archives.takeOpenedFile()) {
+      m_launcher.open(*file);
+    }
   }
-  if (!m_archives.busy()) {
-    std::string message = files::fileErrorText(m_archives.error());
-    const bool finished = !m_archives.results().empty();
+  if (!archives.busy() && job.takeResult()) {
+    std::string message = files::fileErrorText(archives.error());
+    const bool finished = !archives.results().empty();
     if (finished && message.empty()) {
       message = "Archive operation complete.";
     }
@@ -87,7 +109,9 @@ files::Location ArchiveController::destination(const files::Location& source) {
 void ArchiveController::openDialog(
     std::vector<files::Location> sources, std::vector<std::string> selected, bool compress
 ) {
-  if (sources.empty() || m_archives.busy()) {
+  if (sources.empty() || m_page.jobs().newest([](const OperationJob& job) {
+        return job.kind() == JobKind::Archive && job.running();
+      })) {
     return;
   }
   const auto formats = files::archiveFormats();
@@ -126,8 +150,11 @@ void ArchiveController::openDialog(
           }
           destination = destination.child(name);
         }
-        const bool started = compress ? m_archives.compress(sources, destination, format)
-                                      : m_archives.extract(sources.front(), destination, selected);
+        const bool started = compress
+            ? m_page.jobs().create<files::ArchiveService>()->service<files::ArchiveService>().compress(
+                  sources, destination, format
+              )
+            : extract(sources.front(), destination, selected);
         if (!started) {
           return "Could not start the archive operation.";
         }
@@ -185,17 +212,25 @@ void ArchiveController::sync() {
     auto root = std::make_unique<ArchiveView>(
         m_icons, [this] { return m_connection.keyboardModifiers(); }, [this] { deferClose(); },
         [this](std::vector<std::string> selected) {
-          if (m_archives.catalog()) {
-            openDialog({m_archives.catalog()->source}, std::move(selected), false);
+          if (const auto* catalog = m_browser ? m_browser->service<files::ArchiveService>().catalog().get() : nullptr) {
+            openDialog({catalog->source}, std::move(selected), false);
           }
         },
-        [this](const std::string& path) { (void)m_archives.openMember(path); },
+        [this](const std::string& path) {
+          if (m_browser) {
+            (void)m_browser->service<files::ArchiveService>().openMember(path);
+          }
+        },
         [this] {
-          if (m_source) {
-            (void)m_archives.inspect(*m_source);
+          if (m_source && m_browser) {
+            (void)m_browser->service<files::ArchiveService>().inspect(*m_source);
           }
         },
-        [this] { m_archives.cancel(); }
+        [this] {
+          if (auto* job = shown()) {
+            job->cancel();
+          }
+        }
     );
     m_view = root.get();
     root->setParticipatesInLayout(false);
@@ -204,8 +239,12 @@ void ArchiveController::sync() {
     m_dispatcher.cancelPointerCapture();
     m_dispatcher.setFocus(m_view->focusArea());
   }
-  if (m_view) {
-    m_view->sync(m_archives.catalog(), m_archives.phase(), m_archives.items(), m_archives.bytes(), m_archives.error());
+  if (const auto* job = shown(); m_view && job) {
+    const auto& archives = job->service<files::ArchiveService>();
+    m_view->sync(
+        m_browser ? m_browser->service<files::ArchiveService>().catalog() : nullptr, archives.phase(), archives.items(),
+        archives.bytes(), archives.error()
+    );
     m_page.surface().requestLayout();
   }
 }

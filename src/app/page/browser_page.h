@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/operation_hub.h"
 #include "app/page/about_controller.h"
 #include "app/page/active_dialog.h"
 #include "app/page/application_chooser_controller.h"
@@ -32,15 +33,7 @@
 #include "config/view_preference_writer.h"
 #include "core/timer_manager.h"
 #include "model/details_columns.h"
-#include "operations/archive_service.h"
-#include "operations/batch_rename_service.h"
-#include "operations/create_service.h"
-#include "operations/empty_trash_service.h"
-#include "operations/permission_service.h"
-#include "operations/rename_service.h"
-#include "operations/restore_service.h"
-#include "operations/transfer_service.h"
-#include "operations/trash_service.h"
+#include "operations/template_catalog.h"
 #include "platform/desktop_integration.h"
 #include "platform/file_launcher.h"
 #include "platform/terminal_launcher.h"
@@ -72,15 +65,16 @@
 #include <string>
 #include <utility>
 
-class BrowserPage final : public PageContext {
+class BrowserPage final : public PageContext, public OperationHub::Owner {
 public:
   using Action = files::BrowserAction;
 
+  // `id` is the page's TabId in the workspace; the page shows the jobs `hub` routes to it.
   BrowserPage(
       WaylandConnection& connection, RenderContext& renderer, TextInputService& textInput,
       const files::BrowserSettings& settings, files::WaylandTextClipboard& clipboard, files::WindowSurface& surface,
       AnimationManager& animations, files::PinService& pins, files::FileIconCache& icons,
-      files::ViewPreferenceWriter& preferences
+      files::ThumbnailService& thumbnails, files::ViewPreferenceWriter& preferences, OperationHub& hub, files::TabId id
   );
 
   files::BrowserController& browser() override;
@@ -96,9 +90,13 @@ public:
   // Select `items` once the current folder finishes loading; optionally open their Properties.
   void revealItems(std::vector<files::Location> items, bool properties);
 
-  bool renameBusy() const;
+  // True while page-local work that outlives the window runs: launching, saving places or preferences, a paste.
   bool busy() const;
   void shutdown();
+  // OperationHub::Owner: hands the job to the controller of its kind.
+  void jobChanged(OperationJob& job) override;
+  // The shared thumbnail service changed.
+  void thumbnailsChanged();
 
   files::BrowserSettings options() const;
   std::optional<files::Location> location() const;
@@ -113,7 +111,6 @@ public:
   void iconsReady();
   void reusePlacesFrom(BrowserPage& previous);
   void workspaceError(const std::string& message);
-  void setWorkspaceId(files::TabId id);
   bool owns(const Node* node) const;
   void focusArea(InputArea* area);
   void leavePointer();
@@ -124,10 +121,6 @@ public:
   void duplicateFrom(BrowserPage& source);
   void open(const files::Location& location);
   void setWorkspaceRequest(std::function<void(WorkspaceCommand, std::optional<files::Location>)> callback);
-  void setClearThumbnails(std::function<void()> callback);
-  void clearThumbnails();
-  bool clearingThumbnails() const;
-  void pauseThumbnails(bool pause);
   void configurationChanged();
   void setHasOther(std::function<bool()> callback);
   void setPopupAvailable(std::function<bool()> callback);
@@ -197,7 +190,7 @@ private:
   bool targetsCurrent(const std::vector<files::DirectoryEntry>& targets) override;
   bool requestCurrent(const files::ActionRequest& request, files::ActionScope scope) const override;
   bool operationsBusy() const override;
-  bool fileJobsIdle() const override;
+  PageJobs& jobs() override;
   bool visible() const override;
   bool active() const override;
   bool thumbnailsPaused() const override;
@@ -298,7 +291,7 @@ private:
   NameEditor* m_patternEditor = nullptr;
   std::string m_selectionPattern = "*";
   files::FileIconCache& m_icons;
-  files::ThumbnailService m_thumbnails;
+  files::ThumbnailService& m_thumbnails;
   files::PreviewService m_preview;
   bool m_thumbnailClearing = false;
   std::string m_thumbnailError;
@@ -320,29 +313,20 @@ private:
   float m_pointerY = 0;
   std::uint32_t m_popupSerial = 0;
   Flex* m_filePane = nullptr;
-  files::ArchiveService m_archives;
-  files::TransferService m_transfers;
-  files::TrashService m_trash;
-  files::RestoreService m_restore;
-  files::EmptyTrashService m_emptyTrash;
-  TrashController m_trashController{*this, m_trash, m_emptyTrash, m_restore};
-  files::RenameService m_renamer;
-  RenameController m_renameController{*this, m_renamer, m_pins};
-  files::BatchRenameService m_batchRenamer;
-  files::PermissionService m_permissions;
-  PropertiesController m_propertiesController{*this, m_permissions, m_icons};
-  BatchRenameController m_batchRename{*this, m_batchRenamer};
-  files::CreateService m_creator;
+  OperationHub& m_hub;
+  PageJobs m_jobs;
+  TrashController m_trashController{*this};
+  RenameController m_renameController{*this, m_pins};
+  PropertiesController m_propertiesController{*this, m_icons};
+  BatchRenameController m_batchRename{*this};
   files::TemplateCatalog m_templates;
-  CreateController m_createController{*this, m_creator, m_templates, m_connection, m_renderer, m_animations};
-  ArchiveController m_archiveController{*this, m_archives, m_launcher, m_icons, m_connection, m_dispatcher};
-  TransferController m_transferController{*this,          m_transfers,   m_archives,
-                                          m_restore,      m_trash,       m_emptyTrash,
-                                          m_batchRenamer, m_permissions, [this] { operationProgressTick(); }};
+  CreateController m_createController{*this, m_templates, m_connection, m_renderer, m_animations};
+  ArchiveController m_archiveController{*this, m_launcher, m_icons, m_connection, m_dispatcher};
+  TransferController m_transferController{*this, [this] { operationProgressTick(); }};
   MenuController m_menuController{
       *this,
       m_pins,
-      m_transfers,
+      m_transferController,
       m_terminal,
       m_siblingCompletion,
       m_createController,
@@ -353,9 +337,7 @@ private:
   };
   SettingsController m_settingsController{
       *this, m_preferences, m_thumbnails, m_dispatcher, m_archiveController, m_menuController, [this] {
-        if (m_clearThumbnails) {
-          m_clearThumbnails();
-        }
+        m_thumbnails.clearCache();
       }
   };
   AboutController m_aboutController{*this, m_launcher};
@@ -367,27 +349,11 @@ private:
   SidebarController m_sidebar{
       *this, m_dispatcher, m_pins, m_preferences, m_animations, m_menuController, m_renameController, m_dragDrop
   };
-  DragDropController m_dragDrop{*this,        m_dispatcher, m_connection, m_pins,    m_transfers,  m_transferController,
+  DragDropController m_dragDrop{*this,        m_dispatcher, m_connection, m_pins,    m_transferController,
                                 m_thumbnails, m_icons,      m_miller,     m_sidebar, m_locationBar};
   FileKeyboardController m_fileKeys{*this,         m_dispatcher, m_textInput, m_miller, m_menuController,
                                     m_locationBar, m_statusBar};
-  StatusBarController m_statusBar{
-      *this,
-      m_creator,
-      m_permissions,
-      m_batchRenamer,
-      m_renamer,
-      m_restore,
-      m_emptyTrash,
-      m_trash,
-      m_archives,
-      m_transfers,
-      m_pins,
-      m_trashController,
-      m_transferController,
-      m_settingsController,
-      m_fileKeys
-  };
+  StatusBarController m_statusBar{*this, m_pins, m_transferController, m_settingsController, m_fileKeys};
   std::size_t m_gridZoom = 1;
   double m_zoomScroll = 0;
   files::ViewMode m_viewMode;
@@ -409,11 +375,9 @@ private:
   std::optional<files::BrowseViewport> m_inactiveViewport;
   std::function<void(WorkspaceCommand, std::optional<files::Location>)> m_workspaceRequest;
   bool m_visible = false, m_active = false;
-  files::TabId m_workspaceId = 0;
+  files::TabId m_workspaceId;
   std::uint64_t m_nextFocusKey = 0;
   std::function<bool()> m_popupAvailable, m_hasOther;
-  std::function<void()> m_clearThumbnails;
-  bool m_cachePaused = false;
   std::optional<files::ActionRequest> m_pendingWorkspaceRequest;
 
   InputDispatcher m_dispatcher;
