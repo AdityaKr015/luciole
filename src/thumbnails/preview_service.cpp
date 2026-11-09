@@ -1,5 +1,7 @@
 #include "thumbnails/preview_service.h"
 
+#include "fs/gio_interop.h"
+
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -50,7 +52,7 @@ namespace {
       return {{}, "Text previews are available for local files."};
     }
     const GioPtr<GFileInfo> fs(
-        g_file_query_filesystem_info(entry.location.file().get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE, cancel, nullptr)
+        g_file_query_filesystem_info(gioFile(entry.location).get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE, cancel, nullptr)
     );
     if (!fs
         || !g_file_info_has_attribute(fs.get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE)
@@ -77,7 +79,7 @@ namespace {
       return {{}, "The file changed. Select it again.", true};
     }
     const GioPtr<GFileInfo> info(g_file_query_info(
-        entry.location.file().get(),
+        gioFile(entry.location).get(),
         G_FILE_ATTRIBUTE_ID_FILE "," G_FILE_ATTRIBUTE_ID_FILESYSTEM "," G_FILE_ATTRIBUTE_ETAG_VALUE
                                  "," G_FILE_ATTRIBUTE_TIME_CHANGED
                                  ",time::changed-nsec," G_FILE_ATTRIBUTE_TIME_CHANGED_USEC,
@@ -303,8 +305,8 @@ void files::PreviewService::show(
   state.options = options;
   state.view.entry = *entry;
   state.view.status = PreviewStatus::Unavailable;
-  state.view.message = entry->type == G_FILE_TYPE_DIRECTORY ? "Folder" : "No preview available for this file.";
-  if (entry->type == G_FILE_TYPE_REGULAR && !entry->symlink && entry->access.read != false) {
+  state.view.message = entry->type == files::FileType::Directory ? "Folder" : "No preview available for this file.";
+  if (entry->type == files::FileType::Regular && !entry->symlink && entry->access.read != false) {
     state.view.status = PreviewStatus::Loading;
     state.view.message = "Loading preview…";
     if (textType(entry->contentType.value_or(""))) {

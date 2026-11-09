@@ -1,6 +1,7 @@
 #include "ui/controls/permission_editor.h"
 
 #include "ui/builders.h"
+#include "ui/controls/file_error_text.h"
 #include "ui/controls/input.h"
 #include "ui/controls/recursive_permission_editor.h"
 #include "ui/controls/segmented.h"
@@ -14,6 +15,9 @@ namespace {
                                                0004, 0002, 0001, 04000, 02000, 01000};
   constexpr float labelWidth = 88.0F, columnWidth = 100.0F;
 } // namespace
+std::string permissionStatusText(const files::PermissionSnapshot& snapshot) {
+  return snapshot.error ? files::fileErrorText(*snapshot.error) : snapshot.message;
+}
 PermissionEditor::PermissionEditor(std::function<void()> edited, bool multiple, bool folders)
     : m_multiple(multiple), m_edited(std::move(edited)) {
   setDirection(FlexDirection::Vertical);
@@ -211,7 +215,7 @@ void PermissionEditor::sync(const files::PermissionSnapshot& snapshot) {
       && snapshot.info->group == m_snapshot.info->group;
   const bool keepDraft = sameValues
       && (snapshot.phase == files::PermissionPhase::Saving
-          || (snapshot.phase == files::PermissionPhase::Ready && snapshot.error && !snapshot.applied));
+          || (snapshot.phase == files::PermissionPhase::Ready && snapshot.failed() && !snapshot.applied));
   m_snapshot = snapshot;
   const bool ready = snapshot.phase == files::PermissionPhase::Ready
       && snapshot.info.has_value()
@@ -302,11 +306,11 @@ void PermissionEditor::sync(const files::PermissionSnapshot& snapshot) {
   m_reason->setParticipatesInLayout(!reason.empty());
   const std::string message = snapshot.phase == files::PermissionPhase::Loading ? "Reading permissions…"
       : snapshot.phase == files::PermissionPhase::Saving                        ? "Saving changes…"
-                                                                                : snapshot.message;
+                                                                                : permissionStatusText(snapshot);
   m_message->setText(message);
   m_message->setVisible(!m_multiple && !message.empty());
   m_message->setParticipatesInLayout(!m_multiple && !message.empty());
-  m_message->setColor(colorSpecFromRole(snapshot.error ? ColorRole::Error : ColorRole::OnSurfaceVariant));
+  m_message->setColor(colorSpecFromRole(snapshot.failed() ? ColorRole::Error : ColorRole::OnSurfaceVariant));
   m_reason->setColor(colorSpecFromRole(ColorRole::OnSurfaceVariant));
   m_ids->setColor(colorSpecFromRole(ColorRole::OnSurfaceVariant));
   m_syncing = false;

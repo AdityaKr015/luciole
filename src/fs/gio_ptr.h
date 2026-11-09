@@ -15,4 +15,10 @@ namespace files {
   };
 
   using GString = std::unique_ptr<char, GFree>;
+
+  struct GErrorFree {
+    void operator()(GError* error) const { g_error_free(error); }
+  };
+
+  using GErrorPtr = std::unique_ptr<GError, GErrorFree>;
 } // namespace files

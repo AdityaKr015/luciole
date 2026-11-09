@@ -1,4 +1,5 @@
 #include "clipboard/file_payload.h"
+#include "fs/gio_interop.h"
 #include "test_check.h"
 
 #include <print>
@@ -53,8 +54,10 @@ namespace {
     const std::vector<TransferResult> results{
         {selection.locations[0], TransferOutcome::Moved, {}},
         {selection.locations[1], TransferOutcome::Skipped, {}},
-        {selection.locations[2], TransferOutcome::Failed, "fixture failure"},
-        {selection.locations[3], TransferOutcome::Partial, "source removal incomplete"},
+        {selection.locations[2], TransferOutcome::Failed,
+         files::FileError{files::FileErrorKind::Other, "fixture failure"}},
+        {selection.locations[3], TransferOutcome::Partial,
+         files::FileError{files::FileErrorKind::Other, "source removal incomplete"}},
         {selection.locations[4], TransferOutcome::Cancelled, {}},
         {selection.locations[5], TransferOutcome::Copied, {}},
     };

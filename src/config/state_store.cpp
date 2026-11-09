@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <format>
+#include <glib.h>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>

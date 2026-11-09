@@ -1,7 +1,16 @@
 #pragma once
 
 #include "fs/directory_session.h"
+#include "fs/file_error.h"
 #include "operations/posix_acl.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
 
 namespace files {
   enum class PermissionPhase { Idle, Loading, Ready, Saving, Error, Cancelled };
@@ -11,7 +20,7 @@ namespace files {
     bool canMode = false, canOwner = false, canGroup = false;
     bool symlink = false, multipleLinks = false, current = true, directory = false;
     std::shared_ptr<const AclInfo> acl;
-    std::string reason;
+    std::string reason; // Why editing is limited or unavailable; empty when it is not.
   };
   struct PermissionEdit {
     std::optional<std::uint32_t> mode;
@@ -29,13 +38,16 @@ namespace files {
     std::string name;
     std::optional<PermissionInfo> info;
     PermissionOutcome outcome = PermissionOutcome::Ready;
-    std::string message;
+    std::optional<FileError> error; // Why the item failed, or stopped after a partial change.
+    std::string message;            // Status note shown after the error: edit limits, skips, hard link effects.
   };
   struct PermissionSnapshot {
     PermissionPhase phase = PermissionPhase::Idle;
     std::optional<PermissionInfo> info;
-    std::string message;
-    bool error = false, applied = false;
+    std::string message;            // Status or a bulk job's outcome summary.
+    std::optional<FileError> error; // The request failed, or stopped short, as a whole.
+    bool itemsFailed = false;       // A bulk job ended with Failed or Partially changed items.
+    bool applied = false;
     bool multiple = false, finished = false, cancelRequested = false, recursive = false;
     bool aclOperation = false;
     std::uint32_t mixedMode = 0;
@@ -43,6 +55,7 @@ namespace files {
     std::size_t unknownItems = 0;
     std::shared_ptr<const std::vector<PermissionResult>> results;
     std::string report;
+    bool failed() const { return error.has_value() || itemsFailed; }
   };
   // Native captured items, up to 4096. Inspection, account lookup and descriptor-based edits run on a worker.
   class PermissionService {

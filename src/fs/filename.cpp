@@ -1,5 +1,7 @@
 #include "fs/filename.h"
 
+#include "fs/gio_ptr.h"
+
 #include <glib.h>
 
 std::optional<std::string> files::filenameProblem(const std::string& name) {
@@ -20,4 +22,8 @@ std::optional<std::string> files::filenameProblem(const std::string& name) {
 std::size_t files::filenameStemLength(const std::string& name, bool directory) {
   const auto dot = name.rfind('.');
   return !directory && dot != std::string::npos && dot != 0 && dot + 1 < name.size() ? dot : name.size();
+}
+std::string files::filenameDisplayText(const std::string& name) {
+  const GString text(g_filename_display_name(name.c_str()));
+  return text.get();
 }

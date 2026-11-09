@@ -1,5 +1,6 @@
 #include "browser/directory_model.h"
 #include "event_loop/glib_poll_source.h"
+#include "fs/gio_interop.h"
 #include "model/details_columns.h"
 #include "test_check.h"
 
@@ -24,7 +25,7 @@ namespace {
   using files::SelectionMode;
   using files::SortField;
 
-  DirectoryEntry entry(EntryId id, const std::string& name, GFileType type = G_FILE_TYPE_REGULAR) {
+  DirectoryEntry entry(EntryId id, const std::string& name, files::FileType type = files::FileType::Regular) {
     return {
         .id = id,
         .location = Location::fromPath("/tmp/noctalia-model-fixture/" + name),
@@ -56,8 +57,8 @@ namespace {
   void testSortAndMetadata() {
     DirectoryModel model;
     auto data = snapshot(
-        {entry(10, "item10"), entry(2, "item2"), entry(1, "item1"), entry(30, "z-folder", G_FILE_TYPE_DIRECTORY),
-         entry(20, "a-folder", G_FILE_TYPE_DIRECTORY)}
+        {entry(10, "item10"), entry(2, "item2"), entry(1, "item1"), entry(30, "z-folder", files::FileType::Directory),
+         entry(20, "a-folder", files::FileType::Directory)}
     );
     model.applySnapshot(data);
     rows(model, {20, 30, 1, 2, 10});
@@ -164,9 +165,9 @@ namespace {
   void testTypeSort() {
     DirectoryModel model;
     auto data = snapshot(
-        {entry(10, "z-folder", G_FILE_TYPE_DIRECTORY), entry(2, "link"), entry(3, "note10.txt"), entry(4, "note2.txt"),
-         entry(5, "z.png"), entry(6, "a.bin"), entry(7, "b"), entry(8, "special", G_FILE_TYPE_SPECIAL),
-         entry(9, "c", G_FILE_TYPE_UNKNOWN)}
+        {entry(10, "z-folder", files::FileType::Directory), entry(2, "link"), entry(3, "note10.txt"),
+         entry(4, "note2.txt"), entry(5, "z.png"), entry(6, "a.bin"), entry(7, "b"),
+         entry(8, "special", files::FileType::Special), entry(9, "c", files::FileType::Unknown)}
     );
     data.entries[1].symlink = true;
     data.entries[1].contentType = "image/png";
@@ -210,8 +211,8 @@ namespace {
   void testSelectionSummary() {
     DirectoryModel model;
     auto data = snapshot(
-        {entry(1, "empty"), entry(2, "known"), entry(3, "unknown"), entry(4, "folder", G_FILE_TYPE_DIRECTORY),
-         entry(5, "link"), entry(6, "special", G_FILE_TYPE_SPECIAL), entry(7, ".hidden")}
+        {entry(1, "empty"), entry(2, "known"), entry(3, "unknown"), entry(4, "folder", files::FileType::Directory),
+         entry(5, "link"), entry(6, "special", files::FileType::Special), entry(7, ".hidden")}
     );
     data.entries[0].size = 0;
     data.entries[1].size = 5;

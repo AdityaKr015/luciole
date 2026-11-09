@@ -4,6 +4,7 @@
 #include "fs/gio_ptr.h"
 #include "ui/browser/file_icon.h"
 #include "ui/builders.h"
+#include "ui/controls/file_error_text.h"
 #include "ui/controls/scroll_view.h"
 
 #include <algorithm>
@@ -229,7 +230,7 @@ ArchiveView::ArchiveView(
 ArchiveView::~ArchiveView() { m_grid->setAdapter(nullptr); }
 void ArchiveView::sync(
     std::shared_ptr<const files::ArchiveCatalog> catalog, files::ArchivePhase phase, std::size_t items,
-    std::uint64_t bytes, const std::string& error
+    std::uint64_t bytes, const std::optional<files::FileError>& error
 ) {
   m_busy = phase != files::ArchivePhase::Idle;
   if (catalog != m_catalog) {
@@ -241,17 +242,15 @@ void ArchiveView::sync(
     rebuild();
   }
   if (m_catalog) {
-    const files::GString raw(g_file_get_basename(m_catalog->source.file().get()));
-    const files::GString name(g_filename_display_name(raw ? raw.get() : "Archive"));
-    m_title->setText(name.get());
+    m_title->setText(m_catalog->source.displayName().value_or("Archive"));
   }
   const files::GString size(g_format_size_full(bytes, G_FORMAT_SIZE_IEC_UNITS));
   m_status->setText(
-      !error.empty() ? error
-          : m_busy   ? std::format("Processing {} entries · {}", items, size.get())
-                     : std::format("{} item{}", m_rows.size(), m_rows.size() == 1 ? "" : "s")
+      error        ? files::fileErrorText(*error)
+          : m_busy ? std::format("Processing {} entries · {}", items, size.get())
+                   : std::format("{} item{}", m_rows.size(), m_rows.size() == 1 ? "" : "s")
   );
-  m_status->setColor(colorSpecFromRole(error.empty() ? ColorRole::OnSurfaceVariant : ColorRole::Error));
+  m_status->setColor(colorSpecFromRole(error ? ColorRole::Error : ColorRole::OnSurfaceVariant));
   m_cancel->setVisible(m_busy);
   m_cancel->setParticipatesInLayout(m_busy);
   m_reload->setEnabled(!m_busy);

@@ -151,9 +151,9 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
              return entry.location.nativePath().has_value()
                  && !entry.location.isTrash()
                  && entry.identity.has_value()
-                 && (entry.type == G_FILE_TYPE_REGULAR
-                     || entry.type == G_FILE_TYPE_DIRECTORY
-                     || entry.type == G_FILE_TYPE_SYMBOLIC_LINK);
+                 && (entry.type == files::FileType::Regular
+                     || entry.type == files::FileType::Directory
+                     || entry.type == files::FileType::Symlink);
            })
         ? ActionState{}
         : unavailable("Select one native file, folder or symbolic link.");
@@ -163,7 +163,7 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
     return single() ? ActionState{} : unavailable("Select one item to preview.");
   case A::OpenWith:
     return single() && all([](const DirectoryEntry& entry) {
-             return entry.type == G_FILE_TYPE_REGULAR && !entry.symlink && entry.access.read != false;
+             return entry.type == files::FileType::Regular && !entry.symlink && entry.access.read != false;
            })
         ? ActionState{}
         : unavailable("Select one readable file.");
@@ -190,7 +190,7 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
       }
     } else {
       if (!single() || !all([](const auto& entry) {
-            return entry.type == G_FILE_TYPE_DIRECTORY
+            return entry.type == files::FileType::Directory
                 && entry.location.nativePath().has_value()
                 && entry.access.execute.value_or(true);
           })) {
@@ -217,7 +217,7 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
     if (!all([&](const auto& entry) {
           return entry.location.nativePath().has_value()
               && entry.access.read.value_or(true)
-              && (entry.type == G_FILE_TYPE_DIRECTORY || entry.type == G_FILE_TYPE_REGULAR || entry.symlink)
+              && (entry.type == files::FileType::Directory || entry.type == files::FileType::Regular || entry.symlink)
               && (action != A::CutFiles || entry.access.rename.value_or(true));
         })) {
       return unavailable("Select accessible native files or folders outside Trash.");
@@ -247,10 +247,10 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
       return unavailable("Select items directly in Trash first.");
     }
     if (!all([](const auto& entry) {
-          const GioPtr<GFile> parent(g_file_get_parent(entry.location.file().get()));
+          const auto parent = entry.location.parent();
           return entry.location.isTrash()
               && parent
-              && g_file_equal(parent.get(), Location::trash().file().get())
+              && *parent == Location::trash()
               && entry.identity
               && entry.access.remove.value_or(true);
         })) {
@@ -271,10 +271,10 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
       if (r.targets.size() > 4096) {
         return unavailable("Select at most 4096 items for batch rename.");
       }
-      const auto parent = GioPtr<GFile>(g_file_get_parent(r.targets.front().location.file().get()));
+      const auto parent = r.targets.front().location.parent();
       if (!parent || !all([&](const auto& entry) {
-            const auto other = GioPtr<GFile>(g_file_get_parent(entry.location.file().get()));
-            return entry.identity && other && g_file_equal(parent.get(), other.get());
+            const auto other = entry.location.parent();
+            return entry.identity && other && *parent == *other;
           })) {
         return unavailable("Batch rename requires identified items from one native folder.");
       }
@@ -306,12 +306,12 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
     }
     if (action == A::Compress) {
       if (!all([](const auto& entry) {
-            return entry.type == G_FILE_TYPE_REGULAR || entry.type == G_FILE_TYPE_DIRECTORY || entry.symlink;
+            return entry.type == files::FileType::Regular || entry.type == files::FileType::Directory || entry.symlink;
           })) {
         return unavailable("Special files cannot be compressed.");
       }
     } else if (!single() || !all([](const auto& entry) {
-                 return entry.type == G_FILE_TYPE_REGULAR
+                 return entry.type == files::FileType::Regular
                      && !entry.symlink
                      && isSupportedArchive(entry.location, entry.contentType);
                })) {
@@ -319,11 +319,11 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
     }
     return {};
   case A::Open:
-    if (!single() && !all([](const auto& entry) { return entry.type == G_FILE_TYPE_REGULAR; })) {
+    if (!single() && !all([](const auto& entry) { return entry.type == files::FileType::Regular; })) {
       return unavailable("Open folders individually.");
     }
     if (!all([](const auto& entry) {
-          return !entry.location.isTrash() || (entry.type == G_FILE_TYPE_DIRECTORY && !entry.symlink);
+          return !entry.location.isTrash() || (entry.type == files::FileType::Directory && !entry.symlink);
         })) {
       return unavailable("Restore this item before opening it.");
     }
@@ -342,7 +342,7 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
     return {};
   case A::Pin:
   case A::Unpin:
-    if (!all([](const auto& entry) { return entry.type == G_FILE_TYPE_DIRECTORY && !entry.location.isTrash(); })) {
+    if (!all([](const auto& entry) { return entry.type == files::FileType::Directory && !entry.location.isTrash(); })) {
       return unavailable("Only folders outside Trash can be pinned.");
     }
     if (!c.pinsEditable) {

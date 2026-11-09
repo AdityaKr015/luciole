@@ -1,5 +1,6 @@
 #include "browser/directory_model.h"
 #include "event_loop/glib_poll_source.h"
+#include "fs/gio_interop.h"
 #include "operations/create_service.h"
 #include "test_check.h"
 
@@ -66,7 +67,7 @@ namespace {
   }
   files::DirectoryEntry linkEntry(const fs::path& path) {
     const files::GioPtr<GFileInfo> info(g_file_query_info(
-        location(path).file().get(), "id::file,id::filesystem,standard::type,standard::is-symlink",
+        files::gioFile(location(path)).get(), "id::file,id::filesystem,standard::type,standard::is-symlink",
         G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, nullptr
     ));
     TEST_CHECK(info);
@@ -76,7 +77,7 @@ namespace {
         .location = location(path),
         .name = path.filename().native(),
         .displayName = display.get(),
-        .type = g_file_info_get_file_type(info.get()),
+        .type = files::fileType(g_file_info_get_file_type(info.get())),
         .symlink = g_file_info_get_is_symlink(info.get()) != FALSE,
         .size = {},
         .modifiedSeconds = {},
@@ -302,7 +303,7 @@ namespace {
     std::ofstream(root / raw) << "raw";
     files::TemplateCatalog catalog;
     auto listing = pump.templates(catalog);
-    TEST_CHECK(listing.error.empty() && !listing.truncated && listing.items.size() == 3);
+    TEST_CHECK(!listing.error && !listing.truncated && listing.items.size() == 3);
     const auto report = std::ranges::find(listing.items, "Work/report.txt", &files::DocumentTemplate::label);
     TEST_CHECK(report != listing.items.end() && report->location == location(root / "Work/report.txt"));
     TEST_CHECK(std::ranges::find(listing.items, raw, &files::DocumentTemplate::name) != listing.items.end());
@@ -313,12 +314,12 @@ namespace {
     catalog.cancel();
     TEST_CHECK(pump.templates(catalog).items.size() == 4 && !obsolete);
     fs::rename(root, home / "Saved templates");
-    TEST_CHECK(!pump.templates(catalog).error.empty());
+    TEST_CHECK(pump.templates(catalog).error.has_value());
     fs::create_directory_symlink(home, root);
-    TEST_CHECK(pump.templates(catalog).items.empty() && !pump.templates(catalog).error.empty());
+    TEST_CHECK(pump.templates(catalog).items.empty() && pump.templates(catalog).error.has_value());
     fs::remove(root);
     fs::create_directory(root);
-    TEST_CHECK(pump.templates(catalog).items.empty() && pump.templates(catalog).error.empty());
+    TEST_CHECK(pump.templates(catalog).items.empty() && !pump.templates(catalog).error);
     for (int index = 0; index < 260; ++index) {
       std::ofstream(root / ("Document " + std::to_string(index))) << "bounded";
     }
@@ -621,7 +622,7 @@ namespace {
     const auto id = model.rows().front();
     TEST_CHECK(
         model.entry(id)->location == service.snapshot().destination
-        && model.entry(id)->type == G_FILE_TYPE_DIRECTORY
+        && model.entry(id)->type == files::FileType::Directory
         && model.select(id)
     );
     pump.prepare(service, fixture.root, files::CreateKind::EmptyFile);
@@ -632,7 +633,7 @@ namespace {
     });
     TEST_CHECK(
         file != model.rows().end()
-        && model.entry(*file)->type == G_FILE_TYPE_REGULAR
+        && model.entry(*file)->type == files::FileType::Regular
         && model.entry(*file)->size == 0
         && model.select(*file)
     );

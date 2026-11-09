@@ -2,6 +2,7 @@
 
 #include "fs/atomic_file.h"
 #include "fs/gio_ptr.h"
+#include "fs/posix_fd.h"
 #include "fs/xdg_dirs.h"
 
 #include <algorithm>
@@ -20,14 +21,6 @@ namespace {
   std::string_view directory(int side) {
     return side <= 128 ? "normal" : side <= 256 ? "large" : side <= 512 ? "x-large" : "xx-large";
   }
-  struct Fd {
-    int value;
-    ~Fd() {
-      if (value >= 0) {
-        ::close(value);
-      }
-    }
-  };
   std::string cacheIdentity(const struct stat& info) {
     return std::format(
         "{}:{}:{}:{}:{}", info.st_dev, info.st_ino, info.st_size, info.st_mtim.tv_sec, info.st_mtim.tv_nsec
@@ -37,12 +30,12 @@ namespace {
     if (::mkdir(path.c_str(), 0700) < 0 && errno != EEXIST) {
       return false;
     }
-    const Fd directory{::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW)};
+    const files::Fd directory(::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW));
     struct stat info{};
-    return directory.value >= 0
-        && ::fstat(directory.value, &info) == 0
+    return directory.valid()
+        && ::fstat(directory.get(), &info) == 0
         && info.st_uid == ::getuid()
-        && ::fchmod(directory.value, 0700) == 0;
+        && ::fchmod(directory.get(), 0700) == 0;
   }
   bool safeName(const std::string& name) {
     const auto slash = name.find('/');
@@ -106,10 +99,10 @@ std::string files::ThumbnailStore::filename(const std::string& uri) {
 }
 std::optional<std::vector<std::uint8_t>>
 files::readThumbnailFile(const std::filesystem::path& path, std::size_t maximum) {
-  const Fd file{::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)};
+  const files::Fd file(::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK));
   struct stat info{};
-  if (file.value < 0
-      || ::fstat(file.value, &info) < 0
+  if (!file.valid()
+      || ::fstat(file.get(), &info) < 0
       || !S_ISREG(info.st_mode)
       || info.st_size <= 0
       || static_cast<std::uint64_t>(info.st_size) > maximum) {
@@ -118,7 +111,7 @@ files::readThumbnailFile(const std::filesystem::path& path, std::size_t maximum)
   std::vector<std::uint8_t> bytes(static_cast<std::size_t>(info.st_size));
   std::size_t offset = 0;
   while (offset < bytes.size()) {
-    const auto n = ::read(file.value, bytes.data() + offset, bytes.size() - offset);
+    const auto n = ::read(file.get(), bytes.data() + offset, bytes.size() - offset);
     if (n < 0 && errno == EINTR) {
       continue;
     }
@@ -272,13 +265,13 @@ void files::ThumbnailStore::writeBatch(
               prepared[classIndex] = true;
             }
             std::string pattern = (m_root / directory(entry.side) / ".noctalia-XXXXXX").native();
-            const Fd file{::mkstemp(pattern.data())};
-            if (file.value < 0) {
+            const files::Fd file(::mkstemp(pattern.data()));
+            if (!file.valid()) {
               return std::unexpected("cannot create thumbnail cache file");
             }
             std::size_t offset = 0;
             while (offset < entry.bytes.size()) {
-              const auto count = ::write(file.value, entry.bytes.data() + offset, entry.bytes.size() - offset);
+              const auto count = ::write(file.get(), entry.bytes.data() + offset, entry.bytes.size() - offset);
               if (count < 0 && errno == EINTR) {
                 continue;
               }
@@ -294,7 +287,7 @@ void files::ThumbnailStore::writeBatch(
               break;
             }
             struct stat info{};
-            if (::fstat(file.value, &info) < 0) {
+            if (::fstat(file.get(), &info) < 0) {
               return std::unexpected("cannot identify cached thumbnail");
             }
             const auto identity = cacheIdentity(info);

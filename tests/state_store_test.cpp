@@ -1,4 +1,5 @@
 #include "config/state_store.h"
+#include "fs/gio_ptr.h"
 #include "test_check.h"
 
 #include <cstdlib>

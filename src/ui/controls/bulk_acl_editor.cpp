@@ -2,6 +2,7 @@
 
 #include "ui/builders.h"
 #include "ui/controls/input.h"
+#include "ui/controls/permission_editor.h"
 #include "ui/controls/segmented.h"
 
 #include <algorithm>
@@ -125,8 +126,8 @@ void BulkAclEditor::sync(const files::PermissionSnapshot& snapshot) {
       )
   );
   m_summary->setColor(colorSpecFromRole(ColorRole::OnSurfaceVariant));
-  m_status->setText(snapshot.aclOperation ? snapshot.message : "");
-  m_status->setColor(colorSpecFromRole(snapshot.error ? ColorRole::Error : ColorRole::OnSurfaceVariant));
+  m_status->setText(snapshot.aclOperation ? permissionStatusText(snapshot) : "");
+  m_status->setColor(colorSpecFromRole(snapshot.failed() ? ColorRole::Error : ColorRole::OnSurfaceVariant));
 }
 const Node* BulkAclEditor::messageNode() const { return m_status; }
 void BulkAclEditor::rebuild() {

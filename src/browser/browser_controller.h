@@ -3,6 +3,8 @@
 #include "browser/directory_model.h"
 #include "fs/recursive_search.h"
 
+#include <glib.h>
+
 namespace files {
   struct BrowseViewport {
     ViewMode mode = ViewMode::Grid;

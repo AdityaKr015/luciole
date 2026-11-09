@@ -1,5 +1,6 @@
 #include "clipboard/text_clipboard.h"
 
+#include "fs/gio_interop.h"
 #include "fs/location.h"
 
 #include <algorithm>

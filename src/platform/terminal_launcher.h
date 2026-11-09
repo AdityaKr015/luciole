@@ -3,6 +3,7 @@
 #include "fs/location.h"
 
 #include <functional>
+#include <memory>
 
 namespace files {
   class TerminalLauncher {

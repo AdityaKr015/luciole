@@ -71,6 +71,8 @@ Each directory under `src/` builds as one static library in `meson.build` (`ui/b
 
 All modules share the `src/` include root, so Meson cannot reject an include of a forbidden `src/` module; review catches those. `model`, `fs`, `config`, `browser`, and `operations` do not depend on `noctalia_ui_dep`, so any `lib/` include there fails to compile; give `browser` that dependency only once it needs `lib/core`.
 
+GIO file types stay behind `fs/`: public headers outside `fs/`, `thumbnails/`, and `imaging/` never mention `GFile`, `GFileInfo`, `GFileType`, or `GCancellable`. `browser`, `config`, `ui`, and `app` use the typed `fs/` API (`Location`, `FileType`, `CancelToken`, `runJob`, `fs/file_query.h`). Modules that drive GIO themselves (`operations`, `thumbnails`, `imaging`, `platform`, `clipboard`) reach it through `fs/gio_interop.h` in their `.cpp` files.
+
 ### Code shared with noctalia-shell
 
 `lib/` (UI controls, render, Wayland surfaces, core helpers) is copied from [noctalia-shell](https://github.com/noctalia-dev/noctalia); do not edit it here. Make generic fixes there first and resync the copy, so the two trees do not drift apart.

@@ -39,17 +39,23 @@ namespace files {
     AclDefaultPolicy defaultPolicy = AclDefaultPolicy::Keep;
   };
   inline constexpr std::size_t maxAclEntries = 128;
+  // Maps a named rule's account text to its numeric UID/GID.
+  using AclResolver = std::function<std::uint32_t(AclTag, const std::string&)>;
   // Worker-only Linux POSIX ACL adapter. Descriptor paths always address a held,
   // non-symlink inode; callers retain pathname/metadata validation policy.
+  // inspectAcl reports failure in AclInfo::message; the others throw FileErrorException.
   AclInfo inspectAcl(int descriptor);
-  std::vector<AclEntry> normalizeAcl(
-      std::vector<AclEntry> entries, bool allowEmpty,
-      const std::function<std::uint32_t(AclTag, const std::string&)>& resolve
-  );
+  std::vector<AclEntry> normalizeAcl(std::vector<AclEntry> entries, bool allowEmpty, const AclResolver& resolve);
+  // Validates both tables of an edit before either can be written.
+  AclEdit normalizeAclEdit(AclEdit edit, const AclResolver& resolve);
   void writeAcl(int descriptor, bool defaults, const std::vector<AclEntry>& entries);
   bool sameAcl(const AclInfo& left, const AclInfo& right);
-  AclPatchEdit
-  normalizeAclPatch(AclPatchEdit edit, const std::function<std::uint32_t(AclTag, const std::string&)>& resolve);
+  // actual holds every table that desired sets.
+  bool satisfiesAcl(const AclInfo& actual, const AclEdit& desired);
+  bool changesAccess(const AclPatchEdit& edit);
+  // The patch leaves this item's default table alone: a file, or Edit existing on a folder without one.
+  bool skipsDefaults(const AclInfo& actual, const AclPatchEdit& edit);
+  AclPatchEdit normalizeAclPatch(AclPatchEdit edit, const AclResolver& resolve);
   // Apply a normalized patch to this item's tables, preserving all unmentioned rules.
   AclEdit patchAcl(const AclInfo& actual, const AclPatchEdit& edit);
   std::string describeAcl(const AclInfo& info);

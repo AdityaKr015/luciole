@@ -23,6 +23,7 @@
 #include "event_loop/glib_poll_source.h"
 #include "event_loop/timer_poll_source.h"
 #include "fs/filename.h"
+#include "fs/gio_ptr.h"
 #include "model/details_columns.h"
 #include "noctalia_files_build_info.h"
 #include "operations/archive_service.h"
@@ -55,6 +56,7 @@
 #include "ui/controls/browser_settings_view.h"
 #include "ui/controls/bulk_acl_editor.h"
 #include "ui/controls/context_menu.h"
+#include "ui/controls/file_error_text.h"
 #include "ui/controls/file_preview_view.h"
 #include "ui/controls/input.h"
 #include "ui/controls/link_dialog.h"
@@ -98,6 +100,13 @@ namespace {
 
   volatile std::sig_atomic_t g_stopRequested = 0;
   void stopRequested(int) { g_stopRequested = 1; }
+
+  std::string createErrorText(const std::optional<files::FileError>& error) {
+    return error ? files::nameErrorText(*error, "The destination folder is no longer available.") : std::string{};
+  }
+  std::string renameErrorText(const std::optional<files::FileError>& error) {
+    return error ? files::nameErrorText(*error) : std::string{};
+  }
 
   class KeyRepeatPollSource final : public PollSource {
   public:
@@ -272,7 +281,7 @@ namespace {
           m_launcher.open(*file);
         }
         if (!m_archives.busy()) {
-          m_actionError = m_archives.error();
+          m_actionError = files::fileErrorText(m_archives.error());
           if (!m_archives.results().empty()) {
             if (m_actionError.empty()) {
               m_actionError = "Archive operation complete.";
@@ -294,11 +303,11 @@ namespace {
               "{} item{} {}", done, done == 1 ? "" : "s",
               m_transfers.action() == files::TransferAction::Copy ? "copied" : "moved"
           );
-          if (const auto error = std::ranges::find_if(results, [](const auto& item) { return !item.error.empty(); });
+          if (const auto error = std::ranges::find_if(results, [](const auto& item) { return item.error.has_value(); });
               error != results.end()) {
-            const files::GString raw(g_file_get_basename(error->source.file().get()));
-            const files::GString name(g_filename_display_name(raw ? raw.get() : "Item"));
-            m_actionError += std::format(" · {}: {}", name.get(), error->error);
+            m_actionError += std::format(
+                " · {}: {}", error->source.displayName().value_or("Item"), files::fileErrorText(*error->error)
+            );
           }
           if (const auto selection = std::exchange(m_clipboardTransfer, std::nullopt)) {
             m_clipboard.finishMove(*selection, results);
@@ -337,9 +346,9 @@ namespace {
               m_actionError += std::format(" · {} {}", amount, label);
             }
           }
-          const auto error = std::ranges::find_if(results, [](const auto& item) { return !item.error.empty(); });
+          const auto error = std::ranges::find_if(results, [](const auto& item) { return item.error.has_value(); });
           if (error != results.end()) {
-            m_actionError += std::format(" · {}: {}", error->displayName, error->error);
+            m_actionError += std::format(" · {}: {}", error->displayName, files::fileErrorText(error->error));
           }
           browser().refresh();
         }
@@ -530,9 +539,7 @@ namespace {
       if (!location()) {
         return "Files";
       }
-      const files::GString raw(g_file_get_basename(location()->file().get()));
-      const files::GString text(g_filename_display_name(raw ? raw.get() : "Files"));
-      return text.get();
+      return location()->displayName().value_or("Files");
     }
     void preferencesChanged(const std::string& error) {
       m_preferenceError = error;
@@ -966,7 +973,7 @@ namespace {
           return std::nullopt;
         }
         const auto* entry = browser().model().entry(rows[*index]);
-        if (!entry || entry->symlink || entry->type != G_FILE_TYPE_DIRECTORY || !entry->location.nativePath()) {
+        if (!entry || entry->symlink || entry->type != files::FileType::Directory || !entry->location.nativePath()) {
           return std::nullopt;
         }
         if (auto rect = m_list->itemRect(*index)) {
@@ -1027,7 +1034,7 @@ namespace {
         if (m_list && m_list->containsScenePoint(x, y)) {
           if (auto index = m_list->itemAtScene(x, y); index && *index < browser().model().rows().size()) {
             const auto* entry = browser().model().entry(browser().model().rows()[*index]);
-            if (entry && entry->type == G_FILE_TYPE_DIRECTORY) {
+            if (entry && entry->type == files::FileType::Directory) {
               m_workspaceRequest(WorkspaceCommand::NewTab, entry->location);
             }
             return;
@@ -2018,7 +2025,7 @@ namespace {
       case Action::Open:
         if (m_miller.enabled()
             && targets.size() == 1
-            && targets.front().type == G_FILE_TYPE_DIRECTORY
+            && targets.front().type == files::FileType::Directory
             && !targets.front().symlink
             && browser().searchQuery().empty()) {
           (void)browser().model().select(targets.front().id);
@@ -2246,7 +2253,7 @@ namespace {
         }
         if (request.targets.size() == 1) {
           const auto* entry = browser().model().entry(request.targets.front().id);
-          if (entry && entry->type == G_FILE_TYPE_DIRECTORY) {
+          if (entry && entry->type == files::FileType::Directory) {
             entries.push_back({.id = 9000, .label = "Open in New Tab"});
             entries.push_back({.id = 9001, .label = "Open in Other Pane"});
             entries.push_back({.id = 9002, .label = "Open in New Window"});
@@ -2282,7 +2289,7 @@ namespace {
         }
         const bool folders = std::ranges::all_of(request.targets, [this](const auto& target) {
           const auto* entry = browser().model().entry(target.id);
-          return entry->type == G_FILE_TYPE_DIRECTORY && !entry->location.isTrash();
+          return entry->type == files::FileType::Directory && !entry->location.isTrash();
         });
         if (folders) {
           separator();
@@ -2418,7 +2425,7 @@ namespace {
                   {{.location = bookmark.location,
                     .name = bookmark.label,
                     .displayName = bookmark.label,
-                    .type = G_FILE_TYPE_DIRECTORY,
+                    .type = files::FileType::Directory,
                     .size = std::nullopt,
                     .modifiedSeconds = std::nullopt,
                     .etag = std::nullopt,
@@ -2537,7 +2544,7 @@ namespace {
           );
           m_emptyTrashConfirm->setEnabled(m_emptyTrash.canEmpty());
         } else if (snapshot.status == files::EmptyTrashStatus::Error) {
-          m_emptyTrashMessage->setText("Could not read Trash: " + snapshot.error);
+          m_emptyTrashMessage->setText("Could not read Trash: " + files::fileErrorText(snapshot.error));
           m_emptyTrashConfirm->setEnabled(false);
         }
         std::string sizeText = "Size: calculating…";
@@ -2564,9 +2571,10 @@ namespace {
             message += std::format(" · {} {}", amount, label);
           }
         }
-        const auto error = std::ranges::find_if(snapshot.results, [](const auto& item) { return !item.error.empty(); });
+        const auto error =
+            std::ranges::find_if(snapshot.results, [](const auto& item) { return item.error.has_value(); });
         if (error != snapshot.results.end()) {
-          message += std::format(" · {}: {}", error->displayName, error->error);
+          message += std::format(" · {}: {}", error->displayName, files::fileErrorText(error->error));
         }
         actionError(std::move(message));
         if (const auto& location = browser().model().snapshot().location; location && location->isTrash()) {
@@ -2575,7 +2583,7 @@ namespace {
       } else if (snapshot.status == files::EmptyTrashStatus::Error) {
         actionError(
             std::string(m_selectedTrashDelete ? "Could not delete selected items: " : "Could not empty Trash: ")
-            + snapshot.error
+            + files::fileErrorText(snapshot.error)
         );
       }
     }
@@ -2621,7 +2629,7 @@ namespace {
       if (snapshot.status == files::TrashStatus::Ready) {
         (void)m_trash.trash();
       } else if (snapshot.status == files::TrashStatus::Error) {
-        actionError("Could not move to Trash: " + snapshot.error);
+        actionError("Could not move to Trash: " + files::fileErrorText(snapshot.error));
       } else if (snapshot.status == files::TrashStatus::Cancelled) {
         actionError("Move to Trash cancelled.");
       } else if (snapshot.status == files::TrashStatus::Finished) {
@@ -2639,11 +2647,11 @@ namespace {
           message += std::format(" · {} cancelled", cancelled);
         }
         const auto error =
-            std::ranges::find_if(snapshot.results, [](const auto& result) { return !result.error.empty(); });
+            std::ranges::find_if(snapshot.results, [](const auto& result) { return result.error.has_value(); });
         if (error != snapshot.results.end()) {
-          const files::GString raw(g_file_get_basename(error->source.file().get()));
-          const files::GString name(g_filename_display_name(raw ? raw.get() : "Item"));
-          message += std::format(" · {}: {}", name.get(), error->error);
+          message += std::format(
+              " · {}: {}", error->source.displayName().value_or("Item"), files::fileErrorText(*error->error)
+          );
         }
         actionError(std::move(message));
         browser().refresh();
@@ -2688,11 +2696,11 @@ namespace {
       for (std::size_t index = 0; index < items->size(); ++index) {
         entries.push_back({.id = static_cast<int>(index), .label = (*items)[index].label});
       }
-      if (loading || items->empty() || !listing.error.empty()) {
+      if (loading || items->empty() || listing.error) {
         entries.push_back(
-            {.label = loading             ? "Loading templates…"
-                 : !listing.error.empty() ? listing.error
-                                          : "No document templates",
+            {.label = loading    ? "Loading templates…"
+                 : listing.error ? files::fileErrorText(*listing.error)
+                                 : "No document templates",
              .enabled = false}
         );
       }
@@ -2815,13 +2823,13 @@ namespace {
       }
       const float width = std::min(420.0F, static_cast<float>(m_surface->width()) - 32.0F);
       const bool document = kind == files::CreateKind::Document;
-      const files::GString display(source ? g_filename_display_name(source->name.c_str()) : nullptr);
+      const auto display = source ? files::filenameDisplayText(source->name) : std::string{};
       auto editor = std::make_unique<NameEditor>(
           width,
           kind == files::CreateKind::Folder ? "New folder"
               : document                    ? "New document"
                                             : "New file",
-          source                                  ? display.get()
+          source                                  ? display
               : kind == files::CreateKind::Folder ? "New Folder"
                                                   : "New File",
           source ? "From " + source->label : "", files::filenameProblem,
@@ -2860,8 +2868,8 @@ namespace {
         m_createEditor->setSaving(true);
       } else {
         m_createEditor->showError(
-            m_creator.snapshot().error.empty() ? "The destination is unavailable. Close this dialog and try again."
-                                               : m_creator.snapshot().error
+            m_creator.snapshot().error ? createErrorText(m_creator.snapshot().error)
+                                       : "The destination is unavailable. Close this dialog and try again."
         );
       }
     }
@@ -2870,17 +2878,16 @@ namespace {
         actionError("This item cannot be linked right now.");
         return;
       }
-      const files::GioPtr<GFile> parent(g_file_get_parent(target.location.file().get()));
+      const auto parent = target.location.parent();
       if (!parent) {
         actionError("The source has no containing folder.");
         return;
       }
-      const files::GString uri(g_file_get_uri(parent.get()));
-      const auto base = files::Location::fromUri(uri.get());
+      const auto& base = *parent;
       const float width = std::min(480.0F, static_cast<float>(m_surface->width()) - 32.0F);
       auto root = std::make_unique<LinkDialog>(
           width, files::locationEditText(target.location), "Link to " + target.displayName,
-          files::locationEditText(base), target.type == G_FILE_TYPE_REGULAR && !target.symlink,
+          files::locationEditText(base), target.type == files::FileType::Regular && !target.symlink,
           [this, base](std::string name, const std::string& path, files::CreateKind kind) {
             if (!m_linkDialog) {
               return;
@@ -2891,8 +2898,8 @@ namespace {
                 m_linkDialog->setSaving(true);
               } else {
                 m_linkDialog->showError(
-                    m_creator.snapshot().error.empty() ? "The source is unavailable. Close this dialog and try again."
-                                                       : m_creator.snapshot().error
+                    m_creator.snapshot().error ? createErrorText(m_creator.snapshot().error)
+                                               : "The source is unavailable. Close this dialog and try again."
                 );
               }
             } catch (const std::exception& error) {
@@ -2938,8 +2945,8 @@ namespace {
       }
       const auto& snapshot = m_creator.snapshot();
       if (snapshot.status == files::CreateStatus::Succeeded || snapshot.status == files::CreateStatus::Partial) {
-        m_actionError = snapshot.error;
-        if (m_linkDialog && snapshot.error.empty() && snapshot.parent) {
+        m_actionError = createErrorText(snapshot.error);
+        if (m_linkDialog && !snapshot.error && snapshot.parent) {
           m_actionError = "Link created in " + files::locationEditText(*snapshot.parent);
         }
         if (browser().model().snapshot().location == snapshot.parent) {
@@ -2955,7 +2962,7 @@ namespace {
         }
       } else if (m_linkDialog) {
         m_linkDialog->setSaving(false);
-        m_linkDialog->showError(snapshot.error);
+        m_linkDialog->showError(createErrorText(snapshot.error));
         if (std::exchange(m_linkPreparing, false)) {
           m_menuDispatcher.setFocus(m_linkDialog->nameInput()->inputArea());
           m_linkDialog->nameInput()->selectAll();
@@ -2963,11 +2970,11 @@ namespace {
         m_menuSurface->requestLayout();
       } else if (m_createEditor == nullptr) {
         if (snapshot.status == files::CreateStatus::Error) {
-          actionError("Could not create: " + snapshot.error);
+          actionError("Could not create: " + createErrorText(snapshot.error));
         }
       } else if (snapshot.status == files::CreateStatus::Ready || snapshot.status == files::CreateStatus::Error) {
         m_createEditor->setSaving(false);
-        m_createEditor->showError(snapshot.error);
+        m_createEditor->showError(createErrorText(snapshot.error));
         if (std::exchange(m_creationPreparing, false)) {
           m_menuDispatcher.setFocus(m_createEditor->input()->inputArea());
           if (snapshot.kind == files::CreateKind::Document) {
@@ -3044,9 +3051,9 @@ namespace {
         );
         std::string message = std::format("{} items renamed.", count);
         const auto problem =
-            std::ranges::find_if(*snapshot.results, [](const auto& result) { return !result.error.empty(); });
+            std::ranges::find_if(*snapshot.results, [](const auto& result) { return result.error.has_value(); });
         if (problem != snapshot.results->end()) {
-          message += " " + problem->error;
+          message += " " + files::fileErrorText(problem->error);
         }
         actionError(std::move(message));
         if (snapshot.parent == browser().model().snapshot().location) {
@@ -3060,7 +3067,7 @@ namespace {
           m_batchRevealContext = browser().contextSerial();
         }
       } else if (snapshot.phase == files::BatchRenamePhase::Error && !m_batchRenameDialog) {
-        actionError("Could not rename: " + snapshot.error);
+        actionError("Could not rename: " + files::fileErrorText(snapshot.error));
       }
     }
 
@@ -3075,7 +3082,7 @@ namespace {
       const float width = std::min(420.0F, static_cast<float>(m_surface->width()) - 32.0F);
       const bool validText = g_utf8_validate(target.name.data(), static_cast<gssize>(target.name.size()), nullptr);
       auto editor = std::make_unique<NameEditor>(
-          width, target.type == G_FILE_TYPE_DIRECTORY && !target.symlink ? "Rename folder" : "Rename file",
+          width, target.type == files::FileType::Directory && !target.symlink ? "Rename folder" : "Rename file",
           validText ? target.name : "", validText ? "" : "Enter a new UTF-8 name for this item.",
           files::filenameProblem, [this](std::string name) { submitFileRename(std::move(name)); },
           [this] { dismissMenu(); }
@@ -3107,7 +3114,8 @@ namespace {
       }
       if (!m_renamer.rename(std::move(name))) {
         m_fileRenameEditor->showError(
-            m_renamer.snapshot().error.empty() ? "The item is unavailable. Reopen Rename." : m_renamer.snapshot().error
+            m_renamer.snapshot().error ? files::nameErrorText(*m_renamer.snapshot().error)
+                                       : "The item is unavailable. Reopen Rename."
         );
       } else {
         m_fileRenameEditor->setSaving(true);
@@ -3121,7 +3129,7 @@ namespace {
       if (snapshot.status == files::RenameStatus::Succeeded) {
         m_actionError.clear();
         const auto& current = browser().model().snapshot().location;
-        if (current && snapshot.source && g_file_has_prefix(snapshot.source->file().get(), current->file().get())) {
+        if (current && snapshot.source && snapshot.source->isInside(*current)) {
           m_revealTargets.clear();
           if (snapshot.destination) {
             m_revealTargets.push_back(*snapshot.destination);
@@ -3134,15 +3142,15 @@ namespace {
         }
       } else if (m_fileRenameEditor == nullptr) {
         if (snapshot.status == files::RenameStatus::Error) {
-          actionError("Could not rename: " + snapshot.error);
+          actionError("Could not rename: " + renameErrorText(snapshot.error));
         }
       } else if (snapshot.status == files::RenameStatus::Ready || snapshot.status == files::RenameStatus::Error) {
         m_fileRenameEditor->setSaving(false);
-        m_fileRenameEditor->showError(snapshot.error);
+        m_fileRenameEditor->showError(renameErrorText(snapshot.error));
         if (std::exchange(m_fileRenamePreparing, false)) {
           m_menuDispatcher.setFocus(m_fileRenameEditor->input()->inputArea());
           const auto& value = m_fileRenameEditor->input()->value();
-          const bool directory = m_fileRenameTarget->type == G_FILE_TYPE_DIRECTORY && !m_fileRenameTarget->symlink;
+          const bool directory = m_fileRenameTarget->type == files::FileType::Directory && !m_fileRenameTarget->symlink;
           m_fileRenameEditor->input()->selectRange(0, files::filenameStemLength(value, directory));
         }
         m_menuSurface->requestLayout();
@@ -3230,12 +3238,11 @@ namespace {
     }
 
     void showContaining(const files::Location& location) {
-      const files::GioPtr<GFile> parent(g_file_get_parent(location.file().get()));
+      const auto parent = location.parent();
       if (!parent) {
         return;
       }
-      const files::GString uri(g_file_get_uri(parent.get()));
-      browser().open(files::Location::fromUri(uri.get()));
+      browser().open(*parent);
       revealItems({location}, false);
     }
 
@@ -3343,10 +3350,7 @@ namespace {
     }
 
     static files::Location archiveDestination(const files::Location& source) {
-      const files::GioPtr<GFile> parent(g_file_get_parent(source.file().get()));
-      const files::GioPtr<GFile> child(g_file_get_child(parent.get(), files::archiveFolderName(source).c_str()));
-      const files::GString uri(g_file_get_uri(child.get()));
-      return files::Location::fromUri(uri.get());
+      return source.parent().value_or(source).child(files::archiveFolderName(source));
     }
     void openArchiveDialog(std::vector<files::Location> sources, std::vector<std::string> selected, bool compress) {
       if (sources.empty() || m_archives.busy()) {
@@ -3358,16 +3362,13 @@ namespace {
         return;
       }
       const auto source = sources.front();
-      const files::GioPtr<GFile> parentFile(g_file_get_parent(source.file().get()));
-      if (!parentFile) {
+      const auto parent = source.parent();
+      if (!parent) {
         actionError("The source has no destination parent.");
         return;
       }
-      const files::GString uri(g_file_get_uri(parentFile.get()));
-      const auto base = files::Location::fromUri(uri.get());
-      const files::GString raw(g_file_get_basename(source.file().get()));
-      const files::GString display(g_filename_display_name(raw ? raw.get() : "Archive"));
-      const std::string name = (sources.size() == 1 ? std::string(display.get()) : "Archive")
+      const auto& base = *parent;
+      const std::string name = (sources.size() == 1 ? source.displayName().value_or("Archive") : "Archive")
           + (formats.empty() ? ".zip" : std::string(formats.front().suffix));
       auto root = std::make_unique<ArchiveDialog>(
           compress, name, files::locationEditText(compress ? base : archiveDestination(source)),
@@ -3389,9 +3390,7 @@ namespace {
               if (found == formats.end() || !name.ends_with(found->suffix)) {
                 return "Use the filename extension for the selected format.";
               }
-              const files::GioPtr<GFile> child(g_file_get_child(destination.file().get(), name.c_str()));
-              const files::GString uri(g_file_get_uri(child.get()));
-              destination = files::Location::fromUri(uri.get());
+              destination = destination.child(name);
             }
             const bool started = compress ? m_archives.compress(sources, destination, format)
                                           : m_archives.extract(sources.front(), destination, selected);
@@ -3819,7 +3818,7 @@ namespace {
                    .configure = [](Button& button) { button.label()->setUseMarkup(false); }}
               );
               button->setFillWidth(true);
-              auto source = files::readIconSource(g_app_info_get_icon(app.app.get()));
+              auto source = app.icon;
               source.names.emplace_back("application-x-executable");
               auto icon = std::make_unique<files::FileIcon>(m_icons, 24.0F);
               icon->bind(source, colorSpecFromRole(ColorRole::OnSurface));
@@ -3877,7 +3876,7 @@ namespace {
                                                                                : "Reading selection",
                                                     m_permissions.completed()
                                                 ))
-                  : snapshot.message
+                  : permissionStatusText(snapshot)
           );
           if (m_permissions.collecting() && !snapshot.cancelRequested) {
             m_permissionStatus->setText(
@@ -3892,7 +3891,7 @@ namespace {
             );
           }
           m_permissionStatus->setColor(
-              colorSpecFromRole(snapshot.error ? ColorRole::Error : ColorRole::OnSurfaceVariant)
+              colorSpecFromRole(snapshot.failed() ? ColorRole::Error : ColorRole::OnSurfaceVariant)
           );
           m_permissionReport->setEnabled(!m_permissions.busy() && !snapshot.report.empty() && m_clipboard.available());
           m_permissionCancel->setVisible(saving);
@@ -3902,7 +3901,7 @@ namespace {
             m_permissionTabs->setSelectedIndex(m_permissionResultTab);
           }
         }
-        if (snapshot.error && !snapshot.finished && snapshot.phase == files::PermissionPhase::Ready) {
+        if (snapshot.failed() && !snapshot.finished && snapshot.phase == files::PermissionPhase::Ready) {
           m_permissionTabs->setSelectedIndex(1);
           showAdvancedPermissions(snapshot.aclOperation);
           m_permissionScroll->requestScrollIntoView(
@@ -3916,8 +3915,9 @@ namespace {
           && snapshot.applied) {
         browser().refresh();
       }
-      if (!m_permissions.busy() && !snapshot.message.empty() && (!m_permissionEditor || snapshot.applied)) {
-        actionError(snapshot.message);
+      if (const auto status = permissionStatusText(snapshot);
+          !m_permissions.busy() && !status.empty() && (!m_permissionEditor || snapshot.applied)) {
+        actionError(status);
       }
     }
     void showProperties(const std::vector<files::DirectoryEntry>& targets, bool captureCurrentLocation = false) {
@@ -3928,7 +3928,7 @@ namespace {
       const bool editable = !targets.empty() && targets.size() <= 4096;
       const bool multiple = targets.size() > 1;
       const bool folders = std::ranges::any_of(targets, [](const auto& entry) {
-        return entry.type == G_FILE_TYPE_DIRECTORY
+        return entry.type == files::FileType::Directory
             && !entry.symlink
             && entry.location.nativePath()
             && !entry.location.isTrash();
@@ -3979,9 +3979,9 @@ namespace {
                          .configure = literal}
                     ),
                     ui::label(
-                        {.text = entry.symlink                     ? "Symbolic link"
-                             : entry.type == G_FILE_TYPE_DIRECTORY ? "Folder"
-                                                                   : "File",
+                        {.text = entry.symlink                          ? "Symbolic link"
+                             : entry.type == files::FileType::Directory ? "Folder"
+                                                                        : "File",
                          .fontSize = Style::fontSizeCaption,
                          .color = colorSpecFromRole(ColorRole::OnSurfaceVariant)}
                     )
@@ -3994,7 +3994,7 @@ namespace {
           field("Original", entry.trash.original ? files::locationEditText(*entry.trash.original) : "Unknown");
           field("Deleted", entry.trash.deletionDate.value_or("Unknown"));
         }
-        if (entry.type != G_FILE_TYPE_DIRECTORY) {
+        if (entry.type != files::FileType::Directory) {
           const files::GString size(entry.size ? g_format_size_full(*entry.size, G_FORMAT_SIZE_IEC_UNITS) : nullptr);
           field("Size", size ? size.get() : "Unknown");
         }
@@ -4522,11 +4522,10 @@ namespace {
         }
         bool differentParent = false;
         for (const auto& source : payload->locations) {
-          if (source == destination || g_file_has_prefix(destination.file().get(), source.file().get())) {
+          if (source == destination || destination.isInside(source)) {
             return false;
           }
-          const files::GioPtr<GFile> parent(g_file_get_parent(source.file().get()));
-          differentParent |= !parent || !g_file_equal(parent.get(), destination.file().get());
+          differentParent |= source.parent() != destination;
         }
         return differentParent || (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0;
       }
@@ -4542,12 +4541,10 @@ namespace {
         if (entry == nullptr) {
           return false;
         }
-        if (entry->type == G_FILE_TYPE_DIRECTORY
-            && g_file_has_prefix(destination.file().get(), source.location.file().get())) {
+        if (entry->type == files::FileType::Directory && destination.isInside(source.location)) {
           return false;
         }
-        const files::GioPtr<GFile> parent(g_file_get_parent(source.location.file().get()));
-        anyDifferentParent = anyDifferentParent || !parent || !g_file_equal(parent.get(), destination.file().get());
+        anyDifferentParent = anyDifferentParent || source.location.parent() != destination;
       }
       return anyDifferentParent || (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0;
     }
@@ -4572,12 +4569,9 @@ namespace {
         }
       }
       if (m_up->containsScenePoint(m_pointerX, m_pointerY) && browser().model().snapshot().location) {
-        const files::GioPtr<GFile> parent(g_file_get_parent(browser().model().snapshot().location->file().get()));
-        if (parent) {
-          const files::GString uri(g_file_get_uri(parent.get()));
-          const auto location = files::Location::fromUri(uri.get());
-          if (validDropFolder(location)) {
-            return DropTarget{location, sceneRect(*m_up)};
+        if (const auto location = browser().model().snapshot().location->parent()) {
+          if (validDropFolder(*location)) {
+            return DropTarget{*location, sceneRect(*m_up)};
           }
         }
       }
@@ -4597,7 +4591,7 @@ namespace {
             if (*row < model.rows().size()) {
               const auto* entry = model.entry(model.rows()[*row]);
               if (entry
-                  && entry->type == G_FILE_TYPE_DIRECTORY
+                  && entry->type == files::FileType::Directory
                   && !entry->symlink
                   && validDropFolder(entry->location)) {
                 return DropTarget{entry->location, *grid->itemRect(*row), entry->id};
@@ -4618,7 +4612,7 @@ namespace {
           if (*index < rows.size()) {
             const auto* entry = browser().model().entry(rows[*index]);
             if (entry != nullptr
-                && entry->type == G_FILE_TYPE_DIRECTORY
+                && entry->type == files::FileType::Directory
                 && !entry->symlink
                 && validDropFolder(entry->location)) {
               if (const auto rect = m_list->itemRect(*index)) {
@@ -4664,10 +4658,12 @@ namespace {
         const auto* entry = browser().model().entry(id);
         if (entry == nullptr
             || entry->location.isTrash()
-            || (entry->type != G_FILE_TYPE_DIRECTORY && entry->type != G_FILE_TYPE_REGULAR && !entry->symlink)) {
+            || (entry->type != files::FileType::Directory
+                && entry->type != files::FileType::Regular
+                && !entry->symlink)) {
           return;
         }
-        drag.foldersOnly = drag.foldersOnly && entry->type == G_FILE_TYPE_DIRECTORY && !entry->symlink;
+        drag.foldersOnly = drag.foldersOnly && entry->type == files::FileType::Directory && !entry->symlink;
         drag.entries.push_back({id, entry->location});
         drag.bookmarks.push_back({entry->displayName, entry->location});
       }
@@ -5257,9 +5253,7 @@ namespace {
       };
       showContextMenu(entries, activate, anchor);
       const auto generation = m_menuGeneration;
-      const files::GioPtr<GFile> parent(g_file_get_parent(target.file().get()));
-      const files::GString uri(parent ? g_file_get_uri(parent.get()) : nullptr);
-      const auto siblingParent = uri ? files::Location::fromUri(uri.get()) : target;
+      const auto siblingParent = target.parent().value_or(target);
       m_siblingCompletion.children(
           siblingParent, browser().model().filter().showHidden,
           [this, context, generation, anchor, targets, entries = std::move(entries),
@@ -8319,16 +8313,12 @@ namespace {
     void show(const files::FileManagerRequest& request) {
       std::vector<std::pair<files::Location, std::vector<files::Location>>> groups;
       for (const auto& location : request.locations) {
-        const files::GioPtr<GFile> parent(
-            request.kind == files::FileManagerRequest::Kind::Folders ? nullptr
-                                                                     : g_file_get_parent(location.file().get())
-        );
+        auto parent = request.kind == files::FileManagerRequest::Kind::Folders ? std::nullopt : location.parent();
         if (!parent) {
           groups.emplace_back(location, std::vector<files::Location>{});
           continue;
         }
-        const files::GString uri(g_file_get_uri(parent.get()));
-        auto folder = files::Location::fromUri(uri.get());
+        auto folder = std::move(*parent);
         const auto found = std::ranges::find(groups, folder, [](const auto& group) { return group.first; });
         if (found != groups.end() && !found->second.empty()) {
           found->second.push_back(location);

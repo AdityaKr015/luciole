@@ -1,6 +1,10 @@
 #include "operations/batch_rename_service.h"
 
+#include "fs/background_job.h"
+#include "fs/cancel_token.h"
 #include "fs/filename.h"
+#include "fs/gio_interop.h"
+#include "fs/posix_fd.h"
 
 #include <algorithm>
 #include <array>
@@ -13,77 +17,51 @@
 #include <map>
 #include <ranges>
 #include <set>
-#include <stdexcept>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 #include <utility>
 
 namespace {
-  class Fd {
-  public:
-    explicit Fd(int fd) : m_fd(fd) {
-      if (fd < 0) {
-        throw std::runtime_error(std::strerror(errno));
-      }
-    }
-    ~Fd() { ::close(m_fd); }
-    Fd(const Fd&) = delete;
-    Fd& operator=(const Fd&) = delete;
-    int get() const { return m_fd; }
-
-  private:
-    int m_fd;
-  };
-  struct stat metadata(int fd) {
-    struct stat value{};
-    if (::fstat(fd, &value) != 0) {
-      throw std::runtime_error(std::strerror(errno));
-    }
-    return value;
-  }
-  bool same(const struct stat& a, const struct stat& b) {
-    return a.st_dev == b.st_dev && a.st_ino == b.st_ino && (a.st_mode & S_IFMT) == (b.st_mode & S_IFMT);
-  }
-  std::string display(const std::string& name) {
-    const files::GString text(g_filename_display_name(name.c_str()));
-    return text.get();
-  }
+  using files::FileErrorKind;
   std::string fdPath(int fd) {
     std::vector<char> buffer(8192);
     const auto count = ::readlink(("/proc/self/fd/" + std::to_string(fd)).c_str(), buffer.data(), buffer.size());
     if (count <= 0 || static_cast<std::size_t>(count) == buffer.size()) {
-      throw std::runtime_error("The held folder's current path is unavailable.");
+      files::throwFileError(FileErrorKind::Unavailable, "The held folder's current path is unavailable.");
     }
     return {buffer.data(), static_cast<std::size_t>(count)};
   }
   struct Item {
     files::DirectoryEntry entry;
     std::string name;
-    Fd fd;
+    files::Fd fd;
     struct stat identity;
     Item(files::DirectoryEntry entry, int parent, std::string name)
         : entry(std::move(entry)), name(std::move(name)),
-          fd(::openat(parent, this->name.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC)), identity(metadata(fd.get())) {}
+          fd(files::checkedFd(::openat(parent, this->name.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC))),
+          identity(files::statFd(fd.get())) {}
     bool at(int parent, const std::string& name) const {
       struct stat value{};
-      return ::fstatat(parent, name.c_str(), &value, AT_SYMLINK_NOFOLLOW) == 0 && same(value, identity);
+      return ::fstatat(parent, name.c_str(), &value, AT_SYMLINK_NOFOLLOW) == 0 && files::sameIdentity(value, identity);
     }
   };
   struct Prepared {
     files::Location parent;
     std::string path;
-    Fd fd;
+    files::Fd fd;
     std::vector<std::unique_ptr<Item>> items;
     long nameLimit;
     explicit Prepared(files::Location parent)
         : parent(std::move(parent)), path(*this->parent.nativePath()),
-          fd(::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC)), nameLimit(::fpathconf(fd.get(), _PC_NAME_MAX)) {
-    }
+          fd(files::checkedFd(::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC))),
+          nameLimit(::fpathconf(fd.get(), _PC_NAME_MAX)) {}
     void requireCurrent() const {
-      const Fd current(::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
-      if (!same(metadata(current.get()), metadata(fd.get()))) {
-        throw std::runtime_error("The containing folder changed. Close this dialog and select the items again.");
+      const auto current = files::checkedFd(::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+      if (!files::sameIdentity(files::statFd(current.get()), files::statFd(fd.get()))) {
+        files::throwFileError(
+            FileErrorKind::Changed, "The containing folder changed. Close this dialog and select the items again."
+        );
       }
     }
     std::optional<files::Location>
@@ -109,46 +87,40 @@ namespace {
       }
     }
   };
-  std::shared_ptr<Prepared> prepareItems(std::vector<files::DirectoryEntry> entries, const std::atomic<bool>& stop) {
-    const files::GioPtr<GFile> first(g_file_get_parent(entries.front().location.file().get()));
+  std::shared_ptr<Prepared> prepareItems(std::vector<files::DirectoryEntry> entries, const files::CancelToken& token) {
+    const auto first = entries.front().location.parent();
     if (!first) {
-      throw std::runtime_error("Select entries inside a native folder.");
+      files::throwFileError(FileErrorKind::InvalidArgument, "Select entries inside a native folder.");
     }
-    const files::GString uri(g_file_get_uri(first.get()));
-    const auto parent = files::Location::fromUri(uri.get());
-    if (!parent.nativePath()) {
-      throw std::runtime_error("Batch rename requires a native folder.");
+    if (!first->nativePath()) {
+      files::throwFileError(FileErrorKind::Unsupported, "Batch rename requires a native folder.");
     }
-    auto prepared = std::make_shared<Prepared>(parent);
+    auto prepared = std::make_shared<Prepared>(*first);
     std::set<std::string> names;
     for (auto& entry : entries) {
-      if (stop.load()) {
+      if (token.cancelled()) {
         return {};
       }
-      const files::GioPtr<GFile> containing(g_file_get_parent(entry.location.file().get()));
-      if (!entry.location.nativePath()
-          || !entry.identity
-          || !containing
-          || !g_file_equal(first.get(), containing.get())) {
-        throw std::runtime_error("Select identified items from one native folder.");
+      if (!entry.location.nativePath() || !entry.identity || entry.location.parent() != first) {
+        files::throwFileError(FileErrorKind::InvalidArgument, "Select identified items from one native folder.");
       }
-      const files::GString raw(g_file_get_basename(entry.location.file().get()));
-      const std::string name = raw ? raw.get() : "";
+      const std::string name = entry.location.basename().value_or(std::string{});
       if (name.empty() || name == "." || name == ".." || name != entry.name || !names.insert(name).second) {
-        throw std::runtime_error("The selection contains invalid or repeated names.");
+        files::throwFileError(FileErrorKind::InvalidArgument, "The selection contains invalid or repeated names.");
       }
       auto item = std::make_unique<Item>(entry, prepared->fd.get(), name);
       const files::GioPtr<GFileInfo> info(g_file_query_info(
-          entry.location.file().get(), "id::file,id::filesystem,standard::type,standard::is-symlink,access::can-rename",
+          files::gioFile(entry.location).get(),
+          "id::file,id::filesystem,standard::type,standard::is-symlink,access::can-rename",
           G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, nullptr
       ));
       if (!info
           || files::readFileIdentity(info.get()) != entry.identity
-          || g_file_info_get_file_type(info.get()) != entry.type
+          || files::fileType(g_file_info_get_file_type(info.get())) != entry.type
           || (g_file_info_get_is_symlink(info.get()) != FALSE) != entry.symlink
           || !item->at(prepared->fd.get(), name)
           || !files::readFileAccess(info.get()).rename.value_or(true)) {
-        throw std::runtime_error("A selected item changed or cannot be renamed. Select it again.");
+        files::throwFileError(FileErrorKind::Changed, "A selected item changed or cannot be renamed. Select it again.");
       }
       prepared->items.push_back(std::move(item));
     }
@@ -156,18 +128,22 @@ namespace {
     return prepared;
   }
   std::shared_ptr<std::vector<files::BatchRenameRow>>
-  validate(const Prepared& plan, const std::vector<std::string>& names, const std::atomic<bool>& stop) {
+  validate(const Prepared& plan, const std::vector<std::string>& names, const files::CancelToken& token) {
     auto rows = std::make_shared<std::vector<files::BatchRenameRow>>();
     std::map<std::string, std::size_t> sources, targets;
     for (std::size_t i = 0; i < names.size(); ++i) {
       sources.emplace(plan.items[i]->name, i);
       rows->push_back(
-          {plan.items[i]->entry.displayName, display(names[i]), names[i], {}, names[i] != plan.items[i]->name}
+          {plan.items[i]->entry.displayName,
+           files::filenameDisplayText(names[i]),
+           names[i],
+           {},
+           names[i] != plan.items[i]->name}
       );
     }
     plan.requireCurrent();
     const bool writable = ::faccessat(plan.fd.get(), ".", W_OK | X_OK, AT_EACCESS) == 0;
-    for (std::size_t i = 0; i < names.size() && !stop.load(); ++i) {
+    for (std::size_t i = 0; i < names.size() && !token.cancelled(); ++i) {
       auto& row = (*rows)[i];
       if (!plan.items[i]->at(plan.fd.get(), plan.items[i]->name)) {
         row.error = "Source changed. Close and select it again.";
@@ -209,41 +185,41 @@ namespace {
       const files::GString uuid(g_uuid_string_random());
       m_name = ".noctalia-rename-" + std::string(uuid.get());
       if (::mkdirat(m_parent, m_name.c_str(), 0700) != 0) {
-        throw std::runtime_error(std::strerror(errno));
+        files::throwErrno(errno);
       }
-      const int fd = ::openat(m_parent, m_name.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-      if (fd < 0) {
+      files::Fd fd(::openat(m_parent, m_name.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+      if (!fd.valid()) {
         const int code = errno;
         (void)::unlinkat(m_parent, m_name.c_str(), AT_REMOVEDIR);
-        throw std::runtime_error(std::strerror(code));
+        files::throwErrno(code);
       }
-      m_fd = std::make_unique<Fd>(fd);
+      m_fd = std::move(fd);
     }
     ~Stage() {
       struct stat current{}, held{};
-      if (m_fd
-          && ::fstat(m_fd->get(), &held) == 0
+      if (m_fd.valid()
+          && ::fstat(m_fd.get(), &held) == 0
           && ::fstatat(m_parent, m_name.c_str(), &current, AT_SYMLINK_NOFOLLOW) == 0
-          && same(current, held)) {
+          && files::sameIdentity(current, held)) {
         // Never remove contents: incomplete recovery must remain available for inspection.
         (void)::unlinkat(m_parent, m_name.c_str(), AT_REMOVEDIR);
       }
     }
     Stage(const Stage&) = delete;
     Stage& operator=(const Stage&) = delete;
-    int fd() const { return m_fd->get(); }
+    int fd() const { return m_fd.get(); }
 
   private:
     int m_parent;
     std::string m_name;
-    std::unique_ptr<Fd> m_fd;
+    files::Fd m_fd;
   };
   void move(const Item& item, int from, const std::string& oldName, int to, const std::string& newName) {
     if (!item.at(from, oldName)) {
-      throw std::runtime_error("An item changed during the operation.");
+      files::throwFileError(FileErrorKind::Changed, "An item changed during the operation.");
     }
     if (::syscall(SYS_renameat2, from, oldName.c_str(), to, newName.c_str(), RENAME_NOREPLACE) != 0) {
-      throw std::runtime_error(std::strerror(errno));
+      files::throwErrno(errno);
     }
   }
   std::vector<std::vector<std::size_t>>
@@ -283,8 +259,16 @@ namespace {
     return groups;
   }
   enum class Position { Original, Staged, Published, Unknown };
+  // Adds a sentence to a result's error, or starts one of kind.
+  void appendError(std::optional<files::FileError>& error, FileErrorKind kind, const std::string& text) {
+    if (error) {
+      error->message += " " + text;
+    } else {
+      error = files::FileError{.kind = kind, .message = text};
+    }
+  }
   std::shared_ptr<std::vector<files::BatchRenameResult>> execute(
-      const Prepared& plan, const std::vector<files::BatchRenameRow>& rows, const std::atomic<bool>& stop,
+      const Prepared& plan, const std::vector<files::BatchRenameRow>& rows, const files::CancelToken& token,
       std::atomic<std::size_t>& completed
   ) {
     using O = files::BatchRenameOutcome;
@@ -300,24 +284,24 @@ namespace {
     }
     std::unique_ptr<Stage> stage;
     for (const auto& group : components(plan, rows)) {
-      if (stop.load()) {
+      if (token.cancelled()) {
         break;
       }
-      std::string problem;
+      std::optional<files::FileError> problem;
       try {
         plan.requireCurrent();
         if (!stage) {
           stage = std::make_unique<Stage>(plan);
         }
         for (const auto index : group) {
-          if (stop.load()) {
+          if (token.cancelled()) {
             break;
           }
           plan.requireCurrent();
           move(*plan.items[index], plan.fd.get(), plan.items[index]->name, stage->fd(), std::to_string(index));
           positions[index] = Position::Staged;
         }
-        if (!stop.load()) {
+        if (!token.cancelled()) {
           // Once publication starts, finish this connected group before observing cancellation.
           for (const auto index : group) {
             plan.requireCurrent();
@@ -330,8 +314,8 @@ namespace {
           }
           continue;
         }
-      } catch (const std::exception& error) {
-        problem = error.what();
+      } catch (const std::exception&) {
+        problem = files::currentFileError();
       }
       // Recover an incomplete connected group without replacing any intervening entry.
       for (const auto index : std::views::reverse(group)) {
@@ -347,19 +331,20 @@ namespace {
       }
       for (const auto index : group) {
         auto& result = (*results)[index];
-        result.outcome = problem.empty() ? O::Cancelled : O::Failed;
+        result.outcome = problem ? O::Failed : O::Cancelled;
         result.error = problem;
         if (positions[index] == Position::Staged) {
           try {
             move(*plan.items[index], stage->fd(), std::to_string(index), plan.fd.get(), plan.items[index]->name);
             positions[index] = Position::Original;
-          } catch (const std::exception& error) {
+          } catch (const std::exception&) {
+            const auto failure = files::currentFileError();
             result.outcome = O::NeedsAttention;
-            result.error += std::string(" Original name could not be restored: ") + error.what();
+            appendError(result.error, failure.kind, "Original name could not be restored: " + failure.message);
           }
         } else if (positions[index] == Position::Unknown) {
           result.outcome = O::Unconfirmed;
-          result.error += " The item's final location could not be confirmed.";
+          appendError(result.error, FileErrorKind::Other, "The item's final location could not be confirmed.");
         }
         completed.fetch_add(1);
       }
@@ -377,11 +362,14 @@ namespace {
         );
       }
       if (staged && result.actual) {
-        result.error += " Retained at " + display(*result.actual->nativePath());
+        appendError(
+            result.error, FileErrorKind::Other,
+            "Retained at " + files::filenameDisplayText(*result.actual->nativePath())
+        );
       }
       if (!result.actual && result.outcome != O::Unconfirmed) {
         result.outcome = O::Unconfirmed;
-        result.error += " The item's final location could not be confirmed.";
+        appendError(result.error, FileErrorKind::Other, "The item's final location could not be confirmed.");
       }
     }
     return results;
@@ -397,14 +385,14 @@ files::batchRenameName(const std::string& name, bool directory, std::size_t inde
       || o.start > 1000000000
       || o.digits < 1
       || o.digits > 9) {
-    throw std::runtime_error("Rename options exceed their limits.");
+    throwFileError(FileErrorKind::InvalidArgument, "Rename options exceed their limits.");
   }
   const auto stemLength = o.keepExtensions ? filenameStemLength(name, directory) : name.size();
   const auto stem = name.substr(0, stemLength), extension = name.substr(stemLength);
   std::string result;
   const auto append = [&](std::string_view text) {
     if (result.size() + text.size() > 4096) {
-      throw std::runtime_error("Generated name is too long.");
+      throwFileError(FileErrorKind::NameTooLong, "Generated name is too long.");
     }
     result += text;
   };
@@ -426,7 +414,7 @@ files::batchRenameName(const std::string& name, bool directory, std::size_t inde
         append(tail.substr(0, 1));
         pos += 2;
       } else if (tail[0] == '{' || tail[0] == '}') {
-        throw std::runtime_error("Use {name}, {number}, {{ or }} in the pattern.");
+        throwFileError(FileErrorKind::InvalidArgument, "Use {name}, {number}, {{ or }} in the pattern.");
       } else {
         append(tail.substr(0, 1));
         ++pos;
@@ -434,7 +422,7 @@ files::batchRenameName(const std::string& name, bool directory, std::size_t inde
     }
   } else if (o.mode == BatchRenameMode::Replace) {
     if (o.find.empty()) {
-      throw std::runtime_error("Enter text to find.");
+      throwFileError(FileErrorKind::InvalidArgument, "Enter text to find.");
     }
     std::size_t start = 0;
     for (;;) {
@@ -448,7 +436,7 @@ files::batchRenameName(const std::string& name, bool directory, std::size_t inde
       start = found + o.find.size();
     }
   } else {
-    throw std::runtime_error("Unknown rename mode.");
+    throwFileError(FileErrorKind::InvalidArgument, "Unknown rename mode.");
   }
   append(extension);
   return result;
@@ -458,18 +446,18 @@ struct files::BatchRenameService::State {
   BatchRenameSnapshot snapshot;
   BatchRenameOptions options;
   std::shared_ptr<Prepared> prepared;
-  std::atomic<bool> stop{false};
-  std::shared_ptr<std::atomic<bool>> previewStop;
+  // One token per prepared selection, shared by its apply; each preview has its own.
+  CancelToken token;
+  CancelToken previewToken;
   std::atomic<std::size_t> completed{0};
   std::uint64_t version = 0;
   bool active = false;
   std::function<void()> changed;
-  enum class Kind { Prepare, Preview, Apply };
+  enum class Kind : std::uint8_t { Prepare, Preview, Apply };
   struct Reply {
     std::shared_ptr<Prepared> prepared;
     std::shared_ptr<std::vector<BatchRenameRow>> rows;
     std::shared_ptr<std::vector<BatchRenameResult>> results;
-    std::string error;
     std::string report;
   };
   void notify() const {
@@ -478,81 +466,55 @@ struct files::BatchRenameService::State {
       callback();
     }
   }
-  static void launch(const std::shared_ptr<State>& owner, Kind kind, std::function<Reply()> work) {
-    struct Request {
-      std::shared_ptr<State> owner;
-      Kind kind;
-      std::uint64_t version;
-      std::function<Reply()> work;
-    };
+  static void launch(const std::shared_ptr<State>& owner, Kind kind, std::move_only_function<Reply()> work) {
     owner->active = true;
-    const GioPtr<GTask> task(g_task_new(
-        nullptr, nullptr,
-        [](GObject*, GAsyncResult* result, gpointer) {
-          const auto& request = *static_cast<Request*>(g_task_get_task_data(G_TASK(result)));
-          const auto owner = request.owner;
-          const std::unique_ptr<Reply> reply(static_cast<Reply*>(g_task_propagate_pointer(G_TASK(result), nullptr)));
-          owner->active = false;
-          if (request.kind != Kind::Apply && owner->stop.load()) {
-            owner->snapshot.phase = BatchRenamePhase::Cancelled;
-            owner->prepared.reset();
-          } else if (request.kind == Kind::Preview && request.version != owner->version) {
-            startPreview(owner);
-            return;
-          } else if (!reply->error.empty()) {
-            owner->snapshot.phase = BatchRenamePhase::Error;
-            owner->snapshot.error = reply->error;
-          } else if (request.kind == Kind::Prepare) {
-            owner->prepared = reply->prepared;
-            owner->snapshot.parent = owner->prepared->parent;
-            startPreview(owner);
-            return;
-          } else if (request.kind == Kind::Preview || !reply->results) {
-            owner->snapshot.phase = BatchRenamePhase::Ready;
-            owner->snapshot.rows = reply->rows;
-            owner->snapshot.canApply = reply->rows && applicable(*reply->rows);
-          } else {
-            owner->snapshot.phase = BatchRenamePhase::Finished;
-            owner->snapshot.results = reply->results;
-            owner->snapshot.rows = reply->rows;
-            owner->snapshot.report = std::move(reply->report);
-            owner->prepared.reset();
-          }
-          owner->notify();
-        },
-        nullptr
-    ));
-    g_task_set_task_data(task.get(), new Request{owner, kind, owner->version, std::move(work)}, [](gpointer p) {
-      delete static_cast<Request*>(p);
-    });
-    g_task_run_in_thread(task.get(), [](GTask* task, gpointer, gpointer data, GCancellable*) {
-      const auto& request = *static_cast<Request*>(data);
-      auto reply = std::make_unique<Reply>();
-      try {
-        *reply = request.work();
-      } catch (const std::exception& error) {
-        reply->error = error.what();
+    runJob<Reply>(std::move(work), [owner, kind, version = owner->version](JobResult<Reply> reply) {
+      owner->active = false;
+      if (kind != Kind::Apply && owner->token.cancelled()) {
+        owner->snapshot.phase = BatchRenamePhase::Cancelled;
+        owner->prepared.reset();
+      } else if (kind == Kind::Preview && version != owner->version) {
+        startPreview(owner);
+        return;
+      } else if (!reply) {
+        owner->snapshot.phase = BatchRenamePhase::Error;
+        owner->snapshot.error = std::move(reply.error());
+      } else if (kind == Kind::Prepare) {
+        owner->prepared = reply->prepared;
+        owner->snapshot.parent = owner->prepared->parent;
+        startPreview(owner);
+        return;
+      } else if (kind == Kind::Preview || !reply->results) {
+        owner->snapshot.phase = BatchRenamePhase::Ready;
+        owner->snapshot.rows = reply->rows;
+        owner->snapshot.canApply = reply->rows && applicable(*reply->rows);
+      } else {
+        owner->snapshot.phase = BatchRenamePhase::Finished;
+        owner->snapshot.results = reply->results;
+        owner->snapshot.rows = reply->rows;
+        owner->snapshot.report = std::move(reply->report);
+        owner->prepared.reset();
       }
-      g_task_return_pointer(task, reply.release(), [](gpointer p) { delete static_cast<Reply*>(p); });
+      owner->notify();
     });
     owner->notify();
   }
   static void startPreview(const std::shared_ptr<State>& owner) {
     owner->snapshot.phase = BatchRenamePhase::Previewing;
     owner->snapshot.canApply = false;
-    owner->previewStop = std::make_shared<std::atomic<bool>>(false);
-    launch(owner, Kind::Preview, [plan = owner->prepared, options = owner->options, stop = owner->previewStop] {
+    owner->previewToken = CancelToken{};
+    launch(owner, Kind::Preview, [plan = owner->prepared, options = owner->options, token = owner->previewToken] {
       std::vector<std::string> names;
-      for (std::size_t i = 0; i < plan->items.size() && !stop->load(); ++i) {
+      for (std::size_t i = 0; i < plan->items.size() && !token.cancelled(); ++i) {
         const auto& entry = plan->items[i]->entry;
         names.push_back(
-            batchRenameName(plan->items[i]->name, entry.type == G_FILE_TYPE_DIRECTORY && !entry.symlink, i, options)
+            batchRenameName(plan->items[i]->name, entry.type == FileType::Directory && !entry.symlink, i, options)
         );
       }
-      if (stop->load()) {
+      if (token.cancelled()) {
         return Reply{};
       }
-      return Reply{.prepared = {}, .rows = validate(*plan, names, *stop), .results = {}, .error = {}, .report = {}};
+      return Reply{.prepared = {}, .rows = validate(*plan, names, token), .results = {}, .report = {}};
     });
   }
 };
@@ -571,10 +533,8 @@ void files::BatchRenameService::setChangedCallback(std::function<void()> callbac
   m_state->changed = std::move(callback);
 }
 void files::BatchRenameService::cancel() {
-  m_state->stop.store(true);
-  if (m_state->previewStop) {
-    m_state->previewStop->store(true);
-  }
+  m_state->token.cancel();
+  m_state->previewToken.cancel();
   m_state->snapshot.canApply = false;
   if (!busy()) {
     m_state->prepared.reset();
@@ -588,32 +548,28 @@ bool files::BatchRenameService::prepare(std::vector<DirectoryEntry> entries) {
     return false;
   }
   m_state->prepared.reset();
-  m_state->stop.store(false);
+  m_state->token = CancelToken{};
   m_state->completed.store(0);
   ++m_state->version;
   m_state->options = {};
   m_state->snapshot = {};
   m_state->snapshot.phase = BatchRenamePhase::Preparing;
-  State::launch(m_state, State::Kind::Prepare, [owner = m_state, entries = std::move(entries)] mutable {
-    return State::Reply{
-        .prepared = prepareItems(std::move(entries), owner->stop), .rows = {}, .results = {}, .error = {}, .report = {}
-    };
+  State::launch(m_state, State::Kind::Prepare, [token = m_state->token, entries = std::move(entries)] mutable {
+    return State::Reply{.prepared = prepareItems(std::move(entries), token), .rows = {}, .results = {}, .report = {}};
   });
   return true;
 }
 bool files::BatchRenameService::preview(BatchRenameOptions options) {
   if (applying()
-      || m_state->stop.load()
+      || m_state->token.cancelled()
       || (!m_state->prepared && m_state->snapshot.phase != BatchRenamePhase::Preparing)) {
     return false;
   }
   m_state->options = std::move(options);
   ++m_state->version;
   m_state->snapshot.canApply = false;
-  m_state->snapshot.error.clear();
-  if (m_state->previewStop) {
-    m_state->previewStop->store(true);
-  }
+  m_state->snapshot.error.reset();
+  m_state->previewToken.cancel();
   if (!busy()) {
     State::startPreview(m_state);
   } else if (m_state->prepared) {
@@ -628,37 +584,34 @@ bool files::BatchRenameService::apply() {
   m_state->snapshot.phase = BatchRenamePhase::Applying;
   m_state->snapshot.canApply = false;
   State::launch(
-      m_state, State::Kind::Apply, [owner = m_state, plan = m_state->prepared, approved = m_state->snapshot.rows] {
+      m_state, State::Kind::Apply,
+      [owner = m_state, token = m_state->token, plan = m_state->prepared, approved = m_state->snapshot.rows] {
         std::vector<std::string> names;
         for (const auto& row : *approved) {
           names.push_back(row.name);
         }
-        auto rows = validate(*plan, names, owner->stop);
-        if (!owner->stop.load() && !applicable(*rows)) {
-          return State::Reply{.prepared = {}, .rows = std::move(rows), .results = {}, .error = {}, .report = {}};
+        auto rows = validate(*plan, names, token);
+        if (!token.cancelled() && !applicable(*rows)) {
+          return State::Reply{.prepared = {}, .rows = std::move(rows), .results = {}, .report = {}};
         }
-        auto results = execute(*plan, *rows, owner->stop, owner->completed);
-        std::string report = "Batch rename in " + display(plan->path) + "\n";
+        auto results = execute(*plan, *rows, token, owner->completed);
+        std::string report = "Batch rename in " + filenameDisplayText(plan->path) + "\n";
         constexpr std::array labels{"Renamed", "Unchanged", "Failed", "Cancelled", "Needs attention", "Unconfirmed"};
         for (std::size_t i = 0; i < rows->size(); ++i) {
           const auto& result = (*results)[i];
-          (*rows)[i].error = result.error;
+          (*rows)[i].error = result.error ? result.error->message : std::string{};
           report +=
               (*rows)[i].before + " -> " + (*rows)[i].after + ": " + labels[static_cast<std::size_t>(result.outcome)];
           if (result.actual) {
             report += "\n  " + result.actual->uri();
           }
-          if (!result.error.empty()) {
-            report += "\n  " + result.error;
+          if (result.error) {
+            report += "\n  " + result.error->message;
           }
           report += '\n';
         }
         return State::Reply{
-            .prepared = {},
-            .rows = std::move(rows),
-            .results = std::move(results),
-            .error = {},
-            .report = std::move(report)
+            .prepared = {}, .rows = std::move(rows), .results = std::move(results), .report = std::move(report)
         };
       }
   );

@@ -2,11 +2,13 @@
 
 #include "fs/location.h"
 
+#include <optional>
+#include <string>
+
 namespace files {
   struct TrashInfo {
     std::optional<Location> original;
     std::optional<std::string> deletionDate;
   };
-  TrashInfo readTrashInfo(GFileInfo* info);
   std::string trashOriginalParentText(const TrashInfo& info);
 } // namespace files

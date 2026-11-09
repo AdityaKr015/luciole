@@ -4,12 +4,16 @@
 #include "ui/controls/flex.h"
 
 #include <array>
+#include <string>
 
 class Input;
 class Toggle;
 class Label;
 class Segmented;
 class RecursivePermissionEditor;
+
+// The snapshot's failure text, or its status message when it did not fail as a whole.
+std::string permissionStatusText(const files::PermissionSnapshot& snapshot);
 
 class PermissionEditor final : public Flex {
 public:

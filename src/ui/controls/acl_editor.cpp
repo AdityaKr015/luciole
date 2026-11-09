@@ -3,6 +3,7 @@
 #include "ui/builders.h"
 #include "ui/controls/button.h"
 #include "ui/controls/input.h"
+#include "ui/controls/permission_editor.h"
 #include "ui/controls/toggle.h"
 
 #include <algorithm>
@@ -54,7 +55,7 @@ void AclEditor::sync(const files::PermissionSnapshot& snapshot) {
   const auto actual = snapshot.info ? snapshot.info->acl : nullptr;
   const bool preserve = m_draft
       && snapshot.aclOperation
-      && (snapshot.phase == files::PermissionPhase::Saving || (snapshot.error && !snapshot.applied));
+      && (snapshot.phase == files::PermissionPhase::Saving || (snapshot.error.has_value() && !snapshot.applied));
   const bool editable = snapshot.phase == files::PermissionPhase::Ready && actual && actual->editable;
   if (actual != m_actual || editable != m_editable) {
     if (!preserve) {
@@ -67,11 +68,11 @@ void AclEditor::sync(const files::PermissionSnapshot& snapshot) {
     m_rebuild = true;
   }
   m_reason->setText(actual ? actual->message : "ACL inspection is available for one native regular file or folder.");
-  const auto message = snapshot.aclOperation ? snapshot.message : "";
+  const auto message = snapshot.aclOperation ? permissionStatusText(snapshot) : "";
   m_status->setText(
       snapshot.aclOperation && snapshot.phase == files::PermissionPhase::Saving ? "Saving access control…" : message
   );
-  m_status->setColor(colorSpecFromRole(snapshot.error ? ColorRole::Error : ColorRole::OnSurfaceVariant));
+  m_status->setColor(colorSpecFromRole(snapshot.failed() ? ColorRole::Error : ColorRole::OnSurfaceVariant));
   m_reason->setColor(colorSpecFromRole(ColorRole::OnSurfaceVariant));
 }
 files::AclEdit AclEditor::edit() const {

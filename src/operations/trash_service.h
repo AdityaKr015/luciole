@@ -1,9 +1,11 @@
 #pragma once
 
+#include "fs/file_error.h"
 #include "fs/location.h"
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -13,12 +15,12 @@ namespace files {
   struct TrashResult {
     Location source;
     TrashOutcome outcome = TrashOutcome::Cancelled;
-    std::string error;
+    std::optional<FileError> error;
   };
   struct TrashSnapshot {
     TrashStatus status = TrashStatus::Idle;
     std::vector<TrashResult> results;
-    std::string error;
+    std::optional<FileError> error;
   };
 
   // A native browse selection. Preparation pins one parent and its selected entries.

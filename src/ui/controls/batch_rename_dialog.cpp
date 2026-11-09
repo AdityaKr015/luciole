@@ -1,6 +1,7 @@
 #include "ui/controls/batch_rename_dialog.h"
 
 #include "ui/builders.h"
+#include "ui/controls/file_error_text.h"
 #include "ui/controls/input.h"
 #include "ui/controls/scroll_view.h"
 #include "ui/controls/segmented.h"
@@ -316,7 +317,7 @@ void BatchRenameDialog::sync(
   m_report->setParticipatesInLayout(finished);
   m_report->setEnabled(clipboardAvailable && !snapshot.report.empty());
   const auto count = snapshot.rows ? snapshot.rows->size() : 0;
-  std::string status = snapshot.error;
+  std::string status = snapshot.error ? files::fileErrorText(*snapshot.error) : std::string{};
   bool error = !status.empty();
   if (status.empty()) {
     if (snapshot.phase == P::Preparing) {

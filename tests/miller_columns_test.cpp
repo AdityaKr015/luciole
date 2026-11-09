@@ -1,5 +1,6 @@
 #include "browser/miller_columns.h"
 #include "event_loop/glib_poll_source.h"
+#include "fs/gio_interop.h"
 #include "test_check.h"
 
 #include <chrono>

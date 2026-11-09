@@ -1,6 +1,7 @@
 #pragma once
 
 #include "fs/archive_type.h"
+#include "fs/file_error.h"
 #include "fs/file_icon_source.h"
 #include "operations/transfer_service.h"
 
@@ -59,7 +60,7 @@ namespace files {
     ArchivePhase phase() const;
     std::uint64_t bytes() const;
     std::size_t items() const;
-    const std::string& error() const;
+    const std::optional<FileError>& error() const;
     const std::shared_ptr<const ArchiveCatalog>& catalog() const;
     std::optional<Location> takeOpenedFile();
     const std::vector<TransferResult>& results() const;

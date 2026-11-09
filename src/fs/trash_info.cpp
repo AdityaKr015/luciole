@@ -1,5 +1,8 @@
 #include "fs/trash_info.h"
 
+#include "fs/filename.h"
+#include "fs/gio_interop.h"
+
 files::TrashInfo files::readTrashInfo(GFileInfo* info) {
   TrashInfo result;
   if (g_file_info_get_attribute_type(info, G_FILE_ATTRIBUTE_TRASH_ORIG_PATH) == G_FILE_ATTRIBUTE_TYPE_BYTE_STRING) {
@@ -21,8 +24,7 @@ std::string files::trashOriginalParentText(const TrashInfo& info) {
   if (!info.original) {
     return {};
   }
-  const GioPtr<GFile> parent(g_file_get_parent(info.original->file().get()));
-  const GString path(parent ? g_file_get_path(parent.get()) : nullptr);
-  const GString display(path ? g_filename_display_name(path.get()) : nullptr);
-  return display ? display.get() : "";
+  const auto parent = info.original->parent();
+  const auto path = parent ? parent->nativePath() : std::nullopt;
+  return path ? filenameDisplayText(*path) : "";
 }

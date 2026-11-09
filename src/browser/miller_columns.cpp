@@ -40,15 +40,14 @@ void files::MillerColumns::start(BrowserController& source, bool showParents) {
 
 void files::MillerColumns::buildChain(std::unique_ptr<Column> current) {
   std::vector<Location> parents;
-  auto file = current->location.file();
+  auto file = current->location;
   while (m_showParents && parents.size() + 1 < maxColumns) {
-    GioPtr<GFile> parent(g_file_get_parent(file.get()));
-    if (!parent || g_file_equal(file.get(), parent.get())) {
+    auto parent = file.parent();
+    if (!parent || file == *parent) {
       break;
     }
-    const GString uri(g_file_get_uri(parent.get()));
-    parents.push_back(Location::fromUri(uri.get()));
-    file = std::move(parent);
+    parents.push_back(*parent);
+    file = std::move(*parent);
   }
   clear();
   for (const auto& parent : parents | std::views::reverse) {
@@ -169,7 +168,7 @@ void files::MillerColumns::synchronize() {
               break;
             }
             child.identity = entry.identity;
-            if (entry.type == G_FILE_TYPE_DIRECTORY || entry.symlink) {
+            if (entry.type == files::FileType::Directory || entry.symlink) {
               parent.pathEntry = entry.id;
             }
             break;
@@ -187,7 +186,7 @@ void files::MillerColumns::synchronize() {
     const auto& selected = model.selection().selected;
     const auto* entry = selected.size() == 1 ? model.entry(*selected.begin()) : nullptr;
     const bool folder =
-        entry && entry->type == G_FILE_TYPE_DIRECTORY && !entry->symlink && browser.searchQuery().empty();
+        entry && entry->type == files::FileType::Directory && !entry->symlink && browser.searchQuery().empty();
     if (i + 1 < m_columns.size()) {
       auto& child = *m_columns[i + 1];
       if (child.explicitPath && !child.identity && entry && entry->location == child.location) {

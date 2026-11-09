@@ -1,4 +1,6 @@
 #include "event_loop/glib_poll_source.h"
+#include "fs/filename.h"
+#include "fs/gio_interop.h"
 #include "operations/batch_rename_service.h"
 #include "test_check.h"
 
@@ -40,17 +42,16 @@ namespace {
   files::Location location(const fs::path& path) { return files::Location::fromPath(path.native()); }
   files::DirectoryEntry entry(const fs::path& path) {
     const files::GioPtr<GFileInfo> info(g_file_query_info(
-        location(path).file().get(), "id::file,id::filesystem,standard::type,standard::is-symlink",
+        files::gioFile(location(path)).get(), "id::file,id::filesystem,standard::type,standard::is-symlink",
         G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, nullptr
     ));
     TEST_CHECK(info);
-    const files::GString display(g_filename_display_name(path.filename().c_str()));
     return {
         .id = 1,
         .location = location(path),
         .name = path.filename().native(),
-        .displayName = display.get(),
-        .type = g_file_info_get_file_type(info.get()),
+        .displayName = files::filenameDisplayText(path.filename().native()),
+        .type = files::fileType(g_file_info_get_file_type(info.get())),
         .symlink = g_file_info_get_is_symlink(info.get()) != FALSE,
         .size = {},
         .modifiedSeconds = {},

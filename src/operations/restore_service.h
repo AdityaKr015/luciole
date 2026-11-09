@@ -1,7 +1,10 @@
 #pragma once
 
 #include "fs/directory_session.h"
+#include "fs/file_error.h"
 #include "operations/transfer_service.h"
+
+#include <optional>
 
 namespace files {
   enum class RestoreOutcome { Restored, Skipped, Failed, Cancelled, Unconfirmed };
@@ -10,7 +13,7 @@ namespace files {
     std::optional<Location> destination;
     std::string displayName;
     RestoreOutcome outcome = RestoreOutcome::Cancelled;
-    std::string error;
+    std::optional<FileError> error;
   };
   class RestoreService {
   public:

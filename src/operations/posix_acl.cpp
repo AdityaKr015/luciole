@@ -1,15 +1,16 @@
 #include "operations/posix_acl.h"
 
+#include "fs/file_error.h"
+#include "fs/posix_fd.h"
+
 #include <acl/libacl.h>
 #include <algorithm>
 #include <array>
 #include <cerrno>
 #include <charconv>
-#include <cstring>
 #include <limits>
 #include <memory>
 #include <set>
-#include <stdexcept>
 #include <sys/acl.h>
 #include <sys/stat.h>
 #include <tuple>
@@ -22,19 +23,22 @@ namespace {
   using Acl = std::unique_ptr<std::remove_pointer_t<acl_t>, FreeAcl>;
   constexpr std::array<acl_tag_t, 6> tags{ACL_USER_OBJ, ACL_USER, ACL_GROUP_OBJ, ACL_GROUP, ACL_MASK, ACL_OTHER};
   std::string path(int fd) {
-    struct stat value{};
-    if (::fstat(fd, &value) != 0) {
-      throw std::runtime_error(std::strerror(errno));
-    }
+    const auto value = files::statFd(fd);
     if (!S_ISREG(value.st_mode) && !S_ISDIR(value.st_mode)) {
-      throw std::runtime_error("ACL editing supports native regular files and folders, without following links.");
+      files::throwFileError(
+          files::FileErrorKind::Unsupported,
+          "ACL editing supports native regular files and folders, without following links."
+      );
     }
     return "/proc/self/fd/" + std::to_string(fd);
   }
   void check(int result) {
     if (result != 0) {
-      throw std::runtime_error(std::strerror(errno));
+      files::throwErrno(errno);
     }
+  }
+  [[noreturn]] void invalid(std::string message) {
+    files::throwFileError(files::FileErrorKind::InvalidArgument, std::move(message));
   }
   std::uint32_t numeric(const std::string& text) {
     std::uint32_t value = 0;
@@ -43,7 +47,7 @@ namespace {
         || parsed.ec != std::errc{}
         || parsed.ptr != text.data() + text.size()
         || value == std::numeric_limits<std::uint32_t>::max()) {
-      throw std::runtime_error("Invalid ACL account ID.");
+      invalid("Invalid ACL account ID.");
     }
     return value;
   }
@@ -55,20 +59,20 @@ namespace {
   }
   Acl build(const std::vector<files::AclEntry>& entries) {
     if (entries.size() > files::maxAclEntries) {
-      throw std::runtime_error("The ACL editor supports at most 128 entries per list.");
+      invalid("The ACL editor supports at most 128 entries per list.");
     }
     Acl acl(::acl_init(static_cast<int>(entries.size())));
     if (!acl) {
-      throw std::runtime_error(std::strerror(errno));
+      files::throwErrno(errno);
     }
     for (const auto& value : entries) {
       const auto tag = static_cast<std::size_t>(value.tag);
       if (tag >= tags.size() || value.permissions > 7) {
-        throw std::runtime_error("Invalid ACL tag or permissions.");
+        invalid("Invalid ACL tag or permissions.");
       }
       const bool named = value.tag == files::AclTag::User || value.tag == files::AclTag::Group;
       if (!named && !value.qualifier.empty()) {
-        throw std::runtime_error("Only named user/group entries accept an account.");
+        invalid("Only named user/group entries accept an account.");
       }
       acl_entry_t entry = nullptr;
       auto* raw = acl.release();
@@ -97,39 +101,37 @@ namespace {
       check(::acl_set_permset(entry, permissions));
     }
     if (!entries.empty() && ::acl_valid(acl.get()) != 0) {
-      throw std::runtime_error(
-          "Invalid ACL: require owner, owning group and others; named accounts need a mask and unique IDs."
-      );
+      invalid("Invalid ACL: require owner, owning group and others; named accounts need a mask and unique IDs.");
     }
     return acl;
   }
   std::vector<files::AclEntry> read(const std::string& file, acl_type_t type) {
     Acl acl(::acl_get_file(file.c_str(), type));
     if (!acl) {
-      throw std::runtime_error(std::strerror(errno));
+      files::throwErrno(errno);
     }
     const auto count = ::acl_entries(acl.get());
     if (count < 0 || count > static_cast<int>(files::maxAclEntries)) {
-      throw std::runtime_error("The ACL exceeds the editor's 128-entry limit.");
+      files::throwFileError(files::FileErrorKind::Unsupported, "The ACL exceeds the editor's 128-entry limit.");
     }
     std::vector<files::AclEntry> entries;
     acl_entry_t entry = nullptr;
     for (int next = ::acl_get_entry(acl.get(), ACL_FIRST_ENTRY, &entry); next != 0;
          next = ::acl_get_entry(acl.get(), ACL_NEXT_ENTRY, &entry)) {
       if (next < 0) {
-        throw std::runtime_error(std::strerror(errno));
+        files::throwErrno(errno);
       }
       acl_tag_t tag = 0;
       check(::acl_get_tag_type(entry, &tag));
       const auto* const found = std::ranges::find(tags, tag);
       if (found == tags.end()) {
-        throw std::runtime_error("Unsupported ACL entry type.");
+        files::throwFileError(files::FileErrorKind::Unsupported, "Unsupported ACL entry type.");
       }
       files::AclEntry value{static_cast<files::AclTag>(found - tags.begin()), {}, 0};
       if (tag == ACL_USER || tag == ACL_GROUP) {
         const std::unique_ptr<void, FreeAcl> id(::acl_get_qualifier(entry));
         if (!id) {
-          throw std::runtime_error(std::strerror(errno));
+          files::throwErrno(errno);
         }
         value.qualifier =
             std::to_string(tag == ACL_USER ? *static_cast<uid_t*>(id.get()) : *static_cast<gid_t*>(id.get()));
@@ -139,7 +141,7 @@ namespace {
       for (const auto bit : {ACL_READ, ACL_WRITE, ACL_EXECUTE}) {
         const int present = ::acl_get_perm(permissions, bit);
         if (present < 0) {
-          throw std::runtime_error(std::strerror(errno));
+          files::throwErrno(errno);
         }
         if (present != 0) {
           value.permissions |= bit;
@@ -155,11 +157,7 @@ files::AclInfo files::inspectAcl(int descriptor) {
   AclInfo info;
   try {
     const auto file = path(descriptor);
-    struct stat value{};
-    if (::fstat(descriptor, &value) != 0) {
-      throw std::runtime_error(std::strerror(errno));
-    }
-    info.directory = S_ISDIR(value.st_mode);
+    info.directory = S_ISDIR(statFd(descriptor).st_mode);
     info.access = read(file, ACL_TYPE_ACCESS);
     if (info.directory) {
       info.defaults = read(file, ACL_TYPE_DEFAULT);
@@ -170,15 +168,13 @@ files::AclInfo files::inspectAcl(int descriptor) {
   }
   return info;
 }
-std::vector<files::AclEntry> files::normalizeAcl(
-    std::vector<AclEntry> entries, bool allowEmpty,
-    const std::function<std::uint32_t(AclTag, const std::string&)>& resolve
-) {
+std::vector<files::AclEntry>
+files::normalizeAcl(std::vector<AclEntry> entries, bool allowEmpty, const AclResolver& resolve) {
   if (!allowEmpty && entries.empty()) {
-    throw std::runtime_error("The access ACL cannot be empty.");
+    invalid("The access ACL cannot be empty.");
   }
   if (entries.size() > maxAclEntries) {
-    throw std::runtime_error("The ACL editor supports at most 128 entries per list.");
+    invalid("The ACL editor supports at most 128 entries per list.");
   }
   for (auto& entry : entries) {
     if (entry.tag == AclTag::User || entry.tag == AclTag::Group) {
@@ -189,10 +185,19 @@ std::vector<files::AclEntry> files::normalizeAcl(
   const auto checked = build(entries);
   return entries;
 }
+files::AclEdit files::normalizeAclEdit(AclEdit edit, const AclResolver& resolve) {
+  if (edit.access) {
+    edit.access = normalizeAcl(std::move(*edit.access), false, resolve);
+  }
+  if (edit.defaults) {
+    edit.defaults = normalizeAcl(std::move(*edit.defaults), true, resolve);
+  }
+  return edit;
+}
 void files::writeAcl(int descriptor, bool defaults, const std::vector<AclEntry>& entries) {
   const auto file = path(descriptor);
   if (!defaults && entries.empty()) {
-    throw std::runtime_error("The access ACL cannot be empty.");
+    invalid("The access ACL cannot be empty.");
   }
   const auto acl = build(entries);
   check(::acl_set_file(file.c_str(), defaults ? ACL_TYPE_DEFAULT : ACL_TYPE_ACCESS, acl.get()));
@@ -200,20 +205,30 @@ void files::writeAcl(int descriptor, bool defaults, const std::vector<AclEntry>&
 bool files::sameAcl(const AclInfo& left, const AclInfo& right) {
   return left.supported && right.supported && left.access == right.access && left.defaults == right.defaults;
 }
-files::AclPatchEdit
-files::normalizeAclPatch(AclPatchEdit edit, const std::function<std::uint32_t(AclTag, const std::string&)>& resolve) {
+bool files::satisfiesAcl(const AclInfo& actual, const AclEdit& desired) {
+  return actual.supported
+      && (!desired.access || actual.access == *desired.access)
+      && (!desired.defaults || actual.defaults == *desired.defaults);
+}
+bool files::changesAccess(const AclPatchEdit& edit) {
+  return !edit.access.entries.empty() || edit.access.maskPolicy != AclMaskPolicy::Keep;
+}
+bool files::skipsDefaults(const AclInfo& actual, const AclPatchEdit& edit) {
+  return !actual.directory || (edit.defaultPolicy == AclDefaultPolicy::Existing && actual.defaults.empty());
+}
+files::AclPatchEdit files::normalizeAclPatch(AclPatchEdit edit, const AclResolver& resolve) {
   if (edit.defaultPolicy < AclDefaultPolicy::Keep || edit.defaultPolicy > AclDefaultPolicy::Remove) {
-    throw std::runtime_error("Invalid default ACL policy.");
+    invalid("Invalid default ACL policy.");
   }
   if ((edit.defaultPolicy == AclDefaultPolicy::Keep || edit.defaultPolicy == AclDefaultPolicy::Remove)
       && (!edit.defaults.entries.empty() || edit.defaults.maskPolicy != AclMaskPolicy::Keep)) {
-    throw std::runtime_error("Choose Edit existing or Create before changing default rules.");
+    invalid("Choose Edit existing or Create before changing default rules.");
   }
   for (auto* list : {&edit.access, &edit.defaults}) {
     if (list->entries.size() > maxAclEntries
         || list->maskPolicy < AclMaskPolicy::Keep
         || list->maskPolicy > AclMaskPolicy::RemoveUnused) {
-      throw std::runtime_error("Invalid ACL patch or too many rules (maximum 128 per list).");
+      invalid("Invalid ACL patch or too many rules (maximum 128 per list).");
     }
     std::set<std::pair<AclTag, std::string>> seen;
     for (auto& entry : list->entries) {
@@ -224,17 +239,17 @@ files::normalizeAclPatch(AclPatchEdit edit, const std::function<std::uint32_t(Ac
           || (entry.permissions && (*entry.permissions > 7 || entry.mask == 0))
           || (!entry.permissions && !named)
           || (!named && !entry.qualifier.empty())) {
-        throw std::runtime_error("Invalid ACL rule change.");
+        invalid("Invalid ACL rule change.");
       }
       if (entry.tag == AclTag::Mask && list->maskPolicy != AclMaskPolicy::Keep) {
-        throw std::runtime_error("Choose either mask bit changes or an automatic mask policy.");
+        invalid("Choose either mask bit changes or an automatic mask policy.");
       }
       if (named) {
         entry.qualifier = std::to_string(resolve(entry.tag, entry.qualifier));
         (void)numeric(entry.qualifier);
       }
       if (!seen.emplace(entry.tag, entry.qualifier).second) {
-        throw std::runtime_error("Each account or ACL role can be changed only once per list.");
+        invalid("Each account or ACL role can be changed only once per list.");
       }
     }
   }
@@ -242,7 +257,9 @@ files::normalizeAclPatch(AclPatchEdit edit, const std::function<std::uint32_t(Ac
 }
 files::AclEdit files::patchAcl(const AclInfo& actual, const AclPatchEdit& edit) {
   if (!actual.supported) {
-    throw std::runtime_error(actual.message.empty() ? "ACL inspection is unavailable." : actual.message);
+    throwFileError(
+        FileErrorKind::Unsupported, actual.message.empty() ? "ACL inspection is unavailable." : actual.message
+    );
   }
   const auto patch = [](std::vector<AclEntry> entries, const AclListPatch& changes) {
     for (const auto& change : changes.entries) {
@@ -269,12 +286,12 @@ files::AclEdit files::patchAcl(const AclInfo& actual, const AclPatchEdit& edit) 
     });
     const auto group = std::ranges::find(entries, AclTag::OwningGroup, &AclEntry::tag);
     if (group == entries.end()) {
-      throw std::runtime_error("The owning-group rule is missing.");
+      invalid("The owning-group rule is missing.");
     }
     std::uint32_t rights = group->permissions;
     if (changes.maskPolicy == AclMaskPolicy::RemoveUnused) {
       if (named) {
-        throw std::runtime_error("Cannot remove the mask while named rules remain.");
+        invalid("Cannot remove the mask while named rules remain.");
       }
       if (mask != entries.end()) {
         entries.erase(mask);
@@ -297,7 +314,7 @@ files::AclEdit files::patchAcl(const AclInfo& actual, const AclPatchEdit& edit) 
   };
   AclEdit result;
   auto access = actual.access;
-  if (!edit.access.entries.empty() || edit.access.maskPolicy != AclMaskPolicy::Keep) {
+  if (changesAccess(edit)) {
     access = patch(access, edit.access);
     if (access != actual.access) {
       result.access = access;

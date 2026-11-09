@@ -1,4 +1,5 @@
 #include "event_loop/glib_poll_source.h"
+#include "fs/gio_interop.h"
 #include "imaging/pixbuf_image_decoder.h"
 #include "system/icon_resolver.h"
 #include "test_check.h"

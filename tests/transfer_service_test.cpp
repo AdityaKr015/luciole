@@ -96,7 +96,7 @@ namespace {
         TransferAction::Move
     );
     TEST_CHECK(service.results().size() == 2 && std::ranges::all_of(service.results(), [](const auto& result) {
-                 return result.outcome == TransferOutcome::Moved && result.error.empty();
+                 return result.outcome == TransferOutcome::Moved && !result.error;
                }));
     TEST_CHECK(
         !fs::exists(fixture.source("file.txt"))
@@ -518,7 +518,11 @@ namespace {
       return TransferConflictChoice::Merge;
     });
     TEST_CHECK(service.results().front().outcome == TransferOutcome::Failed);
-    TEST_CHECK(service.results().front().error.contains("16384") && !fs::exists(f.destination("tree/0")));
+    TEST_CHECK(
+        service.results().front().error
+        && service.results().front().error->message.contains("16384")
+        && !fs::exists(f.destination("tree/0"))
+    );
     f.clean();
   }
   void testRetry(Pump& pump) {

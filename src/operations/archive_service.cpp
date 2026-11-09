@@ -1,38 +1,26 @@
 #include "operations/archive_service.h"
 
-#include "fs/gio_ptr.h"
+#include "fs/background_job.h"
+#include "operations/archive_icons.h"
 #include "operations/archive_work.h"
 
-#include <atomic>
 #include <filesystem>
-#include <stdexcept>
+#include <glib.h>
 #include <utility>
 
 struct files::ArchiveService::State : std::enable_shared_from_this<State> {
   enum class Operation { Inspect, Compress, Extract, Open };
-  struct Request {
-    std::shared_ptr<State> owner;
-    Operation operation;
-    std::vector<Location> sources;
-    std::optional<Location> destination;
-    ArchiveFormat format = ArchiveFormat::Zip;
-    std::vector<std::string> selected;
-    std::shared_ptr<const ArchiveCatalog> expected;
-  };
-  struct Result {
-    archive_work::Prepared prepared;
-    std::string error;
-  };
   ArchiveLimits limits;
   archive_work::Progress progress;
   ArchivePhase phase = ArchivePhase::Idle;
   std::function<void()> changed;
-  GioPtr<GCancellable> cancel{g_cancellable_new()};
+  CancelToken cancel;
   std::shared_ptr<const ArchiveCatalog> catalog;
   std::optional<Location> opened;
   std::vector<std::string> openStages;
   std::uint64_t openBytes = 0;
-  std::string stage, error;
+  std::string stage;
+  std::optional<FileError> error;
   bool closing = false;
   GSource* timer = nullptr;
   TransferService transfers;
@@ -44,6 +32,9 @@ struct files::ArchiveService::State : std::enable_shared_from_this<State> {
       g_source_destroy(timer);
       g_source_unref(timer);
     }
+  }
+  static FileError previewFull() {
+    return {FileErrorKind::NoSpace, "Temporary archive preview storage is full. Extract the member instead."};
   }
   void notify() {
     const auto callback = changed;
@@ -85,17 +76,13 @@ struct files::ArchiveService::State : std::enable_shared_from_this<State> {
       return;
     }
     phase = ArchivePhase::Cleaning;
-    struct Cleanup {
-      std::shared_ptr<State> owner;
-      std::vector<std::string> paths;
-    };
-    const GioPtr<GTask> task(g_task_new(
-        nullptr, nullptr,
-        [](GObject*, GAsyncResult* result, gpointer) {
-          const auto owner = static_cast<Cleanup*>(g_task_get_task_data(G_TASK(result)))->owner;
-          const GString problem(static_cast<char*>(g_task_propagate_pointer(G_TASK(result), nullptr)));
-          if (problem && *problem) {
-            owner->error = problem.get();
+    runJob<std::optional<FileError>>(
+        [paths = std::move(paths)] { return archive_work::cleanup(paths); },
+        [owner = shared_from_this()](JobResult<std::optional<FileError>> result) {
+          if (!result) {
+            owner->error = std::move(result.error());
+          } else if (*result) {
+            owner->error = std::move(**result);
           }
           if (owner->closing && !owner->openStages.empty()) {
             owner->clean({});
@@ -103,17 +90,8 @@ struct files::ArchiveService::State : std::enable_shared_from_this<State> {
             owner->phase = ArchivePhase::Idle;
             owner->notify();
           }
-        },
-        nullptr
-    ));
-    g_task_set_task_data(task.get(), new Cleanup{shared_from_this(), std::move(paths)}, [](gpointer data) {
-      delete static_cast<Cleanup*>(data);
-    });
-    g_task_run_in_thread(task.get(), [](GTask* task, gpointer, gpointer data, GCancellable*) {
-      const auto& cleanup = *static_cast<Cleanup*>(data);
-      const auto error = archive_work::cleanup(cleanup.paths);
-      g_task_return_pointer(task, g_strdup(error.c_str()), g_free);
-    });
+        }
+    );
     notify();
   }
   void transferChanged() {
@@ -123,14 +101,14 @@ struct files::ArchiveService::State : std::enable_shared_from_this<State> {
     }
     results = transfers.results();
     for (const auto& result : results) {
-      if (!result.error.empty()) {
+      if (result.error) {
         error = result.error;
         break;
       }
       if (result.outcome == TransferOutcome::Cancelled) {
-        error = "Archive operation cancelled.";
+        error = FileError{FileErrorKind::Cancelled, "Archive operation cancelled."};
       } else if (result.outcome == TransferOutcome::Skipped) {
-        error = "Archive operation skipped.";
+        error = FileError{FileErrorKind::Exists, "Archive operation skipped."};
       }
     }
     std::vector<std::string> paths;
@@ -140,24 +118,58 @@ struct files::ArchiveService::State : std::enable_shared_from_this<State> {
     clean(std::move(paths));
     transferLifetime.reset();
   }
+  // Publishes a successful job's output on the main thread.
+  void finish(Operation operation, const std::optional<Location>& destination, archive_work::Prepared prepared) {
+    if (operation == Operation::Inspect) {
+      catalog = std::move(prepared.catalog);
+      phase = ArchivePhase::Idle;
+      notify();
+      return;
+    }
+    if (operation == Operation::Open) {
+      if (prepared.expandedBytes > 512U * 1024U * 1024U - openBytes) {
+        error = previewFull();
+        clean({prepared.stage});
+        return;
+      }
+      openStages.push_back(prepared.stage);
+      openBytes += prepared.expandedBytes;
+      opened = prepared.output;
+      phase = ArchivePhase::Idle;
+      notify();
+      return;
+    }
+    stage = std::move(prepared.stage);
+    const std::filesystem::path target(*destination->nativePath());
+    phase = ArchivePhase::Transferring;
+    transferLifetime = shared_from_this();
+    if (!transfers.start(
+            {{*prepared.output}, Location::fromPath(target.parent_path().native()), TransferAction::Move, false}
+        )) {
+      error = FileError{FileErrorKind::Other, "Could not start the archive publication."};
+      clean({std::exchange(stage, {})});
+      transferLifetime.reset();
+    }
+    notify();
+  }
   bool start(
-      Operation operation, std::vector<Location> sources, std::optional<Location> destination, ArchiveFormat format,
-      std::vector<std::string> selected
+      Operation operation, std::vector<Location> sources, const std::optional<Location>& destination,
+      ArchiveFormat format, std::vector<std::string> selected
   ) {
     if (phase != ArchivePhase::Idle || closing || sources.empty()) {
       return false;
     }
     if (operation == Operation::Open && (openStages.size() >= 32 || openBytes >= 512U * 1024U * 1024U)) {
-      error = "Temporary archive preview storage is full. Extract the member instead.";
+      error = previewFull();
       notify();
       return false;
     }
-    error.clear();
+    error.reset();
     opened.reset();
     results.clear();
     progress.bytes.store(0);
     progress.items.store(0);
-    cancel.reset(g_cancellable_new());
+    cancel = CancelToken{};
     auto expected = (catalog && catalog->source == sources.front()) ? catalog : nullptr;
     if (operation == Operation::Inspect) {
       catalog.reset();
@@ -165,98 +177,44 @@ struct files::ArchiveService::State : std::enable_shared_from_this<State> {
     } else {
       phase = operation == Operation::Compress ? ArchivePhase::Compressing : ArchivePhase::Extracting;
     }
-    const GioPtr<GTask> task(g_task_new(
-        nullptr, cancel.get(),
-        [](GObject*, GAsyncResult* result, gpointer) {
-          auto* task = G_TASK(result);
-          const auto* request = static_cast<Request*>(g_task_get_task_data(task));
-          const auto owner = request->owner;
-          const std::unique_ptr<Result> outcome(static_cast<Result*>(g_task_propagate_pointer(task, nullptr)));
+    // progress outlives the work: the done callback holds the state until after the work returns.
+    runJob<archive_work::Prepared>(
+        [limits = limits, progress = &progress, token = cancel, operation, sources = std::move(sources), destination,
+         format, selected = std::move(selected), expected = std::move(expected)] {
+          if (operation == Operation::Inspect) {
+            auto prepared = archive_work::inspect(sources.front(), limits, token, *progress);
+            assignArchiveIcons(*prepared.catalog);
+            return prepared;
+          }
+          if (operation == Operation::Compress) {
+            return archive_work::compress(sources, *destination, format, limits, token, *progress);
+          }
+          return archive_work::extract(
+              sources.front(), *destination, selected, expected, operation == Operation::Open, limits, token, *progress
+          );
+        },
+        [owner = shared_from_this(), token = cancel, operation,
+         destination](JobResult<archive_work::Prepared> outcome) {
           owner->stopTimer();
-          owner->error = outcome->error;
-          if (owner->closing || g_cancellable_is_cancelled(g_task_get_cancellable(task))) {
-            if (owner->error.empty()) {
-              owner->error = "Archive operation cancelled.";
+          owner->error = outcome ? std::nullopt : std::optional(outcome.error());
+          if (owner->closing || token.cancelled()) {
+            if (!owner->error) {
+              owner->error = FileError{FileErrorKind::Cancelled, "Archive operation cancelled."};
             }
             std::vector<std::string> paths;
-            if (!outcome->prepared.stage.empty()) {
-              paths.push_back(std::move(outcome->prepared.stage));
+            if (outcome && !outcome->stage.empty()) {
+              paths.push_back(std::move(outcome->stage));
             }
             owner->clean(std::move(paths));
             return;
           }
-          if (!owner->error.empty()) {
+          if (owner->error) {
             owner->clean({});
             return;
           }
-          if (request->operation == Operation::Inspect) {
-            owner->catalog = std::move(outcome->prepared.catalog);
-            owner->phase = ArchivePhase::Idle;
-            owner->notify();
-            return;
-          }
-          if (request->operation == Operation::Open) {
-            if (outcome->prepared.expandedBytes > 512U * 1024U * 1024U - owner->openBytes) {
-              owner->error = "Temporary archive preview storage is full. Extract the member instead.";
-              owner->clean({outcome->prepared.stage});
-              return;
-            }
-            owner->openStages.push_back(outcome->prepared.stage);
-            owner->openBytes += outcome->prepared.expandedBytes;
-            owner->opened = outcome->prepared.output;
-            owner->phase = ArchivePhase::Idle;
-            owner->notify();
-            return;
-          }
-          owner->stage = std::move(outcome->prepared.stage);
-          const std::filesystem::path target(*request->destination->nativePath());
-          owner->phase = ArchivePhase::Transferring;
-          owner->transferLifetime = owner;
-          if (!owner->transfers.start(
-                  {{*outcome->prepared.output},
-                   Location::fromPath(target.parent_path().native()),
-                   TransferAction::Move,
-                   false}
-              )) {
-            owner->error = "Could not start the archive publication.";
-            owner->clean({std::exchange(owner->stage, {})});
-            owner->transferLifetime.reset();
-          }
-          owner->notify();
-        },
-        nullptr
-    ));
-    g_task_set_check_cancellable(task.get(), false);
-    g_task_set_task_data(
-        task.get(),
-        new Request{
-            shared_from_this(), operation, std::move(sources), std::move(destination), format, std::move(selected),
-            std::move(expected)
-        },
-        [](gpointer data) { delete static_cast<Request*>(data); }
-    );
-    g_task_run_in_thread(task.get(), [](GTask* task, gpointer, gpointer data, GCancellable* cancel) {
-      const auto& request = *static_cast<Request*>(data);
-      auto result = std::make_unique<Result>();
-      try {
-        auto& owner = *request.owner;
-        if (request.operation == Operation::Inspect) {
-          result->prepared = archive_work::inspect(request.sources.front(), owner.limits, cancel, owner.progress);
-        } else if (request.operation == Operation::Compress) {
-          result->prepared = archive_work::compress(
-              request.sources, *request.destination, request.format, owner.limits, cancel, owner.progress
-          );
-        } else {
-          result->prepared = archive_work::extract(
-              request.sources.front(), *request.destination, request.selected, request.expected,
-              request.operation == Operation::Open, owner.limits, cancel, owner.progress
-          );
+          owner->finish(operation, destination, std::move(*outcome));
         }
-      } catch (const std::exception& error) {
-        result->error = error.what();
-      }
-      g_task_return_pointer(task, result.release(), [](gpointer data) { delete static_cast<Result*>(data); });
-    });
+    );
     startTimer();
     notify();
     return true;
@@ -294,7 +252,7 @@ bool files::ArchiveService::openMember(const std::string& path) {
   );
 }
 void files::ArchiveService::cancel() {
-  g_cancellable_cancel(m_state->cancel.get());
+  m_state->cancel.cancel();
   m_state->transfers.cancel();
 }
 void files::ArchiveService::shutdown() {
@@ -313,7 +271,7 @@ std::uint64_t files::ArchiveService::bytes() const {
   return m_state->phase == ArchivePhase::Transferring ? m_state->transfers.bytes() : m_state->progress.bytes.load();
 }
 std::size_t files::ArchiveService::items() const { return m_state->progress.items.load(); }
-const std::string& files::ArchiveService::error() const { return m_state->error; }
+const std::optional<files::FileError>& files::ArchiveService::error() const { return m_state->error; }
 const std::shared_ptr<const files::ArchiveCatalog>& files::ArchiveService::catalog() const { return m_state->catalog; }
 std::optional<files::Location> files::ArchiveService::takeOpenedFile() {
   return std::exchange(m_state->opened, std::nullopt);

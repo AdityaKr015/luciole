@@ -14,17 +14,16 @@ bool files::isSupportedArchive(const Location& location, const std::optional<std
           || *mime == "application/x-compressed-tar")) {
     return true;
   }
-  const files::GString name(g_file_get_basename(location.file().get()));
+  const auto name = location.basename();
   if (!name) {
     return false;
   }
-  const files::GString lower(g_ascii_strdown(name.get(), -1));
+  const files::GString lower(g_ascii_strdown(name->c_str(), -1));
   const std::string_view text(lower.get());
   return text.ends_with(".zip") || text.ends_with(".tar") || text.ends_with(".tar.gz") || text.ends_with(".tgz");
 }
 std::string files::archiveFolderName(const Location& location) {
-  const files::GString raw(g_file_get_basename(location.file().get()));
-  std::string name = raw ? raw.get() : "Archive";
+  std::string name = location.basename().value_or("Archive");
   const files::GString lower(g_ascii_strdown(name.c_str(), -1));
   const std::string_view text(lower.get());
   for (const auto suffix :

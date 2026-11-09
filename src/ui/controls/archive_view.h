@@ -36,7 +36,7 @@ public:
   ~ArchiveView() override;
   void sync(
       std::shared_ptr<const files::ArchiveCatalog> catalog, files::ArchivePhase phase, std::size_t items,
-      std::uint64_t bytes, const std::string& error
+      std::uint64_t bytes, const std::optional<files::FileError>& error
   );
   bool key(std::uint32_t symbol, std::uint32_t modifiers);
   InputArea* focusArea() const;

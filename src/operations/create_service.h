@@ -1,6 +1,7 @@
 #pragma once
 
 #include "fs/directory_session.h"
+#include "fs/file_error.h"
 #include "fs/location.h"
 #include "operations/template_catalog.h"
 
@@ -17,7 +18,7 @@ namespace files {
     CreateKind kind = CreateKind::Folder;
     std::optional<Location> parent;
     std::optional<Location> destination;
-    std::string error;
+    std::optional<FileError> error;
   };
 
   // One native file or folder creation. Preparation pins the destination while editing.

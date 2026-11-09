@@ -1,5 +1,6 @@
 #include "core/log.h"
 #include "event_loop/glib_poll_source.h"
+#include "fs/gio_interop.h"
 #include "imaging/pixbuf_image_decoder.h"
 #include "imaging/png_decoder.h"
 #include "imaging/raster_decoder.h"
@@ -259,7 +260,7 @@ namespace {
     TEST_CHECK(session.snapshot().status == files::DirectoryStatus::Ready);
     auto entries = session.snapshot().entries;
     std::erase_if(entries, [videos](const auto& entry) {
-      return entry.type != G_FILE_TYPE_REGULAR
+      return entry.type != files::FileType::Regular
           || !entry.contentType
           || !entry.contentType->starts_with(videos ? "video/" : "image/")
           || entry.symlink;
@@ -882,7 +883,7 @@ namespace {
         .location = remote,
         .name = "photo.png",
         .displayName = "photo.png",
-        .type = G_FILE_TYPE_REGULAR,
+        .type = files::FileType::Regular,
         .size = 42,
         .modifiedSeconds = 123,
         .etag = std::nullopt,

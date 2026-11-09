@@ -1,6 +1,7 @@
 #include "platform/file_launcher.h"
 
 #include "core/log.h"
+#include "fs/gio_interop.h"
 
 #include <cstdint>
 
@@ -74,7 +75,10 @@ void files::FileLauncher::applications(std::string mime, std::function<void(std:
       const char* id = g_app_info_get_id(app);
       const char* name = g_app_info_get_display_name(app);
       if (id && name && g_app_info_should_show(app)) {
-        result->push_back({id, name, std::shared_ptr<GAppInfo>(G_APP_INFO(g_object_ref(app)), ObjectUnref{})});
+        result->push_back(
+            {id, name, readIconSource(g_app_info_get_icon(app)),
+             std::shared_ptr<GAppInfo>(G_APP_INFO(g_object_ref(app)), ObjectUnref{})}
+        );
       }
     }
     g_list_free_full(applications, g_object_unref);

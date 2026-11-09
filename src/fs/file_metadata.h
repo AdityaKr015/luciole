@@ -1,11 +1,12 @@
 #pragma once
 
 #include <cstdint>
-#include <gio/gio.h>
 #include <optional>
 #include <string>
 
 namespace files {
+  enum class FileType : std::uint8_t { Unknown, Regular, Directory, Symlink, Special, Shortcut, Mountable };
+
   // Provider-reported access facts, not promises that an operation will succeed.
   // nullopt is unknown; false is a reported negative, not a missing attribute.
   struct FileIdentity {
@@ -13,7 +14,6 @@ namespace files {
     std::string file;
     bool operator==(const FileIdentity&) const = default;
   };
-  std::optional<FileIdentity> readFileIdentity(GFileInfo* info);
 
   struct FileAccess {
     std::optional<bool> read;
@@ -35,8 +35,4 @@ namespace files {
     FileAccess access;
     FilesystemInfo filesystem;
   };
-
-  FileAccess readFileAccess(GFileInfo* info);
-  FilesystemInfo readFilesystemInfo(GFileInfo* info);
-  std::optional<std::string> readFastContentType(GFileInfo* info);
 } // namespace files

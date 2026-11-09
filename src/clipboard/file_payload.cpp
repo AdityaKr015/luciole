@@ -1,5 +1,7 @@
 #include "clipboard/file_payload.h"
 
+#include "fs/gio_interop.h"
+
 #include <algorithm>
 #include <unordered_set>
 

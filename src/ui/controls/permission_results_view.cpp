@@ -2,6 +2,7 @@
 
 #include "core/input/key_symbols.h"
 #include "ui/builders.h"
+#include "ui/controls/file_error_text.h"
 #include "ui/controls/virtual_grid_view.h"
 
 #include <algorithm>
@@ -37,7 +38,12 @@ namespace {
             + std::format(" · ACL: {} access, {} default", row.info->acl->access.size(), row.info->acl->defaults.size())
         );
       }
-      m_detail->setText(row.location.uri() + (row.message.empty() ? "" : "\n" + row.message));
+      std::string detail = row.error ? files::fileErrorText(*row.error) : "";
+      if (!detail.empty() && !row.message.empty()) {
+        detail += ' ';
+      }
+      detail += row.message;
+      m_detail->setText(row.location.uri() + (detail.empty() ? "" : "\n" + detail));
       const bool error =
           row.outcome == files::PermissionOutcome::Failed || row.outcome == files::PermissionOutcome::Partial;
       m_name->setColor(colorSpecFromRole(error ? ColorRole::Error : ColorRole::OnSurface));

@@ -1,6 +1,7 @@
 #include "browser/browser_controller.h"
 #include "browser/location_presentation.h"
 #include "event_loop/glib_poll_source.h"
+#include "fs/gio_interop.h"
 #include "fs/trash_info.h"
 #include "test_check.h"
 
@@ -24,9 +25,9 @@ namespace {
       while (!done()) {
         TEST_CHECK(std::chrono::steady_clock::now() < deadline);
         std::vector<pollfd> fds;
-        const auto start = source.addPollFds(fds);
+        const auto start = m_source.addPollFds(fds);
         TEST_CHECK(::poll(fds.data(), fds.size(), 5) >= 0);
-        source.dispatch(fds, start);
+        m_source.dispatch(fds, start);
       }
     }
     void ready(const files::BrowserController& browser) {
@@ -36,7 +37,7 @@ namespace {
     }
 
   private:
-    GlibPollSource source;
+    GlibPollSource m_source;
   };
   struct Fixture {
     fs::path root;
@@ -104,7 +105,7 @@ namespace {
         for (int iteration = 0; iteration < 10000; ++iteration) {
           const auto root = files::Location::trash();
           const auto nested = files::Location::fromUri("trash:///parallel%20folder/item%23.txt");
-          const auto file = root.file();
+          const auto file = files::gioFile(root);
           const files::GString uri(g_file_get_uri(file.get()));
           if (!root.isTrash() || nested.nativePath() || !nested.isTrash() || root.uri() != uri.get()) {
             valid.store(false);
@@ -131,8 +132,7 @@ namespace {
     std::ofstream(a / raw) << "raw";
     for (const auto& path : {a / "same #%.txt", b / "same #%.txt", a / "Folder 文", a / ".hidden", a / raw}) {
       GError* error = nullptr;
-      const bool ok = g_file_trash(files::Location::fromPath(path.native()).file().get(), nullptr, &error);
-      const std::string message = error ? error->message : "trash preparation failed";
+      const bool ok = g_file_trash(files::gioFile(files::Location::fromPath(path.native())).get(), nullptr, &error);
       g_clear_error(&error);
       TEST_CHECK(ok);
     }

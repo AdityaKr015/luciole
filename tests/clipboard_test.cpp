@@ -1,4 +1,5 @@
 #include "clipboard/text_clipboard.h"
+#include "fs/gio_interop.h"
 #include "test_check.h"
 
 #include <algorithm>

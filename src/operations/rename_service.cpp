@@ -1,80 +1,38 @@
 #include "operations/rename_service.h"
 
+#include "fs/background_job.h"
 #include "fs/filename.h"
+#include "fs/posix_fd.h"
 
-#include <atomic>
 #include <cerrno>
-#include <cstring>
 #include <fcntl.h>
 #include <filesystem>
 #include <linux/fs.h>
-#include <stdexcept>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 #include <utility>
 
 namespace {
-  class Fd {
-  public:
-    explicit Fd(int fd) : m_fd(fd) {
-      if (fd < 0) {
-        throw std::runtime_error(std::strerror(errno));
-      }
-    }
-    ~Fd() { ::close(m_fd); }
-    Fd(const Fd&) = delete;
-    Fd& operator=(const Fd&) = delete;
-    int get() const { return m_fd; }
-
-  private:
-    int m_fd;
-  };
-  struct stat metadata(int fd) {
-    struct stat value{};
-    if (::fstat(fd, &value) != 0) {
-      throw std::runtime_error(std::strerror(errno));
-    }
-    return value;
-  }
-  bool sameIdentity(const struct stat& a, const struct stat& b) {
-    return a.st_dev == b.st_dev && a.st_ino == b.st_ino && (a.st_mode & S_IFMT) == (b.st_mode & S_IFMT);
-  }
   struct Target {
     std::string parentPath, name;
-    Fd parent, item;
+    files::Fd parent, item;
     explicit Target(const std::string& path)
         : parentPath(std::filesystem::path(path).parent_path().native()),
           name(std::filesystem::path(path).filename().native()),
-          parent(::open(parentPath.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC)),
-          item(::openat(parent.get(), name.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC)) {}
+          parent(files::checkedFd(::open(parentPath.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC))),
+          item(files::checkedFd(::openat(parent.get(), name.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC))) {}
   };
   struct Reply {
     std::shared_ptr<Target> target;
     std::optional<files::Location> destination;
-    std::string error;
   };
-  std::string renameError(int code) {
-    if (code == EEXIST || code == ENOTEMPTY) {
-      return "An item with that name already exists.";
-    }
-    if (code == ENAMETOOLONG) {
-      return "The name is too long for this folder.";
-    }
-    if (code == EACCES || code == EPERM) {
-      return "Permission denied.";
-    }
-    if (code == ENOENT) {
-      return "The item or its folder is no longer available.";
-    }
-    return std::strerror(code);
-  }
 } // namespace
 
 struct files::RenameService::State {
   RenameSnapshot snapshot;
   std::shared_ptr<Target> target;
-  std::atomic<bool> cancelled{false};
+  CancelToken token;
   bool active = false;
   std::function<void()> changed;
   void notify() const {
@@ -83,53 +41,33 @@ struct files::RenameService::State {
       callback();
     }
   }
-  static void launch(const std::shared_ptr<State>& owner, std::function<Reply()> work) {
-    struct Request {
-      std::shared_ptr<State> owner;
-      std::function<Reply()> work;
-    };
+  static void launch(const std::shared_ptr<State>& owner, std::move_only_function<Reply(const CancelToken&)> work) {
     owner->active = true;
-    owner->cancelled.store(false);
-    GioPtr<GTask> task(g_task_new(
-        nullptr, nullptr,
-        [](GObject*, GAsyncResult* result, gpointer) {
-          auto* task = G_TASK(result);
-          const auto owner = static_cast<Request*>(g_task_get_task_data(task))->owner;
-          std::unique_ptr<Reply> reply(static_cast<Reply*>(g_task_propagate_pointer(task, nullptr)));
+    owner->token = CancelToken{};
+    runJob<Reply>(
+        owner->token, [token = owner->token, work = std::move(work)] mutable { return work(token); },
+        [owner, token = owner->token](JobResult<Reply> result) {
           owner->active = false;
-          owner->snapshot.error = reply->error;
-          if (reply->destination) {
-            owner->snapshot.destination = std::move(reply->destination);
+          owner->snapshot.error.reset();
+          if (!result && result.error().kind != FileErrorKind::Cancelled) {
+            owner->snapshot.error = std::move(result.error());
+          }
+          if (result && result->destination) {
+            owner->snapshot.destination = std::move(result->destination);
             owner->snapshot.status = RenameStatus::Succeeded;
             owner->target.reset();
-          } else if (owner->cancelled.load()) {
+          } else if (token.cancelled()) {
             owner->snapshot.status = RenameStatus::Cancelled;
             owner->target.reset();
-          } else if (!reply->error.empty()) {
+          } else if (!result) {
             owner->snapshot.status = RenameStatus::Error;
           } else {
-            owner->target = std::move(reply->target);
+            owner->target = std::move(result->target);
             owner->snapshot.status = RenameStatus::Ready;
           }
           owner->notify();
-        },
-        nullptr
-    ));
-    g_task_set_task_data(task.get(), new Request{owner, std::move(work)}, [](gpointer data) {
-      delete static_cast<Request*>(data);
-    });
-    g_task_run_in_thread(task.get(), [](GTask* task, gpointer, gpointer data, GCancellable*) {
-      auto& request = *static_cast<Request*>(data);
-      auto reply = std::make_unique<Reply>();
-      try {
-        if (!request.owner->cancelled.load()) {
-          *reply = request.work();
         }
-      } catch (const std::exception& error) {
-        reply->error = error.what();
-      }
-      g_task_return_pointer(task, reply.release(), [](gpointer data) { delete static_cast<Reply*>(data); });
-    });
+    );
     owner->notify();
   }
 };
@@ -145,7 +83,7 @@ bool files::RenameService::busy() const { return m_state->active; }
 bool files::RenameService::canRename() const { return !busy() && m_state->target != nullptr; }
 const files::RenameSnapshot& files::RenameService::snapshot() const { return m_state->snapshot; }
 void files::RenameService::cancel() {
-  m_state->cancelled.store(true);
+  m_state->token.cancel();
   m_state->target.reset();
   if (!busy() && m_state->snapshot.status != RenameStatus::Succeeded) {
     m_state->snapshot.status = RenameStatus::Cancelled;
@@ -157,16 +95,16 @@ bool files::RenameService::prepare(const Location& source) {
   }
   m_state->target.reset();
   m_state->snapshot = {.status = RenameStatus::Preparing, .source = source, .destination = std::nullopt, .error = {}};
-  State::launch(m_state, [source] {
+  State::launch(m_state, [source](const CancelToken&) {
     const auto path = source.nativePath();
     if (!path) {
-      throw std::runtime_error("Renaming remote items is not supported yet.");
+      throwFileError(FileErrorKind::Unsupported, "Renaming remote items is not supported yet.");
     }
     const auto name = std::filesystem::path(*path).filename().native();
     if (name.empty() || name == "." || name == "..") {
-      throw std::runtime_error("The filesystem root cannot be renamed.");
+      throwFileError(FileErrorKind::InvalidArgument, "The filesystem root cannot be renamed.");
     }
-    return Reply{.target = std::make_shared<Target>(*path), .destination = std::nullopt, .error = {}};
+    return Reply{.target = std::make_shared<Target>(*path), .destination = std::nullopt};
   });
   return true;
 }
@@ -176,30 +114,30 @@ bool files::RenameService::rename(std::string name) {
   }
   if (const auto error = filenameProblem(name)) {
     m_state->snapshot.status = RenameStatus::Error;
-    m_state->snapshot.error = *error;
+    m_state->snapshot.error = FileError{.kind = FileErrorKind::InvalidArgument, .message = *error};
     m_state->notify();
     return false;
   }
   m_state->snapshot.status = RenameStatus::Renaming;
-  m_state->snapshot.error.clear();
-  State::launch(m_state, [owner = m_state, target = m_state->target, name = std::move(name)] {
+  m_state->snapshot.error.reset();
+  State::launch(m_state, [target = m_state->target, name = std::move(name)](const CancelToken& token) {
     auto destination = Location::fromPath((std::filesystem::path(target->parentPath) / name).native());
-    Fd parent(::open(target->parentPath.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
-    if (!sameIdentity(metadata(parent.get()), metadata(target->parent.get()))) {
-      throw std::runtime_error("The containing folder changed. Reopen Rename.");
+    const auto parent = checkedFd(::open(target->parentPath.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+    if (!sameIdentity(statFd(parent.get()), statFd(target->parent.get()))) {
+      throwFileError(FileErrorKind::Changed, "The containing folder changed. Reopen Rename.");
     }
     struct stat current{};
     if (::fstatat(target->parent.get(), target->name.c_str(), &current, AT_SYMLINK_NOFOLLOW) != 0) {
-      throw std::runtime_error(renameError(errno));
+      throwErrno(errno);
     }
-    if (!sameIdentity(metadata(target->item.get()), current)) {
-      throw std::runtime_error("The item was replaced or moved. Reopen Rename.");
+    if (!sameIdentity(statFd(target->item.get()), current)) {
+      throwFileError(FileErrorKind::Changed, "The item was replaced or moved. Reopen Rename.");
     }
     const auto limit = ::fpathconf(target->parent.get(), _PC_NAME_MAX);
     if (limit >= 0 && name.size() > static_cast<std::size_t>(limit)) {
-      throw std::runtime_error(renameError(ENAMETOOLONG));
+      throwErrno(ENAMETOOLONG);
     }
-    if (owner->cancelled.load()) {
+    if (token.cancelled()) {
       return Reply{};
     }
     if (name != target->name
@@ -207,9 +145,9 @@ bool files::RenameService::rename(std::string name) {
                SYS_renameat2, target->parent.get(), target->name.c_str(), target->parent.get(), name.c_str(),
                RENAME_NOREPLACE
            ) != 0) {
-      throw std::runtime_error(renameError(errno));
+      throwErrno(errno);
     }
-    return Reply{.target = {}, .destination = std::move(destination), .error = {}};
+    return Reply{.target = {}, .destination = std::move(destination)};
   });
   return true;
 }

@@ -1,5 +1,7 @@
 #include "fs/file_metadata.h"
 
+#include "fs/gio_interop.h"
+
 namespace {
   std::optional<bool> boolean(GFileInfo* info, const char* attribute) {
     if (g_file_info_get_attribute_type(info, attribute) != G_FILE_ATTRIBUTE_TYPE_BOOLEAN) {

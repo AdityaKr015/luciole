@@ -34,6 +34,7 @@ test_table = [
   {'name': 'settings', 'deps': [config_dep, browser_dep], 'env': ['G_DEBUG=fatal-warnings']},
   {'name': 'atomic-file', 'deps': [fs_dep]},
   {'name': 'xdg-dirs', 'deps': [fs_dep]},
+  {'name': 'shared-helpers', 'deps': [operations_dep], 'env': gio_env},
   {'name': 'state-store', 'deps': [config_dep], 'env': gio_env},
 ]
 

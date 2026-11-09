@@ -1,9 +1,10 @@
 #include "config/view_preference_writer.h"
 
-#include "fs/gio_ptr.h"
+#include "fs/background_job.h"
+#include "fs/directory_watch.h"
 
 #include <algorithm>
-#include <gio/gio.h>
+#include <glib.h>
 #include <utility>
 
 namespace {
@@ -53,10 +54,6 @@ namespace {
 } // namespace
 
 struct files::ViewPreferenceWriter::State : std::enable_shared_from_this<State> {
-  struct Request {
-    std::shared_ptr<State> owner;
-    std::vector<OverrideEdit> edits;
-  };
   struct Result {
     std::string error;
     std::optional<Settings> settings;
@@ -73,7 +70,7 @@ struct files::ViewPreferenceWriter::State : std::enable_shared_from_this<State> 
   bool reloadPending = false;
   bool watching = false;
   std::vector<WatchTarget> targets;
-  std::vector<GioPtr<GFileMonitor>> monitors;
+  std::vector<std::unique_ptr<DirectoryWatch>> monitors;
   GSource* debounce = nullptr;
 
   void stopWatching() {
@@ -81,10 +78,6 @@ struct files::ViewPreferenceWriter::State : std::enable_shared_from_this<State> 
     if (auto* source = std::exchange(debounce, nullptr)) {
       g_source_destroy(source);
       g_source_unref(source);
-    }
-    for (const auto& monitor : monitors) {
-      g_signal_handlers_disconnect_by_data(monitor.get(), this);
-      g_file_monitor_cancel(monitor.get());
     }
     monitors.clear();
     targets.clear();
@@ -123,30 +116,14 @@ struct files::ViewPreferenceWriter::State : std::enable_shared_from_this<State> 
         continue;
       }
       directories.push_back(directory);
-      const GioPtr<GFile> file(g_file_new_for_path(directory.c_str()));
-      GioPtr<GFileMonitor> monitor(g_file_monitor_directory(file.get(), G_FILE_MONITOR_WATCH_MOVES, nullptr, nullptr));
+      auto monitor = DirectoryWatch::start(directory, [this](const std::filesystem::path& path) {
+        if (std::ranges::any_of(targets, [&](const auto& entry) { return entry.second == path; })) {
+          scheduleReload();
+        }
+      });
       if (!monitor) {
         continue;
       }
-      g_signal_connect(
-          monitor.get(), "changed",
-          G_CALLBACK(+[](GFileMonitor*, GFile* file, GFile* other, GFileMonitorEvent, gpointer data) {
-            auto* owner = static_cast<State*>(data);
-            for (auto* candidate : {file, other}) {
-              if (!candidate) {
-                continue;
-              }
-              const GString path(g_file_get_path(candidate));
-              if (path && std::ranges::any_of(owner->targets, [&](const auto& entry) {
-                    return entry.second == path.get();
-                  })) {
-                owner->scheduleReload();
-                break;
-              }
-            }
-          }),
-          this
-      );
       monitors.push_back(std::move(monitor));
     }
     // Close the read/install gap, including directories created while the first load ran.
@@ -160,64 +137,57 @@ struct files::ViewPreferenceWriter::State : std::enable_shared_from_this<State> 
     auto edits = std::exchange(pending, {});
     reloadPending = false;
     active = true;
-    GioPtr<GTask> task(g_task_new(
-        nullptr, nullptr,
-        [](GObject*, GAsyncResult* result, gpointer) {
-          auto* task = G_TASK(result);
-          const auto owner = static_cast<Request*>(g_task_get_task_data(task))->owner;
-          const std::unique_ptr<Result> outcome(static_cast<Result*>(g_task_propagate_pointer(task, nullptr)));
+    runJob<Result>(
+        [owner = shared_from_this(), edits = std::move(edits)] {
+          Result outcome;
+          ConfigService service(owner->paths);
+          if (!edits.empty()) {
+            const auto result = service.saveOverrides(edits);
+            if (result == AtomicWriteState::NotCommitted || !service.issues().empty()) {
+              outcome.error =
+                  service.issues().empty() ? "Cannot save settings." : issueMessage(service.issues().front());
+            }
+          }
+          const auto loaded = loadSettings(owner->paths);
+          const auto inherited = loadInheritedSettings(owner->paths);
+          if (loaded && inherited) {
+            outcome.settings = *loaded;
+            outcome.inherited = *inherited;
+          } else if (outcome.error.empty()) {
+            outcome.error = loaded ? issueMessage(inherited.error().front()) : issueMessage(loaded.error().front());
+          }
+          outcome.targets = watchTargets(owner->paths);
+          return outcome;
+        },
+        [owner = shared_from_this()](JobResult<Result> result) {
+          if (!result) {
+            Result failed;
+            failed.error = result.error().message;
+            result = std::move(failed);
+          }
+          auto& outcome = *result;
           owner->active = false;
-          owner->watch(outcome->targets);
-          if (!outcome->error.empty()) {
-            owner->pendingError = outcome->error;
+          owner->watch(outcome.targets);
+          if (!outcome.error.empty()) {
+            owner->pendingError = outcome.error;
           }
           if (!owner->pending.empty() || owner->reloadPending) {
             owner->pump();
             return;
           }
-          if (outcome->settings) {
-            owner->settings = outcome->settings;
+          if (outcome.settings) {
+            owner->settings = outcome.settings;
           }
-          if (outcome->inherited) {
-            owner->inherited = outcome->inherited;
+          if (outcome.inherited) {
+            owner->inherited = outcome.inherited;
           }
           const auto changed = owner->changed;
           const auto error = std::exchange(owner->pendingError, {});
           if (changed) {
             changed(error);
           }
-        },
-        nullptr
-    ));
-    g_task_set_task_data(task.get(), new Request{shared_from_this(), std::move(edits)}, [](gpointer data) {
-      delete static_cast<Request*>(data);
-    });
-    g_task_run_in_thread(task.get(), [](GTask* task, gpointer, gpointer data, GCancellable*) {
-      const auto& request = *static_cast<Request*>(data);
-      auto outcome = std::make_unique<Result>();
-      try {
-        ConfigService service(request.owner->paths);
-        if (!request.edits.empty()) {
-          const auto result = service.saveOverrides(request.edits);
-          if (result == AtomicWriteState::NotCommitted || !service.issues().empty()) {
-            outcome->error =
-                service.issues().empty() ? "Cannot save settings." : issueMessage(service.issues().front());
-          }
         }
-        const auto loaded = loadSettings(request.owner->paths);
-        const auto inherited = loadInheritedSettings(request.owner->paths);
-        if (loaded && inherited) {
-          outcome->settings = *loaded;
-          outcome->inherited = *inherited;
-        } else if (outcome->error.empty()) {
-          outcome->error = loaded ? issueMessage(inherited.error().front()) : issueMessage(loaded.error().front());
-        }
-        outcome->targets = watchTargets(request.owner->paths);
-      } catch (const std::exception& error) {
-        outcome->error = error.what();
-      }
-      g_task_return_pointer(task, outcome.release(), [](gpointer value) { delete static_cast<Result*>(value); });
-    });
+    );
   }
 
   void queue(const std::vector<OverrideEdit>& edits) {

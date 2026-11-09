@@ -1,4 +1,5 @@
 #include "core/log.h"
+#include "fs/gio_interop.h"
 #include "test_check.h"
 #include "thumbnails/preview_service.h"
 #include "thumbnails/thumbnail_worker.h"
@@ -40,7 +41,7 @@ namespace {
     result.location = files::Location::fromPath(path.native());
     result.name = path.filename().native();
     result.displayName = result.name;
-    result.type = G_FILE_TYPE_REGULAR;
+    result.type = files::FileType::Regular;
     result.contentType = std::move(mime);
     struct stat stat{};
     if (::lstat(path.c_str(), &stat) == 0) {

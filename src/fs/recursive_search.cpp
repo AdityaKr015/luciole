@@ -1,5 +1,6 @@
 #include "fs/recursive_search.h"
 
+#include "fs/gio_interop.h"
 #include "fs/name_matching.h"
 
 #include <deque>
@@ -85,7 +86,7 @@ struct files::RecursiveSearch::State : std::enable_shared_from_this<State> {
     }
     scan->current = std::move(scan->pending.front());
     scan->pending.pop_front();
-    const auto file = scan->current->location.file();
+    const auto file = gioFile(scan->current->location);
     auto* request = new Request{shared_from_this(), scan};
     g_file_enumerate_children_async(
         file.get(), kAttributes, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, G_PRIORITY_DEFAULT, scan->cancellable.get(),
@@ -164,13 +165,13 @@ struct files::RecursiveSearch::State : std::enable_shared_from_this<State> {
     if (hidden && !scan->showHidden) {
       return;
     }
-    const auto parent = scan->current->location.file();
+    const auto parent = gioFile(scan->current->location);
     const GioPtr<GFile> child(g_file_get_child(parent.get(), name));
     const GString uri(g_file_get_uri(child.get()));
     const auto location = Location::fromUri(uri.get());
-    const auto type = g_file_info_get_file_type(info);
+    const auto type = fileType(g_file_info_get_file_type(info));
     const bool symlink = g_file_info_get_is_symlink(info);
-    if (type == G_FILE_TYPE_DIRECTORY && !symlink) {
+    if (type == FileType::Directory && !symlink) {
       const char* identity = g_file_info_get_attribute_string(info, G_FILE_ATTRIBUTE_ID_FILE);
       const char* filesystem = g_file_info_get_attribute_string(info, G_FILE_ATTRIBUTE_ID_FILESYSTEM);
       const auto key =
@@ -189,7 +190,7 @@ struct files::RecursiveSearch::State : std::enable_shared_from_this<State> {
     if (!foldedDisplayText(displayName).contains(scan->query)) {
       return;
     }
-    const GString relative(g_file_get_relative_path(scan->root->file().get(), parent.get()));
+    const GString relative(g_file_get_relative_path(gioFile(*scan->root).get(), parent.get()));
     const GString parentName(g_filename_display_name(relative && *relative.get() != '\0' ? relative.get() : "."));
     snapshot.entries.push_back(
         {.id = nextId++,

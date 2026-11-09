@@ -4,6 +4,7 @@
 #include "fs/name_matching.h"
 
 #include <algorithm>
+#include <gio/gio.h>
 #include <limits>
 #include <utility>
 
@@ -33,17 +34,17 @@ bool files::DirectoryModel::applySnapshot(DirectorySnapshot snapshot) {
     const GString sortKey(g_utf8_collate_key_for_filename(key.c_str(), -1));
     std::string typeLabel;
     bool knownType = true;
-    if (entry.symlink || entry.type == G_FILE_TYPE_SYMBOLIC_LINK) {
+    if (entry.symlink || entry.type == files::FileType::Symlink) {
       typeLabel = "Link";
-    } else if (entry.type == G_FILE_TYPE_DIRECTORY) {
+    } else if (entry.type == files::FileType::Directory) {
       typeLabel = "Folder";
-    } else if (entry.type == G_FILE_TYPE_SPECIAL) {
+    } else if (entry.type == files::FileType::Special) {
       typeLabel = "Special";
-    } else if (entry.type == G_FILE_TYPE_SHORTCUT) {
+    } else if (entry.type == files::FileType::Shortcut) {
       typeLabel = "Shortcut";
-    } else if (entry.type == G_FILE_TYPE_MOUNTABLE) {
+    } else if (entry.type == files::FileType::Mountable) {
       typeLabel = "Mount";
-    } else if (entry.type == G_FILE_TYPE_REGULAR) {
+    } else if (entry.type == files::FileType::Regular) {
       knownType = entry.contentType && !g_content_type_is_unknown(entry.contentType->c_str());
       typeLabel = "File";
       if (knownType) {
@@ -115,8 +116,8 @@ bool files::DirectoryModel::less(EntryId left, EntryId right) const {
   const auto& rightPresentation = m_presentations.at(right);
   const auto& a = m_snapshot.entries[leftPresentation.sourceIndex];
   const auto& b = m_snapshot.entries[rightPresentation.sourceIndex];
-  if (m_sort.directoriesFirst && (a.type == G_FILE_TYPE_DIRECTORY) != (b.type == G_FILE_TYPE_DIRECTORY)) {
-    return a.type == G_FILE_TYPE_DIRECTORY;
+  if (m_sort.directoriesFirst && (a.type == files::FileType::Directory) != (b.type == files::FileType::Directory)) {
+    return a.type == files::FileType::Directory;
   }
   if (m_sort.field == SortField::Type) {
     const auto& first = leftPresentation.typeSortKey;
@@ -199,9 +200,9 @@ files::SelectionSummary files::DirectoryModel::selectionSummary() const {
     if (item == nullptr) {
       continue;
     }
-    if (!item->symlink && item->type == G_FILE_TYPE_DIRECTORY) {
+    if (!item->symlink && item->type == files::FileType::Directory) {
       ++summary.folders;
-    } else if (!item->symlink && item->type == G_FILE_TYPE_REGULAR) {
+    } else if (!item->symlink && item->type == files::FileType::Regular) {
       ++summary.files;
       if (!item->size) {
         ++summary.unknownSizes;

@@ -1,5 +1,7 @@
 #include "fs/directory_session.h"
 
+#include "fs/gio_interop.h"
+
 #include <unordered_map>
 #include <utility>
 
@@ -119,7 +121,7 @@ struct files::DirectorySession::State : std::enable_shared_from_this<State> {
   }
 
   void queryMetadata() {
-    const auto file = snapshot.location->file();
+    const auto file = gioFile(*snapshot.location);
     g_file_query_info_async(
         file.get(), kAccessAttributes, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, G_PRIORITY_DEFAULT, scan->cancellable.get(),
         [](GObject* source, GAsyncResult* result, gpointer data) {
@@ -209,7 +211,7 @@ struct files::DirectorySession::State : std::enable_shared_from_this<State> {
   }
 
   void watch() {
-    const auto file = snapshot.location->file();
+    const auto file = gioFile(*snapshot.location);
     if (!g_file_is_native(file.get())) {
       snapshot.monitorError = FileError{
           .kind = FileErrorKind::Unsupported,
@@ -245,7 +247,7 @@ struct files::DirectorySession::State : std::enable_shared_from_this<State> {
     scan = std::make_shared<Scan>();
     queryMetadata();
     g_file_enumerate_children_async(
-        snapshot.location->file().get(), kAttributes, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, G_PRIORITY_DEFAULT,
+        gioFile(*snapshot.location).get(), kAttributes, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, G_PRIORITY_DEFAULT,
         scan->cancellable.get(),
         [](GObject* source, GAsyncResult* result, gpointer data) {
           const std::unique_ptr<Request> request(static_cast<Request*>(data));
@@ -267,7 +269,7 @@ struct files::DirectorySession::State : std::enable_shared_from_this<State> {
 
   void append(GFileInfo* info) {
     const char* name = g_file_info_get_name(info);
-    const auto parent = snapshot.location->file();
+    const auto parent = gioFile(*snapshot.location);
     const GioPtr<GFile> child(g_file_get_child(parent.get(), name));
     const GString uri(g_file_get_uri(child.get()));
     auto [identity, inserted] = identities.try_emplace(uri.get(), nextId);
@@ -279,7 +281,7 @@ struct files::DirectorySession::State : std::enable_shared_from_this<State> {
         .location = Location::fromUri(uri.get()),
         .name = name,
         .displayName = g_file_info_get_display_name(info),
-        .type = g_file_info_get_file_type(info),
+        .type = fileType(g_file_info_get_file_type(info)),
         .hidden = g_file_info_get_is_hidden(info) != FALSE,
         .symlink = g_file_info_get_is_symlink(info) != FALSE,
         .size = std::nullopt,

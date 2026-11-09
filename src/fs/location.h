@@ -1,8 +1,5 @@
 #pragma once
 
-#include "fs/gio_ptr.h"
-
-#include <gio/gio.h>
 #include <optional>
 #include <string>
 
@@ -17,7 +14,20 @@ namespace files {
     const std::string& uri() const { return m_uri; }
     std::optional<std::string> nativePath() const;
     bool isTrash() const;
-    GioPtr<GFile> file() const;
+    bool isNative() const;
+
+    // nullopt at a root.
+    std::optional<Location> parent() const;
+    // One filename component, as raw bytes.
+    Location child(const std::string& name) const;
+    // A relative path below this location; absolute paths replace it.
+    Location resolve(const std::string& relativePath) const;
+    // Raw last-component bytes; nullopt when the provider reports none.
+    std::optional<std::string> basename() const;
+    // basename() as valid UTF-8 presentation text.
+    std::optional<std::string> displayName() const;
+    // True for strict descendants only.
+    bool isInside(const Location& ancestor) const;
 
     bool operator==(const Location&) const = default;
 

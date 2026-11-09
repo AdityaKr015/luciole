@@ -1,5 +1,7 @@
 #include "fs/file_icon_source.h"
 
+#include "fs/gio_interop.h"
+
 namespace {
   void readIcon(GIcon* icon, files::FileIconSource& result) {
     if (icon == nullptr) {

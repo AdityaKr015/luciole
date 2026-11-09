@@ -1,5 +1,6 @@
 #include "event_loop/glib_poll_source.h"
 #include "fs/directory_session.h"
+#include "fs/gio_interop.h"
 #include "test_check.h"
 
 #include <algorithm>
@@ -129,7 +130,7 @@ namespace {
     TEST_CHECK(g_utf8_validate(entry(session, unusual).displayName.c_str(), -1, nullptr));
     TEST_CHECK(entry(session, ".hidden").hidden);
     TEST_CHECK(entry(session, "broken-link").symlink);
-    TEST_CHECK(entry(session, "folder").type == G_FILE_TYPE_DIRECTORY);
+    TEST_CHECK(entry(session, "folder").type == files::FileType::Directory);
     TEST_CHECK(entry(session, "0").id != entry(session, "hard-link").id);
     const auto id = entry(session, unusual).id;
     TEST_CHECK(entry(session, "folder").contentType == "inode/directory");

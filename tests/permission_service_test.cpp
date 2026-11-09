@@ -1,4 +1,6 @@
 #include "event_loop/glib_poll_source.h"
+#include "fs/filename.h"
+#include "fs/gio_interop.h"
 #include "operations/permission_service.h"
 #include "test_check.h"
 
@@ -13,6 +15,7 @@
 #include <fstream>
 #include <print>
 #include <set>
+#include <string_view>
 #include <sys/acl.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
@@ -63,20 +66,23 @@ namespace {
     return supported;
   }
   unsigned fixtureMode(unsigned value) { return value & (0777 | supportedSpecialBits); }
+  bool errorContains(const files::PermissionService& service, std::string_view text) {
+    const auto& error = service.snapshot().error;
+    return error && error->message.contains(text);
+  }
   files::DirectoryEntry entry(const fs::path& path) {
     const auto location = files::Location::fromPath(path.native());
     const files::GioPtr<GFileInfo> info(g_file_query_info(
-        location.file().get(), "id::file,id::filesystem,standard::type,standard::is-symlink",
+        files::gioFile(location).get(), "id::file,id::filesystem,standard::type,standard::is-symlink",
         G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, nullptr
     ));
     TEST_CHECK(info);
-    const files::GString display(g_filename_display_name(path.filename().c_str()));
     return {
         .id = 1,
         .location = location,
         .name = path.filename().native(),
-        .displayName = display.get(),
-        .type = g_file_info_get_file_type(info.get()),
+        .displayName = files::filenameDisplayText(path.filename().native()),
+        .type = files::fileType(g_file_info_get_file_type(info.get())),
         .symlink = g_file_info_get_is_symlink(info.get()) != FALSE,
         .size = {},
         .modifiedSeconds = {},
@@ -128,14 +134,14 @@ namespace {
       const auto before = mode(file);
       pump.apply(service, {.mode = value, .owner = {}, .group = {}});
       if ((value & 07000 & ~supportedSpecialBits) != 0) {
-        TEST_CHECK(service.snapshot().error && !service.snapshot().applied && mode(file) == before);
+        TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied && mode(file) == before);
         TEST_CHECK(service.snapshot().info->mode == before);
       } else {
-        TEST_CHECK(!service.snapshot().error && mode(file) == value && service.snapshot().info->mode == value);
+        TEST_CHECK(!service.snapshot().failed() && mode(file) == value && service.snapshot().info->mode == value);
       }
     }
     pump.apply(service, {.mode = 0644, .owner = {}, .group = {}});
-    TEST_CHECK(!service.snapshot().applied && !service.snapshot().error);
+    TEST_CHECK(!service.snapshot().applied && !service.snapshot().failed());
     fs::create_hard_link(file, f.root / "alias");
     pump.prepare(service, file);
     TEST_CHECK(service.snapshot().info->multipleLinks);
@@ -164,27 +170,27 @@ namespace {
     write(file);
     pump.prepare(service, file);
     pump.apply(service, {.mode = {}, .owner = std::to_string(::geteuid()), .group = std::to_string(::getegid())});
-    TEST_CHECK(!service.snapshot().error && !service.snapshot().applied);
+    TEST_CHECK(!service.snapshot().failed() && !service.snapshot().applied);
     const auto info = *service.snapshot().info;
     if (!info.ownerName.empty() && !info.groupName.empty()) {
       pump.apply(service, {.mode = {}, .owner = info.ownerName, .group = info.groupName});
-      TEST_CHECK(!service.snapshot().error && !service.snapshot().applied);
+      TEST_CHECK(!service.snapshot().failed() && !service.snapshot().applied);
     }
     const auto original = mode(file);
     for (const std::string value : {"", "4294967295", "999999999999999999999", "noctalia-no-such-account-370917"}) {
       pump.apply(service, {.mode = 0777, .owner = {}, .group = value});
-      TEST_CHECK(service.snapshot().error && !service.snapshot().applied && mode(file) == original);
+      TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied && mode(file) == original);
     }
     pump.apply(service, {.mode = 010000, .owner = {}, .group = {}});
-    TEST_CHECK(service.snapshot().error && mode(file) == original);
+    TEST_CHECK(service.snapshot().failed() && mode(file) == original);
     if (::geteuid() != 0) {
       pump.apply(service, {.mode = 0777, .owner = "0", .group = {}});
-      TEST_CHECK(service.snapshot().error && metadata(file).st_uid == ::geteuid() && mode(file) == original);
+      TEST_CHECK(service.snapshot().failed() && metadata(file).st_uid == ::geteuid() && mode(file) == original);
       pump.apply(service, {.mode = 0777, .owner = {}, .group = "4294967294"});
-      TEST_CHECK(service.snapshot().error && mode(file) == original);
+      TEST_CHECK(service.snapshot().failed() && mode(file) == original);
     }
     pump.apply(service, {.mode = 0600, .owner = {}, .group = {}});
-    TEST_CHECK(!service.snapshot().error && mode(file) == 0600);
+    TEST_CHECK(!service.snapshot().failed() && mode(file) == 0600);
     const int count = ::getgroups(0, nullptr);
     TEST_CHECK(count >= 0);
     std::vector<gid_t> groups(static_cast<std::size_t>(count));
@@ -196,10 +202,10 @@ namespace {
       TEST_CHECK(::chmod(file.c_str(), fixtureMode(04750)) == 0);
       pump.prepare(service, file);
       pump.apply(service, {.mode = {}, .owner = {}, .group = std::to_string(group)});
-      TEST_CHECK(!service.snapshot().error && service.snapshot().applied && metadata(file).st_gid == group);
+      TEST_CHECK(!service.snapshot().failed() && service.snapshot().applied && metadata(file).st_gid == group);
       TEST_CHECK(service.snapshot().info->mode == mode(file) && (mode(file) & 04000) == 0);
       pump.apply(service, {.mode = 0640, .owner = {}, .group = std::to_string(::getegid())});
-      TEST_CHECK(!service.snapshot().error && metadata(file).st_gid == ::getegid() && mode(file) == 0640);
+      TEST_CHECK(!service.snapshot().failed() && metadata(file).st_gid == ::getegid() && mode(file) == 0640);
       std::println("Verified membership-based group changes and kernel set-ID clearing.");
       break;
     }
@@ -214,11 +220,11 @@ namespace {
     pump.prepare(service, f.root / "link");
     TEST_CHECK(service.snapshot().info->symlink && !service.snapshot().info->canMode);
     pump.apply(service, {.mode = 0777, .owner = {}, .group = {}});
-    TEST_CHECK(service.snapshot().error && mode(file) == 0600 && fs::is_symlink(f.root / "link"));
+    TEST_CHECK(service.snapshot().failed() && mode(file) == 0600 && fs::is_symlink(f.root / "link"));
     fs::create_symlink("missing", f.root / "broken");
     pump.prepare(service, f.root / "broken");
     pump.apply(service, {.mode = {}, .owner = std::to_string(::geteuid()), .group = std::to_string(::getegid())});
-    TEST_CHECK(!service.snapshot().error && fs::read_symlink(f.root / "broken") == "missing");
+    TEST_CHECK(!service.snapshot().failed() && fs::read_symlink(f.root / "broken") == "missing");
     const int count = ::getgroups(0, nullptr);
     TEST_CHECK(count >= 0);
     std::vector<gid_t> groups(static_cast<std::size_t>(count));
@@ -231,7 +237,7 @@ namespace {
       for (const auto* name : {"link", "broken"}) {
         pump.prepare(service, f.root / name);
         pump.apply(service, {.mode = {}, .owner = {}, .group = std::to_string(group)});
-        TEST_CHECK(!service.snapshot().error && metadata(f.root / name).st_gid == group);
+        TEST_CHECK(!service.snapshot().failed() && metadata(f.root / name).st_gid == group);
         TEST_CHECK(metadata(file).st_gid == targetGroup && mode(file) == 0600);
       }
       std::println("Verified descriptor-based ownership changes on live and broken links.");
@@ -242,14 +248,14 @@ namespace {
     write(file);
     TEST_CHECK(service.prepare(captured));
     pump.settle(service);
-    TEST_CHECK(service.snapshot().error);
+    TEST_CHECK(service.snapshot().failed());
     pump.prepare(service, file);
     fs::rename(file, f.root / "held2");
     write(file);
     const auto replacementMode = mode(file);
     pump.apply(service, {.mode = 0777, .owner = {}, .group = {}});
     TEST_CHECK(
-        service.snapshot().error
+        service.snapshot().failed()
         && !service.snapshot().applied
         && mode(file) == replacementMode
         && mode(f.root / "held2") == replacementMode
@@ -258,7 +264,7 @@ namespace {
     TEST_CHECK(::chmod(file.c_str(), 0600) == 0);
     pump.apply(service, {.mode = 0777, .owner = {}, .group = {}});
     TEST_CHECK(
-        service.snapshot().error
+        service.snapshot().failed()
         && !service.snapshot().applied
         && mode(file) == 0600
         && !service.snapshot().info->canMode
@@ -271,14 +277,14 @@ namespace {
     write(f.root / "folder/item");
     pump.apply(service, {.mode = 0777, .owner = {}, .group = {}});
     TEST_CHECK(
-        service.snapshot().error && mode(f.root / "folder/item") != 0777 && mode(f.root / "old-folder/item") != 0777
+        service.snapshot().failed() && mode(f.root / "folder/item") != 0777 && mode(f.root / "old-folder/item") != 0777
     );
     fs::create_directory_symlink(f.root / "old-folder", f.root / "parent-link");
     pump.prepare(service, f.root / "parent-link/item");
     fs::remove(f.root / "parent-link");
     fs::create_directory_symlink(f.root / "folder", f.root / "parent-link");
     pump.apply(service, {.mode = 0777, .owner = {}, .group = {}});
-    TEST_CHECK(service.snapshot().error && mode(f.root / "folder/item") != 0777);
+    TEST_CHECK(service.snapshot().failed() && mode(f.root / "folder/item") != 0777);
   }
   void cancellationAndLifetime(Pump& pump) {
     Fixture f;
@@ -322,7 +328,7 @@ namespace {
     pump.settle(service);
     TEST_CHECK(service.snapshot().info && service.snapshot().info->canMode);
     pump.apply(service, {.mode = 0640, .owner = {}, .group = {}});
-    TEST_CHECK(!service.snapshot().error && mode(file) == 0640);
+    TEST_CHECK(!service.snapshot().failed() && mode(file) == 0640);
     auto remote = entry(file);
     remote.location = files::Location::fromUri("sftp://example.invalid/file");
     TEST_CHECK(service.prepare(remote));
@@ -352,19 +358,19 @@ namespace {
     TEST_CHECK(service.snapshot().results->back().outcome == O::Changed);
     TEST_CHECK(service.snapshot().report.contains(std::format("mode {:04o}", fixtureMode(02751))));
     pump.apply(service, {});
-    TEST_CHECK(!service.snapshot().applied && !service.snapshot().error);
+    TEST_CHECK(!service.snapshot().applied && !service.snapshot().failed());
     for (const auto& row : *service.snapshot().results) {
       TEST_CHECK(row.outcome == O::Unchanged);
     }
     pump.apply(service, {.mode = 07777, .owner = {}, .group = "noctalia-no-such-group-370917", .mask = 07777});
-    TEST_CHECK(service.snapshot().error && !service.snapshot().finished && !service.snapshot().applied);
+    TEST_CHECK(service.snapshot().failed() && !service.snapshot().finished && !service.snapshot().applied);
     TEST_CHECK(service.snapshot().report.starts_with("No changes attempted:"));
     for (const auto& row : *service.snapshot().results) {
       TEST_CHECK(row.outcome == O::Ready);
     }
     TEST_CHECK(mode(a) == fixtureMode(04760) && mode(b) == fixtureMode(02751));
     pump.apply(service, {.mode = 0004, .owner = {}, .group = {}, .mask = 0004});
-    TEST_CHECK(!service.snapshot().error && mode(a) == fixtureMode(04764) && mode(b) == fixtureMode(02755));
+    TEST_CHECK(!service.snapshot().failed() && mode(a) == fixtureMode(04764) && mode(b) == fixtureMode(02755));
     const int count = ::getgroups(0, nullptr);
     TEST_CHECK(count >= 0);
     std::vector<gid_t> groups(static_cast<std::size_t>(count));
@@ -374,7 +380,7 @@ namespace {
         continue;
       }
       pump.apply(service, {.mode = 0004, .owner = {}, .group = std::to_string(group), .mask = 0004});
-      TEST_CHECK(!service.snapshot().error && metadata(a).st_gid == group && metadata(b).st_gid == group);
+      TEST_CHECK(!service.snapshot().failed() && metadata(a).st_gid == group && metadata(b).st_gid == group);
       TEST_CHECK(mode(a) == 0764 && mode(b) == 0755); // Keep does not restore kernel-cleared set-ID bits.
       std::println("Verified bulk group changes preserve kernel set-ID clearing.");
       break;
@@ -398,7 +404,7 @@ namespace {
     write(a);
     const auto replacement = mode(a);
     pump.apply(service, {.mode = 0004, .owner = {}, .group = {}, .mask = 0004});
-    TEST_CHECK(service.snapshot().error && service.snapshot().applied && service.snapshot().finished);
+    TEST_CHECK(service.snapshot().failed() && service.snapshot().applied && service.snapshot().finished);
     TEST_CHECK(mode(a) == replacement && mode(f.root / "held") == 0600 && mode(b) == 0604);
     TEST_CHECK(
         service.snapshot().results->front().outcome == O::Failed
@@ -411,39 +417,39 @@ namespace {
     prepareBulk(pump, service, {entry(a), unknown, remote});
     TEST_CHECK(service.snapshot().unknownItems == 1 && service.snapshot().results->back().outcome == O::Failed);
     pump.apply(service, {.mode = 0002, .owner = {}, .group = {}, .mask = 0002});
-    TEST_CHECK(service.snapshot().error && mode(a) == (replacement | 0002) && mode(b) == 0604);
+    TEST_CHECK(service.snapshot().failed() && mode(a) == (replacement | 0002) && mode(b) == 0604);
     TEST_CHECK(service.snapshot().results->at(1).outcome == O::Failed);
     fs::create_symlink("a", f.root / "link");
     prepareBulk(pump, service, {entry(b), entry(f.root / "link")});
     pump.apply(service, {.mode = 0001, .owner = {}, .group = {}, .mask = 0001});
-    TEST_CHECK(service.snapshot().error && mode(a) == (replacement | 0002) && mode(b) == 0605);
+    TEST_CHECK(service.snapshot().failed() && mode(a) == (replacement | 0002) && mode(b) == 0605);
     TEST_CHECK(service.snapshot().results->back().outcome == O::Failed);
     fs::create_hard_link(b, f.root / "alias");
     prepareBulk(pump, service, {entry(b), entry(f.root / "alias")});
     pump.apply(service, {.mode = 0002, .owner = {}, .group = {}, .mask = 0002});
-    TEST_CHECK(!service.snapshot().error && mode(b) == 0607);
+    TEST_CHECK(!service.snapshot().failed() && mode(b) == 0607);
     TEST_CHECK(
         service.snapshot().results->front().outcome == O::Changed
         && service.snapshot().results->back().outcome == O::Changed
     );
     TEST_CHECK(service.snapshot().results->back().message.contains("hard link"));
     pump.apply(service, {.mode = 0, .owner = {}, .group = {}, .mask = 0002});
-    TEST_CHECK(!service.snapshot().error && mode(b) == 0605);
+    TEST_CHECK(!service.snapshot().failed() && mode(b) == 0605);
     prepareBulk(pump, service, {entry(b), entry(f.root / "alias")});
     fs::remove(f.root / "alias");
     write(f.root / "alias");
     const auto aliasMode = mode(f.root / "alias");
     pump.apply(service, {.mode = 0020, .owner = {}, .group = {}, .mask = 0020});
-    TEST_CHECK(service.snapshot().error && mode(f.root / "alias") == aliasMode && mode(b) == 0625);
+    TEST_CHECK(service.snapshot().failed() && mode(f.root / "alias") == aliasMode && mode(b) == 0625);
     fs::remove(f.root / "alias");
     fs::create_hard_link(b, f.root / "alias");
     pump.apply(service, {.mode = 0020, .owner = {}, .group = {}, .mask = 0020});
-    TEST_CHECK(service.snapshot().error && !service.snapshot().applied);
+    TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied);
     TEST_CHECK(service.snapshot().results->back().outcome == O::Failed);
     prepareBulk(pump, service, {entry(a), entry(b)});
     TEST_CHECK(::chmod(a.c_str(), 0400) == 0);
     pump.apply(service, {.mode = 0010, .owner = {}, .group = {}, .mask = 0010});
-    TEST_CHECK(service.snapshot().error && mode(a) == 0400 && mode(b) == 0635);
+    TEST_CHECK(service.snapshot().failed() && mode(a) == 0400 && mode(b) == 0635);
     const auto source = entry(a);
     TEST_CHECK(!service.prepare(std::vector<files::DirectoryEntry>{}));
     TEST_CHECK(!service.prepare(std::vector{source}));
@@ -568,7 +574,7 @@ namespace {
     TEST_CHECK(service.applyRecursive(recursiveEdit()));
     pump.settle(service);
     const auto& snapshot = service.snapshot();
-    TEST_CHECK(snapshot.recursive && snapshot.finished && !snapshot.error && snapshot.applied);
+    TEST_CHECK(snapshot.recursive && snapshot.finished && !snapshot.failed() && snapshot.applied);
     TEST_CHECK(mode(file) == 0644 && mode(nested) == 0604 && mode(tree / ".hidden") == 0604);
     TEST_CHECK(mode(tree / "fifo") == 0604 && mode(f.root / "outside") == outsideMode);
     TEST_CHECK(mode(tree / "alias") == 0644);
@@ -593,7 +599,7 @@ namespace {
     edit.directoryMask = 0777;
     TEST_CHECK(service.applyRecursive(edit));
     pump.settle(service);
-    TEST_CHECK(!service.snapshot().error && mode(tree) == 0);
+    TEST_CHECK(!service.snapshot().failed() && mode(tree) == 0);
     TEST_CHECK(::chmod(tree.c_str(), 0700) == 0);
     TEST_CHECK(::chmod((tree / "child").c_str(), 0700) == 0);
     TEST_CHECK(::chmod((tree / "child/nested").c_str(), 0700) == 0);
@@ -611,21 +617,21 @@ namespace {
     invalid.directoryMode = 010000;
     TEST_CHECK(service.applyRecursive(invalid));
     pump.settle(service);
-    TEST_CHECK(service.snapshot().error && !service.snapshot().applied && !service.snapshot().finished);
+    TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied && !service.snapshot().finished);
     TEST_CHECK(mode(f.root / "tree/good") == 0600);
     invalid = recursiveEdit();
     invalid.files.group = "noctalia-no-such-account-370917";
     TEST_CHECK(service.applyRecursive(invalid));
     pump.settle(service);
-    TEST_CHECK(service.snapshot().error && !service.snapshot().applied && mode(f.root / "tree/good") == 0600);
+    TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied && mode(f.root / "tree/good") == 0600);
     if (::geteuid() != 0) {
       TEST_CHECK(::chmod((f.root / "tree/blocked").c_str(), 0000) == 0);
       TEST_CHECK(service.applyRecursive(recursiveEdit()));
       pump.settle(service);
-      TEST_CHECK(service.snapshot().error && service.snapshot().applied);
+      TEST_CHECK(service.snapshot().failed() && service.snapshot().applied);
       TEST_CHECK(mode(f.root / "tree/good") == 0604);
       TEST_CHECK(std::ranges::any_of(*service.snapshot().results, [](const auto& row) {
-        return row.outcome == O::Failed && row.message.contains("Contents not inspected");
+        return row.outcome == O::Failed && row.error && row.error->message.contains("Contents not inspected");
       }));
       TEST_CHECK(::chmod((f.root / "tree/blocked").c_str(), 0700) == 0);
     }
@@ -638,7 +644,9 @@ namespace {
     fs::create_directory_symlink(f.root / "replacement", f.root / "tree");
     TEST_CHECK(service.applyRecursive(recursiveEdit()));
     pump.settle(service);
-    TEST_CHECK(service.snapshot().error && !service.snapshot().applied && mode(f.root / "replacement/value") == before);
+    TEST_CHECK(
+        service.snapshot().failed() && !service.snapshot().applied && mode(f.root / "replacement/value") == before
+    );
   }
   void recursiveCancellationAndLimits(Pump& pump) {
     Fixture f;
@@ -667,8 +675,8 @@ namespace {
     TEST_CHECK(service.applyRecursive(recursiveEdit()));
     pump.settle(service);
     TEST_CHECK(::setrlimit(RLIMIT_NOFILE, &saved) == 0);
-    TEST_CHECK(service.snapshot().error && !service.snapshot().applied && service.snapshot().finished);
-    TEST_CHECK(service.snapshot().message.contains("file descriptors"));
+    TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied && service.snapshot().finished);
+    TEST_CHECK(errorContains(service, "file descriptors"));
     for (unsigned i = 0; i < 1024; ++i) {
       TEST_CHECK(mode(f.root / "tree" / std::to_string(i)) == 0600);
     }
@@ -704,7 +712,7 @@ namespace {
     pump.prepare(service, f.root / "deep");
     TEST_CHECK(service.applyRecursive(recursiveEdit()));
     pump.settle(service);
-    TEST_CHECK(service.snapshot().error && !service.snapshot().applied && service.snapshot().message.contains("128"));
+    TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied && errorContains(service, "128"));
   }
   void recursiveOwnership(Pump& pump) {
     Fixture f;
@@ -726,7 +734,7 @@ namespace {
       edit.files.group = std::to_string(group);
       TEST_CHECK(service.applyRecursive(edit));
       pump.settle(service);
-      TEST_CHECK(!service.snapshot().error);
+      TEST_CHECK(!service.snapshot().failed());
       for (const auto& path : {f.root / "tree", f.root / "tree/child", file}) {
         TEST_CHECK(metadata(path).st_gid == group && metadata(path).st_uid == ::geteuid());
       }
@@ -748,7 +756,7 @@ namespace {
       const auto before = mode(file);
       TEST_CHECK(service.applyRecursive(denied));
       pump.settle(service);
-      TEST_CHECK(service.snapshot().error && !service.snapshot().applied && mode(file) == before);
+      TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied && mode(file) == before);
     }
   }
   void recursiveReplacementDuringCollection(Pump& pump) {
@@ -783,8 +791,8 @@ namespace {
     pump.prepare(service, f.root / "tree");
     TEST_CHECK(service.applyRecursive(recursiveEdit()));
     pump.settle(service);
-    TEST_CHECK(service.snapshot().error && !service.snapshot().applied && service.snapshot().finished);
-    TEST_CHECK(service.snapshot().message.contains("16384") || service.snapshot().message.contains("file descriptors"));
+    TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied && service.snapshot().finished);
+    TEST_CHECK(errorContains(service, "16384") || errorContains(service, "file descriptors"));
     for (unsigned i = 0; i < 16384; ++i) {
       TEST_CHECK(mode(f.root / "tree" / std::to_string(i)) == before);
     }
@@ -846,7 +854,7 @@ namespace {
     const auto before = mode(file);
     TEST_CHECK(service.snapshot().info->acl);
     applyAcl(pump, service, {.access = extended(std::to_string(::geteuid())), .defaults = {}});
-    TEST_CHECK(service.snapshot().error && !service.snapshot().applied && !service.snapshot().message.empty());
+    TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied && service.snapshot().error);
     TEST_CHECK(mode(file) == before);
     std::ifstream input(file);
     std::string contents;
@@ -860,10 +868,10 @@ namespace {
     patch.access.entries.push_back({Tag::User, std::to_string(::geteuid()), 4, 7});
     TEST_CHECK(service.applyAclPatch(patch));
     pump.settle(service);
-    TEST_CHECK(service.snapshot().error && !service.snapshot().applied && service.snapshot().finished);
+    TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied && service.snapshot().finished);
     TEST_CHECK(mode(file) == before && mode(second) == secondMode);
     for (const auto& row : *service.snapshot().results) {
-      TEST_CHECK(row.outcome == O::Failed && !row.message.empty());
+      TEST_CHECK(row.outcome == O::Failed && row.error && !row.error->message.empty());
     }
   }
   void aclEditing(Pump& pump) {
@@ -886,14 +894,14 @@ namespace {
     const std::string id = std::to_string(::geteuid() + 20000);
     const auto rules = extended(id);
     applyAcl(pump, service, {.access = rules, .defaults = {}});
-    TEST_CHECK(!service.snapshot().error && service.snapshot().applied && mode(file) == 0640);
+    TEST_CHECK(!service.snapshot().failed() && service.snapshot().applied && mode(file) == 0640);
     TEST_CHECK(aclText(file).contains("user:" + id + ":rw-\n") && aclText(file).contains("mask::r--\n"));
     TEST_CHECK(service.snapshot().info->acl->access == rules);
     applyAcl(pump, service, {.access = rules, .defaults = {}});
-    TEST_CHECK(!service.snapshot().error && !service.snapshot().applied);
+    TEST_CHECK(!service.snapshot().failed() && !service.snapshot().applied);
     // A chmod edits the group-class mask while preserving named rules.
     pump.apply(service, {.mode = 0620, .owner = {}, .group = {}});
-    TEST_CHECK(!service.snapshot().error && aclText(file).contains("user:" + id + ":rw-\n"));
+    TEST_CHECK(!service.snapshot().failed() && aclText(file).contains("user:" + id + ":rw-\n"));
     TEST_CHECK(aclText(file).contains("mask::-w-\n"));
     TEST_CHECK(service.snapshot().info->acl->editable);
     applyAcl(pump, service, {.access = rules, .defaults = {}});
@@ -901,35 +909,37 @@ namespace {
     auto bad = rules;
     bad.push_back({Tag::User, id, 0});
     applyAcl(pump, service, {.access = bad, .defaults = {}});
-    TEST_CHECK(service.snapshot().error && !service.snapshot().applied && aclText(file) == before);
+    TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied && aclText(file) == before);
     bad = rules;
     bad[1].qualifier = "noctalia-no-such-account-370917";
     applyAcl(pump, service, {.access = bad, .defaults = {}});
-    TEST_CHECK(service.snapshot().error && !service.snapshot().applied && aclText(file) == before);
+    TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied && aclText(file) == before);
     bad = rules;
     bad[1].permissions = 8;
     applyAcl(pump, service, {.access = bad, .defaults = {}});
-    TEST_CHECK(service.snapshot().error && aclText(file) == before);
+    TEST_CHECK(service.snapshot().failed() && aclText(file) == before);
     bad = rules;
     bad.erase(bad.begin() + 3);
     applyAcl(pump, service, {.access = bad, .defaults = {}});
-    TEST_CHECK(service.snapshot().error && aclText(file) == before);
+    TEST_CHECK(service.snapshot().failed() && aclText(file) == before);
     applyAcl(pump, service, {.access = std::vector<files::AclEntry>{}, .defaults = {}});
-    TEST_CHECK(service.snapshot().error && aclText(file) == before);
+    TEST_CHECK(service.snapshot().failed() && aclText(file) == before);
     applyAcl(pump, service, {.access = rules, .defaults = rules});
-    TEST_CHECK(service.snapshot().error && !service.snapshot().applied && aclText(file) == before);
+    TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied && aclText(file) == before);
     bad = std::vector<files::AclEntry>(129, {Tag::Other, {}, 0});
     applyAcl(pump, service, {.access = bad, .defaults = {}});
-    TEST_CHECK(service.snapshot().error && aclText(file) == before);
+    TEST_CHECK(service.snapshot().failed() && aclText(file) == before);
     // Account names resolve on the worker and duplicate resolved IDs are refused.
     const auto name = service.snapshot().info->ownerName;
     if (!name.empty()) {
       auto byName = extended(name);
       applyAcl(pump, service, {.access = byName, .defaults = {}});
-      TEST_CHECK(!service.snapshot().error && aclText(file).contains("user:" + std::to_string(::geteuid()) + ":rw-\n"));
+      TEST_CHECK(
+          !service.snapshot().failed() && aclText(file).contains("user:" + std::to_string(::geteuid()) + ":rw-\n")
+      );
       byName.push_back({Tag::User, std::to_string(::geteuid()), 0});
       applyAcl(pump, service, {.access = byName, .defaults = {}});
-      TEST_CHECK(service.snapshot().error && !service.snapshot().applied);
+      TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied);
     }
     // Strip the named entries and mask deliberately, then recover a mode-0000 file.
     applyAcl(
@@ -937,14 +947,14 @@ namespace {
         {.access = std::vector<files::AclEntry>{{Tag::Owner, {}, 0}, {Tag::OwningGroup, {}, 0}, {Tag::Other, {}, 0}},
          .defaults = {}}
     );
-    TEST_CHECK(!service.snapshot().error && mode(file) == 0 && service.snapshot().info->acl->access.size() == 3);
+    TEST_CHECK(!service.snapshot().failed() && mode(file) == 0 && service.snapshot().info->acl->access.size() == 3);
     pump.prepare(service, file);
     applyAcl(pump, service, {.access = rules, .defaults = {}});
-    TEST_CHECK(!service.snapshot().error && mode(file) == 0640);
+    TEST_CHECK(!service.snapshot().failed() && mode(file) == 0640);
     fs::create_hard_link(file, f.root / "alias");
     pump.prepare(service, file);
     applyAcl(pump, service, {.access = rules, .defaults = {}});
-    TEST_CHECK(!service.snapshot().error && aclText(f.root / "alias") == aclText(file));
+    TEST_CHECK(!service.snapshot().failed() && aclText(f.root / "alias") == aclText(file));
     std::ifstream contents(file);
     std::string payload;
     contents >> payload;
@@ -963,16 +973,16 @@ namespace {
     invalid.pop_back();
     const auto access = aclText(folder);
     applyAcl(pump, service, {.access = rules, .defaults = invalid});
-    TEST_CHECK(service.snapshot().error && !service.snapshot().applied && aclText(folder) == access);
+    TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied && aclText(folder) == access);
     applyAcl(pump, service, {.access = {}, .defaults = rules});
-    TEST_CHECK(!service.snapshot().error && service.snapshot().applied);
+    TEST_CHECK(!service.snapshot().failed() && service.snapshot().applied);
     TEST_CHECK(aclText(folder, true).contains("user:" + std::to_string(::geteuid() + 20000) + ":rw-\n"));
     write(folder / "inherited");
     TEST_CHECK(aclText(folder / "inherited").contains("user:" + std::to_string(::geteuid() + 20000) + ":rw-\n"));
     TEST_CHECK(aclText(folder / "existing") == existing);
     const auto inherited = aclText(folder / "inherited");
     applyAcl(pump, service, {.access = {}, .defaults = std::vector<files::AclEntry>{}});
-    TEST_CHECK(!service.snapshot().error && aclText(folder, true).empty());
+    TEST_CHECK(!service.snapshot().failed() && aclText(folder, true).empty());
     write(folder / "plain");
     TEST_CHECK(!aclText(folder / "plain").contains("user:" + std::to_string(::geteuid() + 20000) + ":"));
     TEST_CHECK(aclText(folder / "inherited") == inherited);
@@ -983,7 +993,7 @@ namespace {
     TEST_CHECK(::close(fd) == 0);
     const auto unchangedAccess = aclText(folder);
     applyAcl(pump, service, {.access = rules, .defaults = {}});
-    TEST_CHECK(service.snapshot().error && !service.snapshot().applied && aclText(folder) == unchangedAccess);
+    TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied && aclText(folder) == unchangedAccess);
     TEST_CHECK(!service.snapshot().info->acl->editable);
   }
   void aclStaleSourcesAndCancellation(Pump& pump) {
@@ -1005,19 +1015,19 @@ namespace {
     const auto changed = aclText(file);
     TEST_CHECK(mode(file) == 0640);
     applyAcl(pump, service, {.access = rules, .defaults = {}});
-    TEST_CHECK(service.snapshot().error && !service.snapshot().applied && aclText(file) == changed);
+    TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied && aclText(file) == changed);
     TEST_CHECK(!service.snapshot().info->acl->editable);
     pump.prepare(service, file);
     fs::rename(file, f.root / "held");
     write(file);
     const auto replacement = aclText(file);
     applyAcl(pump, service, {.access = rules, .defaults = {}});
-    TEST_CHECK(service.snapshot().error && !service.snapshot().applied && aclText(file) == replacement);
+    TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied && aclText(file) == replacement);
     fs::create_symlink(file, f.root / "link");
     pump.prepare(service, f.root / "link");
     TEST_CHECK(!service.snapshot().info->acl->supported);
     applyAcl(pump, service, {.access = rules, .defaults = {}});
-    TEST_CHECK(service.snapshot().error && !service.snapshot().applied && aclText(file) == replacement);
+    TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied && aclText(file) == replacement);
     pump.prepare(service, file);
     TEST_CHECK(service.applyAcl({.access = rules, .defaults = {}}));
     service.cancel();
@@ -1052,7 +1062,7 @@ namespace {
     prepareBulk(pump, service, {entry(a), entry(b)});
     TEST_CHECK(service.snapshot().info && !service.snapshot().info->acl);
     applyPatch(pump, service, userPatch("21000", 2, 2));
-    TEST_CHECK(!service.snapshot().error && service.snapshot().applied);
+    TEST_CHECK(!service.snapshot().failed() && service.snapshot().applied);
     TEST_CHECK(aclText(a).contains("user:21000:rw-\n") && aclText(a).contains("user:21001:r--\n"));
     TEST_CHECK(aclText(b).contains("user:21000:-wx\n") && aclText(b).contains("group:22000:r-x\n"));
     TEST_CHECK(aclText(a).contains("mask::r--\n") && aclText(b).contains("mask::r-x\n"));
@@ -1063,17 +1073,19 @@ namespace {
     auto recalc = userPatch("21002", 6);
     recalc.access.maskPolicy = files::AclMaskPolicy::Recalculate;
     applyPatch(pump, service, recalc);
-    TEST_CHECK(!service.snapshot().error && aclText(a).contains("mask::rw-\n") && aclText(b).contains("mask::rwx\n"));
+    TEST_CHECK(
+        !service.snapshot().failed() && aclText(a).contains("mask::rw-\n") && aclText(b).contains("mask::rwx\n")
+    );
     const auto beforeA = aclText(a), beforeB = aclText(b);
     auto bad = userPatch("21000", 0);
     bad.access.entries.push_back({Tag::User, "021000", 7, 7});
     applyPatch(pump, service, bad);
-    TEST_CHECK(service.snapshot().error && !service.snapshot().finished && !service.snapshot().applied);
+    TEST_CHECK(service.snapshot().failed() && !service.snapshot().finished && !service.snapshot().applied);
     TEST_CHECK(aclText(a) == beforeA && aclText(b) == beforeB);
     TEST_CHECK(service.snapshot().results->front().outcome == O::Ready);
     bad = userPatch("noctalia-no-such-account-370917", 7);
     applyPatch(pump, service, bad);
-    TEST_CHECK(service.snapshot().error && aclText(a) == beforeA && aclText(b) == beforeB);
+    TEST_CHECK(service.snapshot().failed() && aclText(a) == beforeA && aclText(b) == beforeB);
     for (unsigned invalid = 0; invalid < 4; ++invalid) {
       files::AclPatchEdit patch;
       patch.access.entries.push_back({Tag::Other, {}, 7, 7});
@@ -1088,14 +1100,14 @@ namespace {
         patch.defaults.entries.push_back({Tag::Other, {}, 7, 7}); // Keep defaults must be unambiguous.
       }
       applyPatch(pump, service, patch);
-      TEST_CHECK(service.snapshot().error && !service.snapshot().finished && !service.snapshot().applied);
+      TEST_CHECK(service.snapshot().failed() && !service.snapshot().finished && !service.snapshot().applied);
       TEST_CHECK(aclText(a) == beforeA && aclText(b) == beforeB);
     }
     // Mask removal cannot silently discard named rules or apply another part first.
     bad = userPatch("21000", 0);
     bad.access.maskPolicy = files::AclMaskPolicy::RemoveUnused;
     applyPatch(pump, service, bad);
-    TEST_CHECK(service.snapshot().finished && service.snapshot().error && !service.snapshot().applied);
+    TEST_CHECK(service.snapshot().finished && service.snapshot().failed() && !service.snapshot().applied);
     TEST_CHECK(aclText(a) == beforeA && aclText(b) == beforeB);
     files::AclPatchEdit remove;
     remove.access.maskPolicy = files::AclMaskPolicy::RemoveUnused;
@@ -1104,19 +1116,21 @@ namespace {
     }
     remove.access.entries.push_back({Tag::Group, "22000", {}, 0});
     applyPatch(pump, service, remove);
-    TEST_CHECK(!service.snapshot().error && !aclText(a).contains("mask::") && !aclText(b).contains("mask::"));
+    TEST_CHECK(!service.snapshot().failed() && !aclText(a).contains("mask::") && !aclText(b).contains("mask::"));
     // A first named rule receives a conservative mask, rather than recalculation.
     applyPatch(pump, service, userPatch("21000", 7));
-    TEST_CHECK(!service.snapshot().error && aclText(a).contains("mask::r--\n") && aclText(b).contains("mask::---\n"));
+    TEST_CHECK(
+        !service.snapshot().failed() && aclText(a).contains("mask::r--\n") && aclText(b).contains("mask::---\n")
+    );
     pump.apply(service, {.mode = 0020, .owner = {}, .group = {}, .mask = 0020});
-    TEST_CHECK(!service.snapshot().error && aclText(a).contains("user:21000:rwx\n"));
+    TEST_CHECK(!service.snapshot().failed() && aclText(a).contains("user:21000:rwx\n"));
     applyPatch(pump, service, userPatch("21000", 0, 1));
-    TEST_CHECK(!service.snapshot().error && aclText(a).contains("user:21000:rw-\n"));
+    TEST_CHECK(!service.snapshot().failed() && aclText(a).contains("user:21000:rw-\n"));
     applyPatch(pump, service, remove);
     files::AclPatchEdit maskBit;
     maskBit.access.entries.push_back({Tag::Mask, {}, 1, 1});
     applyPatch(pump, service, maskBit);
-    TEST_CHECK(!service.snapshot().error && aclText(a).contains("mask::r-x\n"));
+    TEST_CHECK(!service.snapshot().failed() && aclText(a).contains("mask::r-x\n"));
   }
   void bulkAclDefaults(Pump& pump) {
     Fixture f;
@@ -1134,7 +1148,7 @@ namespace {
     patch.defaultPolicy = files::AclDefaultPolicy::Existing;
     patch.defaults.entries.push_back({Tag::User, "21000", 6, 7});
     applyPatch(pump, service, patch);
-    TEST_CHECK(!service.snapshot().error && aclText(a, true).contains("user:21001:r--\n"));
+    TEST_CHECK(!service.snapshot().failed() && aclText(a, true).contains("user:21001:r--\n"));
     TEST_CHECK(aclText(a, true).contains("user:21000:rw-\n") && aclText(b, true).empty());
     TEST_CHECK(
         service.snapshot().results->at(1).outcome == O::Skipped
@@ -1143,7 +1157,7 @@ namespace {
     patch.defaultPolicy = files::AclDefaultPolicy::Create;
     patch.access.entries.push_back({Tag::Other, {}, 1, 1});
     applyPatch(pump, service, patch);
-    TEST_CHECK(!service.snapshot().error && aclText(b, true).contains("other::--x\n"));
+    TEST_CHECK(!service.snapshot().failed() && aclText(b, true).contains("other::--x\n"));
     TEST_CHECK(aclText(b, true).contains("mask::---\n") && aclText(a, true).contains("mask::r-x\n"));
     TEST_CHECK(aclText(b, true).contains("group::---\n") && aclText(a, true).contains("group::r-x\n"));
     TEST_CHECK(aclText(a / "existing") == child);
@@ -1156,12 +1170,12 @@ namespace {
     const auto before = aclText(a);
     applyPatch(pump, service, invalid);
     TEST_CHECK(
-        service.snapshot().error && aclText(a) == before
+        service.snapshot().failed() && aclText(a) == before
     ); // Invalid default prevents access write on this folder.
     files::AclPatchEdit remove;
     remove.defaultPolicy = files::AclDefaultPolicy::Remove;
     applyPatch(pump, service, remove);
-    TEST_CHECK(!service.snapshot().error && aclText(a, true).empty() && aclText(b, true).empty());
+    TEST_CHECK(!service.snapshot().failed() && aclText(a, true).empty() && aclText(b, true).empty());
     TEST_CHECK(service.snapshot().results->at(2).outcome == O::Skipped);
   }
   void bulkAclStaleAndAliases(Pump& pump) {
@@ -1174,16 +1188,16 @@ namespace {
     fs::create_hard_link(a, alias);
     prepareBulk(pump, service, {entry(a), entry(alias), entry(b)});
     applyPatch(pump, service, userPatch("21000", 1, 1));
-    TEST_CHECK(!service.snapshot().error && service.snapshot().results->at(1).outcome == O::Changed);
+    TEST_CHECK(!service.snapshot().failed() && service.snapshot().results->at(1).outcome == O::Changed);
     TEST_CHECK(aclText(a) == aclText(alias) && aclText(a).contains("user:21000:rwx\n"));
     // Mode edits through aliases still adopt this job's updated ACL baseline.
     pump.apply(service, {.mode = 0020, .owner = {}, .group = {}, .mask = 0020});
-    TEST_CHECK(!service.snapshot().error && aclText(a) == aclText(alias));
+    TEST_CHECK(!service.snapshot().failed() && aclText(a) == aclText(alias));
     prepareBulk(pump, service, {entry(a), entry(alias), entry(b)});
     setAcl(a, "u::rw-,u:21000:---,g::r--,m::rw-,o::---");
     const auto stale = aclText(a);
     applyPatch(pump, service, userPatch("21000", 4));
-    TEST_CHECK(service.snapshot().error && aclText(a) == stale && aclText(alias) == stale);
+    TEST_CHECK(service.snapshot().failed() && aclText(a) == stale && aclText(alias) == stale);
     TEST_CHECK(
         service.snapshot().results->at(0).outcome == O::Failed && service.snapshot().results->at(1).outcome == O::Failed
     );
@@ -1193,12 +1207,12 @@ namespace {
     write(a);
     const auto replacement = aclText(a);
     applyPatch(pump, service, userPatch("21002", 7));
-    TEST_CHECK(service.snapshot().error && aclText(a) == replacement && aclText(f.root / "held") == stale);
+    TEST_CHECK(service.snapshot().failed() && aclText(a) == replacement && aclText(f.root / "held") == stale);
     fs::create_symlink(b, f.root / "link");
     TEST_CHECK(::mkfifo((f.root / "pipe").c_str(), 0600) == 0);
     prepareBulk(pump, service, {entry(b), entry(f.root / "link"), entry(f.root / "pipe")});
     applyPatch(pump, service, userPatch("21003", 4));
-    TEST_CHECK(service.snapshot().error && service.snapshot().results->front().outcome == O::Changed);
+    TEST_CHECK(service.snapshot().failed() && service.snapshot().results->front().outcome == O::Changed);
     TEST_CHECK(
         service.snapshot().results->at(1).outcome == O::Failed && service.snapshot().results->at(2).outcome == O::Failed
     );
@@ -1212,7 +1226,7 @@ namespace {
     const auto full = aclText(a);
     applyPatch(pump, service, userPatch("21004", 4));
     TEST_CHECK(
-        service.snapshot().error && aclText(a) == full && service.snapshot().results->back().outcome == O::Changed
+        service.snapshot().failed() && aclText(a) == full && service.snapshot().results->back().outcome == O::Changed
     );
   }
   void bulkAclCancellation(Pump& pump) {

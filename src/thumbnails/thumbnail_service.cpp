@@ -1,7 +1,9 @@
 #include "thumbnails/thumbnail_service.h"
 
 #include "core/log.h"
+#include "fs/gio_interop.h"
 #include "fs/gio_ptr.h"
+#include "fs/posix_fd.h"
 #include "thumbnails/thumbnail_codec.h"
 #include "thumbnails/thumbnail_provider.h"
 #include "thumbnails/thumbnail_store.h"
@@ -22,14 +24,6 @@ namespace {
   constexpr std::size_t kResidentBudget = 64U * 1024U * 1024U;
   constexpr std::size_t kMaxEntries = 1024;
   std::mutex diskMutex;
-  struct Fd {
-    int value;
-    ~Fd() {
-      if (value >= 0) {
-        ::close(value);
-      }
-    }
-  };
   std::string stamp(const struct stat& info) {
     return std::format(
         "{}:{}:{}:{}:{}:{}:{}", info.st_dev, info.st_ino, info.st_size, info.st_mtim.tv_sec, info.st_mtim.tv_nsec,
@@ -72,9 +66,9 @@ namespace {
     if (g_cancellable_is_cancelled(cancel)) {
       return result;
     }
-    const GioPtr<GFileInfo> filesystem(
-        g_file_query_filesystem_info(source.location.file().get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE, cancel, nullptr)
-    );
+    const GioPtr<GFileInfo> filesystem(g_file_query_filesystem_info(
+        gioFile(source.location).get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE, cancel, nullptr
+    ));
     const bool local = filesystem
         && g_file_info_has_attribute(filesystem.get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE)
         && !g_file_info_get_attribute_boolean(filesystem.get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE);
@@ -86,10 +80,10 @@ namespace {
       }
       return result;
     }
-    const Fd file{::open(native->c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)};
+    const files::Fd file(::open(native->c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK));
     struct stat before{};
-    if (file.value < 0
-        || ::fstat(file.value, &before) < 0
+    if (!file.valid()
+        || ::fstat(file.get(), &before) < 0
         || !S_ISREG(before.st_mode)
         || before.st_size <= 0
         || static_cast<std::uint64_t>(before.st_size)
@@ -101,7 +95,7 @@ namespace {
       return result;
     }
     const GioPtr<GFileInfo> current(g_file_query_info(
-        source.location.file().get(),
+        gioFile(source.location).get(),
         G_FILE_ATTRIBUTE_ETAG_VALUE "," G_FILE_ATTRIBUTE_ID_FILE "," G_FILE_ATTRIBUTE_ID_FILESYSTEM
                                     "," G_FILE_ATTRIBUTE_TIME_CHANGED
                                     ",time::changed-nsec," G_FILE_ATTRIBUTE_TIME_CHANGED_USEC,
@@ -136,7 +130,7 @@ namespace {
               static_cast<std::uint64_t>(before.st_size), sourceStamp
           )) {
         struct stat after{};
-        if (::fstat(file.value, &after) == 0 && stamp(after) == sourceStamp && !g_cancellable_is_cancelled(cancel)) {
+        if (::fstat(file.get(), &after) == 0 && stamp(after) == sourceStamp && !g_cancellable_is_cancelled(cancel)) {
           result.image.pixels = std::make_shared<const LoadedImageFile>(std::move(cached->image));
         }
         return result;
@@ -149,14 +143,14 @@ namespace {
     std::expected<LoadedImageFile, std::string> decoded = std::unexpected("no thumbnail decoder");
     const auto mime = source.contentType.value_or("");
     if (mime.starts_with("image/") || !insideCache) {
-      decoded = renderThumbnailProvider(file.value, mime, side, options, cancel);
+      decoded = renderThumbnailProvider(file.get(), mime, side, options, cancel);
     }
     if (!decoded && !g_cancellable_is_cancelled(cancel)) {
       logDebug("[thumbnail] mime={} size={}: {}", mime, side, decoded.error());
     }
     struct stat after{};
     if (!decoded
-        || ::fstat(file.value, &after) < 0
+        || ::fstat(file.get(), &after) < 0
         || sourceStamp != stamp(after)
         || g_cancellable_is_cancelled(cancel)) {
       return result;
@@ -514,7 +508,7 @@ files::ThumbnailService::request(const DirectoryEntry& source, int pixels, bool 
           || mime->starts_with("audio/")
           || *mime == "application/pdf"
       )
-      || source.type != G_FILE_TYPE_REGULAR
+      || source.type != files::FileType::Regular
       || source.symlink
       || !source.modifiedSeconds
       || privateUri(source.location.uri())

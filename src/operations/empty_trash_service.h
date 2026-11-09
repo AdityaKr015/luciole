@@ -1,10 +1,12 @@
 #pragma once
 
 #include "fs/directory_session.h"
+#include "fs/file_error.h"
 
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -15,12 +17,12 @@ namespace files {
     Location location;
     std::string displayName;
     EmptyTrashOutcome outcome = EmptyTrashOutcome::Cancelled;
-    std::string error;
+    std::optional<FileError> error;
   };
   struct EmptyTrashSnapshot {
     EmptyTrashStatus status = EmptyTrashStatus::Idle;
     std::vector<EmptyTrashResult> results;
-    std::string error;
+    std::optional<FileError> error;
     std::optional<std::uint64_t> size = std::nullopt;
     bool sizeIncomplete = false;
   };

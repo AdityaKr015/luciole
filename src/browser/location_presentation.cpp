@@ -1,5 +1,8 @@
 #include "browser/location_presentation.h"
 
+#include "fs/filename.h"
+#include "fs/gio_ptr.h"
+
 #include <algorithm>
 #include <cstdlib>
 #include <memory>
@@ -8,32 +11,30 @@
 std::vector<files::Breadcrumb> files::locationBreadcrumbs(const Location& location) {
   std::vector<Breadcrumb> result;
   const char* homePath = g_get_home_dir();
-  const GioPtr<GFile> home(homePath && g_path_is_absolute(homePath) ? g_file_new_for_path(homePath) : nullptr);
-  auto current = location.file();
+  const auto home =
+      homePath && g_path_is_absolute(homePath) ? std::optional(Location::fromPath(homePath)) : std::nullopt;
+  std::optional<Location> current = location;
   while (current) {
-    const GString uri(g_file_get_uri(current.get()));
-    auto parent = GioPtr<GFile>(g_file_get_parent(current.get()));
-    const bool atHome = home && g_file_equal(current.get(), home.get());
+    auto parent = current->parent();
+    const bool atHome = home && *current == *home;
     std::string label;
     if (atHome) {
       label = "Home";
     } else if (parent) {
-      const GString name(g_file_get_basename(current.get()));
-      const GString display(g_filename_display_name(name ? name.get() : uri.get()));
-      label = display.get();
+      label = filenameDisplayText(current->basename().value_or(current->uri()));
     } else if (location.isTrash()) {
       label = "Trash";
-    } else if (g_file_is_native(current.get())) {
+    } else if (current->isNative()) {
       label = "File System";
     } else {
       const std::unique_ptr<GUri, decltype(&g_uri_unref)> parsed(
-          g_uri_parse(uri.get(), G_URI_FLAGS_ENCODED, nullptr), &g_uri_unref
+          g_uri_parse(current->uri().c_str(), G_URI_FLAGS_ENCODED, nullptr), &g_uri_unref
       );
       const char* host = parsed ? g_uri_get_host(parsed.get()) : nullptr;
       label = host != nullptr && *host != '\0' ? host : "Location";
     }
-    result.push_back({.location = Location::fromUri(uri.get()), .label = std::move(label)});
-    if (atHome || (parent && g_file_equal(current.get(), parent.get()))) {
+    result.push_back({.location = *current, .label = std::move(label)});
+    if (atHome || (parent && *current == *parent)) {
       break;
     }
     current = std::move(parent);
@@ -65,7 +66,5 @@ files::Location files::resolveLocationText(const std::string& text, const Locati
   if (const GString scheme(g_uri_parse_scheme(expanded.c_str())); scheme) {
     return Location::fromUri(expanded);
   }
-  const GioPtr<GFile> file(g_file_resolve_relative_path(base.file().get(), expanded.c_str()));
-  const GString uri(g_file_get_uri(file.get()));
-  return Location::fromUri(uri.get());
+  return base.resolve(expanded);
 }

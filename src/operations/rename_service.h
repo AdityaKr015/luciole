@@ -1,5 +1,6 @@
 #pragma once
 
+#include "fs/file_error.h"
 #include "fs/location.h"
 
 #include <functional>
@@ -13,7 +14,7 @@ namespace files {
     RenameStatus status = RenameStatus::Idle;
     std::optional<Location> source;
     std::optional<Location> destination;
-    std::string error;
+    std::optional<FileError> error;
   };
 
   // One native rename. Preparation pins identities while the editor is open.

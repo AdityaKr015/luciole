@@ -2,6 +2,7 @@
 
 #include "core/input/key_modifiers.h"
 #include "core/log.h"
+#include "fs/gio_ptr.h"
 #include "model/details_columns.h"
 #include "ui/browser/file_icon.h"
 #include "ui/builders.h"
@@ -95,7 +96,7 @@ namespace {
       for (auto* label : {m_name, m_parent, m_kind, m_size, m_modified}) {
         label->setOpacity(entry.hidden && !selected ? kHiddenTextOpacity : 1.0F);
       }
-      const bool directory = entry.type == G_FILE_TYPE_DIRECTORY;
+      const bool directory = entry.type == files::FileType::Directory;
       m_arrow->setVisible(m_miller && directory);
       m_arrow->setParticipatesInLayout(m_miller && directory);
       m_arrow->setColor(colorSpecFromRole(path ? ColorRole::Primary : ColorRole::OnSurfaceVariant));
@@ -416,7 +417,7 @@ VirtualGridAdapter::PointerReleaseResult files::FileViewAdapter::onPointerReleas
   m_lastClick = twice ? std::nullopt : pressed;
   m_lastClickTime = now;
   const auto* entry = m_browser.model().entry(*pressed);
-  const bool columnFolder = m_mode == ViewMode::Miller && entry && entry->type == G_FILE_TYPE_DIRECTORY;
+  const bool columnFolder = m_mode == ViewMode::Miller && entry && entry->type == files::FileType::Directory;
   return {
       .rebind = true,
       .activateIndex =

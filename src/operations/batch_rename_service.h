@@ -1,6 +1,14 @@
 #pragma once
 
 #include "fs/directory_session.h"
+#include "fs/file_error.h"
+
+#include <cstddef>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
 
 namespace files {
   enum class BatchRenameMode { Numbering, Replace };
@@ -13,21 +21,23 @@ namespace files {
   enum class BatchRenamePhase { Idle, Preparing, Previewing, Ready, Applying, Finished, Error, Cancelled };
   enum class BatchRenameOutcome { Renamed, Unchanged, Failed, Cancelled, NeedsAttention, Unconfirmed };
   struct BatchRenameRow {
-    std::string before, after, name, error;
+    std::string before, after, name;
+    std::string error; // Preview validation or the applied result's message.
     bool changed = false;
   };
   struct BatchRenameResult {
     Location source;
     std::optional<Location> actual;
     BatchRenameOutcome outcome;
-    std::string error;
+    std::optional<FileError> error;
   };
   struct BatchRenameSnapshot {
     BatchRenamePhase phase = BatchRenamePhase::Idle;
     std::shared_ptr<const std::vector<BatchRenameRow>> rows;
     std::shared_ptr<const std::vector<BatchRenameResult>> results;
     std::optional<Location> parent;
-    std::string error, report;
+    std::optional<FileError> error;
+    std::string report;
     bool canApply = false;
   };
   // One native containing folder, up to 4096 captured entries, in their displayed selection order.

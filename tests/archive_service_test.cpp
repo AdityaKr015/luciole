@@ -1,4 +1,5 @@
 #include "event_loop/glib_poll_source.h"
+#include "fs/gio_ptr.h"
 #include "operations/archive_service.h"
 #include "operations/archive_work.h"
 #include "test_check.h"
@@ -11,6 +12,7 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
+#include <gio/gio.h>
 #include <print>
 #include <stdexcept>
 #include <sys/resource.h>
@@ -115,18 +117,18 @@ namespace {
       files::ArchiveService service;
       TEST_CHECK(service.compress({location(src)}, location(archive), format.format));
       wait(service, pump);
-      if (!service.error().empty()) {
-        throw std::runtime_error(service.error());
+      if (service.error()) {
+        throw std::runtime_error(service.error()->message);
       }
-      TEST_CHECK(service.error().empty() && fs::exists(archive));
+      TEST_CHECK(!service.error() && fs::exists(archive));
       TEST_CHECK(service.inspect(location(archive)));
       wait(service, pump);
-      TEST_CHECK(service.error().empty() && service.catalog() && service.catalog()->entries.size() >= 5);
+      TEST_CHECK(!service.error() && service.catalog() && service.catalog()->entries.size() >= 5);
       const auto dest = fixture.root / ("unpacked" + std::to_string(static_cast<int>(format.format)));
       TEST_CHECK(service.extract(location(archive), location(dest)));
       wait(service, pump);
       TEST_CHECK(
-          service.error().empty()
+          !service.error()
           && read(dest / "source/hello.txt") == "archive content"
           && read(dest / "source/café\nnotes.txt") == "Unicode and newline"
           && fs::is_directory(dest / "source/empty")
@@ -161,7 +163,7 @@ namespace {
       if (choice != files::TransferConflictChoice::Replace) {
         TEST_CHECK(read(archive) == original);
       } else {
-        TEST_CHECK(service.error().empty() && read(archive) != original);
+        TEST_CHECK(!service.error() && read(archive) != original);
       }
     }
     TEST_CHECK(fs::exists(fixture.root / "conflict (1).zip"));
@@ -189,7 +191,7 @@ namespace {
       files::ArchiveService service;
       TEST_CHECK(service.extract(location(source), location(dest)));
       wait(service, pump);
-      TEST_CHECK(!service.error().empty() && !fs::exists(dest));
+      TEST_CHECK(service.error() && !fs::exists(dest));
     }
     TEST_CHECK(!fs::exists(fixture.root / "escaped"));
   }
@@ -207,7 +209,7 @@ namespace {
       const auto dest = fixture.root / ("limited" + std::to_string(i));
       TEST_CHECK(service.extract(location(source), location(dest)));
       wait(service, pump);
-      TEST_CHECK(!service.error().empty() && !fs::exists(dest));
+      TEST_CHECK(service.error() && !fs::exists(dest));
     }
     const auto truncated = fixture.root / "truncated.tar";
     fs::copy_file(source, truncated);
@@ -216,7 +218,7 @@ namespace {
     const auto dest = fixture.root / "truncated-output";
     TEST_CHECK(service.extract(location(truncated), location(dest)));
     wait(service, pump);
-    TEST_CHECK(!service.error().empty() && !fs::exists(dest));
+    TEST_CHECK(service.error() && !fs::exists(dest));
   }
   void testLinksAndSelection(const Fixture& fixture, Pump& pump) {
     const auto source = fixture.root / "links.tar";
@@ -227,11 +229,11 @@ namespace {
     files::ArchiveService service;
     TEST_CHECK(service.inspect(location(source)));
     wait(service, pump);
-    TEST_CHECK(service.error().empty());
+    TEST_CHECK(!service.error());
     const auto dest = fixture.root / "selected";
     TEST_CHECK(service.extract(location(source), location(dest), {"alias"}));
     wait(service, pump);
-    TEST_CHECK(service.error().empty() && read(dest / "alias") == "linked data" && !fs::exists(dest / "dir/real"));
+    TEST_CHECK(!service.error() && read(dest / "alias") == "linked data" && !fs::exists(dest / "dir/real"));
     struct stat info{};
     TEST_CHECK(
         ::stat((dest / "alias").c_str(), &info) == 0 && (info.st_mode & S_ISUID) == 0 && info.st_uid == ::getuid()
@@ -239,10 +241,10 @@ namespace {
     write(source, read(source) + "changed");
     TEST_CHECK(service.extract(location(source), location(fixture.root / "changed"), {"alias"}));
     wait(service, pump);
-    TEST_CHECK(!service.error().empty() && !fs::exists(fixture.root / "changed"));
+    TEST_CHECK(service.error() && !fs::exists(fixture.root / "changed"));
     TEST_CHECK(service.extract(location(source), location(fixture.root / "changed-all")));
     wait(service, pump);
-    TEST_CHECK(!service.error().empty() && !fs::exists(fixture.root / "changed-all"));
+    TEST_CHECK(service.error() && !fs::exists(fixture.root / "changed-all"));
   }
   void testHardlinkOutputLimit(const Fixture& fixture, Pump& pump) {
     const auto path = fixture.root / "link-limit.tar";
@@ -252,7 +254,7 @@ namespace {
     files::ArchiveService service(limits);
     TEST_CHECK(service.extract(location(path), location(fixture.root / "link-limit")));
     wait(service, pump);
-    TEST_CHECK(!service.error().empty() && !fs::exists(fixture.root / "link-limit"));
+    TEST_CHECK(service.error() && !fs::exists(fixture.root / "link-limit"));
   }
   void testEncryptedAndWriteFailure(const Fixture& fixture, Pump& pump) {
     const auto path = fixture.root / "encrypted.zip";
@@ -280,12 +282,12 @@ namespace {
     files::ArchiveService service;
     TEST_CHECK(service.extract(location(path), location(fixture.root / "encrypted-output")));
     wait(service, pump);
-    TEST_CHECK(!service.error().empty() && !fs::exists(fixture.root / "encrypted-output"));
+    TEST_CHECK(service.error() && !fs::exists(fixture.root / "encrypted-output"));
     const auto file = fixture.root / "not-a-folder";
     write(file, "untouched");
     TEST_CHECK(service.compress({location(file)}, location(file / "failure.tar"), files::ArchiveFormat::Tar));
     wait(service, pump);
-    TEST_CHECK(!service.error().empty() && read(file) == "untouched");
+    TEST_CHECK(service.error() && read(file) == "untouched");
   }
   int boundedWriteFailure() {
     Fixture fixture;
@@ -295,11 +297,11 @@ namespace {
     const rlimit limit{1024, 1024};
     TEST_CHECK(::setrlimit(RLIMIT_FSIZE, &limit) == 0);
     files::archive_work::Progress progress;
-    files::GioPtr<GCancellable> cancel(g_cancellable_new());
+    const files::CancelToken cancel;
     bool failed = false;
     try {
       auto prepared = files::archive_work::compress(
-          {location(source)}, location(fixture.root / "out.tar"), files::ArchiveFormat::Tar, {}, cancel.get(), progress
+          {location(source)}, location(fixture.root / "out.tar"), files::ArchiveFormat::Tar, {}, cancel, progress
       );
       (void)files::archive_work::cleanup({prepared.stage});
     } catch (const std::exception&) {
@@ -315,7 +317,7 @@ namespace {
     TEST_CHECK(service.compress({location(source)}, location(output), files::ArchiveFormat::Zip));
     service.cancel();
     wait(service, pump);
-    TEST_CHECK(!fs::exists(output) && !service.error().empty());
+    TEST_CHECK(!fs::exists(output) && service.error());
     write(output, "keep me");
     auto owner = std::make_unique<files::ArchiveService>();
     TEST_CHECK(owner->compress({location(source)}, location(output), files::ArchiveFormat::Zip));

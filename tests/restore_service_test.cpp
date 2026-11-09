@@ -1,6 +1,6 @@
 #include "event_loop/glib_poll_source.h"
+#include "fs/gio_interop.h"
 #include "operations/restore_service.h"
-#include "operations/trash_item.h"
 #include "test_check.h"
 
 #include <algorithm>
@@ -73,7 +73,7 @@ namespace {
   };
   void trash(const fs::path& path) {
     GError* error = nullptr;
-    const bool result = g_file_trash(files::Location::fromPath(path.native()).file().get(), nullptr, &error);
+    const bool result = g_file_trash(files::gioFile(files::Location::fromPath(path.native())).get(), nullptr, &error);
     const std::string message = error ? error->message : "trash failed";
     g_clear_error(&error);
     if (!result) {
@@ -82,8 +82,8 @@ namespace {
   }
   fs::path backing(const files::DirectoryEntry& entry) {
     const files::GioPtr<GFileInfo> info(g_file_query_info(
-        entry.location.file().get(), G_FILE_ATTRIBUTE_STANDARD_TARGET_URI, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr,
-        nullptr
+        files::gioFile(entry.location).get(), G_FILE_ATTRIBUTE_STANDARD_TARGET_URI, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS,
+        nullptr, nullptr
     ));
     TEST_CHECK(info);
     const auto* uri = g_file_info_get_attribute_string(info.get(), G_FILE_ATTRIBUTE_STANDARD_TARGET_URI);

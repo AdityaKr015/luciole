@@ -109,7 +109,7 @@ void files::FileIcon::doLayout(Renderer& renderer) {
   const int pixels = static_cast<int>(std::ceil(m_size * renderer.renderScale()));
   if (m_thumbnails
       && m_thumbnailSource
-      && m_thumbnailSource->type == G_FILE_TYPE_REGULAR
+      && m_thumbnailSource->type == files::FileType::Regular
       && !m_thumbnailSource->symlink
       && m_thumbnailSource->modifiedSeconds) {
     if (pixels != m_thumbnailPixels || !m_thumbnails->touch(m_thumbnail, m_thumbnailVisible)) {

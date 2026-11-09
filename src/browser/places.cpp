@@ -1,7 +1,11 @@
 #include "browser/places.h"
 
+#include "fs/background_job.h"
+#include "fs/gio_ptr.h"
+
 #include <algorithm>
 #include <array>
+#include <glib.h>
 #include <unordered_set>
 #include <utility>
 
@@ -70,10 +74,6 @@ struct files::PinService::State : std::enable_shared_from_this<State> {
     std::vector<UserPlace> places;
     std::string error;
   };
-  struct Request {
-    std::shared_ptr<State> owner;
-    std::optional<std::vector<Bookmark>> proposed;
-  };
   explicit State(std::filesystem::path path) : store(std::move(path)) {}
   StateStore store; // Accessed only by serial worker tasks.
   std::vector<Bookmark> bookmarks;
@@ -92,75 +92,71 @@ struct files::PinService::State : std::enable_shared_from_this<State> {
   void run(std::optional<std::vector<Bookmark>> proposed) {
     busy = true;
     error.clear();
-    GioPtr<GTask> task(g_task_new(
-        nullptr, nullptr,
-        [](GObject*, GAsyncResult* result, gpointer) {
-          auto* task = G_TASK(result);
-          const auto owner = static_cast<Request*>(g_task_get_task_data(task))->owner;
-          const std::unique_ptr<Result> loaded(static_cast<Result*>(g_task_propagate_pointer(task, nullptr)));
+    runJob<Result>(
+        [owner = shared_from_this(), proposed = std::move(proposed)] {
+          Result result;
+          auto& store = owner->store;
+          try {
+            result.places = configuredUserPlaces();
+            if (proposed) {
+              const auto outcome = store.saveBookmarks(*proposed);
+              if (!store.issues().empty()) {
+                result.error = store.issues().front().format();
+              }
+              result.ready = outcome != AtomicWriteState::NotCommitted;
+              if (!result.ready) {
+                result.ready = store.load();
+              }
+            } else {
+              result.ready = store.load();
+              if (!result.ready && !store.issues().empty()) {
+                result.error = store.issues().front().format();
+              }
+            }
+            result.bookmarks = store.state().bookmarks;
+            if (!store.state().placesCustomized) {
+              auto available = StateStore::bookmarkLimit - result.bookmarks.size();
+              std::vector<Bookmark> initial;
+              for (const auto& place : result.places) {
+                const auto existing = std::ranges::find(result.bookmarks, place.bookmark.location, &Bookmark::location);
+                if (existing != result.bookmarks.end()) {
+                  initial.push_back(*existing);
+                } else if (available != 0) {
+                  initial.push_back(place.bookmark);
+                  --available;
+                }
+              }
+              for (const auto& bookmark : result.bookmarks) {
+                if (std::ranges::none_of(initial, [&](const auto& pin) { return pin.location == bookmark.location; })) {
+                  initial.push_back(bookmark);
+                }
+              }
+              result.bookmarks = std::move(initial);
+            }
+            if (std::ranges::none_of(result.bookmarks, [](const auto& pin) {
+                  return pin.location == Location::trash();
+                })) {
+              result.bookmarks.push_back({"Trash", Location::trash()});
+            }
+          } catch (const std::exception& error) {
+            result.error = error.what();
+          }
+          return result;
+        },
+        [owner = shared_from_this()](JobResult<Result> loaded) {
+          if (!loaded) {
+            Result failed;
+            failed.error = loaded.error().message;
+            loaded = std::move(failed);
+          }
           owner->busy = false;
           owner->ready = loaded->ready;
-          owner->bookmarks = loaded->bookmarks;
-          owner->places = loaded->places;
-          owner->error = loaded->error;
+          owner->bookmarks = std::move(loaded->bookmarks);
+          owner->places = std::move(loaded->places);
+          owner->error = std::move(loaded->error);
           owner->notify();
-        },
-        nullptr
-    ));
-    g_task_set_task_data(task.get(), new Request{shared_from_this(), std::move(proposed)}, [](gpointer data) {
-      delete static_cast<Request*>(data);
-    });
-    g_task_run_in_thread(task.get(), [](GTask* task, gpointer, gpointer data, GCancellable*) {
-      const auto& request = *static_cast<Request*>(data);
-      auto result = std::make_unique<Result>();
-      auto& store = request.owner->store;
-      try {
-        result->places = configuredUserPlaces();
-        if (request.proposed) {
-          const auto outcome = store.saveBookmarks(*request.proposed);
-          if (!store.issues().empty()) {
-            result->error = store.issues().front().format();
-          }
-          result->ready = outcome != AtomicWriteState::NotCommitted;
-          if (!result->ready) {
-            result->ready = store.load();
-          }
-        } else {
-          result->ready = store.load();
-          if (!result->ready && !store.issues().empty()) {
-            result->error = store.issues().front().format();
-          }
         }
-        result->bookmarks = store.state().bookmarks;
-        if (!store.state().placesCustomized) {
-          auto available = StateStore::bookmarkLimit - result->bookmarks.size();
-          std::vector<Bookmark> initial;
-          for (const auto& place : result->places) {
-            const auto existing = std::ranges::find(result->bookmarks, place.bookmark.location, &Bookmark::location);
-            if (existing != result->bookmarks.end()) {
-              initial.push_back(*existing);
-            } else if (available != 0) {
-              initial.push_back(place.bookmark);
-              --available;
-            }
-          }
-          for (const auto& bookmark : result->bookmarks) {
-            if (std::ranges::none_of(initial, [&](const auto& pin) { return pin.location == bookmark.location; })) {
-              initial.push_back(bookmark);
-            }
-          }
-          result->bookmarks = std::move(initial);
-        }
-        if (std::ranges::none_of(result->bookmarks, [](const auto& pin) {
-              return pin.location == Location::trash();
-            })) {
-          result->bookmarks.push_back({"Trash", Location::trash()});
-        }
-      } catch (const std::exception& error) {
-        result->error = error.what();
-      }
-      g_task_return_pointer(task, result.release(), [](gpointer data) { delete static_cast<Result*>(data); });
-    });
+    );
     notify();
   }
 };

@@ -20,7 +20,7 @@ namespace files {
     Location location;
     std::string name; // Original filename bytes, including non-UTF-8 names on Unix.
     std::string displayName;
-    GFileType type = G_FILE_TYPE_UNKNOWN;
+    FileType type = FileType::Unknown;
     bool hidden = false;
     bool symlink = false;
     std::optional<std::uint64_t> size;

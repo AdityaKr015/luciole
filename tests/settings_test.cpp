@@ -1,5 +1,6 @@
 #include "browser/directory_model.h"
 #include "config/settings.h"
+#include "fs/gio_ptr.h"
 #include "test_check.h"
 
 #include <algorithm>

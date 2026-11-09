@@ -1,6 +1,7 @@
 #include "browser/browser_controller.h"
 #include "browser/location_presentation.h"
 #include "event_loop/glib_poll_source.h"
+#include "fs/gio_interop.h"
 #include "test_check.h"
 
 #include <algorithm>
@@ -263,7 +264,7 @@ namespace {
     for (const auto& entry : browser.model().snapshot().entries) {
       targets.insert(entry.location.uri());
       TEST_CHECK(!entry.parentDisplayName.empty() && entry.id != oldId);
-      if (entry.type == G_FILE_TYPE_REGULAR && !entry.symlink) {
+      if (entry.type == files::FileType::Regular && !entry.symlink) {
         TEST_CHECK(entry.contentType == "text/plain");
       }
     }

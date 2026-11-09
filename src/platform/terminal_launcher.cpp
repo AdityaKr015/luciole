@@ -1,5 +1,7 @@
 #include "platform/terminal_launcher.h"
 
+#include "fs/gio_interop.h"
+
 struct files::TerminalLauncher::State {
   GioPtr<GCancellable> cancellable{g_cancellable_new()};
   GString helper{g_find_program_in_path("xdg-terminal-exec")};
@@ -66,7 +68,7 @@ void files::TerminalLauncher::open(const Location& folder, std::function<void(st
     }
     GError* error = nullptr;
     const GioPtr<GFileInfo> info(g_file_query_info(
-        request.folder.file().get(), G_FILE_ATTRIBUTE_STANDARD_TYPE "," G_FILE_ATTRIBUTE_ACCESS_CAN_EXECUTE,
+        gioFile(request.folder).get(), G_FILE_ATTRIBUTE_STANDARD_TYPE "," G_FILE_ATTRIBUTE_ACCESS_CAN_EXECUTE,
         G_FILE_QUERY_INFO_NONE, cancellable, &error
     ));
     if (!info) {

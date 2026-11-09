@@ -1,10 +1,13 @@
 #pragma once
 
+#include "fs/file_error.h"
 #include "fs/location.h"
 
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
+#include <string>
 #include <sys/stat.h>
 #include <vector>
 
@@ -23,7 +26,7 @@ namespace files {
   };
   struct TemplateListing {
     std::vector<DocumentTemplate> items;
-    std::string error;
+    std::optional<FileError> error;
     bool truncated = false;
   };
   // Reads the configured XDG Templates directory on a worker; obsolete replies are discarded.

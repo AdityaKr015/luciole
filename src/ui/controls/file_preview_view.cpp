@@ -1,5 +1,6 @@
 #include "ui/controls/file_preview_view.h"
 
+#include "fs/gio_ptr.h"
 #include "ui/browser/preview_layout.h"
 #include "ui/builders.h"
 #include "ui/controls/button.h"
@@ -110,11 +111,11 @@ void FilePreviewView::sync(
   m_name->setText(entry ? entry->displayName : "Select an item to preview");
   std::string metadata;
   if (entry) {
-    metadata = !typeLabel.empty()              ? std::string(typeLabel)
-        : entry->symlink                       ? "Symbolic link"
-        : entry->type == G_FILE_TYPE_DIRECTORY ? "Folder"
-                                               : entry->contentType.value_or("File");
-    if (entry->size && entry->type != G_FILE_TYPE_DIRECTORY) {
+    metadata = !typeLabel.empty()                   ? std::string(typeLabel)
+        : entry->symlink                            ? "Symbolic link"
+        : entry->type == files::FileType::Directory ? "Folder"
+                                                    : entry->contentType.value_or("File");
+    if (entry->size && entry->type != files::FileType::Directory) {
       const files::GString size(g_format_size_full(*entry->size, G_FORMAT_SIZE_IEC_UNITS));
       metadata += std::format("\n{}", size.get());
     }
@@ -147,6 +148,6 @@ void FilePreviewView::sync(
   m_text->setVisible(!snapshot.text.empty());
   m_text->setParticipatesInLayout(!snapshot.text.empty());
   m_open->setEnabled(entry.has_value());
-  m_openWith->setEnabled(entry && entry->type == G_FILE_TYPE_REGULAR && !entry->symlink);
+  m_openWith->setEnabled(entry && entry->type == files::FileType::Regular && !entry->symlink);
 }
 void FilePreviewView::clear(Renderer& renderer) { m_image->releaseFile(renderer); }

@@ -1,5 +1,6 @@
 #include "browser/directory_model.h"
 #include "event_loop/glib_poll_source.h"
+#include "fs/gio_ptr.h"
 #include "operations/trash_service.h"
 #include "test_check.h"
 
@@ -70,9 +71,9 @@ namespace {
       while (!done()) {
         TEST_CHECK(std::chrono::steady_clock::now() < deadline);
         std::vector<pollfd> fds;
-        const auto first = source.addPollFds(fds);
+        const auto first = m_source.addPollFds(fds);
         TEST_CHECK(::poll(fds.data(), fds.size(), 1) >= 0);
-        source.dispatch(fds, first);
+        m_source.dispatch(fds, first);
       }
     }
     void prepare(files::TrashService& service, const fs::path& parent, const std::vector<fs::path>& paths) {
@@ -92,7 +93,7 @@ namespace {
     }
 
   private:
-    GlibPollSource source;
+    GlibPollSource m_source;
   };
   void preservesRecoverableContent(const Fixture& fixture, Pump& pump) {
     const auto parent = fixture.folder("content");

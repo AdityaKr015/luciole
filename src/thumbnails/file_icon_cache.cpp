@@ -1,5 +1,6 @@
 #include "thumbnails/file_icon_cache.h"
 
+#include "fs/gio_interop.h"
 #include "fs/gio_ptr.h"
 #include "system/icon_resolver.h"
 

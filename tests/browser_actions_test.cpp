@@ -1,5 +1,6 @@
 #include "browser/action_registry.h"
 #include "browser/selection_tools.h"
+#include "fs/gio_interop.h"
 #include "test_check.h"
 
 #include <algorithm>
@@ -11,7 +12,8 @@ namespace {
   using namespace std::chrono_literals;
   using A = files::BrowserAction;
   using R = files::ActionRegistry;
-  files::DirectoryEntry entry(files::EntryId id, const std::string& name, GFileType type = G_FILE_TYPE_REGULAR) {
+  files::DirectoryEntry
+  entry(files::EntryId id, const std::string& name, files::FileType type = files::FileType::Regular) {
     return {
         .id = id,
         .location = files::Location::fromPath("/tmp/action-fixture/" + name),
@@ -31,7 +33,7 @@ namespace {
         .status = files::DirectoryStatus::Ready,
         .entries =
             {entry(1, "alpha.txt"), entry(2, "Beta.txt"), entry(3, "boulder.png"), entry(4, "café.txt"),
-             entry(5, "[literal].txt"), entry(6, "folder", G_FILE_TYPE_DIRECTORY)},
+             entry(5, "[literal].txt"), entry(6, "folder", files::FileType::Directory)},
         .error = {},
         .monitorError = {}
     };
@@ -131,18 +133,18 @@ namespace {
     ++data.generation;
     model.applySnapshot(data);
     TEST_CHECK(enabled());
-    for (const auto type : {G_FILE_TYPE_DIRECTORY, G_FILE_TYPE_SYMBOLIC_LINK}) {
+    for (const auto type : {files::FileType::Directory, files::FileType::Symlink}) {
       data.entries[0].type = type;
-      data.entries[0].symlink = type == G_FILE_TYPE_SYMBOLIC_LINK;
+      data.entries[0].symlink = type == files::FileType::Symlink;
       ++data.generation;
       model.applySnapshot(data);
       TEST_CHECK(enabled());
     }
-    data.entries[0].type = G_FILE_TYPE_SPECIAL;
+    data.entries[0].type = files::FileType::Special;
     ++data.generation;
     model.applySnapshot(data);
     TEST_CHECK(!enabled());
-    data.entries[0].type = G_FILE_TYPE_REGULAR;
+    data.entries[0].type = files::FileType::Regular;
     data.entries[0].symlink = false;
     for (const auto& uri : {"trash:///source", "sftp://example.invalid/source"}) {
       data.entries[0].location = files::Location::fromUri(uri);

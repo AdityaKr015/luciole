@@ -1,4 +1,5 @@
 #include "event_loop/glib_poll_source.h"
+#include "fs/gio_interop.h"
 #include "operations/empty_trash_service.h"
 #include "test_check.h"
 
@@ -59,7 +60,7 @@ namespace {
   };
   void trash(const fs::path& path) {
     GError* error = nullptr;
-    const bool ok = g_file_trash(files::Location::fromPath(path.native()).file().get(), nullptr, &error);
+    const bool ok = g_file_trash(files::gioFile(files::Location::fromPath(path.native())).get(), nullptr, &error);
     g_clear_error(&error);
     TEST_CHECK(ok);
   }
@@ -239,8 +240,9 @@ namespace {
     pump.until([&] { return !service.busy(); });
     TEST_CHECK(service.snapshot().status == Status::Finished);
     for (const auto& result : service.snapshot().results) {
-      const files::GString name(g_file_get_basename(result.location.file().get()));
-      const bool exists = fs::exists(trashFiles() / name.get());
+      const auto name = result.location.basename();
+      TEST_CHECK(name);
+      const bool exists = fs::exists(trashFiles() / *name);
       TEST_CHECK((result.outcome == Outcome::Deleted) == !exists);
     }
     service.cancel();

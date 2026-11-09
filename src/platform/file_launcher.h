@@ -1,13 +1,18 @@
 #pragma once
 
+#include "fs/file_icon_source.h"
 #include "fs/location.h"
 
 #include <functional>
+#include <memory>
 #include <vector>
+
+using GAppInfo = struct _GAppInfo;
 
 namespace files {
   struct ApplicationChoice {
     std::string id, name;
+    FileIconSource icon;
     std::shared_ptr<GAppInfo> app;
   };
   class FileLauncher {
