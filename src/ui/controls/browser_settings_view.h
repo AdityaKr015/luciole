@@ -25,7 +25,7 @@ public:
 private:
   template <class T> using Choices = std::vector<std::pair<std::string, T>>;
   void selectPage(std::size_t selected);
-  void section(const std::string& title);
+  void section(const std::string& title, std::string_view customGlyph = {});
   template <class T> void addChoice(files::PreferenceKey<T> key, const std::string& title, const Choices<T>& choices);
   void addBool(files::PreferenceKey<bool> key, const std::string& title);
   void addNumber(

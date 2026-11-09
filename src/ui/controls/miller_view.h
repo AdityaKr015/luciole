@@ -33,6 +33,7 @@ public:
   std::function<void(int)> resized;
   std::function<void()> requestUpdate;
   TextInputClient* textInputClient = nullptr;
+  files::BrowsePresentation presentation;
   files::ActivationMode activationMode = files::ActivationMode::DoubleClick;
 
 private:
@@ -44,6 +45,7 @@ private:
     InputArea* divider;
     Box* line;
     std::optional<files::EntryId> path = std::nullopt;
+    float rowHeight = 36.0F;
   };
   void doLayout(Renderer& renderer) override;
   LayoutSize doMeasure(Renderer& renderer, const LayoutConstraints& constraints) override;

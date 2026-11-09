@@ -156,6 +156,17 @@ BrowserSettingsView::BrowserSettingsView(
            .onClick = std::move(clearThumbnails)}
       )
   );
+  section("Appearance", "adjustments-horizontal");
+  addChoice(
+      P::Density, "Density",
+      {{"Compact", files::ViewDensity::Compact}, {"Comfortable", files::ViewDensity::Comfortable}}
+  );
+  addBool(P::ShowEmblems, "Link and read-only emblems");
+  m_section->addChild(ui::separator({}));
+  m_section->addChild(ui::label({.text = "Grid captions", .fontWeight = FontWeight::SemiBold}));
+  addBool(P::ShowSizeCaption, "File size");
+  addBool(P::ShowTypeCaption, "File type");
+  addBool(P::ShowModifiedCaption, "Modified date");
   selectPage(0);
   addChild(
       ui::column(
@@ -175,13 +186,14 @@ BrowserSettingsView::BrowserSettingsView(
   );
 }
 
-void BrowserSettingsView::section(const std::string& title) {
+void BrowserSettingsView::section(const std::string& title, std::string_view customGlyph) {
   const auto index = m_pages.size();
-  const std::string glyph = index == 0 ? "layout-grid"
-      : index == 1                     ? "hand-click"
-      : index == 2                     ? "layout-sidebar"
-      : index == 3                     ? "columns-3"
-                                       : "photo";
+  const std::string glyph = !customGlyph.empty() ? std::string(customGlyph)
+      : index == 0                               ? "layout-grid"
+      : index == 1                               ? "hand-click"
+      : index == 2                               ? "layout-sidebar"
+      : index == 3                               ? "columns-3"
+                                                 : "photo";
   Button* button = nullptr;
   m_navigationScroll->content()->addChild(
       ui::button(

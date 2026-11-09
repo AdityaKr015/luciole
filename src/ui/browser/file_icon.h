@@ -7,6 +7,8 @@
 #include "ui/palette.h"
 
 class ImageNode;
+class Flex;
+class Glyph;
 class TextureManager;
 
 namespace files {
@@ -14,6 +16,7 @@ namespace files {
   public:
     FileIcon(FileIconCache& cache, float size, ThumbnailService* thumbnails = nullptr);
     void bindFile(const DirectoryEntry& entry, ColorSpec foreground);
+    void setEmblems(bool link, bool readOnly);
     void setThumbnailVisible(bool visible);
     void releaseFile(Renderer& renderer);
     ~FileIcon() override;
@@ -39,6 +42,10 @@ namespace files {
     FileIconSource m_source;
     ColorSpec m_foreground = colorSpecFromRole(ColorRole::OnSurface);
     ImageNode* m_image = nullptr;
+    Flex* m_linkEmblem = nullptr;
+    Flex* m_readOnlyEmblem = nullptr;
+    Glyph* m_linkGlyph = nullptr;
+    Glyph* m_readOnlyGlyph = nullptr;
     SharedTextureCache::Lease m_texture;
     std::shared_ptr<const LoadedImageFile> m_requestedPixels;
     std::string m_requestedSource;

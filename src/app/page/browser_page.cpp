@@ -37,6 +37,7 @@
 #include "ui/browser/action_shortcuts.h"
 #include "ui/browser/file_icon.h"
 #include "ui/browser/file_view.h"
+#include "ui/browser/file_view_metrics.h"
 #include "ui/browser/places_sidebar.h"
 #include "ui/builders.h"
 #include "ui/controls/context_menu.h"
@@ -1506,6 +1507,9 @@ void BrowserPage::applySettings(const files::BrowserSettings& settings, bool for
     return;
   }
   captureViewAnchor();
+  if (m_list) {
+    m_list->cancelPointerGesture();
+  }
   m_dispatcher.cancelPointerCapture();
   m_listAdapter.onPointerCancel();
   m_gridAdapter.onPointerCancel();
@@ -1650,17 +1654,19 @@ void BrowserPage::applyViewMode() {
   const bool grid = m_viewMode == files::ViewMode::Grid;
   m_list->setAdapter(grid ? &m_gridAdapter : &m_listAdapter);
   m_list->setColumns(grid ? 0 : 1);
-  m_list->setMinCellWidth(std::max(88.0F, gridIconSize() + 56.0F));
+  m_list->setMinCellWidth(files::gridMetrics(gridIconSize(), m_savedSettings.presentation, false).minWidth);
   m_list->setCellHeight(gridHeight());
-  m_list->setColumnGap(grid ? Style::spaceXs : 0.0F);
-  m_list->setRowGap(grid ? Style::spaceXs : 2.0F);
+  m_list->setColumnGap(grid ? files::gridMetrics(gridIconSize(), m_savedSettings.presentation, false).gap : 0.0F);
+  m_list->setRowGap(grid ? files::gridMetrics(gridIconSize(), m_savedSettings.presentation, false).gap : 2.0F);
   m_appliedViewMode = m_viewMode;
 }
 
 float BrowserPage::gridHeight() const {
   const auto& location = browser().model().snapshot().location;
   const bool context = !browser().searchQuery().empty() || (location && location->isTrash());
-  return m_viewMode == files::ViewMode::Grid ? gridIconSize() + (context ? 72.0F : 52.0F) : (context ? 52.0F : 36.0F);
+  return m_viewMode == files::ViewMode::Grid
+      ? files::gridMetrics(gridIconSize(), m_savedSettings.presentation, context).height
+      : files::fileRowHeight(m_savedSettings.presentation, context);
 }
 
 float BrowserPage::gridIconSize() const { return static_cast<float>(files::kGridIconSizes[m_gridZoom]); }
@@ -1763,8 +1769,15 @@ void BrowserPage::syncBrowser() {
   }
   m_locationBar.sync();
   m_list->setCellHeight(gridHeight());
-  m_list->setMinCellWidth(std::max(88.0F, gridIconSize() + 56.0F));
+  m_list->setMinCellWidth(files::gridMetrics(gridIconSize(), m_savedSettings.presentation, false).minWidth);
   m_gridAdapter.setGridIconSize(gridIconSize());
+  for (auto* adapter : {&m_listAdapter, &m_gridAdapter}) {
+    adapter->setPresentation(m_savedSettings.presentation, snapshot.metadata.filesystem.readOnly);
+  }
+  const bool gridMode = m_viewMode == files::ViewMode::Grid;
+  const auto metrics = files::gridMetrics(gridIconSize(), m_savedSettings.presentation, false);
+  m_list->setColumnGap(gridMode ? metrics.gap : 0.0F);
+  m_list->setRowGap(gridMode ? metrics.gap : m_viewMode == files::ViewMode::Miller ? 0.0F : 2.0F);
   const auto& sort = model.sort();
   m_detailsHeader.sync(sort);
   const char* field = sort.field == files::SortField::Name ? "Name"
@@ -1902,6 +1915,7 @@ void BrowserPage::prepareFrame(bool, bool layout) {
         && m_dispatcher.focusedArea() == m_list->focusArea();
     UiPhaseScope phase(UiPhase::Layout);
     m_millerView->activationMode = m_activationMode;
+    m_millerView->presentation = m_savedSettings.presentation;
     m_millerView->synchronize();
     if (auto* grid = m_millerView->focusedView()) {
       m_list = grid;

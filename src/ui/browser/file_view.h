@@ -39,6 +39,10 @@ namespace files {
     void setActivateCallback(std::function<void(EntryId)> callback) { m_activate = std::move(callback); }
     void setCutPredicate(std::function<bool(const Location&)> predicate) { m_cut = std::move(predicate); }
     void setActivationMode(ActivationMode mode) { m_activationMode = mode; }
+    void setPresentation(BrowsePresentation presentation, std::optional<bool> readOnly) {
+      m_presentation = presentation;
+      m_readOnly = readOnly;
+    }
     void setGridIconSize(float size) { m_gridIconSize = size; }
     void setDetailsColumns(DetailsColumns columns) { m_columns = columns; }
     void setDetailsColumnOrder(DetailsColumnOrder order) { m_columnOrder = order; }
@@ -67,6 +71,8 @@ namespace files {
     std::function<void(std::optional<EntryId>, float, float)> m_context;
     std::function<void(const std::vector<EntryId>&)> m_drag;
     std::function<void()> m_cancelDrag;
+    BrowsePresentation m_presentation;
+    std::optional<bool> m_readOnly;
     float m_gridIconSize = 48.0F;
     DetailsColumns m_columns;
     DetailsColumnOrder m_columnOrder = kDefaultDetailsColumnOrder;

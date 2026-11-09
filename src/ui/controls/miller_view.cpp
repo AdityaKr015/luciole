@@ -3,6 +3,7 @@
 #include "core/input/key_modifiers.h"
 #include "core/input/key_symbols.h"
 #include "cursor-shape-v1-client-protocol.h"
+#include "ui/browser/file_view_metrics.h"
 #include "ui/builders.h"
 
 #include <cmath>
@@ -281,6 +282,21 @@ void MillerView::synchronize() {
     const auto& column = *m_columns.columns()[i];
     auto& view = m_views.at(column.id);
     const auto& model = column.browser->model();
+    const auto& snapshot = model.snapshot();
+    view.adapter->setPresentation(presentation, snapshot.metadata.filesystem.readOnly);
+    const bool context = !column.browser->searchQuery().empty() || (snapshot.location && snapshot.location->isTrash());
+    const float rowHeight = files::fileRowHeight(presentation, context);
+    if (rowHeight != view.rowHeight) {
+      const auto anchor = view.grid->firstVisibleIndex();
+      const float offset = view.grid->firstVisibleOffset();
+      view.grid->cancelPointerGesture();
+      view.adapter->onPointerCancel();
+      view.grid->setCellHeight(rowHeight);
+      view.rowHeight = rowHeight;
+      if (anchor) {
+        view.grid->scrollToIndex(*anchor, true, std::min(offset, rowHeight - 1));
+      }
+    }
     view.adapter->setActivationMode(activationMode);
     view.adapter->setColumnActive(i == m_columns.focused());
     std::optional<files::EntryId> path;

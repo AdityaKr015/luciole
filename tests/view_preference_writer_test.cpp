@@ -48,6 +48,15 @@ namespace {
         {{files::BrowserPreference::ThumbnailPolicy, files::ThumbnailPolicy::All},
          {files::BrowserPreference::ThumbnailCacheMib, 64}}
     );
+    using P = files::BrowserPreference;
+    writer.submit({{P::Density, files::ViewDensity::Compact}, {P::ShowSizeCaption, false}, {P::ShowEmblems, true}});
+    writer.submit(
+        {{P::Density, files::ViewDensity::Comfortable},
+         {P::ShowSizeCaption, true},
+         {P::ShowTypeCaption, true},
+         {P::ShowModifiedCaption, true},
+         {P::ShowEmblems, false}}
+    );
     writer.saveGridIconSize(96);
     writer.saveGridIconSize(64);
     writer.saveSidebarWidth(320);
@@ -95,6 +104,8 @@ namespace {
         && loaded->browser.columnWidths == finalWidths
         && loaded->browser.activationMode == files::ActivationMode::SingleClick
         && loaded->browser.typingMode == files::TypingMode::Typeahead
+        && loaded->browser.presentation
+            == files::BrowsePresentation(files::ViewDensity::Comfortable, {true, true, true}, false)
     );
     std::ifstream base(paths.base);
     const std::string content((std::istreambuf_iterator<char>(base)), {});

@@ -15,6 +15,20 @@ namespace files {
   inline constexpr int kMaxSidebarWidth = 400;
   inline constexpr int kDefaultSidebarWidth = 206;
   enum class ViewMode : std::uint8_t { List, Grid, Miller };
+  enum class ViewDensity : std::uint8_t { Compact, Comfortable };
+  struct IconCaptions {
+    bool size = false;
+    bool type = false;
+    bool modified = false;
+    int count() const { return static_cast<int>(size) + static_cast<int>(type) + static_cast<int>(modified); }
+    bool operator==(const IconCaptions&) const = default;
+  };
+  struct BrowsePresentation {
+    ViewDensity density = ViewDensity::Compact;
+    IconCaptions captions;
+    bool showEmblems = true;
+    bool operator==(const BrowsePresentation&) const = default;
+  };
   enum class ActivationMode : std::uint8_t { SingleClick, DoubleClick };
   enum class TypingMode : std::uint8_t { Search, Typeahead };
   // Complete column allocations, including the gap after their contents. Zero

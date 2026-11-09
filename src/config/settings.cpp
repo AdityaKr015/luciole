@@ -42,6 +42,9 @@ namespace {
   constexpr auto kViewModes = std::to_array<Named<files::ViewMode>>(
       {{files::ViewMode::List, "list"}, {files::ViewMode::Grid, "grid"}, {files::ViewMode::Miller, "miller"}}
   );
+  constexpr auto kDensities = std::to_array<Named<files::ViewDensity>>(
+      {{files::ViewDensity::Compact, "compact"}, {files::ViewDensity::Comfortable, "comfortable"}}
+  );
   constexpr auto kThumbnailPolicies = std::to_array<Named<files::ThumbnailPolicy>>(
       {{files::ThumbnailPolicy::Never, "never"},
        {files::ThumbnailPolicy::Local, "local"},
@@ -180,6 +183,14 @@ namespace {
           {[](int value) { return std::ranges::contains(files::kGridIconSizes, value); },
            "expected integer icon size 32, 48, 64, 80, 96, 128, 160, 192, or 256"}
       ),
+      describe(P::Density, "density", [](S& s) -> auto& { return s.presentation.density; }, {kDensities}),
+      describe(P::ShowSizeCaption, "show_size_caption", [](S& s) -> auto& { return s.presentation.captions.size; }),
+      describe(P::ShowTypeCaption, "show_type_caption", [](S& s) -> auto& { return s.presentation.captions.type; }),
+      describe(
+          P::ShowModifiedCaption, "show_modified_caption",
+          [](S& s) -> auto& { return s.presentation.captions.modified; }
+      ),
+      describe(P::ShowEmblems, "show_emblems", [](S& s) -> auto& { return s.presentation.showEmblems; }),
       describe(
           P::SidebarWidth, "sidebar_width", [](S& s) -> auto& { return s.sidebarWidth; },
           {between<files::kMinSidebarWidth, files::kMaxSidebarWidth>, "expected integer sidebar width from 160 to 400"}
@@ -435,6 +446,7 @@ template files::ActivationMode& files::preferenceValue(BrowserSettings&, Prefere
 template files::TypingMode& files::preferenceValue(BrowserSettings&, PreferenceKey<TypingMode>);
 template files::SortField& files::preferenceValue(BrowserSettings&, PreferenceKey<SortField>);
 template files::ViewMode& files::preferenceValue(BrowserSettings&, PreferenceKey<ViewMode>);
+template files::ViewDensity& files::preferenceValue(BrowserSettings&, PreferenceKey<ViewDensity>);
 template files::DetailsColumnOrder& files::preferenceValue(BrowserSettings&, PreferenceKey<DetailsColumnOrder>);
 template files::ThumbnailPolicy& files::preferenceValue(BrowserSettings&, PreferenceKey<ThumbnailPolicy>);
 template const bool& files::preferenceValue(const BrowserSettings&, PreferenceKey<bool>);
@@ -443,6 +455,7 @@ template const files::ActivationMode& files::preferenceValue(const BrowserSettin
 template const files::TypingMode& files::preferenceValue(const BrowserSettings&, PreferenceKey<TypingMode>);
 template const files::SortField& files::preferenceValue(const BrowserSettings&, PreferenceKey<SortField>);
 template const files::ViewMode& files::preferenceValue(const BrowserSettings&, PreferenceKey<ViewMode>);
+template const files::ViewDensity& files::preferenceValue(const BrowserSettings&, PreferenceKey<ViewDensity>);
 template const files::DetailsColumnOrder&
 files::preferenceValue(const BrowserSettings&, PreferenceKey<DetailsColumnOrder>);
 template const files::ThumbnailPolicy& files::preferenceValue(const BrowserSettings&, PreferenceKey<ThumbnailPolicy>);

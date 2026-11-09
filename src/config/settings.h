@@ -21,6 +21,7 @@ namespace files {
     TypingMode typingMode = TypingMode::Search;
     ViewMode viewMode = ViewMode::List;
     bool showHidden = false;
+    BrowsePresentation presentation;
     int gridIconSize = kDefaultGridIconSize;
     int sidebarWidth = kDefaultSidebarWidth;
     bool showSidebar = true;
@@ -57,6 +58,11 @@ namespace files {
     DirectoriesFirst,
     ViewMode,
     GridIconSize,
+    Density,
+    ShowSizeCaption,
+    ShowTypeCaption,
+    ShowModifiedCaption,
+    ShowEmblems,
     SidebarWidth,
     ShowSidebar,
     ShowPreview,
@@ -104,6 +110,11 @@ namespace files {
     static constexpr PreferenceKey<bool> DirectoriesFirst{Id::DirectoriesFirst};
     static constexpr PreferenceKey<files::ViewMode> ViewMode{Id::ViewMode};
     static constexpr PreferenceKey<int> GridIconSize{Id::GridIconSize};
+    static constexpr PreferenceKey<files::ViewDensity> Density{Id::Density};
+    static constexpr PreferenceKey<bool> ShowSizeCaption{Id::ShowSizeCaption};
+    static constexpr PreferenceKey<bool> ShowTypeCaption{Id::ShowTypeCaption};
+    static constexpr PreferenceKey<bool> ShowModifiedCaption{Id::ShowModifiedCaption};
+    static constexpr PreferenceKey<bool> ShowEmblems{Id::ShowEmblems};
     static constexpr PreferenceKey<int> SidebarWidth{Id::SidebarWidth};
     static constexpr PreferenceKey<bool> ShowSidebar{Id::ShowSidebar};
     static constexpr PreferenceKey<bool> ShowPreview{Id::ShowPreview};
@@ -146,7 +157,8 @@ namespace files {
   private:
     BrowserPreferenceId m_preference;
     std::variant<
-        std::monostate, bool, int, SortField, ViewMode, DetailsColumnOrder, ActivationMode, TypingMode, ThumbnailPolicy>
+        std::monostate, bool, int, SortField, ViewMode, ViewDensity, DetailsColumnOrder, ActivationMode, TypingMode,
+        ThumbnailPolicy>
         m_value;
   };
 

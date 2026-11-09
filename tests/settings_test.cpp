@@ -44,6 +44,51 @@ namespace {
     return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
   }
 
+  void testPresentationSettings() {
+    using P = files::BrowserPreference;
+    using State = files::AtomicWriteState;
+    Fixture fixture;
+    files::ConfigService settings(fixture.paths());
+    TEST_CHECK(settings.reload());
+    TEST_CHECK(settings.settings().browser.presentation == files::BrowsePresentation{});
+    fixture.write(
+        "config.toml",
+        "[browser]\ndensity = 'comfortable'\nshow_type_caption = true\nshow_emblems = false\nshow_hidden = true\n"
+    );
+    TEST_CHECK(settings.reload());
+    TEST_CHECK(settings.settings().browser.presentation.density == files::ViewDensity::Comfortable);
+    TEST_CHECK(settings.settings().browser.presentation.captions.type);
+    const std::array edits{
+        files::OverrideEdit{P::Density, files::ViewDensity::Compact}, files::OverrideEdit{P::ShowSizeCaption, true},
+        files::OverrideEdit{P::ShowTypeCaption, false}, files::OverrideEdit{P::ShowModifiedCaption, true},
+        files::OverrideEdit{P::ShowEmblems, true}
+    };
+    TEST_CHECK(settings.saveOverrides(edits) == State::Durable);
+    files::ConfigService restored(fixture.paths());
+    TEST_CHECK(restored.reload());
+    const files::BrowsePresentation expected{files::ViewDensity::Compact, {true, false, true}, true};
+    TEST_CHECK(restored.settings().browser.presentation == expected && restored.settings().browser.showHidden);
+    const auto before = read(fixture.paths().overrides);
+    const std::array invalid{files::OverrideEdit{P::Density, static_cast<files::ViewDensity>(255)}};
+    TEST_CHECK(restored.saveOverrides(invalid) == State::NotCommitted);
+    TEST_CHECK(read(fixture.paths().overrides) == before);
+    const std::array reset{
+        files::OverrideEdit{P::Density, std::nullopt}, files::OverrideEdit{P::ShowSizeCaption, std::nullopt},
+        files::OverrideEdit{P::ShowTypeCaption, std::nullopt},
+        files::OverrideEdit{P::ShowModifiedCaption, std::nullopt}, files::OverrideEdit{P::ShowEmblems, std::nullopt}
+    };
+    TEST_CHECK(restored.saveOverrides(reset) == State::Durable);
+    const files::BrowsePresentation inherited{files::ViewDensity::Comfortable, {false, true, false}, false};
+    TEST_CHECK(restored.settings().browser.presentation == inherited && restored.settings().browser.showHidden);
+    for (const auto* invalidValue :
+         {"density = 'large'", "density = true", "show_size_caption = 'true'", "show_type_caption = 1",
+          "show_modified_caption = []", "show_emblems = 'false'"}) {
+      fixture.write("config.toml", std::format("[browser]\n{}\n", invalidValue));
+      TEST_CHECK(!files::validateConfigFile(fixture.paths().base).empty());
+      TEST_CHECK(!restored.reload() && restored.settings().browser.presentation == inherited);
+    }
+  }
+
   void testMillerSettings() {
     Fixture fixture;
     fixture.write("config.toml", "[browser]\nview_mode = 'miller'\nmiller_column_width = 300\n");
@@ -812,6 +857,7 @@ namespace {
 int main() {
   try {
     testSchemaAndDiagnostics();
+    testPresentationSettings();
     testMillerSettings();
     testMillerParents();
     testLayersAndReload();

@@ -5,10 +5,12 @@
 #include "fs/gio_ptr.h"
 #include "model/details_columns.h"
 #include "ui/browser/file_icon.h"
+#include "ui/browser/file_view_metrics.h"
 #include "ui/builders.h"
 #include "ui/controls/selection_surface.h"
 
 #include <algorithm>
+#include <array>
 #include <format>
 #include <utility>
 
@@ -30,6 +32,22 @@ namespace {
     return text ? text.get() : "Unknown";
   }
 
+  std::string fileSize(const files::DirectoryEntry& entry) {
+    std::string size;
+    if (entry.type != files::FileType::Directory && entry.size) {
+      constexpr const char* units[] = {"B", "KiB", "MiB", "GiB", "TiB"};
+      auto value = static_cast<double>(*entry.size);
+      std::size_t unit = 0;
+      while (value >= 1024 && unit + 1 < std::size(units)) {
+        value /= 1024;
+        ++unit;
+      }
+      size = unit == 0 ? std::format("{} B", *entry.size) : std::format("{:.1f} {}", value, units[unit]);
+    } else if (entry.type != files::FileType::Directory) {
+      size = "Unknown";
+    }
+    return size;
+  }
   // Adapted from Noctalia's FileEntryRow, with URI-backed entries and model selection.
   class FileRow final : public InputArea {
   public:
@@ -88,7 +106,8 @@ namespace {
 
     void bind(
         const files::DirectoryEntry& entry, std::string_view typeLabel, bool selected, bool focused, bool hovered,
-        files::DetailsColumns columns, files::DetailsColumnOrder order, bool cut, bool path
+        files::DetailsColumns columns, files::DetailsColumnOrder order, bool cut, bool path,
+        files::BrowsePresentation presentation, bool readOnly
     ) {
       m_columns = columns;
       m_columnOrder = order;
@@ -101,6 +120,9 @@ namespace {
       m_arrow->setParticipatesInLayout(m_miller && directory);
       m_arrow->setColor(colorSpecFromRole(path ? ColorRole::Primary : ColorRole::OnSurfaceVariant));
       m_icon->bindFile(entry, colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurface));
+      m_iconSize = files::fileRowIconSize(presentation);
+      m_icon->setIconSize(m_iconSize);
+      m_icon->setEmblems(presentation.showEmblems && entry.symlink, presentation.showEmblems && readOnly);
       m_name->setText(entry.displayName);
       m_parent->setText(entry.parentDisplayName);
       m_fullDate = modifiedTime(entry.modifiedSeconds, "%Y-%m-%d %H:%M");
@@ -109,20 +131,7 @@ namespace {
       m_parent->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurfaceVariant));
       m_kind->setUseMarkup(false);
       m_kind->setText(typeLabel);
-      std::string size;
-      if (!directory && entry.size) {
-        constexpr const char* units[] = {"B", "KiB", "MiB", "GiB", "TiB"};
-        auto value = static_cast<double>(*entry.size);
-        std::size_t unit = 0;
-        while (value >= 1024 && unit + 1 < std::size(units)) {
-          value /= 1024;
-          ++unit;
-        }
-        size = unit == 0 ? std::format("{} B", *entry.size) : std::format("{:.1f} {}", value, units[unit]);
-      } else if (!directory) {
-        size = "Unknown";
-      }
-      m_size->setText(size);
+      m_size->setText(fileSize(entry));
       const auto text = colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurface);
       m_name->setColor(path ? colorSpecFromRole(ColorRole::Primary) : text);
       m_kind->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurfaceVariant));
@@ -163,9 +172,10 @@ namespace {
       m_modified->setText(m_fullDate);
       m_kind->setMinWidth(columns.typeWidth);
       m_kind->setMaxWidth(columns.typeWidth);
-      m_nameColumn->setMinWidth(columns.nameWidth - 40.0F);
-      m_nameColumn->setMaxWidth(columns.nameWidth - 40.0F);
-      const float nameWidth = m_miller ? std::max(32.0F, width() - 88.0F) : columns.nameWidth - 40.0F;
+      m_nameColumn->setMinWidth(columns.nameWidth - m_iconSize - 16.0F);
+      m_nameColumn->setMaxWidth(columns.nameWidth - m_iconSize - 16.0F);
+      const float nameWidth =
+          m_miller ? std::max(32.0F, width() - m_iconSize - 64.0F) : columns.nameWidth - m_iconSize - 16.0F;
       m_nameColumn->setMinWidth(nameWidth);
       m_nameColumn->setMaxWidth(nameWidth);
       m_name->setMaxWidth(nameWidth);
@@ -190,6 +200,7 @@ namespace {
     Label* m_modified = nullptr;
     Glyph* m_arrow = nullptr;
     bool m_miller;
+    float m_iconSize = 24.0F;
     std::string m_fullDate;
     files::DetailsColumns m_columns;
     files::DetailsColumnOrder m_columnOrder = files::kDefaultDetailsColumnOrder;
@@ -222,16 +233,44 @@ namespace {
                .configure = [](Label& label) { label.setUseMarkup(false); }}
           )
       );
+      for (auto& caption : m_captions) {
+        addChild(
+            ui::label(
+                {.out = &caption,
+                 .fontSize = Style::fontSizeCaption,
+                 .maxLines = 1,
+                 .textAlign = TextAlign::Center,
+                 .configure = [](Label& label) { label.setUseMarkup(false); }}
+            )
+        );
+      }
     }
 
-    void bind(const files::DirectoryEntry& entry, bool selected, bool focused, bool hovered, float iconSize, bool cut) {
+    void bind(
+        const files::DirectoryEntry& entry, std::string_view typeLabel, bool selected, bool focused, bool hovered,
+        float iconSize, bool cut, files::BrowsePresentation presentation, bool readOnly
+    ) {
       m_icon->setOpacity(cut ? 0.4F : entry.hidden ? kHiddenIconOpacity : 1.0F);
-      for (auto* label : {m_name, m_parent}) {
+      for (auto* label : {m_name, m_parent, m_captions[0], m_captions[1], m_captions[2]}) {
         label->setOpacity(entry.hidden && !selected ? kHiddenTextOpacity : 1.0F);
       }
+      m_presentation = presentation;
       m_iconSize = iconSize;
       m_icon->setIconSize(iconSize);
       m_icon->bindFile(entry, colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurface));
+      m_icon->setEmblems(presentation.showEmblems && entry.symlink, presentation.showEmblems && readOnly);
+      const std::array captionText{
+          presentation.captions.size ? fileSize(entry) : std::string{},
+          presentation.captions.type ? std::string(typeLabel) : std::string{},
+          presentation.captions.modified ? modifiedTime(entry.modifiedSeconds, "%Y-%m-%d") : std::string{}
+      };
+      for (std::size_t i = 0; i < m_captions.size(); ++i) {
+        auto* caption = m_captions[i];
+        caption->setText(captionText[i]);
+        caption->setVisible(!captionText[i].empty());
+        caption->setParticipatesInLayout(!captionText[i].empty());
+        caption->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurfaceVariant));
+      }
       m_name->setText(entry.displayName);
       m_parent->setText(entry.parentDisplayName);
       m_parent->setMaxWidth(std::max(0.0F, width() - Style::spaceSm * 2));
@@ -251,22 +290,26 @@ namespace {
 
   protected:
     void doLayout(Renderer& renderer) override {
-      const float previewInset = Style::spaceSm;
-      const float previewWidth = std::max(0.0F, width() - previewInset * 2);
-      const float previewHeight = m_iconSize;
+      const auto metrics = files::gridMetrics(m_iconSize, m_presentation, m_parent->visible());
+      const float labelWidth = std::max(1.0F, width() - metrics.inset * 2);
       m_background->arrange(renderer, {0, 0, width(), height()});
-      m_icon->arrange(
-          renderer, {previewInset + (previewWidth - m_iconSize) * 0.5F, previewInset, m_iconSize, m_iconSize}
-      );
-      m_name->arrange(
-          renderer,
-          {Style::spaceSm, previewInset + previewHeight + Style::spaceXs, std::max(0.0F, width() - Style::spaceSm * 2),
-           40.0F}
-      );
+      m_icon->arrange(renderer, {(width() - m_iconSize) * 0.5F, metrics.inset, m_iconSize, m_iconSize});
+      m_name->setMaxWidth(labelWidth);
+      LayoutConstraints nameConstraints;
+      nameConstraints.setExactWidth(labelWidth);
+      const float nameHeight = std::clamp(m_name->Node::measure(renderer, nameConstraints).height, 1.0F, 40.0F);
+      m_name->arrange(renderer, {metrics.inset, metrics.nameTop, labelWidth, nameHeight});
+      float y = metrics.nameTop + nameHeight;
+      for (auto* caption : m_captions) {
+        if (caption->visible()) {
+          caption->setMaxWidth(labelWidth);
+          caption->arrange(renderer, {metrics.inset, y, labelWidth, 18.0F});
+          y += 18.0F;
+        }
+      }
       if (m_parent->visible()) {
-        m_parent->arrange(
-            renderer, {Style::spaceSm, height() - 24.0F, std::max(0.0F, width() - Style::spaceSm * 2), 20.0F}
-        );
+        m_parent->setMaxWidth(labelWidth);
+        m_parent->arrange(renderer, {metrics.inset, y, labelWidth, 20.0F});
       }
     }
 
@@ -280,6 +323,8 @@ namespace {
     Label* m_name = nullptr;
     Label* m_parent = nullptr;
     float m_iconSize = 48.0F;
+    files::BrowsePresentation m_presentation;
+    std::array<Label*, 3> m_captions{};
   };
 } // namespace
 
@@ -351,12 +396,14 @@ void files::FileViewAdapter::bindTile(Node& tile, std::size_t index, bool, bool 
     const bool focused = selected || (m_focused() && model.selection().focused == id);
     if (m_mode == ViewMode::Grid) {
       static_cast<FileTile&>(tile).bind(
-          *entry, selected, focused, hovered, m_gridIconSize, m_cut && m_cut(entry->location)
+          *entry, model.typeLabel(id), selected, focused, hovered, m_gridIconSize, m_cut && m_cut(entry->location),
+          m_presentation, entry->access.write == false || m_readOnly == true
       );
     } else {
       static_cast<FileRow&>(tile).bind(
           *entry, model.typeLabel(id), selected, focused, hovered, m_columns, m_columnOrder,
-          m_cut && m_cut(entry->location), m_pathEntry == id && !m_columnActive
+          m_cut && m_cut(entry->location), m_pathEntry == id && !m_columnActive, m_presentation,
+          entry->access.write == false || m_readOnly == true
       );
     }
   }
@@ -517,9 +564,13 @@ bool files::FileViewAdapter::itemHitTest(std::size_t, float x, float y, float wi
   if (m_mode != ViewMode::Grid) {
     return true;
   }
+  const auto metrics = gridMetrics(m_gridIconSize, m_presentation, false);
   const float iconLeft = (width - m_gridIconSize) * 0.5F;
-  const bool icon = x >= iconLeft - 4 && x <= iconLeft + m_gridIconSize + 4 && y >= 4 && y <= m_gridIconSize + 8;
-  const bool label = x >= 8 && x <= width - 8 && y >= m_gridIconSize + 12 && y <= height - 4;
+  const bool icon = x >= iconLeft - 4
+      && x <= iconLeft + m_gridIconSize + 4
+      && y >= metrics.inset - 4
+      && y <= metrics.inset + m_gridIconSize + 4;
+  const bool label = x >= metrics.inset && x <= width - metrics.inset && y >= metrics.nameTop && y <= height - 4;
   return icon || label;
 }
 

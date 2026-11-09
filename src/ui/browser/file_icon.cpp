@@ -3,14 +3,35 @@
 #include "render/core/renderer.h"
 #include "render/core/texture_manager.h"
 #include "render/scene/image_node.h"
+#include "ui/builders.h"
 
 #include <algorithm>
 #include <cmath>
+#include <tuple>
 
 files::FileIcon::FileIcon(FileIconCache& cache, float size, ThumbnailService* thumbnails)
     : m_cache(cache), m_thumbnails(thumbnails), m_size(size) {
   m_image = static_cast<ImageNode*>(addChild(std::make_unique<ImageNode>()));
   m_image->setFitMode(ImageFitMode::Contain);
+  for (const auto& [badge, glyph, name] :
+       {std::tuple{&m_linkEmblem, &m_linkGlyph, "arrow-up-right"},
+        std::tuple{&m_readOnlyEmblem, &m_readOnlyGlyph, "lock"}}) {
+    addChild(
+        ui::row(
+            {.out = badge,
+             .align = FlexAlign::Center,
+             .justify = FlexJustify::Center,
+             .fill = colorSpecFromRole(ColorRole::SurfaceContainerHigh),
+             .radius = 12.0F,
+             .border = colorSpecFromRole(ColorRole::OutlineVariant),
+             .visible = false,
+             .participatesInLayout = false},
+            ui::glyph(
+                {.out = glyph, .glyph = name, .glyphSize = 10.0F, .color = colorSpecFromRole(ColorRole::OnSurface)}
+            )
+        )
+    );
+  }
   setHitTestVisible(false);
 }
 files::FileIcon::~FileIcon() {
@@ -18,6 +39,7 @@ files::FileIcon::~FileIcon() {
   m_texture.reset();
 }
 void files::FileIcon::bind(const FileIconSource& source, ColorSpec foreground) {
+  setEmblems(false, false);
   if (!m_thumbnailSource && source == m_source && foreground == m_foreground) {
     return;
   }
@@ -52,6 +74,13 @@ void files::FileIcon::bindFile(const DirectoryEntry& entry, ColorSpec foreground
   m_foreground = foreground;
   markLayoutDirty();
 }
+void files::FileIcon::setEmblems(bool link, bool readOnly) {
+  if (m_linkEmblem->visible() != link || m_readOnlyEmblem->visible() != readOnly) {
+    m_linkEmblem->setVisible(link);
+    m_readOnlyEmblem->setVisible(readOnly);
+    markLayoutDirty();
+  }
+}
 void files::FileIcon::setThumbnailVisible(bool visible) {
   if (m_thumbnailVisible != visible) {
     m_thumbnailVisible = visible;
@@ -66,6 +95,7 @@ void files::FileIcon::setThumbnailVisible(bool visible) {
   }
 }
 void files::FileIcon::releaseFile(Renderer&) {
+  setEmblems(false, false);
   const bool changed = m_prepared || m_thumbnailSource || m_thumbnail || m_asset || !m_texture.empty();
   m_prepared.reset();
   m_thumbnailSource.reset();
@@ -155,6 +185,23 @@ void files::FileIcon::doLayout(Renderer& renderer) {
   m_image->setTint(symbolic ? resolveColorSpec(m_foreground) : Color{1, 1, 1, 1});
   m_image->setPosition(0, 0);
   m_image->setSize(width(), height());
+  float imageWidth = width(), imageHeight = height();
+  if (texture.width > 0 && texture.height > 0) {
+    const float fit = std::min(width() / texture.width, height() / texture.height);
+    imageWidth = texture.width * fit;
+    imageHeight = texture.height * fit;
+  }
+  const float left = (width() - imageWidth) * 0.5F;
+  const float bottom = (height() + imageHeight) * 0.5F;
+  const float badgeSize = std::clamp(m_size * 0.3F, 12.0F, 22.0F);
+  m_linkGlyph->setGlyphSize(badgeSize * 0.68F);
+  m_readOnlyGlyph->setGlyphSize(badgeSize * 0.64F);
+  if (m_linkEmblem->visible()) {
+    m_linkEmblem->arrange(renderer, {left, bottom - badgeSize, badgeSize, badgeSize});
+  }
+  if (m_readOnlyEmblem->visible()) {
+    m_readOnlyEmblem->arrange(renderer, {left + imageWidth - badgeSize, bottom - badgeSize, badgeSize, badgeSize});
+  }
 }
 void files::FileIcon::doInvalidateGpuResources(Renderer&) {
   m_image->setTextureId({});
