@@ -90,6 +90,7 @@ namespace files::archive_work {
   Fd opened(int fd);
   struct stat statAt(int fd, const std::string& name);
   std::string stamp(const struct stat& info);
+  std::uint64_t decodedContainerBudget(const ArchiveLimits& limits);
   Work workFor(ArchiveLimits limits, const CancelToken& cancel, Progress& progress);
   std::string bounded(const char* text);
   std::vector<std::string> parts(const std::string& name);

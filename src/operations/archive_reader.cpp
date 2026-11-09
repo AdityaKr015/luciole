@@ -1,6 +1,6 @@
 #include "fs/filename.h"
-#include "operations/archive_input.h"
 #include "operations/archive_support.h"
+#include "operations/archive_xz_input.h"
 
 #include <algorithm>
 #include <archive.h>
@@ -8,7 +8,6 @@
 #include <array>
 #include <cerrno>
 #include <fcntl.h>
-#include <limits>
 #include <map>
 #include <set>
 #include <unistd.h>
@@ -20,6 +19,7 @@ namespace {
   struct Reader {
     Work& work;
     Input input;
+    std::optional<XzInput> xz;
     std::string filename, original;
     std::unique_ptr<struct archive, decltype(&archive_read_free)> value{archive_read_new(), &archive_read_free};
     std::array<char, 65536> buffer{};
@@ -33,8 +33,13 @@ namespace {
       if (!value) {
         throwFileError(FileErrorKind::Other, "Could not initialize the archive reader.");
       }
+      if (XzInput::recognizes(input)) {
+        xz.emplace(input, work);
+      }
       if (raw) {
         requireArchive(archive_read_support_format_raw(value.get()), value.get(), work);
+      } else if (xz) {
+        requireArchive(archive_read_support_format_tar(value.get()), value.get(), work);
       } else {
         // Split input needs the final central directory; never recover a partial
         // set with the streaming ZIP reader after a missing or corrupt last part.
@@ -48,7 +53,7 @@ namespace {
         }
       }
       requireArchive(archive_read_support_filter_none(value.get()), value.get(), work);
-      if (!input.split()) {
+      if (!input.split() && !xz) {
         if (archiveCompressionAvailable(ArchiveCompression::Gzip)) {
           requireArchive(archive_read_support_filter_gzip(value.get()), value.get(), work);
         }
@@ -74,23 +79,25 @@ namespace {
           ),
           value.get(), work
       );
-      requireArchive(
-          archive_read_set_seek_callback(
-              value.get(),
-              [](struct archive* a, void* data, la_int64_t offset, int whence) -> la_int64_t {
-                auto& reader = *static_cast<Reader*>(data);
-                try {
-                  reader.work.check();
-                  return reader.input.seek(offset, whence);
-                } catch (...) {
-                  reader.work.failure = std::current_exception();
-                  archive_set_error(a, EIO, "Archive seek failed");
-                  return ARCHIVE_FATAL;
+      if (!xz) {
+        requireArchive(
+            archive_read_set_seek_callback(
+                value.get(),
+                [](struct archive* a, void* data, la_int64_t offset, int whence) -> la_int64_t {
+                  auto& reader = *static_cast<Reader*>(data);
+                  try {
+                    reader.work.check();
+                    return reader.input.seek(offset, whence);
+                  } catch (...) {
+                    reader.work.failure = std::current_exception();
+                    archive_set_error(a, EIO, "Archive seek failed");
+                    return ARCHIVE_FATAL;
+                  }
                 }
-              }
-          ),
-          value.get(), work
-      );
+            ),
+            value.get(), work
+        );
+      }
       requireArchive(
           archive_read_open2(
               value.get(), this, nullptr,
@@ -98,7 +105,7 @@ namespace {
                 auto& reader = *static_cast<Reader*>(data);
                 try {
                   reader.work.check();
-                  const auto count = reader.input.read(reader.buffer);
+                  const auto count = reader.xz ? reader.xz->read(reader.buffer) : reader.input.read(reader.buffer);
                   *block = reader.buffer.data();
                   return count;
                 } catch (...) {
@@ -112,7 +119,12 @@ namespace {
           value.get(), work
       );
     }
-    void unchanged() const { input.unchanged(); }
+    void unchanged() {
+      if (xz) {
+        xz->finish();
+      }
+      input.unchanged();
+    }
     bool next(struct archive_entry*& entry) {
       work.check();
       const auto status = archive_read_next_header(value.get(), &entry);
@@ -136,19 +148,7 @@ namespace {
     auto& work = archive.work;
     // TAR may stop at its end markers before a filter checks its trailer. A raw
     // pass drains the framing with cancellation and a decoded-container budget.
-    // The allowance covers member headers, alignment, PAX metadata and padding.
-    std::uint64_t budget = work.limits.maxExpandedBytes;
-    const auto add = [&](std::uint64_t value) {
-      budget += std::min(value, std::numeric_limits<std::uint64_t>::max() - budget);
-    };
-    add(work.limits.maxMetadataBytes);
-    add(work.limits.maxMetadataBytes);
-    for (unsigned i = 0; i < 3; ++i) {
-      const auto entries =
-          std::min<std::uint64_t>(work.limits.maxEntries, std::numeric_limits<std::uint64_t>::max() / 512);
-      add(entries * 512);
-    }
-    add(1024U * 1024U);
+    const auto budget = decodedContainerBudget(work.limits);
     Reader raw(Location::fromPath(archive.filename), work, nullptr, true);
     struct archive_entry* header = nullptr;
     if (!raw.next(header)) {
@@ -368,6 +368,12 @@ files::archive_work::Prepared files::archive_work::extract(
   if (expected && (expected->source != source || expected->stamp != contents->stamp)) {
     throwFileError(FileErrorKind::Changed, "The archive changed. Reload its contents before extracting.");
   }
+  // Capture the container's decode budget before applying the smaller limit
+  // to the selected member's staged output. Other TAR members still stream by.
+  Reader reader(source, work, &passwords);
+  if (reader.original != contents->stamp) {
+    throwFileError(FileErrorKind::Changed, "Archive changed before extraction.");
+  }
   if (open) {
     work.limits.maxExpandedBytes = std::min<std::uint64_t>(work.limits.maxExpandedBytes, 128U * 1024U * 1024U);
   }
@@ -436,10 +442,6 @@ files::archive_work::Prepared files::archive_work::extract(
     if (entry.kind == ArchiveEntryKind::File || entry.kind == ArchiveEntryKind::Hardlink) {
       bodies.insert(body(path));
     }
-  }
-  Reader reader(source, work, &passwords);
-  if (reader.original != contents->stamp) {
-    throwFileError(FileErrorKind::Changed, "Archive changed before extraction.");
   }
   struct archive_entry* header = nullptr;
   std::uint64_t total = 0;

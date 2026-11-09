@@ -250,9 +250,12 @@ namespace {
     TEST_CHECK(!files::splitZipPart(files::Location::fromPath("/tmp/test.zip.001.bak")));
   }
   void testCompressedArchiveActions() {
-    for (const auto compression : {files::ArchiveCompression::Bzip2, files::ArchiveCompression::Zstd}) {
+    for (const auto compression :
+         {files::ArchiveCompression::Bzip2, files::ArchiveCompression::Zstd, files::ArchiveCompression::Xz}) {
       const bool bzip = compression == files::ArchiveCompression::Bzip2;
-      const char* const name = bzip ? "package.TAR.BZ2" : "package.TAR.ZST";
+      const char* const name = bzip                        ? "package.TAR.BZ2"
+          : compression == files::ArchiveCompression::Zstd ? "package.TAR.ZST"
+                                                           : "package.TAR.XZ";
       files::DirectoryModel model;
       auto data = snapshot();
       data.entries.push_back(entry(7, name));
@@ -267,19 +270,20 @@ namespace {
       const auto opaque = files::Location::fromPath("/tmp/opaque-container");
       TEST_CHECK(
           files::isSupportedArchive(
-              opaque, bzip ? "application/x-bzip2-compressed-tar" : "application/x-zstd-compressed-tar"
+              opaque,
+              bzip                                                 ? "application/x-bzip2-compressed-tar"
+                  : compression == files::ArchiveCompression::Zstd ? "application/x-zstd-compressed-tar"
+                                                                   : "application/x-xz-compressed-tar"
           )
           == files::archiveCompressionAvailable(compression)
       );
     }
-    for (const char* const name : {"a.tbz2", "a.tbz", "a.tzst"}) {
+    for (const char* const name : {"a.tbz2", "a.tbz", "a.tzst", "a.txz"}) {
       TEST_CHECK(files::archiveFolderName(files::Location::fromPath(std::string("/tmp/") + name)) == "a");
     }
     TEST_CHECK(!files::isSupportedArchive(files::Location::fromPath("/tmp/plain.bz2"), "application/x-bzip2"));
     TEST_CHECK(!files::isSupportedArchive(files::Location::fromPath("/tmp/plain.zst"), "application/zstd"));
-    TEST_CHECK(
-        !files::isSupportedArchive(files::Location::fromPath("/tmp/untested.tar.xz"), "application/x-xz-compressed-tar")
-    );
+    TEST_CHECK(!files::isSupportedArchive(files::Location::fromPath("/tmp/plain.xz"), "application/x-xz"));
   }
   void testCapabilitiesAndTargets() {
     files::DirectoryModel model;

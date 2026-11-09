@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <archive.h>
+#include <lzma.h>
 
 bool files::archiveCompressionAvailable(ArchiveCompression compression) {
   switch (compression) {
@@ -16,6 +17,8 @@ bool files::archiveCompressionAvailable(ArchiveCompression compression) {
     return archive_bzlib_version() != nullptr;
   case ArchiveCompression::Zstd:
     return archive_libzstd_version() != nullptr;
+  case ArchiveCompression::Xz:
+    return lzma_filter_decoder_is_supported(LZMA_FILTER_LZMA2);
   }
   return false;
 }
@@ -54,6 +57,9 @@ bool files::isSupportedArchive(const Location& location, const std::optional<std
   if (mime && *mime == "application/x-zstd-compressed-tar") {
     return archiveCompressionAvailable(ArchiveCompression::Zstd);
   }
+  if (mime && *mime == "application/x-xz-compressed-tar") {
+    return archiveCompressionAvailable(ArchiveCompression::Xz);
+  }
   const auto name = location.basename();
   if (!name) {
     return false;
@@ -69,6 +75,9 @@ bool files::isSupportedArchive(const Location& location, const std::optional<std
   if (text.ends_with(".tar.bz2") || text.ends_with(".tbz2") || text.ends_with(".tbz")) {
     return archiveCompressionAvailable(ArchiveCompression::Bzip2);
   }
+  if (text.ends_with(".tar.xz") || text.ends_with(".txz")) {
+    return archiveCompressionAvailable(ArchiveCompression::Xz);
+  }
   return (text.ends_with(".tar.zst") || text.ends_with(".tzst"))
       && archiveCompressionAvailable(ArchiveCompression::Zstd);
 }
@@ -78,8 +87,9 @@ std::string files::archiveFolderName(const Location& location) {
   const std::string_view text(lower.get());
   for (const auto suffix :
        {std::string_view(".zip.001"), std::string_view(".tar.bz2"), std::string_view(".tar.zst"),
-        std::string_view(".tar.gz"), std::string_view(".tbz2"), std::string_view(".tzst"), std::string_view(".tbz"),
-        std::string_view(".tgz"), std::string_view(".zip"), std::string_view(".tar")}) {
+        std::string_view(".tar.gz"), std::string_view(".tar.xz"), std::string_view(".txz"), std::string_view(".tbz2"),
+        std::string_view(".tzst"), std::string_view(".tbz"), std::string_view(".tgz"), std::string_view(".zip"),
+        std::string_view(".tar")}) {
     if (text.ends_with(suffix)) {
       name.resize(name.size() - suffix.size());
       break;

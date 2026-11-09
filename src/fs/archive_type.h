@@ -5,7 +5,7 @@
 #include <string_view>
 
 namespace files {
-  enum class ArchiveCompression { None, Gzip, Bzip2, Zstd };
+  enum class ArchiveCompression { None, Gzip, Bzip2, Zstd, Xz };
   // Native outer-filter support; this never discovers or starts helper programs.
   bool archiveCompressionAvailable(ArchiveCompression compression);
   // A byte-split ZIP part named <name>.zip.NNN; only part 001 opens the set.

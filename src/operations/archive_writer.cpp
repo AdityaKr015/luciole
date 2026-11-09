@@ -26,6 +26,19 @@ namespace {
       return archive_write_add_filter_bzip2(writer);
     case ArchiveCompression::Zstd:
       return archive_write_add_filter_zstd(writer);
+    case ArchiveCompression::Xz: {
+      // Never register libarchive's external xz helper fallback. Fix encoder
+      // memory use independently of machine core count or user environment.
+      if (!archive_liblzma_version()) {
+        return ARCHIVE_FATAL;
+      }
+      const auto status = archive_write_add_filter_xz(writer);
+      if (status != ARCHIVE_OK) {
+        return status;
+      }
+      const auto level = archive_write_set_filter_option(writer, "xz", "compression-level", "6");
+      return level == ARCHIVE_OK ? archive_write_set_filter_option(writer, "xz", "threads", "1") : level;
+    }
     }
     return ARCHIVE_FATAL;
   }
@@ -238,8 +251,9 @@ std::span<const files::ArchiveFormatInfo> files::archiveFormats() {
     for (const auto& item : std::array{
              ArchiveFormatInfo{ArchiveFormat::Zip, "ZIP", ".zip"}, ArchiveFormatInfo{ArchiveFormat::Tar, "TAR", ".tar"},
              ArchiveFormatInfo{ArchiveFormat::TarGzip, "TAR gzip", ".tar.gz", ArchiveCompression::Gzip},
-             ArchiveFormatInfo{ArchiveFormat::TarBzip2, "TAR bzip2", ".tar.bz2", ArchiveCompression::Bzip2},
-             ArchiveFormatInfo{ArchiveFormat::TarZstd, "TAR zstd", ".tar.zst", ArchiveCompression::Zstd}
+             ArchiveFormatInfo{ArchiveFormat::TarBzip2, "TAR bz2", ".tar.bz2", ArchiveCompression::Bzip2},
+             ArchiveFormatInfo{ArchiveFormat::TarZstd, "TAR zstd", ".tar.zst", ArchiveCompression::Zstd},
+             ArchiveFormatInfo{ArchiveFormat::TarXz, "TAR xz", ".tar.xz", ArchiveCompression::Xz}
          }) {
       if (!archiveCompressionAvailable(item.compression)) {
         continue;

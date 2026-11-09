@@ -106,6 +106,7 @@ event_loop_dep = declare_dependency(link_with: event_loop_lib, include_directori
 )
 
 libarchive = dependency('libarchive')
+liblzma = dependency('liblzma')
 fs_lib = static_library('files-fs',
   files(
     'src/fs/archive_type.cpp',
@@ -129,9 +130,9 @@ fs_lib = static_library('files-fs',
     'src/fs/xdg_dirs.cpp',
   ),
   include_directories: src_inc,
-  dependencies: [gio, libarchive],
+  dependencies: [gio, libarchive, liblzma],
 )
-fs_dep = declare_dependency(link_with: fs_lib, include_directories: src_inc, dependencies: [gio, libarchive])
+fs_dep = declare_dependency(link_with: fs_lib, include_directories: src_inc, dependencies: [gio, libarchive, liblzma])
 
 config_lib = static_library('files-config',
   files(
@@ -176,6 +177,7 @@ operations_lib = static_library('files-operations',
   files(
     'src/operations/archive_icons.cpp',
     'src/operations/archive_input.cpp',
+    'src/operations/archive_xz_input.cpp',
     'src/operations/archive_service.cpp',
     'src/operations/archive_reader.cpp',
     'src/operations/archive_support.cpp',
@@ -199,10 +201,10 @@ operations_lib = static_library('files-operations',
     'src/operations/trash_service.cpp',
   ),
   include_directories: src_inc,
-  dependencies: [fs_dep, libacl, libarchive],
+  dependencies: [fs_dep, libacl, libarchive, liblzma],
 )
 operations_dep = declare_dependency(link_with: operations_lib, include_directories: src_inc,
-  dependencies: [fs_dep, libacl, libarchive],
+  dependencies: [fs_dep, libacl, libarchive, liblzma],
 )
 
 libpng = dependency('libpng')

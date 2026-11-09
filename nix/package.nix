@@ -20,6 +20,7 @@
   harfbuzz,
   libpng,
   libarchive,
+  xz,
   acl,
   libwebp,
   librsvg,
@@ -134,6 +135,7 @@ stdenv.mkDerivation (finalAttrs: {
     harfbuzz
     libpng
     libarchive
+    xz
     acl
     libwebp
     pixbufWithGlycin

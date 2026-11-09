@@ -2,12 +2,14 @@
 
 #include "fs/filename.h"
 
+#include <algorithm>
 #include <archive.h>
 #include <cerrno>
 #include <cstring>
 #include <deque>
 #include <fcntl.h>
 #include <format>
+#include <limits>
 #include <ranges>
 
 namespace fs = std::filesystem;
@@ -21,6 +23,21 @@ namespace {
 } // namespace
 
 namespace files::archive_work {
+  std::uint64_t decodedContainerBudget(const ArchiveLimits& limits) {
+    // TAR headers, alignment, PAX metadata and bounded trailing padding.
+    std::uint64_t budget = limits.maxExpandedBytes;
+    const auto add = [&](std::uint64_t value) {
+      budget += std::min(value, std::numeric_limits<std::uint64_t>::max() - budget);
+    };
+    add(limits.maxMetadataBytes);
+    add(limits.maxMetadataBytes);
+    for (unsigned i = 0; i < 3; ++i) {
+      const auto entries = std::min<std::uint64_t>(limits.maxEntries, std::numeric_limits<std::uint64_t>::max() / 512);
+      add(entries * 512);
+    }
+    add(1024U * 1024U);
+    return budget;
+  }
   [[noreturn]] void systemError(const char* operation) {
     const int code = errno;
     throwFileError(errnoError(code).kind, std::string(operation) + ": " + std::strerror(code));

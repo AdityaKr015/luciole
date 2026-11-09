@@ -3,6 +3,7 @@
 #include "operations/archive_input.h"
 #include "operations/archive_service.h"
 #include "operations/archive_work.h"
+#include "operations/archive_xz_input.h"
 #include "test_check.h"
 
 #include <algorithm>
@@ -783,17 +784,250 @@ namespace {
       TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
     }
   }
+  std::string xz(std::string_view bytes) {
+    std::string encoded(lzma_stream_buffer_bound(bytes.size()), '\0');
+    std::size_t position = 0;
+    TEST_CHECK(
+        lzma_easy_buffer_encode(
+            0, LZMA_CHECK_CRC64, nullptr, reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size(),
+            reinterpret_cast<std::uint8_t*>(encoded.data()), &position, encoded.size()
+        )
+        == LZMA_OK
+    );
+    encoded.resize(position);
+    return encoded;
+  }
+  std::string oversizedXzDictionary(std::string encoded) {
+    TEST_CHECK(encoded.size() > 16);
+    lzma_block block{};
+    std::array<lzma_filter, LZMA_FILTERS_MAX + 1> filters{};
+    block.version = 0;
+    block.filters = filters.data();
+    block.header_size = lzma_block_header_size_decode(static_cast<unsigned char>(encoded[12]));
+    TEST_CHECK(block.header_size <= encoded.size() - 12);
+    TEST_CHECK(
+        lzma_block_header_decode(&block, nullptr, reinterpret_cast<const std::uint8_t*>(encoded.data() + 12)) == LZMA_OK
+    );
+    TEST_CHECK(filters[0].id == LZMA_FILTER_LZMA2 && filters[1].id == LZMA_VLI_UNKNOWN);
+    auto* options = static_cast<lzma_options_lzma*>(filters[0].options);
+    options->dict_size = 256U * 1024U * 1024U;
+    TEST_CHECK(lzma_raw_decoder_memusage(filters.data()) > 128U * 1024U * 1024U);
+    TEST_CHECK(lzma_block_header_encode(&block, reinterpret_cast<std::uint8_t*>(encoded.data() + 12)) == LZMA_OK);
+    lzma_filters_free(filters.data(), nullptr);
+    return encoded;
+  }
+  void testXzTar(const Fixture& fixture, Pump& pump) {
+    TEST_CHECK(files::archiveCompressionAvailable(files::ArchiveCompression::Xz));
+    const auto formats = files::archiveFormats();
+    const auto format = std::ranges::find(formats, files::ArchiveFormat::TarXz, &files::ArchiveFormatInfo::format);
+    TEST_CHECK((format != formats.end()) == (archive_liblzma_version() != nullptr));
+    if (format != formats.end()) {
+      TEST_CHECK(format->compression == files::ArchiveCompression::Xz && format->suffix == ".tar.xz");
+    }
+    const auto plain = fixture.root / "xz-source.tar";
+    tar(plain, {{"file", "XZ payload", {}}, {"alias", {}, "file", AE_IFREG}, {"link", {}, "file", AE_IFLNK}});
+    const auto data = read(plain);
+    const auto encoded = xz(data);
+    if (format != formats.end()) {
+      const auto source = fixture.root / "xz-writer-payload";
+      const auto archive = fixture.root / "xz-writer.tar.xz";
+      write(source, "independent reader");
+      files::ArchiveService service;
+      TEST_CHECK(!service.compress({location(source)}, location(archive), format->format, "unsupported"));
+      TEST_CHECK(service.compress({location(source)}, location(archive), format->format));
+      wait(service, pump);
+      TEST_CHECK(!service.error());
+      const std::unique_ptr<struct archive, decltype(&archive_read_free)> reader(
+          archive_read_new(), &archive_read_free
+      );
+      TEST_CHECK(archive_read_support_filter_xz(reader.get()) == ARCHIVE_OK);
+      TEST_CHECK(archive_read_support_format_tar(reader.get()) == ARCHIVE_OK);
+      TEST_CHECK(archive_read_open_filename(reader.get(), archive.c_str(), 65536) == ARCHIVE_OK);
+      struct archive_entry* header = nullptr;
+      TEST_CHECK(archive_read_next_header(reader.get(), &header) == ARCHIVE_OK);
+      TEST_CHECK(archive_filter_code(reader.get(), 0) == ARCHIVE_FILTER_XZ);
+      std::array<char, 64> bytes{};
+      const auto count = archive_read_data(reader.get(), bytes.data(), bytes.size());
+      TEST_CHECK(count == 18 && std::string_view(bytes.data(), static_cast<std::size_t>(count)) == read(source));
+    }
+    for (unsigned variant = 0; variant < 4; ++variant) {
+      const auto source = fixture.root / ("independent-xz-" + std::to_string(variant) + ".txz");
+      // Independent encoder, legal padding and multiple streams, including a
+      // frame boundary inside a TAR header rather than between TAR members.
+      const auto bytes = variant == 0 ? encoded
+          : variant == 1              ? encoded + std::string(4, '\0')
+          : variant == 2 ? xz(std::string_view(data).substr(0, 700)) + xz(std::string_view(data).substr(700))
+                         : xz({}) + encoded + xz({});
+      write(source, bytes);
+      files::ArchiveService service;
+      TEST_CHECK(service.inspect(location(source)));
+      wait(service, pump);
+      TEST_CHECK(!service.error() && service.catalog() && service.catalog()->entries.size() == 3);
+      const auto known = service.catalog();
+      const auto output = fixture.root / ("xz-extracted-" + std::to_string(variant));
+      TEST_CHECK(service.extract(location(source), location(output), {}, known));
+      wait(service, pump);
+      TEST_CHECK(!service.error() && read(output / "file") == "XZ payload" && read(output / "alias") == "XZ payload");
+      TEST_CHECK(fs::is_symlink(output / "link") && fs::read_symlink(output / "link") == "file");
+      const auto selected = fixture.root / ("xz-selected-" + std::to_string(variant));
+      TEST_CHECK(service.extract(location(source), location(selected), {"alias"}, known));
+      wait(service, pump);
+      TEST_CHECK(!service.error() && read(selected / "alias") == "XZ payload" && !fs::exists(selected / "file"));
+      write(source, bytes);
+      const auto stale = fixture.root / ("xz-stale-" + std::to_string(variant));
+      TEST_CHECK(service.extract(location(source), location(stale), {}, known));
+      wait(service, pump);
+      TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Changed && !fs::exists(stale));
+    }
+  }
+  void testXzFailures(const Fixture& fixture, Pump& pump) {
+    const auto plain = fixture.root / "xz-boundary.tar";
+    tar(plain, {{"payload", std::string(129536, 'x'), {}}});
+    const auto data = read(plain);
+    const auto valid = xz(data);
+    const auto hostile = fixture.root / "xz-hostile.tar";
+    tar(hostile, {{"../escaped-xz", "bad", {}}});
+    const auto link = fixture.root / "xz-hostile-link.tar";
+    tar(link, {{"link", {}, "../escaped-xz", AE_IFLNK}});
+    std::vector<std::string> rejected{
+        valid.substr(0, valid.size() - 1),
+        valid.substr(0, valid.size() / 2),
+        valid + std::string(1, '\0'),
+        valid + "garbage",
+        oversizedXzDictionary(valid),
+        xz(data + std::string(4U * 1024U * 1024U, '\0')),
+        xz(read(hostile)),
+        xz(read(link)),
+        valid
+    };
+    auto badCheck = valid;
+    badCheck[badCheck.size() - 13] ^= 0x01;
+    rejected.push_back(std::move(badCheck));
+    std::uint32_t backward = 0;
+    for (unsigned i = 0; i < 4; ++i) {
+      backward |= static_cast<std::uint32_t>(static_cast<unsigned char>(valid[valid.size() - 8 + i])) << (8 * i);
+    }
+    auto badDataCheck = valid;
+    const auto indexSize = (static_cast<std::size_t>(backward) + 1) * 4;
+    TEST_CHECK(indexSize + 13 < valid.size());
+    badDataCheck[valid.size() - indexSize - 13] ^= 0x01;
+    rejected.push_back(std::move(badDataCheck));
+    rejected.push_back(valid + oversizedXzDictionary(valid));
+    rejected.push_back(valid + valid.substr(0, valid.size() - 1));
+    for (std::size_t i = 0; i < rejected.size(); ++i) {
+      const auto source = fixture.root / ("bad-xz-" + std::to_string(i) + ".tar.xz");
+      write(source, rejected[i]);
+      files::ArchiveLimits limits;
+      if (i == 5) {
+        limits.maxExpandedBytes = data.size();
+        limits.maxMetadataBytes = 256;
+        limits.maxEntries = 4;
+      } else if (i == 8) {
+        limits.maxExpandedBytes = 1024;
+      }
+      files::ArchiveService service(limits);
+      TEST_CHECK(service.inspect(location(source)));
+      wait(service, pump);
+      TEST_CHECK(service.error() && !service.catalog());
+      if (i == 4 || i == 5) {
+        TEST_CHECK(service.error()->kind == files::FileErrorKind::Unsupported);
+        TEST_CHECK(service.error()->message.contains(i == 4 ? "128 MiB" : "decoded-container"));
+      }
+      const auto destination = fixture.root / ("xz-rejected-" + std::to_string(i));
+      TEST_CHECK(service.extract(location(source), location(destination)));
+      wait(service, pump);
+      TEST_CHECK(service.error() && !fs::exists(destination) && fs::is_empty(fixture.root / "tmp"));
+    }
+    TEST_CHECK(!fs::exists(fixture.root / "escaped-xz"));
+    const auto split = splitZip(fixture.root / "xz-fake-split", "fake.zip", valid, valid.size() / 2);
+    files::ArchiveService splitService;
+    TEST_CHECK(splitService.inspect(location(split.front())));
+    wait(splitService, pump);
+    TEST_CHECK(splitService.error() && !splitService.catalog());
+    const auto source = fixture.root / "xz-cancel.tar.xz";
+    write(source, valid);
+    files::ArchiveService service;
+    TEST_CHECK(service.extract(location(source), location(fixture.root / "xz-cancelled")));
+    service.cancel();
+    wait(service, pump);
+    TEST_CHECK(service.error() && !fs::exists(fixture.root / "xz-cancelled") && fs::is_empty(fixture.root / "tmp"));
+  }
+  void testXzMemberFromLargeArchive(const Fixture& fixture, Pump& pump) {
+    if (!archive_liblzma_version()) {
+      return;
+    }
+    const auto source = fixture.root / "large-xz.tar.xz";
+    const std::unique_ptr<struct archive, decltype(&archive_write_free)> writer(
+        archive_write_new(), &archive_write_free
+    );
+    TEST_CHECK(archive_write_set_format_pax_restricted(writer.get()) == ARCHIVE_OK);
+    TEST_CHECK(archive_write_add_filter_xz(writer.get()) == ARCHIVE_OK);
+    TEST_CHECK(archive_write_set_filter_option(writer.get(), "xz", "compression-level", "0") == ARCHIVE_OK);
+    TEST_CHECK(archive_write_set_bytes_per_block(writer.get(), 0) == ARCHIVE_OK);
+    TEST_CHECK(archive_write_open_filename(writer.get(), source.c_str()) == ARCHIVE_OK);
+    const std::unique_ptr<struct archive_entry, decltype(&archive_entry_free)> entry(
+        archive_entry_new(), &archive_entry_free
+    );
+    archive_entry_set_pathname(entry.get(), "large");
+    archive_entry_set_filetype(entry.get(), AE_IFREG);
+    archive_entry_set_size(entry.get(), 130U * 1024U * 1024U);
+    TEST_CHECK(archive_write_header(writer.get(), entry.get()) == ARCHIVE_OK);
+    const std::array<char, 65536> chunk{};
+    for (unsigned i = 0; i < 130U * 16U; ++i) {
+      TEST_CHECK(archive_write_data(writer.get(), chunk.data(), chunk.size()) == static_cast<la_ssize_t>(chunk.size()));
+    }
+    archive_entry_set_pathname(entry.get(), "small");
+    archive_entry_set_size(entry.get(), 3);
+    TEST_CHECK(archive_write_header(writer.get(), entry.get()) == ARCHIVE_OK);
+    TEST_CHECK(archive_write_data(writer.get(), "abc", 3) == 3);
+    TEST_CHECK(archive_write_close(writer.get()) == ARCHIVE_OK);
+    files::ArchiveLimits limits;
+    limits.maxExpandedBytes = 256U * 1024U * 1024U;
+    limits.maxMetadataBytes = 256;
+    limits.maxEntries = 4;
+    files::ArchiveService service(limits);
+    TEST_CHECK(service.inspect(location(source)));
+    wait(service, pump);
+    TEST_CHECK(!service.error() && service.catalog());
+    TEST_CHECK(service.openMember("small"));
+    wait(service, pump);
+    const auto opened = service.takeOpenedFile();
+    TEST_CHECK(!service.error() && opened && read(*opened->nativePath()) == "abc");
+    service.shutdown();
+    wait(service, pump);
+    TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
+  }
+  void testXzWorkerBoundaries(const Fixture& fixture) {
+    const auto plain = fixture.root / "xz-worker.tar";
+    tar(plain, {{"file", std::string(256U * 1024U, 'x'), {}}});
+    const auto source = fixture.root / "xz-worker.tar.xz";
+    write(source, xz(read(plain)));
+    files::ArchiveLimits limits;
+    files::CancelToken cancel;
+    files::archive_work::Progress progress;
+    auto work = files::archive_work::workFor(limits, cancel, progress);
+    files::archive_work::Input input(location(source), work);
+    TEST_CHECK(files::archive_work::XzInput::recognizes(input));
+    files::archive_work::XzInput decoder(input, work);
+    std::array<char, 512> bytes{};
+    TEST_CHECK(decoder.read(bytes) == bytes.size());
+    cancel.cancel();
+    bool cancelled = false;
+    try {
+      decoder.finish();
+    } catch (const files::FileErrorException& error) {
+      cancelled = error.error().kind == files::FileErrorKind::Cancelled;
+    }
+    TEST_CHECK(cancelled);
+  }
   int compressedWithoutTools() {
     Fixture fixture;
     Pump pump;
     const auto source = fixture.root / "payload";
     write(source, "no helper program");
-    for (const auto& item : compressedTars) {
-      if (!files::archiveCompressionAvailable(item.compression)) {
-        continue;
-      }
+    for (const auto& item : files::archiveFormats()) {
       const auto archive = fixture.root / ("no-tools" + std::string(item.suffix));
-      const auto destination = fixture.root / ("no-tools" + std::to_string(item.filter));
+      const auto destination = fixture.root / ("no-tools" + std::to_string(static_cast<int>(item.format)));
       files::ArchiveService service;
       TEST_CHECK(service.compress({location(source)}, location(archive), item.format));
       wait(service, pump);
@@ -866,6 +1100,10 @@ int main(int argc, char** argv) {
     }
     Fixture fixture;
     Pump pump;
+    testXzTar(fixture, pump);
+    testXzFailures(fixture, pump);
+    testXzWorkerBoundaries(fixture);
+    testXzMemberFromLargeArchive(fixture, pump);
     testCompressedTarProviders(fixture, pump);
     testCompressedTarFailures(fixture, pump);
     testCompressedPaddingLimit(fixture, pump);
