@@ -46,21 +46,8 @@ jobs:
             gdk-pixbuf2 glycin libheif libwebp librsvg libpng \
             tomlplusplus acl libarchive xz \
             nlohmann-json stb \
-            python curl ffmpeg poppler 7zip \
+            python ffmpeg poppler 7zip \
             just clang
-          # Header-only build dependency, pinned independently of Arch's runtime engine.
-          curl --fail --location --retry 3 https://codeload.github.com/ip7z/7zip/tar.gz/refs/tags/26.04 -o /tmp/7zip-sdk.tar.gz
-          echo '48fdc6dfe879ee2db867bb07f19c4a9406bfea01d51f48785b6c7a137881e25c  /tmp/7zip-sdk.tar.gz' | sha256sum --check
-          mkdir -p /opt/7zip-sdk
-          tar -xzf /tmp/7zip-sdk.tar.gz --strip-components=1 -C /opt/7zip-sdk
-          cat > /usr/lib/pkgconfig/7zip-sdk.pc <<'EOF'
-          includedir=/opt/7zip-sdk
-          sevenzip_library=/usr/lib/7zip/7z.so
-          Name: 7zip-sdk
-          Description: System 7-Zip SDK headers and runtime location
-          Version: 26.04
-          Cflags: -I/opt/7zip-sdk
-          EOF
 
       - uses: actions/checkout@v6
 

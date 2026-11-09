@@ -438,12 +438,10 @@ ArchiveDialog::ArchiveDialog(
                m_format = index;
                value += formats[index].suffix;
                m_name->setValue(value);
-               if (m_password) {
-                 const bool enabled = formats[index].format == files::ArchiveFormat::Zip;
+               if (m_passwordSection) {
                  m_password->setValue("");
                  m_confirmation->setValue("");
-                 m_password->setEnabled(enabled);
-                 m_confirmation->setEnabled(enabled);
+                 showPassword(formats[index].format == files::ArchiveFormat::Zip);
                }
              }}
         )
@@ -466,15 +464,16 @@ ArchiveDialog::ArchiveDialog(
     );
   }
   if (compress && files::archiveEncryptionAvailable()) {
-    body->addChild(ui::label({.text = "Password (optional, ZIP only)"}));
-    body->addChild(ui::input({.out = &m_password, .passwordMode = true, .onSubmit = [this](const std::string&) {
-                                this->submit();
-                              }}));
-    body->addChild(ui::label({.text = "Confirm password"}));
-    body->addChild(ui::input({.out = &m_confirmation, .passwordMode = true, .onSubmit = [this](const std::string&) {
-                                this->submit();
-                              }}));
-    body->addChild(
+    auto section = ui::column({.out = &m_passwordSection, .align = FlexAlign::Stretch, .gap = Style::spaceSm});
+    section->addChild(ui::label({.text = "Password (optional)"}));
+    section->addChild(ui::input({.out = &m_password, .passwordMode = true, .onSubmit = [this](const std::string&) {
+                                   this->submit();
+                                 }}));
+    section->addChild(ui::label({.text = "Confirm password"}));
+    section->addChild(ui::input({.out = &m_confirmation, .passwordMode = true, .onSubmit = [this](const std::string&) {
+                                   this->submit();
+                                 }}));
+    section->addChild(
         ui::label(
             {.text = "ZIP AES-256 protects file contents. File names remain visible.",
              .fontSize = Style::fontSizeCaption,
@@ -482,6 +481,9 @@ ArchiveDialog::ArchiveDialog(
              .maxLines = 2}
         )
     );
+    body->addChild(std::move(section));
+    const auto formats = files::archiveFormats();
+    showPassword(m_format < formats.size() && formats[m_format].format == files::ArchiveFormat::Zip);
   }
   scroll->content()->addChild(std::move(body));
   addChild(std::move(scroll));
@@ -497,7 +499,7 @@ ArchiveDialog::ArchiveDialog(
   );
 }
 void ArchiveDialog::submit() {
-  if (m_password) {
+  if (m_passwordSection && m_passwordSection->visible()) {
     const auto& password = m_password->value();
     if (const auto problem = files::archivePasswordProblem(password)) {
       m_error->setText(*problem);
@@ -511,13 +513,18 @@ void ArchiveDialog::submit() {
   const auto error = m_submit(
       m_name ? m_name->value() : "", m_destination->value(),
       files::archiveFormats().empty() ? files::ArchiveFormat::Zip : files::archiveFormats()[m_format].format,
-      m_password ? m_password->value() : ""
+      m_passwordSection && m_passwordSection->visible() ? m_password->value() : ""
   );
   m_error->setText(error);
-  if (error.empty() && m_password) {
+  if (error.empty() && m_passwordSection) {
     m_password->setValue("");
     m_confirmation->setValue("");
   }
+  markLayoutDirty();
+}
+void ArchiveDialog::showPassword(bool visible) {
+  m_passwordSection->setVisible(visible);
+  m_passwordSection->setParticipatesInLayout(visible);
   markLayoutDirty();
 }
 InputArea* ArchiveDialog::focusArea() const { return (m_name ? m_name : m_destination)->inputArea(); }

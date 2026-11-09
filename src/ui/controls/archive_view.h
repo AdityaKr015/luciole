@@ -24,7 +24,9 @@ public:
 
 private:
   void submit();
+  void showPassword(bool visible);
   Input *m_name = nullptr, *m_destination = nullptr;
+  Flex* m_passwordSection = nullptr;
   Input *m_password = nullptr, *m_confirmation = nullptr;
   ScrollView* m_scroll = nullptr;
   Label* m_error = nullptr;

@@ -1,3 +1,0 @@
-#pragma once
-
-#mesondefine NOCTALIA_FILES_SEVENZIP_LIBRARY

@@ -59,6 +59,7 @@
               nixpkgs.lib.makeBinPath [
                 pkgs.ffmpeg
                 pkgs.poppler-utils
+                pkgs._7zz
               ]
             }:$PATH"
           '';

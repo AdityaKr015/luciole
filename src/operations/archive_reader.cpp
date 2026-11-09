@@ -1,7 +1,6 @@
 #include "fs/filename.h"
 #include "operations/archive_rar_input.h"
-#include "operations/archive_sevenzip_metadata.h"
-#include "operations/archive_sevenzip_provider.h"
+#include "operations/archive_sevenzip.h"
 #include "operations/archive_support.h"
 #include "operations/archive_xz_input.h"
 
@@ -34,7 +33,6 @@ namespace {
         archive_entry_new(), &archive_entry_free
     };
     bool nativeSevenZip() const { return sevenzip.has_value(); }
-    std::uint32_t memberIndex() const { return sevenzip->at(memberPosition - 1).index; }
     Reader(const Location& source, Work& request, const Passwords* passwords = nullptr, bool raw = false)
         : work(request), keys(passwords), input(source, request), filename(native(source)),
           original(input.fingerprint()) {
@@ -446,6 +444,71 @@ namespace {
       systemError("Could not finish extracted data");
     }
   }
+  // One 7-Zip run unpacks every selected body; each produced file is then checked against
+  // the validated catalog and moved, never followed through links, into the private data folder.
+  void unpackSevenZip(
+      Reader& reader, const std::vector<ArchiveEntry>& catalog, const std::set<std::string>& bodies,
+      const std::map<std::string, std::size_t>& index, const std::string& stage, int data, const Passwords& passwords,
+      std::uint64_t& total
+  ) {
+    auto& work = reader.work;
+    if (bodies.empty()) {
+      return;
+    }
+    std::vector<std::string> names;
+    std::size_t nameBytes = 0;
+    std::uint64_t largest = 0;
+    bool encrypted = false;
+    for (const auto& path : bodies) {
+      const auto& entry = catalog[index.at(path)];
+      if (!entry.size || *entry.size > work.limits.maxExpandedBytes - total) {
+        throwFileError(FileErrorKind::Unsupported, "7z member size is unknown or exceeds the output limit.");
+      }
+      total += *entry.size;
+      largest = std::max(largest, *entry.size);
+      encrypted = encrypted || entry.encrypted;
+      nameBytes += path.size() + 1;
+      names.push_back(path);
+    }
+    // Huge selections would exceed argv limits; the whole archive is already within the catalog budget.
+    if (nameBytes > 128U * 1024U) {
+      names.clear();
+      for (const auto& entry : catalog) {
+        largest = std::max(largest, entry.size.value_or(0));
+        encrypted = encrypted || entry.encrypted;
+      }
+    }
+    const auto directory = (fs::path(stage) / ".7z").native();
+    extractSevenZip(reader.input, work, passwords, names, encrypted, largest, directory);
+    const auto missing = [] {
+      throwFileError(FileErrorKind::InvalidArgument, "The 7-Zip command did not produce an expected member.");
+    };
+    const auto root = opened(::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+    for (const auto& path : bodies) {
+      work.check();
+      const auto& entry = catalog[index.at(path)];
+      auto parent = opened(::fcntl(root.get(), F_DUPFD_CLOEXEC, 0));
+      for (const auto& name : parts(entry.parent)) {
+        Fd next(::openat(parent.get(), name.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+        if (next.get() < 0) {
+          missing();
+        }
+        parent = std::move(next);
+      }
+      struct stat info{};
+      if (::fstatat(parent.get(), entry.name.c_str(), &info, AT_SYMLINK_NOFOLLOW) != 0
+          || !S_ISREG(info.st_mode)
+          || static_cast<std::uint64_t>(info.st_size) != *entry.size) {
+        missing();
+      }
+      if (::renameat(parent.get(), entry.name.c_str(), data, std::to_string(index.at(path)).c_str()) != 0) {
+        systemError("Could not stage extracted 7z data");
+      }
+    }
+    std::error_code ignored;
+    fs::remove_all(directory, ignored);
+    work.progress.bytes.store(total);
+  }
 } // namespace
 
 files::archive_work::Prepared files::archive_work::inspect(
@@ -545,32 +608,42 @@ files::archive_work::Prepared files::archive_work::extract(
       bodies.insert(body(path));
     }
   }
-  struct archive_entry* header = nullptr;
   std::uint64_t total = 0;
   std::map<std::string, std::uint64_t> bodySizes;
-  while (reader.next(header)) {
-    const auto path = safePath(bounded(archive_entry_pathname(header)), work);
-    if (bodies.contains(path)) {
+  const auto publish = [&](const std::string& path, int output) {
+    const auto& entry = contents->entries[entries.at(path)];
+    const auto mode = open ? 0600U : 0600U | (entry.mode & 0155U);
+    if (::fchmod(output, static_cast<mode_t>(mode)) != 0) {
+      systemError("Could not set extracted permissions");
+    }
+  };
+  if (reader.nativeSevenZip()) {
+    unpackSevenZip(reader, contents->entries, bodies, entries, stage.path, data.get(), passwords, total);
+    for (const auto& path : bodies) {
       const auto& entry = contents->entries[entries.at(path)];
-      const auto output = opened(
-          ::openat(
-              data.get(), std::to_string(entries.at(path)).c_str(),
-              O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600
-          )
-      );
-      if (reader.nativeSevenZip()) {
-        extractEncryptedSevenZip(reader.input, output.get(), entry, work, passwords, total, reader.memberIndex());
-        reader.skip();
-      } else {
+      const auto output =
+          opened(::openat(data.get(), std::to_string(entries.at(path)).c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC));
+      bodySizes.emplace(path, *entry.size);
+      publish(path, output.get());
+    }
+  } else {
+    struct archive_entry* header = nullptr;
+    while (reader.next(header)) {
+      const auto path = safePath(bounded(archive_entry_pathname(header)), work);
+      if (bodies.contains(path)) {
+        const auto& entry = contents->entries[entries.at(path)];
+        const auto output = opened(
+            ::openat(
+                data.get(), std::to_string(entries.at(path)).c_str(),
+                O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600
+            )
+        );
         extractData(reader, output.get(), total, entry.size);
+        bodySizes.emplace(path, static_cast<std::uint64_t>(statFd(output.get()).st_size));
+        publish(path, output.get());
+      } else {
+        reader.skip();
       }
-      bodySizes.emplace(path, static_cast<std::uint64_t>(statFd(output.get()).st_size));
-      const auto mode = open ? 0600U : 0600U | (entry.mode & 0155U);
-      if (::fchmod(output.get(), static_cast<mode_t>(mode)) != 0) {
-        systemError("Could not set extracted permissions");
-      }
-    } else {
-      reader.skip();
     }
   }
   reader.unchanged();

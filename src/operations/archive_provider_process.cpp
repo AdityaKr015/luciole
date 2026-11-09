@@ -21,7 +21,7 @@ namespace {
   using namespace files::archive_work;
   struct Limits {
     pid_t parent;
-    rlim_t bytes, seconds;
+    rlim_t fileBytes, seconds;
   };
   void childSetup(gpointer data) {
     const auto& limits = *static_cast<const Limits*>(data);
@@ -29,8 +29,8 @@ namespace {
       ::_exit(1);
     }
     const rlimit cpu{limits.seconds, limits.seconds}, memory{768U * 1024U * 1024U, 768U * 1024U * 1024U},
-        file{limits.bytes, limits.bytes}, core{0, 0};
-    // The decoder worker is uninstrumented even when its Files parent uses ASan.
+        file{limits.fileBytes, limits.fileBytes}, core{0, 0};
+    // The 7-Zip CLI is outside ASan; bound its address space and written files.
     if (::setrlimit(RLIMIT_CPU, &cpu) < 0
         || ::setrlimit(RLIMIT_AS, &memory) < 0
         || ::setrlimit(RLIMIT_FSIZE, &file) < 0
@@ -64,7 +64,7 @@ namespace {
       bytes.remove_prefix(static_cast<std::size_t>(count));
     }
   }
-  void copyOutput(Child& child, int output, std::uint64_t expected, Work& work) {
+  void copyOutput(Child& child, int output, std::uint64_t maximum, Work& work) {
     std::array<char, 64U * 1024U> buffer{};
     std::uint64_t total = 0;
     auto* stream = g_subprocess_get_stdout_pipe(child.process.get());
@@ -74,14 +74,14 @@ namespace {
           g_input_stream_read(stream, buffer.data(), buffer.size(), gioCancellable(work.cancel), nullptr);
       if (count < 0) {
         work.check();
-        throwFileError(FileErrorKind::Other, "Could not read decrypted 7z data.");
+        throwFileError(FileErrorKind::Other, "Could not read the archive provider output.");
       }
       if (count == 0) {
         return;
       }
       const auto bytes = static_cast<std::size_t>(count);
-      if (bytes > expected - total) {
-        throwFileError(FileErrorKind::Unsupported, "Decrypted 7z data exceeds its expected size.");
+      if (bytes > maximum - total) {
+        throwFileError(FileErrorKind::Unsupported, "The archive provider output exceeds its limit.");
       }
       total += bytes;
       std::size_t offset = 0;
@@ -92,13 +92,13 @@ namespace {
           continue;
         }
         if (written <= 0) {
-          systemError("Could not write decrypted 7z data");
+          systemError("Could not write archive provider output");
         }
         offset += static_cast<std::size_t>(written);
       }
     }
   }
-  void collect(Child& child, int output, std::uint64_t expected, Work& work) {
+  void collect(Child& child, int output, std::uint64_t maximum, Work& work) {
     struct State {
       std::mutex mutex;
       std::condition_variable condition;
@@ -133,7 +133,7 @@ namespace {
     });
     std::exception_ptr failure;
     try {
-      copyOutput(child, output, expected, work);
+      copyOutput(child, output, maximum, work);
       child.reaped = g_subprocess_wait(child.process.get(), nullptr, nullptr);
     } catch (...) {
       failure = std::current_exception();
@@ -151,14 +151,14 @@ namespace {
     }
     work.check();
     if (!child.reaped) {
-      throwFileError(FileErrorKind::Other, "Could not wait for the encrypted 7z provider.");
+      throwFileError(FileErrorKind::Other, "Could not wait for the archive provider.");
     }
   }
 } // namespace
 
 int files::archive_work::runArchiveProvider(
-    Input& input, int output, std::uint64_t maximum, Work& work, std::string_view password,
-    std::span<const char* const> argv
+    Input& input, Work& work, std::string_view password, std::span<const char* const> argv, int output,
+    std::uint64_t outputLimit, std::uint64_t fileLimit
 ) {
   work.check();
   if (::ftruncate(output, 0) != 0 || ::lseek(output, 0, SEEK_SET) < 0) {
@@ -185,23 +185,23 @@ int files::archive_work::runArchiveProvider(
   g_subprocess_launcher_take_fd(launcher.get(), descriptor, 3);
   const auto remaining = std::chrono::duration_cast<std::chrono::seconds>(work.deadline - Clock::now()).count();
   Limits limits{
-      ::getpid(), static_cast<rlim_t>(maximum), static_cast<rlim_t>(std::max<std::int64_t>(1, remaining + 1))
+      ::getpid(), static_cast<rlim_t>(fileLimit), static_cast<rlim_t>(std::max<std::int64_t>(1, remaining + 1))
   };
   g_subprocess_launcher_set_child_setup(launcher.get(), childSetup, &limits, nullptr);
   Child child{GioPtr<GSubprocess>(g_subprocess_launcher_spawnv(launcher.get(), argv.data(), nullptr))};
   if (!child.process) {
-    throwFileError(FileErrorKind::Unavailable, "Could not start the encrypted archive provider.");
+    throwFileError(FileErrorKind::Unavailable, "Could not start the archive provider.");
   }
   sendSecret(sender.get(), password, work);
   sendSecret(sender.get(), "\n", work);
   (void)::shutdown(sender.get(), SHUT_WR);
-  collect(child, output, maximum, work);
+  collect(child, output, outputLimit, work);
   input.unchanged();
   if (g_subprocess_get_if_signaled(child.process.get())) {
     if (g_subprocess_get_term_sig(child.process.get()) == SIGXFSZ) {
-      throwFileError(FileErrorKind::Unsupported, "Decrypted 7z data exceeds its expected size.");
+      throwFileError(FileErrorKind::Unsupported, "Archive data exceeds its expected size.");
     }
-    throwFileError(FileErrorKind::Other, "The encrypted 7z provider terminated before completing the member.");
+    throwFileError(FileErrorKind::Other, "The archive provider terminated before completing.");
   }
   const auto status = g_subprocess_get_exit_status(child.process.get());
   return status;

@@ -4,8 +4,7 @@
 #include "fs/gio_ptr.h"
 #include "operations/archive_input.h"
 #include "operations/archive_service.h"
-#include "operations/archive_sevenzip_metadata.h"
-#include "operations/archive_sevenzip_provider.h"
+#include "operations/archive_sevenzip.h"
 #include "operations/archive_work.h"
 #include "operations/archive_xz_input.h"
 #include "test_check.h"
@@ -1090,19 +1089,32 @@ namespace {
       wait(service, pump);
       TEST_CHECK(!service.error() && !service.passwordRequest() && fs::file_size(emptyOutput / "empty") == 0);
     }
-    TEST_CHECK(service.extract(location(source), location(output)));
-    const auto request = passwordRequest(service, pump);
+    // 7-Zip lists control characters as "_", so such a name cannot be addressed; it fails closed.
+    const auto unlisted = fixture.root / (encryptedHeader ? "literal-header-unlisted" : "literal-unlisted");
+    TEST_CHECK(
+        service.catalog()->entries.end()
+        != std::ranges::find(service.catalog()->entries, "line_break", &files::ArchiveEntry::path)
+    );
+    TEST_CHECK(service.extract(location(source), location(unlisted), {"line_break"}));
+    auto request = passwordRequest(service, pump);
+    TEST_CHECK(service.providePassword(request.id, " café secret "));
+    wait(service, pump);
+    TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::InvalidArgument);
+    TEST_CHECK(!fs::exists(unlisted));
+    TEST_CHECK(service.extract(
+        location(source), location(output), {"same.txt", "nested", "@list", "wild*card", "-poption", "café", "empty"}
+    ));
+    request = passwordRequest(service, pump);
     TEST_CHECK(service.providePassword(request.id, " café secret "));
     wait(service, pump);
     if (service.error()) {
       throw std::runtime_error(service.error()->message);
     }
-    for (const auto& [name, contents] : std::array<std::pair<const char*, const char*>, 8>{
+    for (const auto& [name, contents] : std::array<std::pair<const char*, const char*>, 7>{
              {{"same.txt", "root payload"},
               {"nested/same.txt", "nested payload"},
               {"@list", "literal at"},
               {"wild*card", "literal wildcard"},
-              {"line\nbreak", "literal newline"},
               {"-poption", "literal dash"},
               {"café", "literal unicode"},
               {"empty", ""}}
@@ -1290,7 +1302,7 @@ namespace {
     passwords.values.emplace_back("fixture-pass");
     const auto stamp = input.fingerprint();
     const auto catalog = files::archive_work::sevenZipCatalog(input, work, passwords);
-    TEST_CHECK(catalog.size() == 3 && catalog[1].index == 1 && catalog[1].path == "folder/first.txt");
+    TEST_CHECK(catalog.size() == 3 && catalog[1].path == "folder/first.txt" && catalog[1].encrypted);
     TEST_CHECK(input.seek(0, SEEK_END) == static_cast<std::int64_t>(original.size()));
     const auto fd = input.duplicateSingle();
     std::array<char, 32> signature{};
@@ -1314,23 +1326,11 @@ namespace {
     Pump pump;
     const auto source = fixture.root / "header.7z";
     write(source, fixtureBytes(encryptedHeaderFixture()));
-    TEST_CHECK(::setenv("NOCTALIA_FILES_ARCHIVE_WORKER", "/nonexistent/noctalia-files-archive-worker", 1) == 0);
-    for (unsigned mode = 0; mode < 2; ++mode) {
-      if (mode == 1) {
-        const auto tools = fixture.root / "tools";
-        fs::create_directory(tools);
-        write(tools / "noctalia-files-archive-worker", "#!/bin/sh\nexit 69\n");
-        fs::permissions(tools / "noctalia-files-archive-worker", fs::perms::owner_all);
-        TEST_CHECK(
-            ::setenv("NOCTALIA_FILES_ARCHIVE_WORKER", (tools / "noctalia-files-archive-worker").c_str(), 1) == 0
-        );
-      }
-      files::ArchiveService service;
-      TEST_CHECK(service.inspect(location(source)));
-      wait(service, pump);
-      TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Unavailable);
-      TEST_CHECK(!service.passwordRequest() && !service.catalog() && fs::is_empty(fixture.root / "tmp"));
-    }
+    files::ArchiveService service;
+    TEST_CHECK(service.inspect(location(source)));
+    wait(service, pump);
+    TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Unavailable);
+    TEST_CHECK(!service.passwordRequest() && !service.catalog() && fs::is_empty(fixture.root / "tmp"));
     return 0;
   }
   int sevenZipProviderFailures() {
@@ -1338,8 +1338,8 @@ namespace {
     const auto tools = fixture.root / "tools", source = fixture.root / "source.7z", marker = fixture.root / "marker";
     fs::create_directory(tools);
     write(source, fixtureBytes(sevenzip_fixtures::literal));
-    // This fake provider has no subprocesses of its own. Secrets are public test data.
-    write(tools / "noctalia-files-archive-worker", R"sh(#!/bin/sh
+    // This fake 7-Zip has no subprocesses of its own. Secrets are public test data.
+    write(tools / "7z", R"sh(#!/bin/sh
 for argument do
   case "$argument" in *fixture-pass*) exit 7;; esac
 done
@@ -1350,27 +1350,24 @@ esac
 IFS= read -r secret
 [ "$secret" = fixture-pass ] || exit 7
 case "$NF_SEVENZIP_TEST_MODE" in
-  short) printf x;;
-  json-version) printf '{"version":2,"entries":[]}';;
-  json-index) printf '{"version":1,"entries":[{"index":-1}]}';;
-  json-fields) printf '{"version":1,"entries":[{"index":0,"size":0,"mode":420,"path":"x"}]}';;
-  oversize) printf 'this is more than twelve bytes';;
-  corrupt) exit 2;;
+  corrupt) echo 'ERROR: Data Error in encrypted file. Wrong password? : same.txt'; exit 2;;
+  fatal) echo 'ERROR: Unsupported Method : same.txt'; exit 2;;
   memory) exit 8;;
+  noise) i=0; while [ $i -lt 40000 ]; do echo 0123456789012345678901234567890123456789012345678; i=$((i+1)); done;;
+  listing-garbage) printf 'Path = x\nnonsense\n';;
+  listing-size) printf 'Path = x\nSize = -1\nAttributes = A -rw-r--r--\n';;
+  listing-duplicate) printf 'Path = x\nPath = y\nSize = 1\n';;
+  listing-mode) printf 'Path = x\nSize = 1\nAttributes = D -rw-r--r--\n';;
+  listing-link) printf 'Path = x\nSize = 1\nAttributes = A lrwxrwxrwx\n';;
   hang) printf '%s' "$$" > "$NF_SEVENZIP_TEST_MARKER"; while :; do :; done;;
   *) exit 7;;
 esac
 )sh");
-    fs::permissions(tools / "noctalia-files-archive-worker", fs::perms::owner_all);
-    TEST_CHECK(::setenv("NOCTALIA_FILES_ARCHIVE_WORKER", (tools / "noctalia-files-archive-worker").c_str(), 1) == 0);
+    fs::permissions(tools / "7z", fs::perms::owner_all);
+    TEST_CHECK(::setenv("NOCTALIA_FILES_7Z", (tools / "7z").c_str(), 1) == 0);
     TEST_CHECK(::setenv("NF_SEVENZIP_TEST_MARKER", marker.c_str(), 1) == 0);
-    const files::ArchiveEntry entry{
-        .path = "same.txt", .parent = {}, .name = "same.txt", .displayName = {}, .size = 12, .link = {}
-    };
-    for (const std::string mode : {"short", "oversize", "corrupt", "memory", "early", "hang", "cancel", "changed"}) {
+    for (const std::string mode : {"corrupt", "fatal", "memory", "noise", "early", "hang", "cancel", "changed"}) {
       const auto output = fixture.root / (mode + "-output");
-      const files::Fd destination(::open(output.c_str(), O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600));
-      TEST_CHECK(destination.get() >= 0);
       const bool waiting = mode == "hang" || mode == "cancel" || mode == "changed";
       TEST_CHECK(::setenv("NF_SEVENZIP_TEST_MODE", waiting ? "hang" : mode.c_str(), 1) == 0);
       fs::remove(marker);
@@ -1403,37 +1400,39 @@ esac
           }
         });
       }
-      std::uint64_t total = 0;
       bool failed = false;
       try {
-        files::archive_work::extractEncryptedSevenZip(input, destination.get(), entry, work, passwords, total);
+        files::archive_work::extractSevenZip(input, work, passwords, {"same.txt"}, true, 12, output.native());
       } catch (const std::exception&) {
         failed = true;
       }
       if (interrupt.joinable()) {
         interrupt.join();
       }
-      TEST_CHECK(failed && total == 0 && fs::is_empty(fixture.root / "tmp"));
+      TEST_CHECK(failed && fs::is_empty(fixture.root / "tmp"));
       TEST_CHECK(progress.passwordNeeded.load() == (mode == "corrupt"));
       if (waiting && fs::exists(marker) && !read(marker).empty()) {
         errno = 0;
         TEST_CHECK(::kill(std::stoi(read(marker)), 0) == -1 && errno == ESRCH);
       }
     }
-    for (const auto* mode : {"short", "json-version", "json-index", "json-fields"}) {
+    for (const auto* mode :
+         {"fatal", "listing-garbage", "listing-size", "listing-duplicate", "listing-mode", "listing-link"}) {
       TEST_CHECK(::setenv("NF_SEVENZIP_TEST_MODE", mode, 1) == 0);
       files::archive_work::Progress progress;
       files::archive_work::Work work{{}, {}, progress, files::archive_work::Clock::now() + 2s, {}};
       files::archive_work::Input input(location(source), work);
       files::archive_work::Passwords passwords;
       passwords.values.emplace_back("fixture-pass");
-      bool rejected = false;
+      std::optional<files::FileErrorKind> rejected;
       try {
         (void)files::archive_work::sevenZipCatalog(input, work, passwords);
       } catch (const files::FileErrorException& error) {
-        rejected = error.error().kind == files::FileErrorKind::InvalidArgument;
+        rejected = error.error().kind;
       }
-      TEST_CHECK(rejected && !progress.passwordNeeded.load() && fs::is_empty(fixture.root / "tmp"));
+      const auto expected = std::string_view(mode) == "listing-link" ? files::FileErrorKind::Unsupported
+                                                                     : files::FileErrorKind::InvalidArgument;
+      TEST_CHECK(rejected == expected && !progress.passwordNeeded.load() && fs::is_empty(fixture.root / "tmp"));
     }
     return 0;
   }
@@ -1841,8 +1840,7 @@ esac
     files::ArchiveService service;
     TEST_CHECK(service.inspect(location(source)));
     wait(service, pump);
-    TEST_CHECK(!service.error() && service.catalog()->encrypted);
-    TEST_CHECK(::setenv("NOCTALIA_FILES_ARCHIVE_WORKER", "/nonexistent/noctalia-files-archive-worker", 1) == 0);
+    TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Unavailable && !service.catalog());
     TEST_CHECK(service.extract(location(source), location(destination)));
     wait(service, pump);
     TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Unavailable);
