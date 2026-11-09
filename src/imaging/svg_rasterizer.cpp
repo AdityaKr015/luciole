@@ -38,8 +38,19 @@ files::rasterizeSvg(const std::string& path, int targetSize, bool centerSquareCr
   if (!bytes) {
     return std::unexpected(bytes.error());
   }
+  return rasterizeSvg(
+      *bytes, targetSize, centerSquareCrop, static_cast<std::uint64_t>(kMaxSvgSourceSide * kMaxSvgSourceSide)
+  );
+}
+
+std::expected<LoadedImageFile, std::string> files::rasterizeSvg(
+    std::span<const std::uint8_t> bytes, int targetSize, bool centerSquareCrop, std::uint64_t maxSourcePixels
+) {
+  if (bytes.empty() || bytes.size() > kMaxEncodedImageBytes || !maxSourcePixels) {
+    return std::unexpected("invalid SVG decode input");
+  }
   GError* error = nullptr;
-  const GioPtr<RsvgHandle> svg(rsvg_handle_new_from_data(bytes->data(), bytes->size(), &error));
+  const GioPtr<RsvgHandle> svg(rsvg_handle_new_from_data(bytes.data(), bytes.size(), &error));
   if (!svg) {
     const std::string message = error != nullptr ? error->message : "invalid SVG";
     g_clear_error(&error);
@@ -62,6 +73,9 @@ files::rasterizeSvg(const std::string& path, int targetSize, bool centerSquareCr
       || sourceWidth > kMaxSvgSourceSide
       || sourceHeight > kMaxSvgSourceSide) {
     return std::unexpected("invalid image dimensions");
+  }
+  if (sourceWidth * sourceHeight > static_cast<double>(maxSourcePixels)) {
+    return std::unexpected("image exceeds source pixel limit");
   }
   const double cropWidth = centerSquareCrop ? std::min(sourceWidth, sourceHeight) : sourceWidth;
   const double cropHeight = centerSquareCrop ? cropWidth : sourceHeight;

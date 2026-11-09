@@ -4,6 +4,7 @@
 #include "imaging/pixbuf_image_decoder.h"
 #include "imaging/png_decoder.h"
 #include "imaging/raster_decoder.h"
+#include "imaging/svg_rasterizer.h"
 #include "render/core/image_orientation.h"
 #include "render/core/image_resize.h"
 #include "test_check.h"
@@ -710,6 +711,80 @@ namespace {
     const auto elapsed = std::chrono::steady_clock::now() - timeoutStarted;
     TEST_CHECK(!still && elapsed >= 7s && elapsed < 12s);
   }
+  void testSvgThumbnails(const Fixture& fixture) {
+    const auto path = fixture.root / "vector café\n.svg";
+    const auto linked = fixture.root / "linked.png";
+    write(linked, png(picture()));
+    const std::string svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 200'>"
+                            "<rect width='200' height='200' fill='red' fill-opacity='.5'/>"
+                            "<image x='200' width='200' height='200' href='"
+        + files::Location::fromPath(linked.native()).uri()
+        + "'/><image x='200' width='200' height='200' href='linked.png'/></svg>";
+    std::ofstream(path, std::ios::binary) << svg;
+    const auto bytes = std::span(reinterpret_cast<const std::uint8_t*>(svg.data()), svg.size());
+    TEST_CHECK(!files::rasterizeSvg(bytes, 128, false, 79999));
+    auto decoded = files::rasterizeSvg(bytes, 128, false, 80000);
+    TEST_CHECK(decoded && decoded->width == 128 && decoded->height == 64);
+    TEST_CHECK(decoded->sourceWidth == 400 && decoded->sourceHeight == 200);
+    TEST_CHECK(decoded->rgba[0] == 255 && decoded->rgba[3] == 128);
+    TEST_CHECK(decoded->rgba[(32 * 128 + 96) * 4 + 3] == 0);
+
+    const GioPtr<GZlibCompressor> compressor(g_zlib_compressor_new(G_ZLIB_COMPRESSOR_FORMAT_GZIP, 6));
+    const GioPtr<GOutputStream> buffer(g_memory_output_stream_new_resizable());
+    const GioPtr<GOutputStream> compressed(g_converter_output_stream_new(buffer.get(), G_CONVERTER(compressor.get())));
+    TEST_CHECK(g_output_stream_write_all(compressed.get(), svg.data(), svg.size(), nullptr, nullptr, nullptr));
+    TEST_CHECK(g_output_stream_close(compressed.get(), nullptr, nullptr));
+    const auto zipped = fixture.root / "vector.svgz";
+    write(
+        zipped,
+        {static_cast<const std::uint8_t*>(g_memory_output_stream_get_data(G_MEMORY_OUTPUT_STREAM(buffer.get()))),
+         g_memory_output_stream_get_data_size(G_MEMORY_OUTPUT_STREAM(buffer.get()))}
+    );
+    const GioPtr<GCancellable> cancel(g_cancellable_new());
+    const auto render = [&](const fs::path& file, const std::string& mime, int side,
+                            files::ThumbnailOptions options = {}) {
+      const int fd = ::open(file.c_str(), O_RDONLY | O_CLOEXEC);
+      TEST_CHECK(fd >= 0);
+      auto result = files::renderThumbnailProvider(fd, mime, side, options, cancel.get());
+      ::close(fd);
+      return result;
+    };
+    auto image = render(path, "image/svg+xml", 2048);
+    TEST_CHECK(image && image->width == 2048 && image->height == 1024);
+    TEST_CHECK(image->rgba[0] == 255 && image->rgba[3] == 128);
+    image = render(zipped, "image/svg+xml-compressed", 128);
+    TEST_CHECK(image && image->rgba == decoded->rgba);
+    const auto broken = fixture.root / "broken.svg";
+    std::ofstream(broken) << "<svg not valid";
+    TEST_CHECK(!render(broken, "image/svg+xml", 128));
+    const auto oversized = fixture.root / "oversized.svg";
+    std::ofstream(oversized) << "<svg xmlns='http://www.w3.org/2000/svg' width='2000' height='1000'/>";
+    auto limited = files::ThumbnailOptions{};
+    limited.maxMegapixels = 1;
+    TEST_CHECK(!render(oversized, "image/svg+xml", 128, limited));
+    g_cancellable_cancel(cancel.get());
+    TEST_CHECK(!render(path, "image/svg+xml", 128));
+    g_cancellable_reset(cancel.get());
+
+    Pump pump;
+    files::ThumbnailService service;
+    const auto entry = source(zipped, pump);
+    TEST_CHECK(entry.contentType == "image/svg+xml-compressed");
+    const auto thumbnail = service.request(entry, 128);
+    pump.until([&] { return thumbnail && thumbnail->ready; });
+    TEST_CHECK(thumbnail->pixels && thumbnail->pixels->rgba == decoded->rgba);
+    files::ThumbnailStore store;
+    pump.until([&] {
+      const auto cached = store.read(entry.location.uri(), 128, *entry.modifiedSeconds, entry.size);
+      return cached && cached->image.rgba == decoded->rgba;
+    });
+    const auto fallback = service.request(source(broken, pump), 128);
+    pump.until([&] { return fallback && fallback->ready; });
+    TEST_CHECK(!fallback->pixels);
+    auto unsupported = entry;
+    unsupported.contentType = "application/octet-stream";
+    TEST_CHECK(!service.request(unsupported, 128));
+  }
   void testCacheLanesAndCancellation(const Fixture& fixture) {
     Pump pump;
     const auto firstPath = fixture.root / "slow-one.pdf";
@@ -929,6 +1004,7 @@ int main(int argc, char** argv) {
     testCacheLimits();
     testBatchAndLargerCache();
     testProviders(fixture);
+    testSvgThumbnails(fixture);
     testCacheLanesAndCancellation(fixture);
     testPublicationAndSourceChanges(fixture);
     testService(fixture);

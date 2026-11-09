@@ -2,6 +2,7 @@
 
 #include "fs/gio_ptr.h"
 #include "imaging/raster_decoder.h"
+#include "imaging/svg_rasterizer.h"
 #include "model/thumbnail_options.h"
 
 #include <algorithm>
@@ -71,7 +72,9 @@ int files::runThumbnailWorker(std::span<const std::string_view> arguments) {
       offset += static_cast<std::size_t>(count);
     }
     const GioPtr<GCancellable> cancel(g_cancellable_new());
-    auto image = decodeRasterImage(bytes, static_cast<int>(*side), *pixels, cancel.get(), arguments[3]);
+    auto image = arguments[3] == "image/svg+xml" || arguments[3] == "image/svg+xml-compressed"
+        ? rasterizeSvg(bytes, static_cast<int>(*side), false, *pixels)
+        : decodeRasterImage(bytes, static_cast<int>(*side), *pixels, cancel.get(), arguments[3]);
     if (!image) {
       // Keep backend diagnostics bounded and on one line; never send the source filename.
       auto message = image.error().substr(0, 768);

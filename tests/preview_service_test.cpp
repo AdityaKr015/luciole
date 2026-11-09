@@ -53,6 +53,29 @@ namespace {
   void write(const std::filesystem::path& path, const std::string& text) {
     std::ofstream(path, std::ios::binary) << text;
   }
+  void svgChecks(const std::filesystem::path& root) {
+    const auto path = root / "preview.svg";
+    write(
+        path,
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 200'>"
+        "<rect width='400' height='200' fill='#ff2244'/></svg>"
+    );
+    const auto source = entry(path, "image/svg+xml");
+    files::ThumbnailService grid;
+    const auto seed = grid.request(source, 128);
+    wait([&] { return seed && seed->ready; });
+    TEST_CHECK(seed->pixels && seed->pixels->width == 128);
+    files::PreviewService preview;
+    preview.show(source, 2048, {}, seed);
+    TEST_CHECK(preview.snapshot().status == files::PreviewStatus::Ready && preview.snapshot().image == seed);
+    wait([&] { return !preview.busy(); });
+    TEST_CHECK(preview.snapshot().image && preview.snapshot().image->pixels);
+    const auto& image = *preview.snapshot().image->pixels;
+    TEST_CHECK(image.width == 2048 && image.height == 1024);
+    TEST_CHECK(image.rgba[0] == 255 && image.rgba[1] == 34 && image.rgba[2] == 68 && image.rgba[3] == 255);
+    preview.clear();
+    TEST_CHECK(preview.snapshot().status == files::PreviewStatus::Empty);
+  }
   void checks(const std::filesystem::path& root) {
     const auto portraitLayout = files::previewImageLayout(1000, 3000, 320, 1300, 1);
     TEST_CHECK(portraitLayout.pixels >= 846);
@@ -234,6 +257,7 @@ int main(int argc, char** argv) {
   int status = 0;
   try {
     checks(root);
+    svgChecks(root);
     std::println("preview checks passed");
   } catch (const std::exception& error) {
     std::println(stderr, "preview: {}", error.what());
