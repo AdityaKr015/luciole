@@ -1,11 +1,14 @@
 #pragma once
 
+#include "app/workspace_command.h"
 #include "browser/action_registry.h"
 #include "fs/location.h"
+#include "model/directory_options.h"
 #include "render/scene/node.h"
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -13,6 +16,7 @@ namespace files {
   class BrowserController;
   class WaylandTextClipboard;
   class WindowSurface;
+  struct BrowserSettings;
   struct DirectoryEntry;
 } // namespace files
 
@@ -73,10 +77,52 @@ public:
   // Hosts full-page overlays.
   virtual Node& sceneRoot() = 0;
 
+  // The page's saved browser settings, which Settings edits.
+  virtual const files::BrowserSettings& settings() const = 0;
+  // Applies changed settings to the page; `force` reapplies fields that did not change.
+  virtual void applySettings(const files::BrowserSettings& settings, bool force) = 0;
+  // True while the page is the focused pane of its window.
+  virtual bool active() const = 0;
+  // True while Settings or the archive browser covers the page.
+  virtual bool overlay() const = 0;
+  // True while thumbnail work is paused for this page.
+  virtual bool thumbnailsPaused() const = 0;
+
+  // The current folder, and the selected items when `withTargets`.
+  virtual files::ActionRequest actionRequest(bool withTargets) const = 0;
+  // Runs `action` on the current selection, or on the folder for folder-scoped actions.
+  virtual void dispatchAction(files::BrowserAction action) = 0;
+  virtual void dispatchAction(files::BrowserAction action, const files::ActionRequest& request) = 0;
+  // True while the window shows another pane next to this one.
+  virtual bool hasOtherPane() const = 0;
+  // Sends `command` to the workspace, if it listens; `pending` becomes the request a pane transfer uses.
+  virtual void requestWorkspace(
+      WorkspaceCommand command, std::optional<files::Location> location, std::optional<files::ActionRequest> pending
+  ) = 0;
+  // Opens `target` from a breadcrumb and focuses the file list.
+  virtual void openBreadcrumb(const files::Location& target) = 0;
+  // Scene rectangle of the view options button.
+  virtual LayoutRect menuAnchor() const = 0;
+  // Releases the pointer capture of a column drag or resize in progress.
+  virtual void cancelColumnGesture() = 0;
+
+  // Details view columns.
+  virtual const files::DetailsColumnVisibility& columnVisibility() const = 0;
+  virtual const files::DetailsColumnOrder& columnOrder() const = 0;
+  virtual const files::DetailsColumnWidths& columnWidths() const = 0;
+  // The column order with `column` moved one place in `direction`; empty when it cannot move.
+  virtual std::optional<files::DetailsColumnOrder>
+  movedColumnOrder(files::DetailsColumn column, int direction) const = 0;
+  virtual void setDetailsColumnVisibility(files::DetailsColumnVisibility visibility) = 0;
+  virtual void setDetailsColumnOrder(files::DetailsColumnOrder order) = 0;
+  virtual void setDetailsColumnWidths(files::DetailsColumnWidths widths) = 0;
+
   // Replaces the active dialog with `root` on a new popup surface anchored at `anchor`.
   virtual void showPopup(
       std::unique_ptr<Flex> root, ContextMenuControl* menu, LayoutRect anchor, float width, float height, bool alignLeft
   ) = 0;
+  // Shows `root` centered on the window, at most `preferredWidth` wide, and focuses its first control.
+  virtual void showCenteredDialog(std::unique_ptr<Flex> root, float preferredWidth) = 0;
   // Re-measures and re-centers the popup on every frame, at most `width` wide; `height` is the current height.
   virtual void setDialogSize(float width, float height) = 0;
   // Closes the active dialog on the next main loop iteration.

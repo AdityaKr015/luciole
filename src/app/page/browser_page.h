@@ -1,12 +1,17 @@
 #pragma once
 
+#include "app/page/about_controller.h"
 #include "app/page/active_dialog.h"
+#include "app/page/application_chooser_controller.h"
 #include "app/page/archive_controller.h"
 #include "app/page/batch_rename_controller.h"
 #include "app/page/create_controller.h"
+#include "app/page/menu_controller.h"
 #include "app/page/page_context.h"
+#include "app/page/preview_controller.h"
 #include "app/page/properties_controller.h"
 #include "app/page/rename_controller.h"
+#include "app/page/settings_controller.h"
 #include "app/page/transfer_controller.h"
 #include "app/page/trash_controller.h"
 #include "app/workspace_command.h"
@@ -41,14 +46,11 @@
 #include "ui/browser/file_icon.h"
 #include "ui/browser/file_view.h"
 #include "ui/browser/places_sidebar.h"
-#include "ui/controls/browser_settings_view.h"
 #include "ui/controls/context_menu.h"
-#include "ui/controls/file_preview_view.h"
 #include "ui/controls/input.h"
 #include "ui/controls/miller_view.h"
 #include "ui/controls/name_editor.h"
 #include "ui/controls/scroll_view.h"
-#include "ui/controls/select_popup_context.h"
 #include "ui/controls/separator.h"
 #include "ui/controls/tooltip_presenter.h"
 #include "wayland/popup_surface.h"
@@ -64,7 +66,7 @@
 #include <string>
 #include <utility>
 
-class BrowserPage final : public TextInputClient, public SelectPopupContext, public PageContext {
+class BrowserPage final : public TextInputClient, public PageContext {
 public:
   using Action = files::BrowserAction;
 
@@ -127,7 +129,7 @@ public:
   void setForeignDrop(std::function<std::optional<std::pair<files::Location, LayoutRect>>(float, float)> callback);
   bool popupOwns(wl_surface* surface) const;
   bool popup() const;
-  bool overlay() const;
+  bool overlay() const override;
   bool previewVisible() const;
   int previewWidth() const;
   float previewAreaWidth() const;
@@ -183,12 +185,11 @@ private:
   };
 
   files::ActionContext actionContext() const;
-  files::ActionRequest actionRequest(bool withTargets = true) const;
+  files::ActionRequest actionRequest(bool withTargets) const override;
   files::ActionRequest requestFor(const std::vector<files::DirectoryEntry>& entries) const override;
   files::ActionState actionState(Action action, const files::ActionRequest& request) const override;
-  ContextMenuControlEntry actionEntry(Action action, const files::ActionRequest& request, bool radio = false) const;
-  void dispatchAction(Action action);
-  void dispatchAction(Action action, const files::ActionRequest& request);
+  void dispatchAction(Action action) override;
+  void dispatchAction(Action action, const files::ActionRequest& request) override;
   void openPatternSelection(const files::ActionRequest& request);
 
   void actionError(std::string message) override;
@@ -200,15 +201,24 @@ private:
   bool requestCurrent(const files::ActionRequest& request, files::ActionScope scope) const override;
   bool operationsBusy() const override;
   bool visible() const override;
+  bool active() const override;
+  bool thumbnailsPaused() const override;
   bool popupAvailable() override;
   void prepareOverlay() override;
   Node& sceneRoot() override;
+  const files::BrowserSettings& settings() const override;
+  bool hasOtherPane() const override;
+  void requestWorkspace(
+      WorkspaceCommand command, std::optional<files::Location> location, std::optional<files::ActionRequest> pending
+  ) override;
+  void openBreadcrumb(const files::Location& target) override;
+  LayoutRect menuAnchor() const override;
+  void cancelColumnGesture() override;
+  const files::DetailsColumnVisibility& columnVisibility() const override;
+  const files::DetailsColumnOrder& columnOrder() const override;
+  const files::DetailsColumnWidths& columnWidths() const override;
 
   void pinFolders(std::vector<files::Bookmark> bookmarks, std::size_t before);
-
-  void openFileMenu(std::optional<files::EntryId> id, float x, float y);
-
-  void openPlaceMenu(const files::Bookmark& bookmark, float x, float y);
 
   bool canEmptyTrash() const override;
 
@@ -216,24 +226,10 @@ private:
 
   void showContaining(const files::Location& location);
 
-  void applySettings(const files::BrowserSettings& settings, bool force);
+  void applySettings(const files::BrowserSettings& settings, bool force) override;
 
-  void showCenteredDialog(std::unique_ptr<Flex> root, float preferredWidth = 588.0F);
+  void showCenteredDialog(std::unique_ptr<Flex> root, float preferredWidth) override;
 
-  void deferCloseSettings();
-  void closeSettings();
-  void openSettings();
-  void openSelectDropdown(const DropdownRequest& request, DropdownCallbacks callbacks) override;
-  void closeSelectDropdown() override;
-  bool isSelectDropdownOpen() const override;
-
-  void openAbout();
-
-  void syncPreview();
-  void previewOpen(bool with);
-  std::unique_ptr<FilePreviewView> makePreviewView(bool quick);
-  void showQuickPreview();
-  void showApplications(const files::DirectoryEntry& entry);
   bool dragCurrent() const;
 
   bool validDropFolder(const files::Location& destination) const;
@@ -270,7 +266,6 @@ private:
   void beginLocationEdit();
   void endLocationEdit(bool focusFiles);
   void breadcrumbClick(const files::Location& target, const InputArea::PointerData* pointer = nullptr);
-  void openBreadcrumbMenu(const files::Location& target, LayoutRect anchor);
   void openBreadcrumbOverflow();
   void layoutBreadcrumbs(Renderer& renderer);
   void rebuildBreadcrumbs();
@@ -292,7 +287,7 @@ private:
 
   void captureViewAnchor();
 
-  void setDetailsColumnVisibility(files::DetailsColumnVisibility visibility);
+  void setDetailsColumnVisibility(files::DetailsColumnVisibility visibility) override;
 
   struct ColumnResize {
     std::size_t index;
@@ -309,7 +304,7 @@ private:
 
   void cancelColumnResize();
 
-  void setDetailsColumnWidths(files::DetailsColumnWidths widths);
+  void setDetailsColumnWidths(files::DetailsColumnWidths widths) override;
 
   void scrollDetails(float offset);
 
@@ -339,9 +334,9 @@ private:
 
   Button* columnHeader(files::DetailsColumn column) const;
 
-  std::optional<files::DetailsColumnOrder> movedColumnOrder(files::DetailsColumn column, int direction) const;
+  std::optional<files::DetailsColumnOrder> movedColumnOrder(files::DetailsColumn column, int direction) const override;
 
-  void setDetailsColumnOrder(files::DetailsColumnOrder order);
+  void setDetailsColumnOrder(files::DetailsColumnOrder order) override;
 
   void changeSort(files::SortOptions options);
 
@@ -371,7 +366,6 @@ private:
 
   void buildScene();
 
-  void revealMenuHighlight();
   void dismissMenu() override;
   void closeMenu() override;
   static LayoutRect sceneRect(const Node& node);
@@ -390,22 +384,7 @@ private:
   files::WindowSurface& surface() override;
   void focusFileList() override;
 
-  void showContextMenu(
-      std::vector<ContextMenuControlEntry> entries, std::function<void(int)> action, LayoutRect anchor,
-      bool alignLeft = false, float preferredWidth = 264.0F
-  );
-
-  void openColumnsMenu(const LayoutRect& anchor, std::optional<files::DetailsColumn> column = std::nullopt);
-
   void toggleHidden();
-
-  void showActionMenu(
-      std::initializer_list<std::optional<Action>> actions, bool radio = false, bool back = false,
-      std::optional<LayoutRect> anchor = std::nullopt, bool alignLeft = true
-  );
-  void openSortMenu(std::optional<LayoutRect> anchor = std::nullopt, bool alignLeft = true);
-  void openSelectionMenu();
-  void openMenu();
 
   WaylandConnection& m_connection;
   RenderContext& m_renderer;
@@ -430,11 +409,6 @@ private:
   files::FileIconCache& m_icons;
   files::ThumbnailService m_thumbnails;
   files::PreviewService m_preview;
-  FilePreviewView* m_previewView = nullptr;
-  FilePreviewView* m_quickPreview = nullptr;
-  Flex* m_appChoiceContainer = nullptr;
-  ScrollView* m_appChoiceScroll = nullptr;
-  std::optional<LayoutRect> m_previewBounds;
   bool m_thumbnailClearing = false;
   std::string m_thumbnailError;
   std::uint64_t m_thumbnailRevision = 0;
@@ -443,12 +417,6 @@ private:
   files::FileViewAdapter m_gridAdapter;
   files::ViewPreferenceWriter& m_preferences;
   files::BrowserSettings m_savedSettings;
-  std::optional<files::Settings> m_pendingSettings;
-  bool m_settingsDirty = false;
-  BrowserSettingsView* m_settingsView = nullptr;
-  std::shared_ptr<int> m_settingsLifetime;
-  ScrollView* m_aboutScroll = nullptr;
-  Label* m_aboutMessage = nullptr;
   std::optional<float> m_dialogHeight;
   float m_dialogWidth = 588.0F;
   std::optional<std::pair<int, int>> m_dialogPosition;
@@ -504,8 +472,27 @@ private:
   TransferController m_transferController{*this,          m_transfers,   m_archives,
                                           m_restore,      m_trash,       m_emptyTrash,
                                           m_batchRenamer, m_permissions, [this] { operationProgressTick(); }};
+  MenuController m_menuController{
+      *this,
+      m_pins,
+      m_transfers,
+      m_terminal,
+      m_siblingCompletion,
+      m_createController,
+      m_renameController,
+      m_propertiesController
+  };
+  SettingsController m_settingsController{
+      *this, m_preferences, m_thumbnails, m_dispatcher, m_archiveController, m_menuController, [this] {
+        if (m_clearThumbnails) {
+          m_clearThumbnails();
+        }
+      }
+  };
+  AboutController m_aboutController{*this, m_launcher};
+  ApplicationChooserController m_applicationChooser{*this, m_launcher, m_icons};
+  PreviewController m_previewController{*this, m_preview, m_thumbnails, m_icons, m_renderer, m_applicationChooser};
   Box* m_placeDropLine = nullptr;
-  std::string m_preferenceError;
   std::size_t m_gridZoom = 1;
   double m_zoomScroll = 0;
   files::ViewMode m_viewMode;
@@ -632,8 +619,6 @@ private:
   bool m_locationInvalid = false;
   std::unique_ptr<PopupSurface> m_menuSurface;
   ActiveDialog m_activeDialog;
-  ContextMenuControl* m_menu = nullptr;
-  ScrollView* m_menuScroll = nullptr;
   std::optional<files::Location> m_restorePlaceFocus;
   InputDispatcher m_menuDispatcher;
   std::shared_ptr<int> m_lifetime = std::make_shared<int>(0);
