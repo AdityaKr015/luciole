@@ -1,0 +1,1426 @@
+#include "app/workspace_application.h"
+
+#include "app/file_manager_service.h"
+#include "browser/location_presentation.h"
+#include "browser/tab_workspace.h"
+#include "clipboard/text_clipboard.h"
+#include "config/settings.h"
+#include "config/view_preference_writer.h"
+#include "core/deferred_call.h"
+#include "core/input/key_symbols.h"
+#include "core/ui_phase.h"
+#include "cursor-shape-v1-client-protocol.h"
+#include "fs/gio_ptr.h"
+#include "platform/desktop_integration.h"
+#include "render/render_context.h"
+#include "render/scene/input_area.h"
+#include "render/scene/input_dispatcher.h"
+#include "ui/builders.h"
+#include "ui/controls/acl_editor.h"
+#include "ui/controls/archive_view.h"
+#include "ui/controls/batch_rename_dialog.h"
+#include "ui/controls/browser_settings_view.h"
+#include "ui/controls/bulk_acl_editor.h"
+#include "ui/controls/context_menu.h"
+#include "ui/controls/file_preview_view.h"
+#include "ui/controls/input.h"
+#include "ui/controls/link_dialog.h"
+#include "ui/controls/miller_view.h"
+#include "ui/controls/name_editor.h"
+#include "ui/controls/permission_editor.h"
+#include "ui/controls/scroll_view.h"
+#include "ui/controls/tooltip_presenter.h"
+#include "ui/palette.h"
+#include "wayland/popup_surface.h"
+#include "wayland/text_input_service.h"
+#include "wayland/toplevel_surface.h"
+#include "wayland/wayland_connection.h"
+#include "xdg-shell-client-protocol.h"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <csignal>
+#include <cstdlib>
+#include <format>
+#include <map>
+#include <memory>
+#include <string>
+#include <utility>
+
+volatile std::sig_atomic_t g_stopRequested = 0;
+
+WorkspaceApplication::WorkspaceApplication(
+    WaylandConnection& connection, RenderContext& renderer, TextInputService& input,
+    files::WaylandTextClipboard& clipboard, files::BrowserSettings settings
+)
+    : m_connection(connection), m_renderer(renderer), m_input(input), m_clipboard(clipboard), m_defaults(settings),
+      m_preferences(files::ConfigPaths::fromEnvironment()), m_pins(files::StateStore::pathFromEnvironment()) {
+  m_preferences.setChangedCallback([this](const std::string& error) {
+    if (m_preferences.settings()) {
+      m_defaults = m_preferences.settings()->browser;
+    }
+    for (auto& [id, page] : m_pages) {
+      (void)id;
+      page->preferencesChanged(error);
+    }
+  });
+  m_clipboard.setChangedCallback([this] {
+    for (auto& [id, page] : m_pages) {
+      (void)id;
+      page->clipboardChanged();
+    }
+  });
+  m_clipboard.setDropCallbacks(
+      [this](wl_surface* surface, float x, float y) {
+        clearExternalDrops();
+        const std::vector<files::Bookmark>* pins = nullptr;
+        for (const auto& [id, page] : m_pages) {
+          (void)id;
+          if (const auto* folders = page->draggedFolders()) {
+            pins = folders;
+          }
+        }
+        for (const auto& [windowId, host] : m_hosts) {
+          if (host->closed || host->surface.wlSurface() != surface) {
+            continue;
+          }
+          if (host->tooltip) {
+            host->tooltip->dismiss();
+          }
+          const auto found = m_model.windows().find(windowId);
+          if (found == m_model.windows().end()) {
+            return files::FileDropTarget{};
+          }
+          for (const auto& [tab, button] : host->buttons) {
+            if (host->tabScroll->containsScenePoint(x, y) && button->containsScenePoint(x, y)) {
+              if (const auto layout = m_model.layout(tab)) {
+                if (const auto destination = m_pages.at(layout->active)->location()) {
+                  float bx = 0, by = 0;
+                  Node::absolutePosition(button, bx, by);
+                  return m_pages.at(found->second.active)
+                      ->externalDestination(*destination, LayoutRect{bx, by, button->width(), button->height()});
+                }
+              }
+            }
+          }
+          for (const auto pageId : host->mounted) {
+            if (m_pages.at(pageId)->contains(x, y)) {
+              return m_pages.at(pageId)->externalDrop(x, y, pins);
+            }
+          }
+          if (found->second.active) {
+            return m_pages.at(found->second.active)->externalDrop(x, y, pins);
+          }
+        }
+        return files::FileDropTarget{};
+      },
+      [this] { clearExternalDrops(); }
+  );
+  m_preferences.startWatching();
+  m_pins.setChangedCallback([this] {
+    for (auto& [id, page] : m_pages) {
+      (void)id;
+      page->placesChanged();
+    }
+  });
+  m_icons.setChangedCallback([this] {
+    for (auto& [id, page] : m_pages) {
+      (void)id;
+      page->iconsReady();
+    }
+  });
+  m_pins.reload();
+}
+
+SharedTextureCache& WorkspaceApplication::imageTextures() { return m_icons.textures(); }
+
+WorkspaceApplication::~WorkspaceApplication() {
+  m_lifetime.reset();
+  m_clipboard.setChangedCallback({});
+  m_clipboard.setDropCallbacks({}, {});
+  m_preferences.setChangedCallback({});
+  m_pins.setChangedCallback({});
+  m_icons.setChangedCallback({});
+  for (auto& [id, host] : m_hosts) {
+    (void)id;
+    releaseChrome(*host);
+    for (auto tab : host->mounted) {
+      m_pages.at(tab)->unmount();
+    }
+    host->mounted.clear();
+    host->surface.setSceneRoot(nullptr);
+    host->root.reset();
+  }
+  m_pages.clear();
+}
+
+void WorkspaceApplication::start(const std::optional<std::string>& initial) {
+  const auto id = newWindow();
+  if (!id) {
+    throw std::runtime_error("Cannot create a Files window.");
+  }
+  std::optional<files::Location> location;
+  if (initial) {
+    // Relative arguments (`xdg-open .`) name paths under the launching shell's directory.
+    const files::GString cwd(g_get_current_dir());
+    location = files::resolveLocationText(*initial, files::Location::fromPath(cwd.get()));
+  }
+  newTab(id, std::move(location));
+}
+
+void WorkspaceApplication::show(const files::FileManagerRequest& request) {
+  std::vector<std::pair<files::Location, std::vector<files::Location>>> groups;
+  for (const auto& location : request.locations) {
+    auto parent = request.kind == files::FileManagerRequest::Kind::Folders ? std::nullopt : location.parent();
+    if (!parent) {
+      groups.emplace_back(location, std::vector<files::Location>{});
+      continue;
+    }
+    auto folder = std::move(*parent);
+    const auto found = std::ranges::find(groups, folder, [](const auto& group) { return group.first; });
+    if (found != groups.end() && !found->second.empty()) {
+      found->second.push_back(location);
+    } else {
+      groups.emplace_back(std::move(folder), std::vector{location});
+    }
+  }
+  const auto window = newWindow();
+  if (!window) {
+    throw std::runtime_error("Cannot create a Files window.");
+  }
+  files::TabId first = 0;
+  for (auto& [folder, items] : groups) {
+    const auto tab = newTab(window, folder);
+    if (!tab) {
+      break;
+    }
+    first = first ? first : tab;
+    if (!items.empty()) {
+      m_pages.at(tab)->revealItems(std::move(items), request.kind == files::FileManagerRequest::Kind::ItemProperties);
+    }
+  }
+  if (first) {
+    select(window, first);
+  }
+}
+
+bool WorkspaceApplication::hasWindows() const {
+  return std::ranges::any_of(m_hosts, [](const auto& item) { return item.second->surface.isRunning(); });
+}
+
+void WorkspaceApplication::focus(wl_surface* surface, bool entered) {
+  for (const auto& [id, host] : m_hosts) {
+    if (host->surface.wlSurface() == surface) {
+      if (!entered) {
+        if (host->tooltip) {
+          host->tooltip->dismiss();
+        }
+        host->surface.requestUpdate();
+        return;
+      }
+      m_focused = id;
+      if (auto found = m_model.windows().find(id); found != m_model.windows().end() && found->second.active) {
+        m_pages.at(found->second.active)->nativeFocus();
+      }
+    }
+  }
+}
+
+void WorkspaceApplication::outputChanged(wl_output* output) {
+  for (auto& [id, host] : m_hosts) {
+    (void)id;
+    if (m_connection.outputForSurface(host->surface.wlSurface()) == output) {
+      host->surface.onSurfaceOutputEnter(host->surface.wlSurface(), output);
+    }
+  }
+  for (auto& [id, page] : m_pages) {
+    (void)id;
+    page->outputChanged(output);
+  }
+}
+
+void WorkspaceApplication::iconsChanged() {
+  m_icons.invalidate();
+  for (auto& [id, page] : m_pages) {
+    (void)id;
+    page->iconThemeChanged();
+  }
+}
+
+bool WorkspaceApplication::running() {
+  bool live = false;
+  for (auto& [id, host] : m_hosts) {
+    if (g_stopRequested && host->surface.isRunning()) {
+      host->surface.close();
+    }
+    if (!host->surface.isRunning() && !host->closed) {
+      host->closed = true;
+      if (host->tooltip) {
+        host->tooltip->dismiss();
+      }
+      releaseChrome(*host);
+      for (auto tab : host->mounted) {
+        m_pages.at(tab)->hide();
+        m_pages.at(tab)->unmount();
+      }
+      host->mounted.clear();
+      if (auto found = m_model.windows().find(id); found != m_model.windows().end()) {
+        const auto tabs = found->second.tabs;
+        for (auto tab : tabs) {
+          m_model.close(tab);
+        }
+        m_model.removeWindow(id);
+      }
+    }
+    live |= host->surface.isRunning();
+  }
+  bool busy = false;
+  for (auto& [id, page] : m_pages) {
+    if (!live) {
+      page->shutdown();
+    } else if (!m_model.owner(id)) {
+      for (auto& [window, host] : m_hosts) {
+        if (host->surface.isRunning()) {
+          (void)window;
+          if (page->boundSurface() != &host->surface) {
+            page->rebind(host->surface);
+          }
+          break;
+        }
+      }
+      page->pumpJobs();
+    }
+    bool visible = false;
+    for (const auto& [window, host] : m_hosts) {
+      (void)window;
+      visible |= std::ranges::contains(host->mounted, id);
+    }
+    if (live && !visible) {
+      page->pumpJobs();
+    }
+    busy |= page->busy();
+  }
+  if (m_cacheClearOwner && !m_pages.at(*m_cacheClearOwner)->clearingThumbnails()) {
+    m_cacheClearOwner.reset();
+    for (auto& [id, page] : m_pages) {
+      (void)id;
+      page->pauseThumbnails(false);
+    }
+  }
+  std::vector<files::TabId> retired;
+  for (auto& [id, page] : m_pages) {
+    const auto tab = m_model.tabFor(id);
+    const bool referenced = tab
+        && std::ranges::contains(m_model.pages(*tab), id)
+        && (m_model.owner(id) || std::ranges::contains(m_model.closed(), *tab));
+    const bool mounted = std::ranges::any_of(m_hosts, [id](const auto& item) {
+      return std::ranges::contains(item.second->mounted, id);
+    });
+    if (!referenced && !mounted && !page->busy()) {
+      page->shutdown();
+      if (!page->busy()) {
+        retired.push_back(id);
+      } else {
+        busy = true;
+      }
+    }
+  }
+  for (auto id : retired) {
+    m_pages.erase(id);
+  }
+  if (live) {
+    std::vector<files::WindowId> retiredHosts;
+    for (const auto& [id, host] : m_hosts) {
+      if (host->closed && std::ranges::none_of(m_pages, [&](const auto& item) {
+            return item.second->boundSurface() == &host->surface;
+          })) {
+        retiredHosts.push_back(id);
+      }
+    }
+    for (auto id : retiredHosts) {
+      m_hosts.erase(id);
+    }
+  }
+  return live || busy;
+}
+
+void WorkspaceApplication::keyboard(const KeyboardEvent& event) {
+  if (event.pressed) {
+    for (const auto& [id, host] : m_hosts) {
+      (void)id;
+      if (host->tooltip) {
+        host->tooltip->dismiss();
+      }
+      host->surface.requestUpdate();
+    }
+  }
+  for (auto& [id, page] : m_pages) {
+    if (page->popupOwns(m_connection.lastKeyboardSurface())) {
+      (void)id;
+      page->keyboard(event);
+      return;
+    }
+  }
+  auto hostIt = m_hosts.find(m_focused);
+  if (hostIt == m_hosts.end() || hostIt->second->closed) {
+    return;
+  }
+  auto& host = *hostIt->second;
+  const auto record = m_model.windows().find(host.id);
+  if (record == m_model.windows().end() || !record->second.active) {
+    return;
+  }
+  auto& page = *m_pages.at(record->second.active);
+  if (page.popup()) {
+    page.keyboard(event);
+    return;
+  }
+  if (event.pressed && !event.preedit) {
+    if (event.modifiers == KeyMod::Ctrl && event.sym == XKB_KEY_q) {
+      g_stopRequested = 1;
+      host.surface.requestUpdate();
+      return;
+    }
+    if (event.modifiers == (KeyMod::Ctrl | KeyMod::Shift) && (event.sym == XKB_KEY_w || event.sym == XKB_KEY_W)) {
+      host.surface.close();
+      return;
+    }
+    const bool ctrl = event.modifiers == KeyMod::Ctrl, ctrlShift = event.modifiers == (KeyMod::Ctrl | KeyMod::Shift);
+    std::optional<WorkspaceCommand> command;
+    if (event.modifiers == (KeyMod::Ctrl | KeyMod::Alt) && (event.sym == XKB_KEY_w || event.sym == XKB_KEY_W)) {
+      command = WorkspaceCommand::ClosePane;
+    }
+    if (ctrl && event.sym == XKB_KEY_t) {
+      command = WorkspaceCommand::NewTab;
+    }
+    if (ctrlShift && (event.sym == XKB_KEY_t || event.sym == XKB_KEY_T)) {
+      command = WorkspaceCommand::Reopen;
+    }
+    if (ctrl && event.sym == XKB_KEY_w) {
+      command = WorkspaceCommand::Close;
+    }
+    if (ctrl && event.sym == XKB_KEY_n) {
+      command = WorkspaceCommand::NewWindow;
+    }
+    if (event.modifiers == 0 && event.sym == XKB_KEY_F3) {
+      command = WorkspaceCommand::Split;
+    }
+    if (event.modifiers == 0 && event.sym == XKB_KEY_F6) {
+      command = WorkspaceCommand::SwitchArea;
+    }
+    if (ctrlShift && (event.sym == XKB_KEY_d || event.sym == XKB_KEY_D)) {
+      command = WorkspaceCommand::Duplicate;
+    }
+    if (command) {
+      defer(host.id, record->second.active, *command);
+      return;
+    }
+    if (!page.overlay() && KeySymbol::isTab(event.sym) && (event.modifiers == 0 || event.modifiers == KeyMod::Shift)) {
+      if (page.completeLocationOnTab(event.modifiers)) {
+        return;
+      }
+      auto* target = page.cycleFocus(event.modifiers == KeyMod::Shift);
+      for (auto tab : host.mounted) {
+        if (tab != record->second.active && m_pages.at(tab)->owns(target)) {
+          page.focusArea(nullptr);
+          m_model.focus(host.id, tab);
+          host.surface.requestLayout();
+          prepare(host);
+          m_pages.at(tab)->focusArea(target);
+          break;
+        }
+      }
+      host.surface.requestRedraw();
+      return;
+    }
+
+    if ((ctrl || ctrlShift)
+        && (KeySymbol::isTab(event.sym) || event.sym == XKB_KEY_Page_Down || event.sym == XKB_KEY_Page_Up)) {
+      const auto& tabs = record->second.tabs;
+      const auto found = std::ranges::find(tabs, record->second.selected);
+      const auto index = static_cast<std::size_t>(found - tabs.begin());
+      const bool backwards = ctrlShift || event.sym == XKB_KEY_Page_Up;
+      select(host.id, tabs[(index + tabs.size() + (backwards ? -1 : 1)) % tabs.size()]);
+      return;
+    }
+    if (event.modifiers == KeyMod::Alt && event.sym >= XKB_KEY_1 && event.sym <= XKB_KEY_9) {
+      const auto index =
+          event.sym == XKB_KEY_9 ? record->second.tabs.size() - 1 : static_cast<std::size_t>(event.sym - XKB_KEY_1);
+      if (index < record->second.tabs.size()) {
+        select(host.id, record->second.tabs[index]);
+      }
+      return;
+    }
+    if (event.sym == XKB_KEY_Escape && host.pressedTab) {
+      host.pressedTab.reset();
+      host.tabDrag = false;
+      host.surface.requestLayout();
+      return;
+    }
+    if (event.sym == XKB_KEY_Escape && host.resizing) {
+      m_model.resize(host.id, host.resizeStart);
+      host.resizing = false;
+      host.surface.requestLayout();
+      return;
+    }
+    if (event.sym == XKB_KEY_Escape && host.previewDragWidth) {
+      host.previewDragWidth.reset();
+      host.surface.requestLayout();
+      return;
+    }
+  }
+  page.keyboard(event);
+}
+
+void WorkspaceApplication::pointer(const PointerEvent& event) {
+  for (auto& [id, page] : m_pages) {
+    if (page->popupOwns(event.surface)) {
+      (void)id;
+      page->pointer(event);
+      return;
+    }
+  }
+  Host* host = nullptr;
+  for (auto& [id, value] : m_hosts) {
+    (void)id;
+    if (value->surface.wlSurface() == event.surface) {
+      host = value.get();
+      break;
+    }
+  }
+  if (!host || host->closed) {
+    return;
+  }
+  if (host->tooltip) {
+    if (!event.touch && (event.type == PointerEvent::Type::Enter || event.type == PointerEvent::Type::Motion)) {
+      host->tooltip->resume();
+    } else {
+      host->tooltip->dismiss();
+    }
+    host->surface.requestUpdate();
+  }
+  host->pointerX = static_cast<float>(event.sx);
+  host->pointerY = static_cast<float>(event.sy);
+  if ((event.type == PointerEvent::Type::Button && event.pressed)
+      || (event.type != PointerEvent::Type::Leave && m_connection.lastKeyboardSurface() == event.surface)) {
+    m_focused = host->id;
+  }
+  const auto found = m_model.windows().find(host->id);
+  if (found == m_model.windows().end() || !found->second.active) {
+    return;
+  }
+  const auto& window = found->second;
+  auto& active = *m_pages.at(window.active);
+  if (host->dispatcher.pointerCaptured()) {
+    dispatch(host->dispatcher, event);
+    return;
+  }
+  if (event.type == PointerEvent::Type::Leave
+      || !host->strip
+      || !host->strip->containsScenePoint(static_cast<float>(event.sx), static_cast<float>(event.sy))) {
+    host->dispatcher.pointerLeave();
+  }
+  for (auto& [tab, page] : m_pages) {
+    (void)tab;
+    if (page->popup() && page->boundSurface() == &host->surface) {
+      page->pointer(event);
+      return;
+    }
+  }
+  for (auto tab : host->mounted) {
+    if (m_pages.at(tab)->dragging() || m_pages.at(tab)->pointerCaptured()) {
+      m_pages.at(tab)->pointer(event);
+      return;
+    }
+  }
+  const auto x = static_cast<float>(event.sx), y = static_cast<float>(event.sy);
+  if (host->previewDragWidth) {
+    if (event.type == PointerEvent::Type::Motion) {
+      host->previewDragWidth =
+          std::clamp(static_cast<int>(std::lround(host->surface.width() - kWorkspaceInset - x)), 208, 800);
+      host->surface.requestLayout();
+    } else if (event.type == PointerEvent::Type::Button && !event.pressed && event.button == BTN_LEFT) {
+      active.savePreviewWidth(*host->previewDragWidth);
+      host->previewDragWidth.reset();
+    } else if (event.type == PointerEvent::Type::Leave) {
+      host->previewDragWidth.reset();
+      host->surface.requestLayout();
+    }
+    return;
+  }
+  if (host->resizing) {
+    if (event.type == PointerEvent::Type::Motion) {
+      m_model.resize(host->id, (x - host->browsingBounds.x) / host->browsingBounds.width);
+      host->surface.requestLayout();
+    }
+    if (event.type == PointerEvent::Type::Button && !event.pressed) {
+      host->resizing = false;
+    }
+    return;
+  }
+  if (host->pressedTab) {
+    if (event.type == PointerEvent::Type::Motion) {
+      host->tabDrag |= std::abs(x - host->pressX) > 8 || std::abs(y - host->pressY) > 8;
+      return;
+    }
+    if (event.type == PointerEvent::Type::Button && !event.pressed && event.button == BTN_LEFT) {
+      const auto tab = *std::exchange(host->pressedTab, std::nullopt);
+      if (host->tabDrag) {
+        if (y > kTabStripHeight + kNavigationToolbarHeight - Style::spaceXs) {
+          defer(host->id, tab, WorkspaceCommand::Detach);
+        } else {
+          std::size_t index = 0;
+          for (const auto& [id, button] : host->buttons) {
+            (void)id;
+            float bx = 0, by = 0;
+            Node::absolutePosition(button, bx, by);
+            if (x > bx + button->width() * 0.5F) {
+              ++index;
+            }
+          }
+          m_model.move(tab, host->id, index);
+          host->labels.clear();
+          host->surface.requestLayout();
+        }
+      } else {
+        select(host->id, tab);
+      }
+      host->tabDrag = false;
+      return;
+    }
+  }
+  if (host->strip && host->strip->containsScenePoint(x, y)) {
+    for (auto tab : host->mounted) {
+      m_pages.at(tab)->leavePointer();
+    }
+    for (const auto& [tab, button] : host->buttons) {
+      if (host->tabScroll->containsScenePoint(x, y)
+          && button->containsScenePoint(x, y)
+          && !host->closeButtons.at(tab).first->containsScenePoint(x, y)
+          && event.type == PointerEvent::Type::Button
+          && event.pressed) {
+        if (event.button == BTN_MIDDLE) {
+          defer(host->id, tab, WorkspaceCommand::Close);
+          return;
+        }
+        if (event.button == BTN_RIGHT) {
+          tabMenu(*host, tab, x, y);
+          return;
+        }
+        if (event.button == BTN_LEFT) {
+          host->pressedTab = tab;
+          host->pressX = x;
+          host->pressY = y;
+          return;
+        }
+      }
+    }
+    if (event.type == PointerEvent::Type::Button
+        && event.pressed
+        && event.button == BTN_LEFT
+        && host->tabScroll->containsScenePoint(x, y)) {
+      bool child = host->newTabButton->containsScenePoint(x, y);
+      for (const auto& [tab, button] : host->buttons) {
+        (void)tab;
+        float bx = 0, by = 0;
+        Node::absolutePosition(button, bx, by);
+        child |= x >= bx && x <= bx + button->width();
+      }
+      if (!child) {
+        host->surface.beginMove(event.serial);
+        return;
+      }
+    }
+    dispatch(host->dispatcher, event);
+    return;
+  }
+  if (host->previewDivider
+      && host->previewDivider->visible()
+      && host->previewDivider->containsScenePoint(x, y)
+      && event.type == PointerEvent::Type::Button
+      && event.pressed
+      && event.button == BTN_LEFT) {
+    host->previewDragWidth = active.previewWidth();
+    return;
+  }
+  if (host->divider
+      && host->divider->visible()
+      && host->divider->containsScenePoint(x, y)
+      && event.type == PointerEvent::Type::Button
+      && event.pressed
+      && event.button == BTN_LEFT) {
+    host->resizing = true;
+    host->resizeStart = window.fraction;
+    return;
+  }
+  if (!active.overlay() && event.type == PointerEvent::Type::Button && event.pressed) {
+    for (auto tab : host->mounted) {
+      if (m_pages.at(tab)->contains(x, y)) {
+        if (tab != window.active) {
+          m_model.focus(host->id, tab);
+          host->surface.requestLayout();
+          prepare(*host);
+        }
+        break;
+      }
+    }
+  }
+  m_pages.at(m_model.windows().at(host->id).active)->pointer(event);
+}
+
+void WorkspaceApplication::clearExternalDrops() {
+  for (auto& [id, page] : m_pages) {
+    (void)id;
+    page->clearExternalDrop();
+  }
+}
+
+void WorkspaceApplication::dispatch(InputDispatcher& dispatcher, const PointerEvent& event) {
+  const auto x = static_cast<float>(event.sx), y = static_cast<float>(event.sy);
+  switch (event.type) {
+  case PointerEvent::Type::Enter:
+    dispatcher.pointerEnter(x, y, event.serial);
+    break;
+  case PointerEvent::Type::Leave:
+    dispatcher.pointerLeave();
+    break;
+  case PointerEvent::Type::Motion:
+    dispatcher.pointerMotion(x, y, event.serial);
+    break;
+  case PointerEvent::Type::Button:
+    dispatcher.pointerButton(x, y, event.button, event.pressed, event.serial, event.time, event.touch);
+    break;
+  case PointerEvent::Type::Axis:
+    dispatcher.pointerAxis(
+        x, y, event.axis, event.axisSource, event.axisValue, event.axisDiscrete, event.axisValue120, event.axisLines,
+        event.axisGestureSerial
+    );
+    break;
+  }
+}
+
+files::WindowId WorkspaceApplication::newWindow() {
+  const auto id = m_model.addWindow();
+  if (!id) {
+    return 0;
+  }
+  auto host = std::make_unique<Host>(id, m_connection);
+  auto* raw = host.get();
+  host->surface.setRenderContext(&m_renderer);
+  host->surface.setAnimationManager(&m_animations);
+  host->surface.setPrepareFrameCallback([this, raw](bool, bool) { prepare(*raw); });
+  host->surface.setUpdateCallback([] {});
+  host->surface.setConfigureCallback([this, raw](std::uint32_t, std::uint32_t) {
+    if (raw->tooltip) {
+      raw->tooltip->dismiss();
+    }
+    raw->previewDragWidth.reset();
+    for (auto& [tab, page] : m_pages) {
+      (void)tab;
+      if (page->boundSurface() == &raw->surface) {
+        page->configurationChanged();
+      }
+    }
+    raw->surface.requestLayout();
+  });
+  host->dispatcher.setCursorShapeCallback([this](auto serial, auto shape) {
+    m_connection.extension<files::DesktopIntegration>().setCursorShape(serial, shape);
+  });
+  if (!host->surface.initialize(
+          nullptr,
+          {.width = 1080,
+           .height = 720,
+           .minWidth = 620,
+           .minHeight = 400,
+           .title = "Noctalia Files",
+           .appId = "dev.noctalia.Files"}
+      )) {
+    throw std::runtime_error("Cannot initialize a Files window.");
+  }
+  m_hosts.emplace(id, std::move(host));
+  m_focused = id;
+  return id;
+}
+
+files::TabId
+WorkspaceApplication::newTab(files::WindowId window, std::optional<files::Location> location, files::TabId duplicate) {
+  if (m_pages.size() >= 64) {
+    return 0;
+  }
+  const auto previous = m_model.windows().at(window).active;
+  const auto id = m_model.addTab(window);
+  if (!id) {
+    return 0;
+  }
+  return createPage(window, id, std::move(location), duplicate, previous);
+}
+
+files::TabId
+WorkspaceApplication::newPane(files::WindowId window, std::optional<files::Location> location, files::TabId duplicate) {
+  if (m_pages.size() >= 64) {
+    return 0;
+  }
+  const auto previous = m_model.windows().at(window).active;
+  const auto id = m_model.addPane(window);
+  if (!id) {
+    return 0;
+  }
+  return createPage(window, id, std::move(location), duplicate, previous);
+}
+
+files::TabId WorkspaceApplication::createPage(
+    files::WindowId window, files::TabId id, std::optional<files::Location> location, files::TabId duplicate,
+    files::TabId previous
+) {
+  auto& host = *m_hosts.at(window);
+  const auto settings = duplicate              ? m_pages.at(duplicate)->options()
+      : previous && m_pages.contains(previous) ? m_pages.at(previous)->options()
+                                               : m_defaults;
+  auto page = std::make_unique<BrowserPage>(
+      m_connection, m_renderer, m_input, settings, m_clipboard, host.surface, m_animations, m_pins, m_icons,
+      m_preferences
+  );
+  page->setWorkspaceId(id);
+  page->setClearThumbnails([this, id] {
+    if (m_cacheClearOwner) {
+      return;
+    }
+    for (auto& [pageId, page] : m_pages) {
+      (void)pageId;
+      page->pauseThumbnails(true);
+    }
+    m_cacheClearOwner = id;
+    m_pages.at(id)->clearThumbnails();
+  });
+  page->setHasOther([this, id] {
+    const auto owner = m_model.owner(id);
+    return owner && m_model.other(*owner).has_value();
+  });
+  page->setWorkspaceRequest([this, id](WorkspaceCommand command, std::optional<files::Location> destination) {
+    if (auto owner = m_model.owner(id)) {
+      defer(*owner, id, command, std::move(destination));
+    }
+  });
+  page->setPopupAvailable([this, id] {
+    const auto page = m_pages.find(id);
+    if (page == m_pages.end()) {
+      return false;
+    }
+    for (const auto& [other, value] : m_pages) {
+      if (other != id && value->boundSurface() == page->second->boundSurface() && value->popup()) {
+        return false;
+      }
+    }
+    return true;
+  });
+  page->setForeignDrop([this, id](float x, float y) -> std::optional<std::pair<files::Location, LayoutRect>> {
+    const auto owner = m_model.owner(id);
+    if (!owner) {
+      return std::nullopt;
+    }
+    auto& host = *m_hosts.at(*owner);
+    for (auto other : host.mounted) {
+      if (other != id) {
+        if (auto target = m_pages.at(other)->foreignTarget(x, y)) {
+          return target;
+        }
+      }
+    }
+    for (const auto& [tab, button] : host.buttons) {
+      if (tab != id && host.tabScroll->containsScenePoint(x, y) && button->containsScenePoint(x, y)) {
+        if (auto destination = m_pages.at(m_model.layout(tab)->active)->location()) {
+          float bx = 0, by = 0;
+          Node::absolutePosition(button, bx, by);
+          return std::pair(*destination, LayoutRect{bx, by, button->width(), button->height()});
+        }
+      }
+    }
+    return std::nullopt;
+  });
+  page->initialize(location ? std::optional(location->uri()) : std::nullopt);
+  if (duplicate) {
+    page->duplicateFrom(*m_pages.at(duplicate));
+  }
+  m_pages.emplace(id, std::move(page));
+  if (m_cacheClearOwner) {
+    m_pages.at(id)->pauseThumbnails(true);
+  }
+  host.labels.clear();
+  host.surface.requestLayout();
+  return id;
+}
+
+void WorkspaceApplication::select(files::WindowId window, files::TabId tab) {
+  if (m_model.select(window, tab)) {
+    m_hosts.at(window)->surface.requestLayout();
+    m_focused = window;
+  }
+}
+
+void WorkspaceApplication::defer(
+    files::WindowId window, files::TabId tab, WorkspaceCommand command, std::optional<files::Location> location
+) {
+  if ((command == WorkspaceCommand::CopyOther || command == WorkspaceCommand::MoveOther) && !location) {
+    if (auto other = m_model.other(window)) {
+      location = m_pages.at(*other)->location();
+    }
+  }
+  const std::weak_ptr<int> lifetime = m_lifetime;
+  DeferredCall::callLater([this, lifetime, window, tab, command, location = std::move(location)] {
+    if (!lifetime.expired() && m_model.owner(tab) == window) {
+      execute(window, tab, command, location);
+    }
+  });
+}
+
+void WorkspaceApplication::execute(
+    files::WindowId window, files::TabId tab, WorkspaceCommand command,
+    const std::optional<files::Location>& destination
+) {
+  auto& host = *m_hosts.at(window);
+  const auto logical = m_model.tabFor(tab);
+  const auto layout = m_model.layout(tab);
+  const auto source = (logical && *logical == tab && layout) ? layout->active : tab;
+  auto& page = *m_pages.at(source);
+  if (logical
+      && (command == WorkspaceCommand::Duplicate
+          || command == WorkspaceCommand::Split
+          || command == WorkspaceCommand::Swap)) {
+    m_model.select(window, *logical);
+  }
+  switch (command) {
+  case WorkspaceCommand::ClosePane:
+    m_model.closePane(window, source);
+    break;
+  case WorkspaceCommand::NewTab:
+    if (!newTab(window, destination ? destination : page.location())) {
+      page.workspaceError("Close a tab before opening another.");
+    }
+    break;
+  case WorkspaceCommand::Duplicate: {
+    const auto record = m_model.windows().at(window);
+    const auto cloned = newTab(window, m_pages.at(record.primary)->location(), record.primary);
+    if (cloned && record.secondary) {
+      const auto auxiliary = newPane(window, m_pages.at(*record.secondary)->location(), *record.secondary);
+      m_model.resize(window, record.fraction);
+      if (record.active == record.primary) {
+        m_model.focus(window, cloned);
+      } else if (auxiliary) {
+        m_model.focus(window, auxiliary);
+      }
+    }
+    break;
+  }
+  case WorkspaceCommand::Close:
+    m_model.close(tab);
+    break;
+  case WorkspaceCommand::Reopen:
+    if (m_model.reopen(window)) {
+      for (auto& [pageId, value] : m_pages) {
+        if (m_model.tabFor(pageId) == m_model.windows().at(window).selected) {
+          value->rebind(host.surface);
+        }
+      }
+    }
+    break;
+  case WorkspaceCommand::NewWindow: {
+    if (auto id = newWindow()) {
+      if (!newTab(id, destination ? destination : page.location())) {
+        m_hosts.at(id)->surface.close();
+        page.workspaceError("Close a tab before opening another window.");
+      }
+    } else {
+      page.workspaceError("The eight-window limit has been reached.");
+    }
+    break;
+  }
+  case WorkspaceCommand::Detach:
+  case WorkspaceCommand::MoveWindow: {
+    files::WindowId destinationWindow = 0;
+    if (command == WorkspaceCommand::Detach) {
+      destinationWindow = newWindow();
+    } else {
+      for (const auto& [id, target] : m_hosts) {
+        if (id > window && !target->closed) {
+          destinationWindow = id;
+          break;
+        }
+      }
+      if (!destinationWindow) {
+        for (const auto& [id, target] : m_hosts) {
+          if (id != window && !target->closed) {
+            destinationWindow = id;
+            break;
+          }
+        }
+      }
+    }
+    if (destinationWindow) {
+      std::vector<files::TabId> pages;
+      for (const auto& [pageId, value] : m_pages) {
+        (void)value;
+        if (m_model.tabFor(pageId) == logical) {
+          pages.push_back(pageId);
+        }
+      }
+      releaseChrome(host);
+      for (auto pageId : pages) {
+        m_pages.at(pageId)->hide();
+        m_pages.at(pageId)->unmount();
+        std::erase(host.mounted, pageId);
+      }
+      m_model.move(tab, destinationWindow, m_model.windows().at(destinationWindow).tabs.size());
+      for (auto pageId : pages) {
+        m_pages.at(pageId)->rebind(m_hosts.at(destinationWindow)->surface);
+      }
+      m_hosts.at(destinationWindow)->surface.requestLayout();
+    }
+    break;
+  }
+  case WorkspaceCommand::Split:
+    if (m_model.windows().at(window).secondary) {
+      m_model.unsplit(window);
+    } else if (!newPane(window, page.location(), source)) {
+      page.workspaceError("The browser-page limit has been reached.");
+    }
+    break;
+  case WorkspaceCommand::SwitchArea:
+    if (auto other = m_model.other(window)) {
+      m_model.focus(window, *other);
+    }
+    break;
+  case WorkspaceCommand::Swap:
+    m_model.swap(window);
+    break;
+  case WorkspaceCommand::OpenOther:
+    if (auto other = m_model.other(window)) {
+      if (destination) {
+        m_pages.at(*other)->open(*destination);
+      }
+    } else {
+      newPane(window, destination ? destination : page.location());
+    }
+    break;
+  case WorkspaceCommand::CopyOther:
+  case WorkspaceCommand::MoveOther:
+    if (destination) {
+      page.transferTo(*destination, command == WorkspaceCommand::CopyOther);
+    }
+    break;
+  }
+  host.labels.clear();
+  host.surface.requestLayout();
+  if (m_model.windows().at(window).tabs.empty()) {
+    host.surface.close();
+  }
+}
+
+void WorkspaceApplication::releaseChrome(Host& host) {
+  if (!host.chromeOwner) {
+    return;
+  }
+  auto& page = *m_pages.at(host.chromeOwner);
+  page.deactivate();
+  if (host.toolbarNode && host.toolbarNode->parent()) {
+    page.returnToolbar(host.toolbarNode->parent()->removeChild(host.toolbarNode));
+  }
+  host.toolbarNode = nullptr;
+  page.returnSidebar();
+  host.chromeOwner = 0;
+}
+
+void WorkspaceApplication::tabMenu(Host& host, files::TabId tab, float x, float y) {
+  auto& page = *m_pages.at(m_model.windows().at(host.id).active);
+  std::vector<ContextMenuControlEntry> entries{
+      {.id = 0, .label = "New Tab", .shortcut = "Ctrl+T"},
+      {.id = 1, .label = "Duplicate Tab", .shortcut = "Ctrl+Shift+D"},
+      {.id = 2, .label = "Close Tab", .shortcut = "Ctrl+W"},
+      {.id = 3, .label = "Reopen Closed Tab", .shortcut = "Ctrl+Shift+T"},
+      {.label = "", .separator = true},
+      {.id = 4, .label = "Split View", .shortcut = "F3"},
+      {.id = 5, .label = "Swap Panes"},
+      {.id = 6, .label = "Move Tab to New Window"},
+      {.id = 7, .label = "Move Tab to Next Window"}
+  };
+  const auto window = host.id;
+  page.workspaceMenu(
+      std::move(entries),
+      [this, window, tab](int id) {
+        const std::array commands{WorkspaceCommand::NewTab, WorkspaceCommand::Duplicate, WorkspaceCommand::Close,
+                                  WorkspaceCommand::Reopen, WorkspaceCommand::Split,     WorkspaceCommand::Swap,
+                                  WorkspaceCommand::Detach, WorkspaceCommand::MoveWindow};
+        if (id >= 0 && static_cast<std::size_t>(id) < commands.size()) {
+          defer(window, tab, commands[static_cast<std::size_t>(id)]);
+        }
+      },
+      x, y
+  );
+}
+
+Button::ButtonPalette WorkspaceApplication::closeTabPalette(ColorRole foreground) {
+  auto palette = Button::defaultPalette(ButtonVariant::Ghost);
+  palette.normal.label = colorSpecFromRole(foreground);
+  palette.hover.bg = colorSpecFromRole(foreground, 0.12F);
+  palette.hover.label = colorSpecFromRole(foreground);
+  palette.pressed.bg = colorSpecFromRole(foreground, 0.20F);
+  palette.pressed.label = colorSpecFromRole(foreground);
+  return palette;
+}
+
+void WorkspaceApplication::rebuildStrip(Host& host, const files::TabWindow& window) {
+  std::vector<std::pair<files::TabId, std::string>> labels;
+  labels.reserve(window.tabs.size());
+  for (auto id : window.tabs) {
+    labels.emplace_back(id, m_pages.at(m_model.layout(id)->active)->title());
+  }
+  const bool decorated = !host.surface.serverDecorated() && !host.surface.fullscreen();
+  if (host.strip && labels == host.labels && decorated == host.decorated) {
+    return;
+  }
+  host.decorated = decorated;
+  const float scrollOffset = host.tabScroll ? host.tabScroll->scrollOffset() : 0.0F;
+  host.dispatcher.cancelPointerCapture();
+  if (host.strip) {
+    auto removed = host.root->removeChild(host.strip);
+  }
+  host.buttons.clear();
+  host.closeButtons.clear();
+  host.revealedTab = 0;
+  host.labels = std::move(labels);
+  auto scroll = ui::scrollView(
+      {.out = &host.tabScroll,
+       .orientation = ScrollOrientation::Horizontal,
+       .scrollbarVisible = false,
+       .viewportPaddingH = 0.0F,
+       .viewportPaddingV = 0.0F,
+       .fillWidth = true,
+       .fillHeight = true,
+       .flexGrow = 1}
+  );
+  auto tabs = ui::row({.align = FlexAlign::Center, .gap = Style::spaceXs, .height = kTabStripHeight});
+  scroll->content()->setDirection(FlexDirection::Horizontal);
+  const auto windowId = host.id;
+  auto tabPalette = Button::defaultPalette(ButtonVariant::Ghost);
+  tabPalette.hover.bg = colorSpecFromRole(ColorRole::OnSurface, 0.08F);
+  tabPalette.hover.label = colorSpecFromRole(ColorRole::OnSurface);
+  for (const auto& [id, label] : host.labels) {
+    Button* button = nullptr;
+    auto tab = ui::button(
+        {.out = &button,
+         .text = label,
+         .controlHeight = Style::controlHeightSm,
+         .contentAlign = ButtonContentAlign::Start,
+         .variant = ButtonVariant::Ghost,
+         .customPalette = tabPalette,
+         .minWidth = 96.0F,
+         .maxWidth = 200.0F,
+         .paddingV = 0.0F,
+         .paddingH = Style::spaceXs,
+         .gap = Style::spaceXs,
+         .onClick = [this, windowId, id] { select(windowId, id); },
+         .configure =
+             [](Button& button) {
+               button.label()->setUseMarkup(false);
+               button.label()->setFlexGrow(1);
+               button.label()->setTextAlign(TextAlign::Center);
+             }}
+    );
+    host.buttons.emplace_back(id, button);
+    Button* close = nullptr;
+    const auto foreground = id == window.selected ? ColorRole::OnPrimary : ColorRole::OnSurface;
+    tab->addChild(
+        ui::button(
+            {.out = &close,
+             .glyph = "x",
+             .glyphSize = 14.0F,
+             .controlHeight = 24.0F,
+             .variant = ButtonVariant::Ghost,
+             .customPalette = closeTabPalette(foreground),
+             .tooltip = "Close tab",
+             .minWidth = 24.0F,
+             .maxWidth = 24.0F,
+             .padding = 0.0F,
+             .onClick = [this, windowId, id] { defer(windowId, id, WorkspaceCommand::Close); },
+             .configure = [](Button& button) { button.setZIndex(2); }}
+        )
+    );
+    host.closeButtons.emplace(id, std::pair(close, foreground));
+    tabs->addChild(std::move(tab));
+  }
+  tabs->addChild(
+      ui::button(
+          {.out = &host.newTabButton,
+           .glyph = "plus",
+           .controlHeight = Style::controlHeightSm,
+           .variant = ButtonVariant::Ghost,
+           .tooltip = "New tab (Ctrl+T)",
+           .onClick = [this, windowId] {
+             defer(windowId, m_model.windows().at(windowId).active, WorkspaceCommand::NewTab);
+           }}
+      )
+  );
+  scroll->content()->addChild(std::move(tabs));
+  scroll->requestScrollToOffset(scrollOffset);
+  auto strip = ui::row(
+      {.out = &host.strip,
+       .align = FlexAlign::Center,
+       .gap = Style::spaceXs,
+       .paddingH = Style::spaceSm,
+       .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
+       .height = kTabStripHeight,
+       .participatesInLayout = false},
+      std::move(scroll),
+      ui::button(
+          {.out = &host.splitButton,
+           .glyph = "layout-columns",
+           .controlHeight = Style::controlHeightSm,
+           .selected = window.secondary.has_value(),
+           .variant = ButtonVariant::Ghost,
+           .tooltip = "Split view (F3)",
+           .onClick = [this, windowId] {
+             defer(windowId, m_model.windows().at(windowId).active, WorkspaceCommand::Split);
+           }}
+      )
+  );
+  if (!host.surface.serverDecorated() && !host.surface.fullscreen()) {
+    strip->addChild(
+        ui::button(
+            {.glyph = "minus",
+             .controlHeight = Style::controlHeightSm,
+             .variant = ButtonVariant::Ghost,
+             .tooltip = "Minimize window",
+             .onClick = [&host] { host.surface.minimize(); }}
+        )
+    );
+    strip->addChild(
+        ui::button(
+            {.glyph = "square",
+             .controlHeight = Style::controlHeightSm,
+             .variant = ButtonVariant::Ghost,
+             .tooltip = "Toggle maximized",
+             .onClick = [&host] { host.surface.toggleMaximized(); }}
+        )
+    );
+    strip->addChild(
+        ui::button(
+            {.glyph = "x",
+             .controlHeight = Style::controlHeightSm,
+             .variant = ButtonVariant::Ghost,
+             .tooltip = "Close window (Ctrl+Shift+W)",
+             .onClick = [&host] { host.surface.close(); }}
+        )
+    );
+  }
+  strip->setZIndex(50);
+  host.root->addChild(std::move(strip));
+}
+
+void WorkspaceApplication::syncTooltip(Host& host) {
+  if (!host.tooltip) {
+    return;
+  }
+  if (host.resizing
+      || host.previewDragWidth
+      || host.pressedTab
+      || host.dispatcher.pointerCaptured()
+      || std::ranges::any_of(
+          m_pages,
+          [&host](const auto& item) { return item.second->boundSurface() == &host.surface && item.second->popup(); }
+      )
+      || std::ranges::any_of(host.mounted, [this](auto tab) {
+           const auto& page = m_pages.at(tab);
+           return page->dragging() || page->pointerCaptured();
+         })) {
+    host.tooltip->dismiss();
+    return;
+  }
+  host.tooltip->sync(
+      host.surface.renderTarget().renderer(), *host.root, host.pointerX, host.pointerY,
+      {static_cast<float>(host.surface.width()), static_cast<float>(host.surface.height())}
+  );
+}
+
+void WorkspaceApplication::prepare(Host& host) {
+  if (host.closed
+      || !host.surface.isRunning()
+      || !m_model.windows().contains(host.id)
+      || !m_renderer.makeCurrent(host.surface.renderTarget())) {
+    return;
+  }
+  UiPhaseScope phase(UiPhase::Layout);
+  const auto window = m_model.windows().at(host.id);
+  if (!window.active) {
+    return;
+  }
+  if (!host.root) {
+    host.root = ui::column({.align = FlexAlign::Stretch, .fill = colorSpecFromRole(ColorRole::SurfaceContainerLow)});
+    host.root->setAnimationManager(&m_animations);
+    host.surface.setSceneRoot(host.root.get());
+    host.dispatcher.setSceneRoot(host.root.get());
+    auto tooltip = std::make_unique<TooltipPresenter>([&host] { host.surface.requestUpdate(); });
+    host.tooltip = tooltip.get();
+    host.root->addChild(std::move(tooltip));
+    auto divider = std::make_unique<InputArea>();
+    divider->setParticipatesInLayout(false);
+    divider->setZIndex(40);
+    divider->setCursorShape(WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COL_RESIZE);
+    divider->setFocusable(true);
+    divider->setTabFocusKey(std::format("window:{}:split", host.id));
+    divider->setOnKeyDown([this, &host](const InputArea::KeyData& key) {
+      if (KeySymbol::isLeft(key.sym) || KeySymbol::isRight(key.sym)) {
+        m_model.resize(
+            host.id, m_model.windows().at(host.id).fraction + (KeySymbol::isLeft(key.sym) ? -0.025F : 0.025F)
+        );
+      } else if (key.sym == XKB_KEY_Home) {
+        m_model.resize(host.id, 0.5F);
+      }
+      host.surface.requestLayout();
+    });
+    host.divider = divider.get();
+    auto line = ui::box({.fill = colorSpecFromRole(ColorRole::OutlineVariant), .width = 1.0F});
+    divider->addChild(std::move(line));
+    host.root->addChild(std::move(divider));
+    auto preview = std::make_unique<InputArea>();
+    preview->setParticipatesInLayout(false);
+    preview->setZIndex(40);
+    preview->setCursorShape(WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COL_RESIZE);
+    preview->setFocusable(true);
+    preview->setTabFocusKey(std::format("window:{}:preview", host.id));
+    preview->setOnKeyDown([this, &host](const InputArea::KeyData& key) {
+      if (!key.pressed) {
+        return;
+      }
+      auto& page = *m_pages.at(m_model.windows().at(host.id).active);
+      if (KeySymbol::isLeft(key.sym) || KeySymbol::isRight(key.sym)) {
+        page.savePreviewWidth(page.previewWidth() + (KeySymbol::isLeft(key.sym) ? 16 : -16));
+      } else if (key.sym == XKB_KEY_Home) {
+        page.savePreviewWidth(320);
+      }
+    });
+    preview->setOnEnter([&host](const auto&) { host.surface.requestLayout(); });
+    preview->setOnLeave([&host] { host.surface.requestLayout(); });
+    host.previewDivider = preview.get();
+    preview->addChild(
+        ui::box({.out = &host.previewResizeLine, .fill = colorSpecFromRole(ColorRole::OutlineVariant), .width = 1})
+    );
+    host.root->addChild(std::move(preview));
+  }
+  auto& active = *m_pages.at(window.active);
+  active.ensureScene();
+  if (host.chromeOwner != window.active) {
+    auto* previous = host.chromeOwner ? m_pages.at(host.chromeOwner).get() : nullptr;
+    releaseChrome(host);
+    if (previous) {
+      active.reusePlacesFrom(*previous);
+    }
+    host.toolbar = active.takeToolbar();
+    host.toolbarNode = host.toolbar.get();
+    host.toolbar->setParticipatesInLayout(false);
+    host.toolbar->setVisible(true);
+    host.toolbar->setZIndex(40);
+    host.root->addChild(std::move(host.toolbar));
+    active.takeSidebar(*host.root);
+    active.sidebar()->setParticipatesInLayout(false);
+    active.sidebar()->setZIndex(30);
+    host.chromeOwner = window.active;
+  }
+  rebuildStrip(host, window);
+  host.splitButton->setSelected(window.secondary.has_value());
+  std::vector<files::TabId> visible{window.primary};
+  if (window.secondary && !active.overlay()) {
+    visible.push_back(*window.secondary);
+  }
+  if (active.overlay()) {
+    visible = {window.active};
+  }
+  for (auto tab : host.mounted) {
+    if (!std::ranges::contains(visible, tab)) {
+      auto& page = *m_pages.at(tab);
+      page.hide();
+      page.unmount();
+    }
+  }
+  host.mounted = visible;
+  for (auto tab : visible) {
+    auto& page = *m_pages.at(tab);
+    page.ensureScene();
+    page.mount(*host.root);
+    page.root()->setParticipatesInLayout(false);
+    page.root()->setZIndex(tab == window.active ? 10 : 0);
+  }
+  const bool dragging = std::ranges::any_of(host.mounted, [this](auto tab) { return m_pages.at(tab)->dragging(); });
+  for (const auto& [tab, button] : host.buttons) {
+    const bool selected =
+        tab == window.selected || (dragging && button->containsScenePoint(host.pointerX, host.pointerY));
+    button->setSelected(selected);
+    auto& [close, role] = host.closeButtons.at(tab);
+    const auto foreground = selected ? ColorRole::OnPrimary : ColorRole::OnSurface;
+    if (foreground != role) {
+      close->setCustomPalette(closeTabPalette(foreground));
+      role = foreground;
+    }
+    if (tab == window.selected && (host.revealedTab != tab || host.revealedTabWidth != host.surface.width())) {
+      host.tabScroll->requestScrollIntoView(tab == window.tabs.back() ? host.newTabButton : button);
+      host.revealedTab = tab;
+      host.revealedTabWidth = host.surface.width();
+    }
+  }
+  auto& renderer = host.surface.renderTarget().renderer();
+  const auto width = static_cast<float>(host.surface.width()), height = static_cast<float>(host.surface.height());
+  host.root->arrange(renderer, {0, 0, width, height});
+  host.strip->arrange(renderer, {0, 0, width, kTabStripHeight});
+  host.toolbarNode->setVisible(!active.overlay());
+  active.sidebar()->setVisible(!active.overlay());
+  if (active.overlay()) {
+    host.divider->setVisible(false);
+    host.previewDivider->setVisible(false);
+    active.setPreviewBounds(std::nullopt);
+    active.prepare({0, kTabStripHeight, width, height - kTabStripHeight}, true, host.root.get());
+    syncTooltip(host);
+    return;
+  }
+  host.toolbarNode->arrange(renderer, {0, kTabStripHeight, width, kNavigationToolbarHeight});
+  const float top = kTabStripHeight + kNavigationToolbarHeight + kWorkspaceInset;
+  const float bodyHeight = std::max(1.0F, height - top - kWorkspaceInset);
+  const float sidebar = active.sidebarWidth();
+  active.sidebar()->arrange(renderer, {kWorkspaceInset, top, active.sidebarControlWidth(), bodyHeight});
+  const float left = kWorkspaceInset + sidebar;
+  const float right = width - kWorkspaceInset;
+  const bool split = visible.size() == 2;
+  const float previewBudget = right - left - kMinimumPaneWidth * (split ? 2.0F : 1.0F);
+  const float previewWidth = active.previewVisible() && previewBudget >= kMinimumPreviewWidth
+      ? std::min(static_cast<float>(host.previewDragWidth.value_or(active.previewWidth())), previewBudget)
+      : 0;
+  host.previewDivider->setVisible(previewWidth > 0);
+  host.previewResizeLine->setFill(colorSpecFromRole(
+      host.previewDragWidth || host.previewDivider->focused() ? ColorRole::Primary
+          : host.previewDivider->hovered()                    ? ColorRole::OnSurfaceVariant
+                                                              : ColorRole::OutlineVariant
+  ));
+  host.previewDivider->arrange(renderer, {right - previewWidth - 3, top, 6, bodyHeight});
+  host.previewDivider->children().front()->arrange(renderer, {2.5F, 0, 1, bodyHeight});
+  for (auto tab : visible) {
+    m_pages.at(tab)->setPreviewBounds(
+        tab == window.active && previewWidth > 0
+            ? std::optional(LayoutRect{right - previewWidth, top, previewWidth, bodyHeight})
+            : std::nullopt
+    );
+  }
+  const float content = std::max(1.0F, right - left - previewWidth);
+  host.browsingBounds = {left, top, content, bodyHeight};
+  const float minimumPane = std::min(kMinimumPaneWidth, content * 0.5F);
+  const float first = split ? std::clamp(content * window.fraction, minimumPane, content - minimumPane) : content;
+  host.divider->setVisible(split);
+  host.divider->arrange(renderer, {left + first - 3, top, 6, bodyHeight});
+  host.divider->children().front()->arrange(renderer, {2.5F, 0, 1.0F, bodyHeight});
+  for (std::size_t index = 0; index < visible.size(); ++index) {
+    const auto tab = visible[index];
+    m_pages.at(tab)->prepare(
+        {left + (index ? first : 0), top, index ? content - first : first, bodyHeight}, tab == window.active,
+        host.root.get(), index == 0, index == visible.size() - 1 && previewWidth == 0
+    );
+  }
+  active.layoutNavigation(renderer);
+  syncTooltip(host);
+}
