@@ -107,7 +107,7 @@ namespace {
       m_treePrefix->setParticipatesInLayout(tree.enabled);
       m_expander->setVisible(tree.expandable);
       m_expander->setGlyph(tree.expanded ? "chevron-down" : Style::rtl() ? "chevron-left" : "chevron-right");
-      m_expander->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurfaceVariant));
+      m_expander->setColor(colorSpecFromRole(ColorRole::OnSurfaceVariant));
       m_columns = columns;
       m_columnOrder = order;
       m_icon->setOpacity(cut ? 0.4F : entry.hidden ? kHiddenIconOpacity : 1.0F);
@@ -118,7 +118,7 @@ namespace {
       m_arrow->setVisible(m_miller && directory);
       m_arrow->setParticipatesInLayout(m_miller && directory);
       m_arrow->setColor(colorSpecFromRole(path ? ColorRole::Primary : ColorRole::OnSurfaceVariant));
-      m_icon->bindFile(entry, colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurface));
+      m_icon->bindFile(entry, colorSpecFromRole(ColorRole::OnSurface));
       m_iconSize = files::fileRowIconSize(presentation);
       m_icon->setIconSize(m_iconSize);
       m_icon->setEmblems(presentation.showEmblems && entry.symlink, presentation.showEmblems && readOnly);
@@ -126,15 +126,14 @@ namespace {
       m_parent->setText(entry.parentDisplayName);
       m_parent->setVisible(!entry.parentDisplayName.empty());
       m_parent->setParticipatesInLayout(!entry.parentDisplayName.empty());
-      m_parent->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurfaceVariant));
+      m_parent->setColor(colorSpecFromRole(ColorRole::OnSurfaceVariant));
       for (const auto column : files::kDefaultDetailsColumnOrder) {
         auto* label = m_details[static_cast<std::size_t>(column)];
         label->setText(columns.visible(column) ? files::entryColumnText(entry, column, typeLabel) : "");
         label->setOpacity(entry.hidden && !selected ? kHiddenTextOpacity : 1.0F);
-        label->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurfaceVariant));
+        label->setColor(colorSpecFromRole(ColorRole::OnSurfaceVariant));
       }
-      const auto text = colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurface);
-      m_name->setColor(path ? colorSpecFromRole(ColorRole::Primary) : text);
+      m_name->setColor(colorSpecFromRole(path ? ColorRole::Primary : ColorRole::OnSurface));
       m_background->setFill(
           !selected && (hovered || path) ? colorSpecFromRole(ColorRole::SurfaceContainerHigh) : clearColorSpec()
       );
@@ -249,7 +248,7 @@ namespace {
       m_presentation = presentation;
       m_iconSize = iconSize;
       m_icon->setIconSize(iconSize);
-      m_icon->bindFile(entry, colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurface));
+      m_icon->bindFile(entry, colorSpecFromRole(ColorRole::OnSurface));
       m_icon->setEmblems(presentation.showEmblems && entry.symlink, presentation.showEmblems && readOnly);
       const std::array captionText{
           presentation.captions.size ? fileSize(entry) : std::string{},
@@ -261,15 +260,15 @@ namespace {
         caption->setText(captionText[i]);
         caption->setVisible(!captionText[i].empty());
         caption->setParticipatesInLayout(!captionText[i].empty());
-        caption->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurfaceVariant));
+        caption->setColor(colorSpecFromRole(ColorRole::OnSurfaceVariant));
       }
       m_name->setText(entry.displayName);
       m_parent->setText(entry.parentDisplayName);
       m_parent->setMaxWidth(std::max(0.0F, width() - Style::spaceSm * 2));
       m_parent->setVisible(!entry.parentDisplayName.empty());
-      m_parent->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurfaceVariant));
+      m_parent->setColor(colorSpecFromRole(ColorRole::OnSurfaceVariant));
       m_name->setMaxWidth(std::max(0.0F, width() - Style::spaceSm * 2));
-      m_name->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurface));
+      m_name->setColor(colorSpecFromRole(ColorRole::OnSurface));
       m_background->setFill(
           !selected && hovered ? colorSpecFromRole(ColorRole::SurfaceContainerHigh) : clearColorSpec()
       );

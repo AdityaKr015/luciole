@@ -75,6 +75,10 @@ GIO file types stay behind `fs/`: public headers outside `fs/`, `thumbnails/`, a
 
 Inside `app`, `WorkspaceApplication` owns windows, tabs, and the `OperationHub`, which runs every file job independently of tabs and hands a job to another tab when its tab closes. Each tab is a `BrowserPage` (`app/page/`) that only orchestrates feature controllers; a new feature gets its own controller behind the `PageContext` interface (see the comment in `app/page/page_context.h`). Actions are declared once in `browser/action_registry.cpp`, with their handler row in `BrowserPage::runAction`.
 
+### Palette colors
+
+Fills, tints, and borders use a palette role: `SurfaceContainerLow` to `SurfaceContainerHighest` for raised backgrounds, the `*Container` roles for tinted fills, and `OutlineVariant` for borders. Do not blend a role with a hardcoded alpha (`colorSpecFromRole(ColorRole::Primary, 0.16F)`) to get a color the palette does not have; if no role fits, propose a new one in noctalia-shell. Alpha is for real transparency only: shadows, scrims, overlays, and fading content that is disabled, cut, hidden, or being dragged (`Node::setOpacity`), ideally through a named constant. `just role-alpha-check` (run in CI) rejects any role-plus-literal-alpha in `src/`; `lib/` is checked by the same rule in noctalia-shell.
+
 ### Code shared with noctalia-shell
 
 `lib/` (UI controls, render, Wayland surfaces, core helpers) is copied from [noctalia-shell](https://github.com/noctalia-dev/noctalia); do not edit it here. Make generic fixes there first and resync the copy, so the two trees do not drift apart.

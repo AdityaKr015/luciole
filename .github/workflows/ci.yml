@@ -28,6 +28,9 @@ jobs:
       - name: Check formatting and prose
         run: just format-check
 
+      - name: Check palette role alpha
+        run: just role-alpha-check
+
   build:
     name: Build and test (debug)
     runs-on: ubuntu-latest

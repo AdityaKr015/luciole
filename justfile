@@ -199,6 +199,39 @@ lint-prose:
         print("\n".join(errors), file=sys.stderr)
         sys.exit(1)
 
+# Palette roles blended with a literal alpha (`colorSpecFromRole(ColorRole::X, 0.4F)`) are banned in src/.
+# lib/ is a copy of noctalia-shell and covered by its own role-alpha-check there.
+role-alpha-check:
+    #!/usr/bin/env python3
+    """Fail on palette roles combined with a literal alpha in src/; same pattern as noctalia-shell."""
+
+    import re
+    import sys
+    from pathlib import Path
+
+    PATTERN = re.compile(
+        r"\b(?:colorSpecFromRole|colorForRole)\(\s*ColorRole::\w+\s*,\s*"
+        r"(?:\w+\s*\?\s*)?[0-9]*\.?[0-9]+F?(?:\s*:\s*[0-9]*\.?[0-9]+F?)?\s*\)"
+    )
+
+    errors = []
+    for path in sorted(Path("src").rglob("*")):
+        if path.suffix not in (".cpp", ".h"):
+            continue
+        text = path.read_text(encoding="utf-8")
+        for match in PATTERN.finditer(text):
+            line = text.count("\n", 0, match.start()) + 1
+            errors.append(f"{path}:{line}: {match.group(0)}")
+
+    if errors:
+        print("\n".join(errors), file=sys.stderr)
+        print(
+            "error: palette role blended with a literal alpha. Use a palette role (surface_container_*, *_container,\n"
+            "outline_variant) or a named Style constant for real transparency. See CONTRIBUTING.md, Palette colors.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
 lint-python:
     just _files python | xargs -0 -r python3 -m py_compile
 

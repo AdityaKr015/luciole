@@ -18,6 +18,7 @@
 #include "ui/browser/places_sidebar.h"
 #include "ui/builders.h"
 #include "ui/controls/miller_view.h"
+#include "ui/controls/selection_surface.h"
 #include "ui/palette.h"
 #include "wayland/toplevel_surface.h"
 #include "wayland/wayland_connection.h"
@@ -101,10 +102,10 @@ void DragDropController::buildOverlay(AnimationManager& animations) {
   m_dragOverlay->addChild(
       ui::box(
           {.out = &m_folderDropHighlight,
-           .fill = colorSpecFromRole(ColorRole::Primary, 0.16F),
+           .fill = clearColorSpec(),
            .border = colorSpecFromRole(ColorRole::Primary),
            .borderWidth = Style::focusRingWidth,
-           .radius = Style::radiusSm,
+           .radius = SelectionSurface::cornerRadius,
            .visible = false,
            .participatesInLayout = false}
       )

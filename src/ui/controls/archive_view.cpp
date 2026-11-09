@@ -43,7 +43,7 @@ namespace {
     }
     void bind(const files::ArchiveEntry& entry, bool selected, bool hovered) {
       m_name->setText(entry.displayName);
-      m_name->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurface));
+      m_name->setColor(colorSpecFromRole(ColorRole::OnSurface));
       m_icon->bind(entry.icon, colorSpecFromRole(ColorRole::OnSurface));
       std::string size;
       if (entry.kind == files::ArchiveEntryKind::Directory) {
@@ -60,7 +60,6 @@ namespace {
               : hovered ? colorSpecFromRole(ColorRole::SurfaceContainerHigh)
                         : clearColorSpec()
       );
-      setBorder(selected ? colorSpecFromRole(ColorRole::Primary) : clearColorSpec(), selected ? 1.0F : 0.0F);
     }
 
   private:

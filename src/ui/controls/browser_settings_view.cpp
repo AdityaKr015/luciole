@@ -227,7 +227,7 @@ void BrowserSettingsView::section(const std::string& title, std::string_view cus
            .align = FlexAlign::Stretch,
            .gap = 8.0F,
            .padding = 12.0F,
-           .fill = colorSpecFromRole(ColorRole::SurfaceContainer, 0.4F),
+           .fill = colorSpecFromRole(ColorRole::SurfaceContainerLow),
            .radius = Style::radiusLg}
       )
   );

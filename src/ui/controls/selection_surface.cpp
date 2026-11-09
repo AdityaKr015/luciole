@@ -165,8 +165,9 @@ void SelectionSurface::bind(
   }
 }
 void SelectionSurface::doLayout(Renderer& renderer) {
+  // A calm tinted block; the outline matches the fill so merged selections read as one shape.
   m_fill->setTint(resolveColorSpec(colorSpecFromRole(ColorRole::PrimaryContainer)));
-  m_outline->setTint(resolveColorSpec(colorSpecFromRole(ColorRole::Primary)));
+  m_outline->setTint(resolveColorSpec(colorSpecFromRole(ColorRole::PrimaryContainer)));
   if (!visible()) {
     return;
   }

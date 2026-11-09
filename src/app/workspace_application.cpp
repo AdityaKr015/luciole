@@ -1053,12 +1053,17 @@ void WorkspaceApplication::tabMenu(Host& host, files::TabId tab, float x, float 
 }
 
 Button::ButtonPalette WorkspaceApplication::closeTabPalette(ColorRole foreground) {
+  // Palette roles only: the selected tab sits on Primary, others on the strip's SurfaceContainer.
+  const bool selected = foreground == ColorRole::OnPrimary;
+  const auto background =
+      colorSpecFromRole(selected ? ColorRole::PrimaryContainer : ColorRole::SurfaceContainerHighest);
+  const auto label = colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurface);
   auto palette = Button::defaultPalette(ButtonVariant::Ghost);
   palette.normal.label = colorSpecFromRole(foreground);
-  palette.hover.bg = colorSpecFromRole(foreground, 0.12F);
-  palette.hover.label = colorSpecFromRole(foreground);
-  palette.pressed.bg = colorSpecFromRole(foreground, 0.20F);
-  palette.pressed.label = colorSpecFromRole(foreground);
+  palette.hover.bg = background;
+  palette.hover.label = label;
+  palette.pressed.bg = background;
+  palette.pressed.label = label;
   return palette;
 }
 
@@ -1096,8 +1101,10 @@ void WorkspaceApplication::rebuildStrip(Host& host, const files::TabWindow& wind
   scroll->content()->setDirection(FlexDirection::Horizontal);
   const auto windowId = host.id;
   auto tabPalette = Button::defaultPalette(ButtonVariant::Ghost);
-  tabPalette.hover.bg = colorSpecFromRole(ColorRole::OnSurface, 0.08F);
+  tabPalette.hover.bg = colorSpecFromRole(ColorRole::SurfaceContainerHigh);
   tabPalette.hover.label = colorSpecFromRole(ColorRole::OnSurface);
+  tabPalette.pressed.bg = colorSpecFromRole(ColorRole::SurfaceContainerHighest);
+  tabPalette.pressed.label = colorSpecFromRole(ColorRole::OnSurface);
   for (const auto& [id, label] : host.labels) {
     Button* button = nullptr;
     auto tab = ui::button(
