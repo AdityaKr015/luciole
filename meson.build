@@ -315,9 +315,10 @@ ui_lib = static_library('files-ui',
     'src/ui/controls/recursive_permission_editor.cpp',
     'src/ui/controls/selection_surface.cpp',
     'src/ui/controls/tooltip_presenter.cpp',
+    'src/ui/palette_file.cpp',
   ),
   include_directories: src_inc,
-  dependencies: [model_dep, browser_dep, config_dep, operations_dep, thumbnails_dep, noctalia_ui_dep],
+  dependencies: [model_dep, browser_dep, config_dep, operations_dep, thumbnails_dep, noctalia_ui_dep, tomlplusplus],
 )
 ui_dep = declare_dependency(link_with: ui_lib, include_directories: src_inc,
   dependencies: [model_dep, browser_dep, config_dep, operations_dep, thumbnails_dep, noctalia_ui_dep],
@@ -351,6 +352,7 @@ app = executable('noctalia-files',
     'src/app/page/status_bar_controller.cpp',
     'src/app/page/transfer_controller.cpp',
     'src/app/page/trash_controller.cpp',
+    'src/app/palette_watcher.cpp',
     'src/app/workspace_application.cpp',
     'src/main.cpp',
   ),
@@ -379,6 +381,7 @@ endif
 
 install_data('LICENSE', install_dir: get_option('datadir') / 'licenses/noctalia-files')
 install_subdir(noctalia_ui_assets_dir / 'fonts', install_dir: get_option('datadir') / 'noctalia-files/assets')
+install_data('assets/noctalia/colors.toml', install_dir: get_option('datadir') / 'noctalia-files/templates')
 install_data('assets/completions/noctalia-files.bash',
   install_dir: get_option('datadir') / 'bash-completion/completions',
   rename: 'noctalia-files',

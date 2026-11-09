@@ -3,6 +3,7 @@
 #include "app/file_manager_service.h"
 #include "app/operation_hub.h"
 #include "app/page/browser_page.h"
+#include "app/palette_watcher.h"
 #include "browser/tab_workspace.h"
 #include "thumbnails/thumbnail_service.h"
 
@@ -96,6 +97,8 @@ private:
   TextInputService& m_input;
   files::WaylandTextClipboard& m_clipboard;
   files::BrowserSettings m_defaults;
+  // Applies colors.toml before any surface is built, then follows its changes.
+  files::PaletteWatcher m_palette;
   AnimationManager m_animations;
   files::ViewPreferenceWriter m_preferences;
   files::PinService m_pins;
