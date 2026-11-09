@@ -11,7 +11,7 @@ pkgs.mkShell {
     wayland-scanner
     llvmPackages_23.clang-tools
     llvmPackages_23.libclang
-    python3
+    noctalia-files.archivePython
     nixfmt
     statix
     deadnix

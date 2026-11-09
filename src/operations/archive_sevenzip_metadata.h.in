@@ -1,0 +1,5 @@
+#pragma once
+
+inline constexpr char sevenZipMetadataProgram[] = R"NF7ZPY(
+@SEVENZIP_METADATA@
+)NF7ZPY";

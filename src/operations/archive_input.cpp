@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstring>
 #include <dirent.h>
 #include <fcntl.h>
 #include <format>
 #include <limits>
+#include <lzma.h>
 #include <set>
 #include <unistd.h>
 
@@ -122,7 +124,18 @@ files::archive_work::Input::Input(const Location& source, Work& work)
 
 std::size_t files::archive_work::Input::read(std::span<char> buffer) {
   std::size_t count = 0;
-  while (count < buffer.size() && m_position < m_size) {
+  while (count < buffer.size() && m_position < m_size + m_header.size()) {
+    m_work.check();
+    if (!m_header.empty() && (m_position < m_signature.size() || m_position >= m_size)) {
+      const std::span<const char> bytes = m_position < m_signature.size()
+          ? std::span<const char>(m_signature).subspan(static_cast<std::size_t>(m_position))
+          : std::span<const char>(m_header).subspan(static_cast<std::size_t>(m_position - m_size));
+      const auto size = std::min(buffer.size() - count, bytes.size());
+      std::memcpy(buffer.data() + count, bytes.data(), size);
+      m_position += size;
+      count += size;
+      continue;
+    }
     m_work.check();
     const auto part = std::prev(std::ranges::upper_bound(m_parts, m_position, {}, &Part::start));
     const auto offset = m_position - part->start;
@@ -153,7 +166,7 @@ std::size_t files::archive_work::Input::read(std::span<char> buffer) {
 
 std::int64_t files::archive_work::Input::seek(std::int64_t offset, int whence) {
   m_work.check();
-  const auto base = whence == SEEK_SET ? 0U : whence == SEEK_CUR ? m_position : m_size;
+  const auto base = whence == SEEK_SET ? 0U : whence == SEEK_CUR ? m_position : m_size + m_header.size();
   if (whence != SEEK_SET && whence != SEEK_CUR && whence != SEEK_END) {
     throwFileError(FileErrorKind::InvalidArgument, "Invalid archive seek origin.");
   }
@@ -202,4 +215,38 @@ files::Fd files::archive_work::Input::duplicateSingle() const {
     throwFileError(FileErrorKind::Unsupported, "This provider requires one ordinary archive file.");
   }
   return opened(::fcntl(m_parts.front().fd.get(), F_DUPFD_CLOEXEC, 4));
+}
+
+void files::archive_work::Input::setSevenZipHeader(std::vector<char> header) {
+  m_work.check();
+  if (split()
+      || !m_header.empty()
+      || header.empty()
+      || header.front() != 1
+      || header.size() > m_work.limits.maxMetadataBytes
+      || header.size() > 16U * 1024U * 1024U
+      || m_size < m_signature.size()
+      || m_size > static_cast<std::uint64_t>(INT64_MAX) - header.size()) {
+    throwFileError(FileErrorKind::Unsupported, "Invalid decoded 7z header overlay.");
+  }
+  seek(0, SEEK_SET);
+  if (read(m_signature) != m_signature.size()) {
+    throwFileError(FileErrorKind::InvalidArgument, "Truncated 7z signature.");
+  }
+  const auto put = [&](std::size_t offset, std::uint64_t value, unsigned width) {
+    for (unsigned i = 0; i < width; ++i) {
+      m_signature[offset + i] = static_cast<char>(value & 255U);
+      value >>= 8U;
+    }
+  };
+  const auto crc = [](std::span<const char> bytes) {
+    return lzma_crc32(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size(), 0);
+  };
+  put(12, m_size - m_signature.size(), 8);
+  put(20, header.size(), 8);
+  put(28, crc(header), 4);
+  put(8, crc(std::span<const char>(m_signature).subspan(12)), 4);
+  m_header = std::move(header);
+  seek(0, SEEK_SET);
+  unchanged();
 }

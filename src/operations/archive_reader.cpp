@@ -1,5 +1,6 @@
 #include "fs/filename.h"
 #include "operations/archive_rar_input.h"
+#include "operations/archive_sevenzip_metadata.h"
 #include "operations/archive_sevenzip_provider.h"
 #include "operations/archive_support.h"
 #include "operations/archive_xz_input.h"
@@ -20,6 +21,7 @@ namespace {
   namespace fs = std::filesystem;
   struct Reader {
     Work& work;
+    const Passwords* keys;
     Input input;
     std::int64_t headerOffset = 0;
     std::optional<XzInput> xz;
@@ -27,12 +29,16 @@ namespace {
     std::unique_ptr<struct archive, decltype(&archive_read_free)> value{archive_read_new(), &archive_read_free};
     std::array<char, 65536> buffer{};
     Reader(const Location& source, Work& request, const Passwords* passwords = nullptr, bool raw = false)
-        : work(request), input(source, request), filename(native(source)), original(input.fingerprint()) {
+        : work(request), keys(passwords), input(source, request), filename(native(source)),
+          original(input.fingerprint()) {
       if (work.progress.sourceStamp.empty()) {
         work.progress.sourceStamp = original;
       } else if (work.progress.sourceStamp != original) {
         throwFileError(FileErrorKind::Changed, "The archive changed while waiting for its password. Start again.");
       }
+      initialize(passwords, raw);
+    }
+    void initialize(const Passwords* passwords, bool raw) {
       if (!value) {
         throwFileError(FileErrorKind::Other, "Could not initialize the archive reader.");
       }
@@ -148,7 +154,14 @@ namespace {
       const auto format = archive_format(value.get()) & ARCHIVE_FORMAT_BASE_MASK;
       if (archive_read_has_encrypted_entries(value.get()) > 0) {
         if (format == ARCHIVE_FORMAT_7ZIP && status != ARCHIVE_OK && status != ARCHIVE_EOF) {
-          throwFileError(FileErrorKind::Unsupported, "Encrypted 7z headers or link metadata are not supported yet.");
+          if (input.hasSevenZipHeader()) {
+            throwFileError(FileErrorKind::Unsupported, "Encrypted 7z link metadata is not supported yet.");
+          }
+          const Passwords empty;
+          input.setSevenZipHeader(decodeSevenZipHeader(input, work, keys ? *keys : empty));
+          value.reset(archive_read_new());
+          initialize(keys, false);
+          return next(entry);
         }
         if (format == ARCHIVE_FORMAT_RAR || format == ARCHIVE_FORMAT_RAR_V5) {
           throwFileError(
@@ -252,9 +265,10 @@ namespace {
       };
       entry.encrypted = archive_entry_is_data_encrypted(header) > 0;
       const auto type = archive_entry_filetype(header);
-      if (entry.encrypted
-          && (archive_format(reader.value.get()) & ARCHIVE_FORMAT_BASE_MASK) == ARCHIVE_FORMAT_7ZIP
-          && (type != AE_IFREG || archive_entry_hardlink(header))) {
+      const bool unsupportedType = type != AE_IFREG || archive_entry_hardlink(header);
+      const bool hiddenLink = reader.input.hasSevenZipHeader() && type != AE_IFDIR && unsupportedType;
+      if ((hiddenLink || (entry.encrypted && unsupportedType))
+          && (archive_format(reader.value.get()) & ARCHIVE_FORMAT_BASE_MASK) == ARCHIVE_FORMAT_7ZIP) {
         throwFileError(FileErrorKind::Unsupported, "Encrypted 7z link metadata is not supported yet.");
       }
       if (const char* target = archive_entry_hardlink(header)) {
@@ -328,6 +342,7 @@ namespace {
       }
     }
     validateLinks(links, reader.work);
+    result->encrypted = result->encrypted || reader.input.hasSevenZipHeader();
     result->expandedBytes = reader.work.expanded;
     result->format = archive_format_name(reader.value.get()) ? archive_format_name(reader.value.get()) : "Archive";
     validateCompression(reader);
@@ -400,11 +415,12 @@ namespace {
 } // namespace
 
 files::archive_work::Prepared files::archive_work::inspect(
-    const Location& source, ArchiveLimits limits, const CancelToken& cancel, Progress& progress
+    const Location& source, ArchiveLimits limits, const CancelToken& cancel, Progress& progress,
+    const Passwords& passwords
 ) {
   const ArchiveLocale locale;
   auto work = workFor(limits, cancel, progress);
-  Reader reader(source, work);
+  Reader reader(source, work, &passwords);
   return {.stage = {}, .catalog = ::catalog(reader), .output = std::nullopt};
 }
 files::archive_work::Prepared files::archive_work::extract(
@@ -507,7 +523,8 @@ files::archive_work::Prepared files::archive_work::extract(
               O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600
           )
       );
-      if (entry.encrypted && (archive_format(reader.value.get()) & ARCHIVE_FORMAT_BASE_MASK) == ARCHIVE_FORMAT_7ZIP) {
+      if ((entry.encrypted || reader.input.hasSevenZipHeader())
+          && (archive_format(reader.value.get()) & ARCHIVE_FORMAT_BASE_MASK) == ARCHIVE_FORMAT_7ZIP) {
         extractEncryptedSevenZip(reader.input, output.get(), entry, work, passwords, total);
         reader.skip();
       } else {

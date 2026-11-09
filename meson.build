@@ -88,6 +88,13 @@ completions = configure_file(
   output: 'noctalia_files_completions.h',
   configuration: completion_config,
 )
+metadata_config = configuration_data()
+metadata_config.set('SEVENZIP_METADATA', fs.read('src/operations/archive_sevenzip_metadata.py'))
+sevenzip_metadata = configure_file(
+  input: 'src/operations/archive_sevenzip_metadata.h.in',
+  output: 'noctalia_files_sevenzip_metadata.h',
+  configuration: metadata_config,
+)
 src_inc = include_directories('src')
 
 # One static library per module. A module's dependencies list only the modules
@@ -174,9 +181,12 @@ browser_dep = declare_dependency(link_with: browser_lib, include_directories: sr
 
 libacl = dependency('libacl')
 operations_lib = static_library('files-operations',
+  sevenzip_metadata,
   files(
     'src/operations/archive_icons.cpp',
     'src/operations/archive_input.cpp',
+    'src/operations/archive_provider_process.cpp',
+    'src/operations/archive_sevenzip_metadata.cpp',
     'src/operations/archive_rar_input.cpp',
     'src/operations/archive_sevenzip_provider.cpp',
     'src/operations/archive_xz_input.cpp',

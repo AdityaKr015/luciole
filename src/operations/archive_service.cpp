@@ -219,7 +219,7 @@ struct files::ArchiveService::State : std::enable_shared_from_this<State> {
     runJob<archive_work::Prepared>(
         [limits = limits, progress = &progress, token = cancel, task] {
           if (task.operation == Operation::Inspect) {
-            auto prepared = archive_work::inspect(task.sources.front(), limits, token, *progress);
+            auto prepared = archive_work::inspect(task.sources.front(), limits, token, *progress, *task.passwords);
             assignArchiveIcons(*prepared.catalog);
             return prepared;
           }

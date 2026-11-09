@@ -105,4 +105,70 @@ namespace sevenzip_fixtures {
       "/2Qoh1Ba79YKzDpQ2GTbudoHObgfBkXU+AAAAAAXBlABCYDZAAcLAQABIwMBAQVdABAAAAyBOgoBlCmeCgAA",
       true
   };
+
+  // Header-encrypted own payloads: 7-Zip 26.04 and py7zr 1.1.3.
+  inline constexpr Fixture literalHeader{
+      "literalHeader",
+      "N3q8ryccAATmRBq+MAEAAAAAAAA+AAAAAAAAAFFAnDMwpgl2L1w25XgQrTIGXOCJBtzigddjfiDo6LUsah3IYPBVhWkZcg3Aajdu"
+      "EDxJOGkw1t+Z9yS9b1dmbMrvCSSOkU4Q3+VdiV7VrjAknyskaC9HAhevwoT7Q4H2nbezAFPhOWbzENXxL08p9WiSvgPuGAFxAs9z"
+      "FRNvKWY+/5jwM9XLVSlosSYyS/UdxB5tHd93ged8DHIh8+oSrlEtaFE4ns6bmy7SZKv3tKa996/DnWfrXcphOiYo35aVPzAUm/oC"
+      "Ci1QpJFMsKsvz/jx71c5o7qZPOD7BspWcZMjzKV47wdzafa6oxkQTrJk09zTO38SSmPNAGd6hDAZMsK8FBze2sYQc/8F1+syep2J"
+      "vUeT5r2Aa9CAQhR6OHZqZG6nK0YaUs9yGZhdeEcba7q5ll6MFwZQAQmA4AAHCwEAAiQG8QcBElMPEWZ75inmDy25E/jalGNjBiMD"
+      "AQEFXQAQAAABAAyA2IE6CgGjnEksAAA=",
+      true
+  };
+  inline constexpr Fixture traversalHeader{
+      "traversalHeader",
+      "N3q8ryccAAS6aeE2kAAAAAAAAAAoAAAAAAAAAPIdsAVXpsBg7xEMvxU3Pl30Pbhr+b+dH47n4NiNUF8BLb+qQLZEXog9UMRvw5QR"
+      "jfXGCrw5l2YOplbBq5pnZMaYBn2DYHMGXdbBAjtX2RoQ1SF/Trd+OeDAUmcF0Ve7xbWnpbO1bJp+duKy0p4cXpLEZrVG69BuwKVX"
+      "NiELyxIqAumi5k//WQ0v0WtL83E0Z+SNWDcXBiABCXAABwsBAAEkBvEHARJTD24kjLjzl3dyR8NHAeb5oOkMbQAA",
+      true
+  };
+  inline constexpr Fixture duplicateHeader{
+      "duplicateHeader",
+      "N3q8ryccAASx+NF8sAAAAAAAAAAqAAAAAAAAAAQDplhZ8eHI6kPXZx+OPZ1ogwV04VcjXnM7EPwKESw1lTgk3oozwadI1uZ2NXlD"
+      "KPMC1hjo8VLozG6cD8sOYDLxhLXTq0DQuD5VdkbnCk6C+xrzPG92MMHbmTBF5MCpAG+SyamL9t19b61UTqPM6fAMgtMrLbCbPvAc"
+      "iT9Ek9K0zJiIDTmmdEKn/+a/7u/Se/KBF3Xq/dE9ZywU//3pssOhs8Q2xCdifrrLCgLqcgDg+/bZVRcGIAEJgJAABwsBAAEkBvEH"
+      "ARJTD8SzR81HKk2929OoTChZehkMgIEAAA==",
+      true
+  };
+  inline constexpr Fixture ancestorHeader{
+      "ancestorHeader",
+      "N3q8ryccAASplPT9wAAAAAAAAAAqAAAAAAAAAMJnp32+sCWgW0TO6pkuwdFKpP2JuNgIas9fRvc4rmhOXF4EY9yuGP6tgc4LMxqy"
+      "/R7wKku8fXceB+Hoxqb9fgEhRlB+UBJlfet3LWpcR4sQdkGXaO33uVvwOlXO+JBHlWFAqEvo6ExwTg+wenXw+wR0SWY8LlJoMWeq"
+      "iVPKAvpG1/p8YSPZT+IS/InpI52H41a1p1yIgUKG6PiW+I2jCOXOwboxPuRhLI0TS/lfe5J9ggGXZHazOP9Rl9DY0651AFaeMNMX"
+      "BiABCYCgAAcLAQABJAbxBwESUw+PPGGKyMaphxHAmOkFb7SMDICVAAA=",
+      true
+  };
+  inline constexpr Fixture compressedHeader{
+      "compressedHeader",
+      "N3q8ryccAARnLIN18AAAAAAAAAA+AAAAAAAAAA9IC0/TR16A/ExvQxRA//hd3AY31BQXqrC2O28b5vhJtleMdcn4pTcfml1owMLO"
+      "0enAf6r0wz23pPQmzof24VJfTMU3jypfXF65ZY2N+SGMjoxg1cWaL+vYGYB4zM6Hn42b/jWICkMxyWcidJdjMvYqkt0o2RBgXxUy"
+      "m0f5SJJKVEqvoF6VH8nJv6WhRbsA1wW/tqzlsOGANQJL2QFUPGzEYg0pEYR4SQrFU1PN5zU95HNakXdKsgVgtR7QMmkLOkjWnu8W"
+      "b1rtKHq0pBqkP8D0IkKJNPgTWRpDXqKjqmUjqA/0iRxzth8fxdwhhx16PLJo19IXBiABCYDQAAcLAQACJAbxBwESUw8Kp3GYRvuO"
+      "w2Do4NRQAqHBIwMBAQVdABAAAAEADIDPilYKAcdEXdoAAA==",
+      true
+  };
+  inline constexpr Fixture linkHeader{
+      "linkHeader",
+      "N3q8ryccAASQRmBPoAAAAAAAAAA8AAAAAAAAAEEIYNL9wMCn5OyGYNfEdW1d3GAYcK993LoTpYYgmKukcNmRZqDMbh1Fbvh9Q5pw"
+      "mLBmqbpt+Vi16oTmIsW5tRUy5QoWhEYqq554MX+Dw/Pj6yq3tP6pthadY9mIZuOzAnveIWwsIvu9ylLw4vknq+pFJXaxQxjkFQjr"
+      "4MkBuPFT07MD+jJ/tB4pAIaTJD3STuoyf4GJaGGL4rnrUkPYaY4Z6duFFwYgAQmAgAAHCwEAAiQG8QcBElMPaJSaMQLd3RJGTE/j"
+      "RDZVRyMDAQEFXQAQAAABAAx1fgoBFiCGXwAA",
+      true
+  };
+  inline constexpr Fixture clearDataHeader{
+      "clearDataHeader",
+      "N3q8ryccAARhv0hSiwAAAAAAAAAoAAAAAAAAAOz178EBACZjbGVhciBmaWxlIGRhdGEgd2l0aCBlbmNyeXB0ZWQgbWV0YWRhdGEA"
+      "2yIjWe5OX2GwnbChfFC6OjWjg0ON/scXsR6P56MIYIkNM33BfeP/7YM17SOJAtJl/4DpbNjJMXTjUKKppb4YmULwt9JKl5Mq5F0o"
+      "5t6rFOa6Th6aBgfOxgJjmUY/P4DaFwYrAQlgAAcLAQABJAbxBwESUw/dXPXoKZonkvYEpTJ/H8gVDFUAAA==",
+      true
+  };
+  inline constexpr Fixture invalidPackHeader{
+      "invalidPackHeader",
+      "N3q8ryccAATU1fYsiwAAAAAAAAAoAAAAAAAAAGmFlOUBACZjbGVhciBmaWxlIGRhdGEgd2l0aCBlbmNyeXB0ZWQgbWV0YWRhdGEA"
+      "n5lm7LNcLEsHrMDIm2vf0P5w4cW3EoqinQoANuEb8gMjoiiMmTHGepd7v/BEAtbKTAdzpWvQ0xDZVTZfYe/tfae6dpMjlsi953s6"
+      "9Vzh2IFEndUJrCOxphSg28RkKHBLFwYrAQlgAAcLAQABJAbxBwESUw/j0Oou4Cxuncf5HVKHelpHDFkAAA==",
+      true
+  };
 } // namespace sevenzip_fixtures

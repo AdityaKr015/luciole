@@ -60,6 +60,7 @@
                 pkgs.ffmpeg
                 pkgs.poppler-utils
                 pkgs._7zz
+                self.packages.${pkgs.stdenv.hostPlatform.system}.default.archivePython
               ]
             }:$PATH"
           '';

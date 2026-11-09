@@ -2,6 +2,7 @@
 
 #include "operations/archive_support.h"
 
+#include <array>
 #include <span>
 
 namespace files::archive_work {
@@ -14,6 +15,8 @@ namespace files::archive_work {
     std::int64_t seek(std::int64_t offset, int whence);
     void unchanged() const;
     Fd duplicateSingle() const;
+    void setSevenZipHeader(std::vector<char> header);
+    bool hasSevenZipHeader() const { return !m_header.empty(); }
     const std::string& fingerprint() const { return m_fingerprint; }
     bool split() const { return !m_prefix.empty(); }
 
@@ -29,6 +32,8 @@ namespace files::archive_work {
     Fd m_parent;
     struct stat m_parentIdentity;
     std::vector<Part> m_parts;
+    std::vector<char> m_header;
+    std::array<char, 32> m_signature{};
     std::uint64_t m_size = 0, m_position = 0, m_readBytes = 0;
   };
 } // namespace files::archive_work

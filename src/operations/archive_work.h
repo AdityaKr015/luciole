@@ -34,7 +34,10 @@ namespace files::archive_work {
     std::uint64_t expandedBytes = 0;
   };
   // Entry icons are left empty; see archive_icons.h.
-  Prepared inspect(const Location& source, ArchiveLimits limits, const CancelToken& cancel, Progress& progress);
+  Prepared inspect(
+      const Location& source, ArchiveLimits limits, const CancelToken& cancel, Progress& progress,
+      const Passwords& passwords = {}
+  );
   Prepared compress(
       const std::vector<Location>& sources, const Location& destination, ArchiveFormat format, ArchiveLimits limits,
       const CancelToken& cancel, Progress& progress, const Passwords& passwords = {}

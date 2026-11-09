@@ -41,6 +41,7 @@
   buildRevision ? "unknown",
 }:
 let
+  archivePython = python3.withPackages (ps: [ ps.py7zr ]);
   pixbufWithGlycin = gdk-pixbuf.overrideAttrs (previous: {
     # 2.44.8 requires Glycin 2.2; the pinned collection provides its 2.1 API.
     version = "2.44.6";
@@ -117,7 +118,7 @@ stdenv.mkDerivation (finalAttrs: {
     meson
     ninja
     pkg-config
-    python3
+    archivePython
     wayland-scanner
     autoAddDriverRunpath
     makeWrapper
@@ -163,6 +164,7 @@ stdenv.mkDerivation (finalAttrs: {
           ffmpeg
           poppler-utils
           _7zz
+          archivePython
         ]
       }" \
       --suffix GIO_EXTRA_MODULES : "${gvfs}/lib/gio/modules" \
@@ -179,6 +181,7 @@ stdenv.mkDerivation (finalAttrs: {
     (lib.mesonOption "build_revision" buildRevision)
   ];
   passthru.glycinLoaders = glycin-loaders;
+  passthru.archivePython = archivePython;
 
   meta = {
     description = "A native Wayland file manager using Noctalia rendering and controls (in development)";
