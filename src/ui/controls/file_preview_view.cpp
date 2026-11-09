@@ -4,6 +4,7 @@
 #include "ui/browser/preview_layout.h"
 #include "ui/builders.h"
 #include "ui/controls/button.h"
+#include "ui/controls/file_metadata_view.h"
 #include "ui/controls/label.h"
 #include "ui/style.h"
 
@@ -50,15 +51,9 @@ FilePreviewView::FilePreviewView(
   body->content()->addChild(
       ui::label({.out = &m_name, .fontWeight = FontWeight::SemiBold, .maxLines = 3, .configure = literal})
   );
-  body->content()->addChild(
-      ui::label(
-          {.out = &m_metadata,
-           .fontSize = Style::fontSizeCaption,
-           .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
-           .maxLines = 8,
-           .configure = literal}
-      )
-  );
+  auto details = std::make_unique<FileMetadataView>();
+  m_metadata = details.get();
+  body->content()->addChild(std::move(details));
   body->content()->addChild(ui::label({.out = &m_status, .maxLines = 3, .configure = literal}));
   body->content()->addChild(ui::label({.out = &m_text, .configure = [](Label& label) {
                                          label.setUseMarkup(false);
@@ -99,7 +94,7 @@ void FilePreviewView::sync(
   for (auto* button : {m_open, m_openWith}) {
     button->setMaxWidth(std::max(40.0F, width - Style::spaceMd * 2));
   }
-  for (auto* label : {m_name, m_metadata, m_status, m_text}) {
+  for (auto* label : {m_name, m_status, m_text}) {
     label->setMaxWidth(budget);
   }
   const auto& entry = snapshot.entry;
@@ -109,15 +104,17 @@ void FilePreviewView::sync(
     m_scroll->requestScrollToOffset(0);
   }
   m_name->setText(entry ? entry->displayName : "Select an item to preview");
-  std::string metadata;
+  files::MetadataFields metadata;
+  files::MetadataFields fileFacts;
   if (entry) {
-    metadata = !typeLabel.empty()                   ? std::string(typeLabel)
+    const auto type = !typeLabel.empty()            ? std::string(typeLabel)
         : entry->symlink                            ? "Symbolic link"
         : entry->type == files::FileType::Directory ? "Folder"
                                                     : entry->contentType.value_or("File");
+    metadata.push_back({"Type", type});
     if (entry->size && entry->type != files::FileType::Directory) {
       const files::GString size(g_format_size_full(*entry->size, G_FORMAT_SIZE_IEC_UNITS));
-      metadata += std::format("\n{}", size.get());
+      metadata.push_back({"File size", size.get()});
     }
     if (entry->modifiedSeconds && *entry->modifiedSeconds <= G_MAXINT64) {
       const std::unique_ptr<GDateTime, decltype(&g_date_time_unref)> date(
@@ -125,7 +122,7 @@ void FilePreviewView::sync(
       );
       if (date) {
         const files::GString formatted(g_date_time_format(date.get(), "%Y-%m-%d %H:%M"));
-        metadata += std::format("\n{}", formatted.get());
+        fileFacts.push_back({"Modified", formatted.get()});
       }
     }
     m_image->bind(entry->icon, colorSpecFromRole(ColorRole::OnSurface));
@@ -139,7 +136,9 @@ void FilePreviewView::sync(
   const bool showImage = entry && snapshot.image && snapshot.image->pixels;
   m_image->parent()->setVisible(showImage);
   m_image->parent()->setParticipatesInLayout(showImage);
-  m_metadata->setText(metadata);
+  metadata.insert(metadata.end(), snapshot.metadata.begin(), snapshot.metadata.end());
+  metadata.insert(metadata.end(), fileFacts.begin(), fileFacts.end());
+  m_metadata->sync(metadata, budget, true);
   m_status->setText(snapshot.message);
   m_status->setColor(
       colorSpecFromRole(snapshot.status == files::PreviewStatus::Error ? ColorRole::Error : ColorRole::OnSurfaceVariant)

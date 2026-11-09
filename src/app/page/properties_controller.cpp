@@ -6,6 +6,7 @@
 #include "browser/browser_controller.h"
 #include "browser/location_presentation.h"
 #include "clipboard/text_clipboard.h"
+#include "config/settings.h"
 #include "core/ui_phase.h"
 #include "fs/gio_ptr.h"
 #include "operations/permission_service.h"
@@ -15,6 +16,7 @@
 #include "ui/builders.h"
 #include "ui/controls/acl_editor.h"
 #include "ui/controls/bulk_acl_editor.h"
+#include "ui/controls/file_metadata_view.h"
 #include "ui/controls/permission_editor.h"
 #include "ui/controls/permission_results_view.h"
 #include "ui/controls/scroll_view.h"
@@ -32,7 +34,12 @@
 #include <vector>
 
 PropertiesController::PropertiesController(PageContext& page, files::FileIconCache& icons)
-    : m_page(page), m_icons(icons) {}
+    : m_page(page), m_icons(icons) {
+  m_metadata.setChangedCallback([this] {
+    m_metadataDirty = true;
+    m_page.requestSync();
+  });
+}
 
 void PropertiesController::progressTick() { m_dirty = m_job && m_job->running(); }
 
@@ -60,6 +67,35 @@ void PropertiesController::onFrame() {
   if (std::exchange(m_dirty, false)) {
     sync();
   }
+  if (std::exchange(m_metadataDirty, false)) {
+    syncMetadata();
+  }
+}
+
+void PropertiesController::syncMetadata() {
+  if (!m_metadataView || !m_page.menuSurface()) {
+    return;
+  }
+  auto fields = m_metadata.fields();
+  if (m_job) {
+    const auto& snapshot = m_job->service<files::PermissionService>().snapshot();
+    if (!snapshot.multiple && snapshot.info && snapshot.info->current) {
+      const auto& info = *snapshot.info;
+      const auto replace = [&](std::string label, std::string value) {
+        const auto found = std::ranges::find(fields, label, &files::MetadataField::label);
+        if (found != fields.end()) {
+          found->value = std::move(value);
+        } else {
+          fields.push_back({std::move(label), std::move(value), false});
+        }
+      };
+      replace("Owner", info.ownerName.empty() ? std::to_string(info.owner) : info.ownerName);
+      replace("Group", info.groupName.empty() ? std::to_string(info.group) : info.groupName);
+      replace("Permissions", std::format("{:04o}", info.mode & 07777U));
+    }
+  }
+  m_metadataView->sync(fields, m_metadataWidth);
+  m_page.menuSurface()->requestLayout();
 }
 
 void PropertiesController::updateApply() {
@@ -80,6 +116,11 @@ bool PropertiesController::resultsKey(const KeyboardEvent& event) {
 }
 
 void PropertiesController::layoutDialog(float width) {
+  const float metadataWidth = std::max(1.0F, width - Style::spaceMd * 2 - Style::scrollbarWidth - Style::scrollbarGap);
+  if (m_metadataView && metadataWidth != m_metadataWidth) {
+    m_metadataWidth = metadataWidth;
+    syncMetadata();
+  }
   if (m_permissionEditor) {
     m_page.activeDialog().root()->setSize(
         width, std::min(600.0F, static_cast<float>(m_page.surface().height()) - 64.0F)
@@ -117,6 +158,7 @@ void PropertiesController::sync() {
   }
   const auto& permissions = m_job->service<files::PermissionService>();
   const auto& snapshot = permissions.snapshot();
+  m_metadataDirty = true;
   if (m_permissionEditor) {
     m_permissionEditor->sync(snapshot);
     if (m_aclEditor) {
@@ -187,6 +229,7 @@ struct PropertiesController::Body {
   std::unique_ptr<Node> node;
   ScrollView* scroll = nullptr;
   Flex* general = nullptr;
+  FileMetadataView* metadata = nullptr;
   Flex* permissions = nullptr;
   Flex* basic = nullptr;
   Flex* advanced = nullptr;
@@ -229,6 +272,7 @@ PropertiesController::Body PropertiesController::buildBody(
         )
     );
   };
+  FileMetadataView* metadataView = nullptr;
   if (targets.size() == 1) {
     const auto& entry = targets.front();
     auto icon = std::make_unique<files::FileIcon>(m_icons, 48.0F);
@@ -257,6 +301,9 @@ PropertiesController::Body PropertiesController::buildBody(
     );
     general->addChild(ui::separator({}));
     field("Location", files::locationEditText(entry.location));
+    if (entry.contentType) {
+      field("MIME", *entry.contentType);
+    }
     if (entry.location.isTrash()) {
       field("Original", entry.trash.original ? files::locationEditText(*entry.trash.original) : "Unknown");
       field("Deleted", entry.trash.deletionDate.value_or("Unknown"));
@@ -274,6 +321,9 @@ PropertiesController::Body PropertiesController::buildBody(
         field("Modified", text.get());
       }
     }
+    auto metadata = std::make_unique<FileMetadataView>();
+    metadataView = metadata.get();
+    general->addChild(std::move(metadata));
   } else {
     field("Selection", std::format("{} items", targets.size()));
     if (!editable) {
@@ -370,6 +420,7 @@ PropertiesController::Body PropertiesController::buildBody(
       .node = std::move(propertiesBody),
       .scroll = scroll,
       .general = generalGroup,
+      .metadata = metadataView,
       .permissions = permissionsGroup,
       .basic = basicGroup,
       .advanced = advancedGroup,
@@ -539,30 +590,17 @@ void PropertiesController::show(const std::vector<files::DirectoryEntry>& target
       std::move(root), nullptr, {(surface.width() - width) * 0.5F, (surface.height() - height) * 0.5F, 1, 1}, width,
       height, false
   );
-  if (m_page.menuSurface() && editable) {
-    m_page.activeDialog().bind(ActiveDialog::Kind::Properties, [this] {
-      if (!m_permissionEditor) {
-        return;
-      }
-      // Saving goes on for the page that takes the job over once this page left its window.
-      if (const auto job = std::exchange(m_job, nullptr); job && (m_page.jobs().attached() || !job->running())) {
-        job->cancel();
-      }
-      m_permissionEditor = nullptr;
-      m_permissionBasic = m_permissionAdvanced = nullptr;
-      m_permissionAdvancedOpen = m_permissionAdvancedBack = nullptr;
-      m_aclEditor = nullptr;
-      m_bulkAclEditor = nullptr;
-      m_aclActive = false;
-      m_permissionResultTab = 2;
-      m_permissionResults = nullptr;
-      m_permissionReport = m_permissionCancel = nullptr;
-      m_permissionStatus = nullptr;
-      m_permissionTabs = nullptr;
-      m_permissionSave = nullptr;
-      m_permissionScroll = nullptr;
-      m_page.focusFileList();
-    });
+  if (m_page.menuSurface()) {
+    m_page.activeDialog().bind(ActiveDialog::Kind::Properties, [this] { close(); });
+    m_metadataView = body.metadata;
+    m_metadataWidth = std::max(1.0F, width - Style::spaceMd * 2 - Style::scrollbarWidth - Style::scrollbarGap);
+    if (m_metadataView) {
+      m_metadata.show(targets.front(), m_page.settings().thumbnails);
+      m_metadataDirty = true;
+    }
+    if (!editable) {
+      return;
+    }
     m_permissionEditor = body.editor;
     m_permissionBasic = body.basic;
     m_permissionAdvanced = body.advanced;
@@ -596,4 +634,28 @@ void PropertiesController::show(const std::vector<files::DirectoryEntry>& target
       (void)permissions.prepare(targets.front());
     }
   }
+}
+
+void PropertiesController::close() {
+  m_metadata.clear();
+  m_metadataView = nullptr;
+  m_metadataDirty = false;
+  // Saving goes on for the page that takes the job over once this page left its window.
+  if (const auto job = std::exchange(m_job, nullptr); job && (m_page.jobs().attached() || !job->running())) {
+    job->cancel();
+  }
+  m_permissionEditor = nullptr;
+  m_permissionBasic = m_permissionAdvanced = nullptr;
+  m_permissionAdvancedOpen = m_permissionAdvancedBack = nullptr;
+  m_aclEditor = nullptr;
+  m_bulkAclEditor = nullptr;
+  m_aclActive = false;
+  m_permissionResultTab = 2;
+  m_permissionResults = nullptr;
+  m_permissionReport = m_permissionCancel = nullptr;
+  m_permissionStatus = nullptr;
+  m_permissionTabs = nullptr;
+  m_permissionSave = nullptr;
+  m_permissionScroll = nullptr;
+  m_page.focusFileList();
 }

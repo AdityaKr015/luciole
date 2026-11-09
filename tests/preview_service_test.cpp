@@ -247,6 +247,9 @@ int main(int argc, char** argv) {
   if (!arguments.empty() && arguments.front() == "--thumbnail-worker") {
     return files::runThumbnailWorker(std::span(arguments).subspan(1));
   }
+  if (!arguments.empty() && arguments.front() == "--preview-metadata-worker") {
+    return files::runPreviewMetadataWorker(std::span(arguments).subspan(1));
+  }
   initLogLevelFromEnvironment();
   const files::GString directory(g_dir_make_tmp("noctalia-preview-test-XXXXXX", nullptr));
   if (!directory) {

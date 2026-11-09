@@ -4,6 +4,7 @@
 #include "config/settings.h"
 #include "noctalia_files_build_info.h"
 #include "noctalia_files_completions.h"
+#include "thumbnails/preview_metadata.h"
 #include "thumbnails/thumbnail_worker.h"
 
 #include <cstdio>
@@ -42,6 +43,9 @@ Options:
 } // namespace
 
 int files::runCli(std::span<const std::string_view> args) {
+  if (!args.empty() && args.front() == "--preview-metadata-worker") {
+    return runPreviewMetadataWorker(args.subspan(1));
+  }
   if (!args.empty() && args.front() == "--thumbnail-worker") {
     return runThumbnailWorker(args.subspan(1));
   }

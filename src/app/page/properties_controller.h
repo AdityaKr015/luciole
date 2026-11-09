@@ -1,5 +1,7 @@
 #pragma once
 
+#include "thumbnails/preview_metadata.h"
+
 #include <cstddef>
 #include <memory>
 #include <vector>
@@ -15,6 +17,7 @@ class BulkAclEditor;
 class Button;
 class Flex;
 class Label;
+class FileMetadataView;
 class OperationJob;
 class PageContext;
 class PermissionEditor;
@@ -52,6 +55,8 @@ private:
   void showAdvanced(bool advanced, bool focus = false);
   bool canApply() const;
   void sync();
+  void syncMetadata();
+  void close();
 
   PageContext& m_page;
   // The dialog's job: reads the targets, then applies changes.
@@ -70,5 +75,9 @@ private:
   Segmented* m_permissionTabs = nullptr;
   ScrollView* m_permissionScroll = nullptr;
   Button* m_permissionSave = nullptr;
+  files::PreviewMetadataService m_metadata;
+  FileMetadataView* m_metadataView = nullptr;
+  float m_metadataWidth = 0;
+  bool m_metadataDirty = false;
   bool m_dirty = false;
 };

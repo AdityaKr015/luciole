@@ -168,6 +168,7 @@ namespace {
 struct files::PreviewService::State : std::enable_shared_from_this<State> {
   PreviewSnapshot view;
   ThumbnailService thumbnails{ThumbnailPurpose::Preview};
+  PreviewMetadataService metadata;
   std::shared_ptr<const FileIconImage> pendingImage;
   GioPtr<GCancellable> cancel;
   std::function<void()> changed;
@@ -246,6 +247,12 @@ struct files::PreviewService::State : std::enable_shared_from_this<State> {
 };
 files::PreviewService::PreviewService() : m_state(std::make_shared<State>()) {
   const std::weak_ptr<State> weak = m_state;
+  m_state->metadata.setChangedCallback([weak] {
+    if (const auto state = weak.lock(); state && state->alive && state->view.entry) {
+      state->view.metadata = state->metadata.fields();
+      state->notify();
+    }
+  });
   m_state->thumbnails.setChangedCallback([weak] {
     const auto state = weak.lock();
     if (!state || !state->alive || !state->pendingImage) {
@@ -261,6 +268,7 @@ files::PreviewService::~PreviewService() {
   m_state->changed = {};
 }
 void files::PreviewService::clear() {
+  m_state->metadata.clear();
   if (!m_state->view.entry && !m_state->pendingImage && !m_state->pending && m_state->thumbnails.reservedBytes() == 0) {
     return;
   }
@@ -304,6 +312,8 @@ void files::PreviewService::show(
   state.pixels = pixels;
   state.options = options;
   state.view.entry = *entry;
+  state.metadata.show(*entry, options);
+  state.view.metadata = state.metadata.fields();
   state.view.status = PreviewStatus::Unavailable;
   state.view.message = entry->type == files::FileType::Directory ? "Folder" : "No preview available for this file.";
   if (entry->type == files::FileType::Regular && !entry->symlink && entry->access.read != false) {
@@ -335,7 +345,8 @@ void files::PreviewService::setChangedCallback(std::function<void()> callback) {
 }
 const files::PreviewSnapshot& files::PreviewService::snapshot() const { return m_state->view; }
 bool files::PreviewService::busy() const {
-  return m_state->running
+  return m_state->metadata.busy()
+      || m_state->running
       || m_state->pending
       || m_state->thumbnails.activeJobs() != 0
       || m_state->thumbnails.queuedJobs() != 0;

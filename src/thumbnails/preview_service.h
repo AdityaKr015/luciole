@@ -1,5 +1,6 @@
 #pragma once
 
+#include "thumbnails/preview_metadata.h"
 #include "thumbnails/thumbnail_service.h"
 
 namespace files {
@@ -10,6 +11,7 @@ namespace files {
     std::string text, message;
     std::shared_ptr<const FileIconImage> image;
     bool imageUpgradeFailed = false;
+    MetadataFields metadata;
   };
   // One current selection and at most one text worker. Superseded work never publishes.
   class PreviewService {

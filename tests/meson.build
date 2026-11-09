@@ -11,6 +11,7 @@ test_table = [
   {'name': 'thumbnail', 'deps': [thumbnails_dep, imaging_dep, event_loop_dep, dependency('libwebp')],
     'timeout': 90, 'env': gio_env},
   {'name': 'preview-service', 'deps': [thumbnails_dep, ui_dep], 'env': gio_env},
+  {'name': 'preview-metadata', 'deps': [thumbnails_dep, imaging_dep, event_loop_dep], 'timeout': 60, 'env': gio_env},
   {'name': 'clipboard', 'deps': [clipboard_dep, dependency('wayland-server')], 'env': gio_env},
   {'name': 'file-payload', 'deps': [clipboard_dep], 'env': gio_env},
   {'name': 'browser-actions', 'deps': [browser_dep, ui_dep], 'env': gio_env},
