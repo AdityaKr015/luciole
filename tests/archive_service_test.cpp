@@ -1,3 +1,4 @@
+#include "archive_rar_fixtures.h"
 #include "archive_sevenzip_fixtures.h"
 #include "event_loop/glib_poll_source.h"
 #include "fs/gio_ptr.h"
@@ -789,12 +790,13 @@ namespace {
       TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
     }
   }
-  std::string sevenZipBytes(const sevenzip_fixtures::Fixture& fixture) {
+  std::string base64Bytes(std::string_view encoded) {
     gsize size = 0;
-    const std::unique_ptr<guchar, decltype(&g_free)> bytes(g_base64_decode(fixture.base64.data(), &size), &g_free);
+    const std::unique_ptr<guchar, decltype(&g_free)> bytes(g_base64_decode(encoded.data(), &size), &g_free);
     TEST_CHECK(bytes && size > 32);
     return {reinterpret_cast<const char*>(bytes.get()), size};
   }
+  std::string fixtureBytes(const auto& fixture) { return base64Bytes(fixture.base64); }
   std::string sevenZipPayload(std::string_view marker) {
     std::string result;
     result.reserve(marker.size() * 32);
@@ -802,6 +804,209 @@ namespace {
       result += marker;
     }
     return result;
+  }
+  std::string digest(std::string_view bytes) {
+    const files::GString value(
+        g_compute_checksum_for_data(G_CHECKSUM_SHA256, reinterpret_cast<const guchar*>(bytes.data()), bytes.size())
+    );
+    TEST_CHECK(value);
+    return value.get();
+  }
+  void testRarProviders(const Fixture& fixture, Pump& pump) {
+    TEST_CHECK(std::ranges::none_of(files::archiveFormats(), [](const auto& format) {
+      return format.suffix == ".rar";
+    }));
+    for (const auto& reference : rar_fixtures::archives) {
+      const auto source = fixture.root / (std::string(reference.name) + ".rar");
+      const auto output = fixture.root / ("rar-extracted-" + std::string(reference.name));
+      const auto bytes = fixtureBytes(reference);
+      write(source, bytes);
+      files::ArchiveService service;
+      TEST_CHECK(service.inspect(location(source)));
+      wait(service, pump);
+      if (!reference.error.empty()) {
+        TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Unsupported);
+        TEST_CHECK(
+            service.error()->message.contains(reference.error) && !service.passwordRequest() && !service.catalog()
+        );
+        TEST_CHECK(service.extract(location(source), location(output)));
+        wait(service, pump);
+        TEST_CHECK(service.error() && !service.passwordRequest() && !fs::exists(output));
+        TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
+        continue;
+      }
+      if (service.error()) {
+        throw std::runtime_error(std::string(reference.name) + ": " + service.error()->message);
+      }
+      const auto known = service.catalog();
+      TEST_CHECK(known && known->format.starts_with("RAR") && !known->entries.empty() && !known->encrypted);
+      TEST_CHECK(service.extract(location(source), location(output), {}, known));
+      wait(service, pump);
+      if (service.error()) {
+        throw std::runtime_error(std::string(reference.name) + ": " + service.error()->message);
+      }
+      TEST_CHECK(!service.error() && fs::file_size(output / reference.member) == reference.size);
+      TEST_CHECK(digest(read(output / reference.member)) == reference.sha256);
+      if (reference.name == "rar4-stored") {
+        TEST_CHECK(fs::is_symlink(output / "testlink") && fs::read_symlink(output / "testlink") == "test.txt");
+      } else if (reference.name == "rar5-hardlink") {
+        TEST_CHECK(fs::equivalent(output / "file.txt", output / "hardlink.txt"));
+      } else if (reference.name == "rar5-symlink") {
+        TEST_CHECK(fs::is_symlink(output / "symlink.txt") && fs::read_symlink(output / "symlink.txt") == "file.txt");
+      }
+      const auto selected = fixture.root / ("rar-selected-" + std::string(reference.name));
+      TEST_CHECK(service.extract(location(source), location(selected), {std::string(reference.member)}, known));
+      wait(service, pump);
+      TEST_CHECK(!service.error() && digest(read(selected / reference.member)) == reference.sha256);
+      TEST_CHECK(service.openMember(std::string(reference.member)));
+      wait(service, pump);
+      const auto opened = service.takeOpenedFile();
+      TEST_CHECK(!service.error() && opened && digest(read(*opened->nativePath())) == reference.sha256);
+      TEST_CHECK((fs::status(*opened->nativePath()).permissions() & fs::perms::owner_exec) == fs::perms::none);
+      write(source, bytes);
+      const auto stale = fixture.root / ("rar-stale-" + std::string(reference.name));
+      TEST_CHECK(service.extract(location(source), location(stale), {}, known));
+      wait(service, pump);
+      TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Changed && !fs::exists(stale));
+      service.shutdown();
+      wait(service, pump);
+      TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
+    }
+  }
+  void testRarStoredChunks(const Fixture& fixture, Pump& pump) {
+    auto bytes = fixtureBytes(rar_fixtures::archives[0]);
+    const auto size =
+        static_cast<unsigned char>(bytes[25]) | (static_cast<unsigned>(static_cast<unsigned char>(bytes[26])) << 8);
+    const auto header = base64Bytes(rar_fixtures::largeStoredHeader);
+    const std::string payload(131072 + 17, 'x');
+    bytes.replace(20, size + 20, header + payload);
+    const auto source = fixture.root / "large-stored.rar";
+    write(source, bytes);
+    files::ArchiveService service;
+    const auto output = fixture.root / "large-rar-output";
+    TEST_CHECK(service.extract(location(source), location(output), {"test.txt"}));
+    wait(service, pump);
+    TEST_CHECK(!service.error() && read(output / "test.txt") == payload);
+    bytes[20 + header.size() + 65536] ^= 1;
+    write(source, bytes);
+    TEST_CHECK(service.extract(location(source), location(fixture.root / "large-rar-corrupt")));
+    wait(service, pump);
+    TEST_CHECK(
+        service.error() && !fs::exists(fixture.root / "large-rar-corrupt") && fs::is_empty(fixture.root / "tmp")
+    );
+  }
+  void testRarFailures(const Fixture& fixture, Pump& pump) {
+    unsigned index = 0;
+    for (const auto encoded : rar_fixtures::rejected) {
+      const auto source = fixture.root / ("rar-hostile-" + std::to_string(index) + ".rar");
+      const auto output = fixture.root / ("rar-hostile-output-" + std::to_string(index++));
+      write(source, base64Bytes(encoded));
+      files::ArchiveService service;
+      TEST_CHECK(service.extract(location(source), location(output)));
+      wait(service, pump);
+      if (!service.error()) {
+        std::println(stderr, "RAR rejected fixture accepted: {}", index - 1);
+      }
+      TEST_CHECK(service.error() && !fs::exists(output) && fs::is_empty(fixture.root / "tmp"));
+    }
+    TEST_CHECK(!fs::exists(fixture.root / "x.txt"));
+    for (const auto index : {0U, 1U, 2U, 3U}) {
+      const auto bytes = fixtureBytes(rar_fixtures::archives[index]);
+      for (unsigned failure = 0; failure < 6; ++failure) {
+        const auto name = std::to_string(index) + "-" + std::to_string(failure);
+        auto bad = bytes;
+        files::ArchiveLimits limits;
+        if (failure == 0) {
+          bad.resize(bad.size() / 2);
+        } else if (failure == 1) {
+          bad[index < 2 ? 7 : 8] ^= 1;
+        } else if (failure == 2) {
+          limits.maxExpandedBytes = 1;
+        } else if (failure == 3) {
+          limits.maxMetadataBytes = 1;
+        } else if (failure == 4) {
+          limits.maxArchiveBytes = bad.size() - 1;
+        } else {
+          bad.resize(bad.size() - 1);
+        }
+        const auto source = fixture.root / ("bad-rar-" + name + ".rar");
+        const auto output = fixture.root / ("rar-rejected-" + name);
+        write(source, bad);
+        files::ArchiveService service(limits);
+        TEST_CHECK(service.extract(location(source), location(output)));
+        wait(service, pump);
+        if (!service.error()) {
+          std::println(stderr, "RAR failure fixture accepted: {}", name);
+        }
+        TEST_CHECK(service.error() && !service.passwordRequest() && !fs::exists(output));
+        TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
+      }
+    }
+    const auto bytes = fixtureBytes(rar_fixtures::archives[3]);
+    const auto source = fixture.root / "rar-cancel.rar";
+    write(source, bytes);
+    files::ArchiveService service;
+    TEST_CHECK(service.extract(location(source), location(fixture.root / "rar-cancelled")));
+    service.cancel();
+    wait(service, pump);
+    TEST_CHECK(service.error() && !fs::exists(fixture.root / "rar-cancelled") && fs::is_empty(fixture.root / "tmp"));
+    const auto split = splitZip(fixture.root / "rar-fake-split", "fake.zip", bytes, bytes.size() / 2);
+    TEST_CHECK(service.inspect(location(split.front())));
+    wait(service, pump);
+    TEST_CHECK(service.error() && !service.catalog());
+  }
+  std::string rar5Header(std::string_view bytes) {
+    auto prefix = fixtureBytes(rar_fixtures::archives[2]).substr(0, 8);
+    prefix += std::string(4, '\0'); // Main-envelope rejection happens before native CRC validation.
+    prefix.append(bytes);
+    return prefix;
+  }
+  template <std::size_t Size> std::string rar5Header(const char (&bytes)[Size]) {
+    return rar5Header(std::string(bytes, Size - 1));
+  }
+  void testRarMainHeaders(const Fixture& fixture, Pump& pump) {
+    const auto legacy = fixture.root / "rar-without-end-marker.rar";
+    auto legacyBytes = fixtureBytes(rar_fixtures::archives[0]);
+    legacyBytes.resize(legacyBytes.size() - 7);
+    write(legacy, legacyBytes);
+    files::ArchiveService legacyService;
+    TEST_CHECK(legacyService.extract(location(legacy), location(fixture.root / "rar-legacy-eof")));
+    wait(legacyService, pump);
+    TEST_CHECK(
+        !legacyService.error()
+        && digest(read(fixture.root / "rar-legacy-eof/test.txt")) == rar_fixtures::archives[0].sha256
+    );
+    auto encrypted4 = fixtureBytes(rar_fixtures::archives[0]);
+    encrypted4[10] |= static_cast<char>(0x80);
+    const std::vector<std::string> invalid{
+        rar5Header(std::string(11, static_cast<char>(0x80))),
+        rar5Header(std::string(9, static_cast<char>(0xFF)) + "\x02"),
+        rar5Header("\x01\x01\x00\x00"),
+        rar5Header("\x03\x01\x01"),
+        rar5Header("\x04\x01\x01\x7f\x00"),
+        rar5Header("\x03\x01\x00\x00").substr(0, 13)
+    };
+    for (std::size_t i = 0; i < invalid.size(); ++i) {
+      const auto source = fixture.root / ("invalid-rar-main-" + std::to_string(i) + ".rar");
+      write(source, invalid[i]);
+      files::ArchiveService service;
+      TEST_CHECK(service.inspect(location(source)));
+      wait(service, pump);
+      TEST_CHECK(
+          service.error()
+          && service.error()->kind == files::FileErrorKind::InvalidArgument
+          && !service.passwordRequest()
+      );
+    }
+    for (const auto& bytes : {encrypted4, rar5Header("\x03\x04\x00\x00")}) {
+      const auto source = fixture.root / "encrypted-rar-main.rar";
+      write(source, bytes);
+      files::ArchiveService service;
+      TEST_CHECK(service.inspect(location(source)));
+      wait(service, pump);
+      TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Unsupported);
+      TEST_CHECK(service.error()->message.contains("Encrypted RAR") && !service.passwordRequest());
+    }
   }
   void testSevenZipProviders(const Fixture& fixture, Pump& pump) {
     for (const auto& reference : sevenzip_fixtures::archives) {
@@ -813,7 +1018,7 @@ namespace {
       }
       const auto source = fixture.root / (std::string(reference.name) + ".7z");
       const auto destination = fixture.root / ("sevenzip-" + std::string(reference.name));
-      const auto bytes = sevenZipBytes(reference);
+      const auto bytes = fixtureBytes(reference);
       write(source, bytes);
       files::ArchiveService service;
       TEST_CHECK(service.inspect(location(source)));
@@ -861,7 +1066,7 @@ namespace {
     }
   }
   void testSevenZipFailures(const Fixture& fixture, Pump& pump) {
-    const auto bytes = sevenZipBytes(sevenzip_fixtures::archives.front());
+    const auto bytes = fixtureBytes(sevenzip_fixtures::archives.front());
     for (unsigned failure = 0; failure < 9; ++failure) {
       const auto source = fixture.root / ("bad-sevenzip-" + std::to_string(failure) + ".7z");
       auto bad = bytes;
@@ -1257,6 +1462,10 @@ int main(int argc, char** argv) {
     }
     Fixture fixture;
     Pump pump;
+    testRarProviders(fixture, pump);
+    testRarStoredChunks(fixture, pump);
+    testRarFailures(fixture, pump);
+    testRarMainHeaders(fixture, pump);
     testSevenZipProviders(fixture, pump);
     testSevenZipFailures(fixture, pump);
     testSevenZipBoundaries(fixture, pump);

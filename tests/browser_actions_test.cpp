@@ -265,7 +265,24 @@ namespace {
     TEST_CHECK(
         !files::isSupportedArchive(files::Location::fromPath("/tmp/split.7z.001"), "application/x-7z-compressed")
     );
-    TEST_CHECK(!files::isSupportedArchive(files::Location::fromPath("/tmp/unsupported.rar"), {}));
+    TEST_CHECK(files::isSupportedArchive(files::Location::fromPath("/tmp/supported.RAR"), {}));
+    TEST_CHECK(files::archiveFolderName(files::Location::fromPath("/tmp/supported.RAR")) == "supported");
+    for (const auto* const mime : {"application/vnd.rar", "application/x-rar", "application/x-rar-compressed"}) {
+      TEST_CHECK(files::isSupportedArchive(files::Location::fromPath("/tmp/opaque-rar"), mime));
+      for (const auto* const name : {"set.part1.rar", "set.part002.RAR", "set.rar.001", "set.r00", "set.s01"}) {
+        TEST_CHECK(!files::isSupportedArchive(files::Location::fromPath(std::string("/tmp/") + name), mime));
+      }
+    }
+    files::DirectoryModel rarModel;
+    auto rarData = snapshot();
+    rarData.entries.push_back(entry(7, "package.rar"));
+    rarModel.applySnapshot(rarData);
+    rarModel.select(7);
+    files::ActionContext rarContext{.model = rarModel, .context = 1, .query = {}, .pinned = {}};
+    for (const auto action : {A::BrowseArchive, A::ExtractHere, A::ExtractTo}) {
+      TEST_CHECK(R::state(action, rarContext, R::capture(rarContext)).enabled);
+    }
+    TEST_CHECK(!files::isSupportedArchive(files::Location::fromUri("sftp://example.invalid/package.rar"), {}));
     for (const auto compression :
          {files::ArchiveCompression::Bzip2, files::ArchiveCompression::Zstd, files::ArchiveCompression::Xz}) {
       const bool bzip = compression == files::ArchiveCompression::Bzip2;

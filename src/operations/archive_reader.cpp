@@ -1,4 +1,5 @@
 #include "fs/filename.h"
+#include "operations/archive_rar_input.h"
 #include "operations/archive_support.h"
 #include "operations/archive_xz_input.h"
 
@@ -19,6 +20,7 @@ namespace {
   struct Reader {
     Work& work;
     Input input;
+    std::int64_t headerOffset = 0;
     std::optional<XzInput> xz;
     std::string filename, original;
     std::unique_ptr<struct archive, decltype(&archive_read_free)> value{archive_read_new(), &archive_read_free};
@@ -36,8 +38,15 @@ namespace {
       if (XzInput::recognizes(input)) {
         xz.emplace(input, work);
       }
+      const auto rar = raw || xz ? RarInput::None : validateRarInput(input);
       if (raw) {
         requireArchive(archive_read_support_format_raw(value.get()), value.get(), work);
+      } else if (rar != RarInput::None) {
+        requireArchive(
+            rar == RarInput::Rar4 ? archive_read_support_format_rar(value.get())
+                                  : archive_read_support_format_rar5(value.get()),
+            value.get(), work
+        );
       } else if (xz) {
         requireArchive(archive_read_support_format_tar(value.get()), value.get(), work);
       } else {
@@ -54,7 +63,7 @@ namespace {
         }
       }
       requireArchive(archive_read_support_filter_none(value.get()), value.get(), work);
-      if (!input.split() && !xz) {
+      if (!input.split() && !xz && rar == RarInput::None) {
         if (archiveCompressionAvailable(ArchiveCompression::Gzip)) {
           requireArchive(archive_read_support_filter_gzip(value.get()), value.get(), work);
         }
@@ -75,8 +84,9 @@ namespace {
               value.get(), this,
               [](struct archive*, void* data) -> const char* {
                 auto& reader = *static_cast<Reader*>(data);
-                // libarchive cannot decrypt 7z; never offer a futile password loop.
-                if ((archive_format(reader.value.get()) & ARCHIVE_FORMAT_BASE_MASK) != ARCHIVE_FORMAT_7ZIP) {
+                // These providers cannot decrypt; never offer a futile password loop.
+                const auto format = archive_format(reader.value.get()) & ARCHIVE_FORMAT_BASE_MASK;
+                if (format != ARCHIVE_FORMAT_7ZIP && format != ARCHIVE_FORMAT_RAR && format != ARCHIVE_FORMAT_RAR_V5) {
                   reader.work.progress.passwordNeeded.store(true);
                 }
                 return nullptr;
@@ -132,15 +142,39 @@ namespace {
     }
     bool next(struct archive_entry*& entry) {
       work.check();
+      const auto before = archive_filter_bytes(value.get(), -1);
       const auto status = archive_read_next_header(value.get(), &entry);
-      if ((archive_format(value.get()) & ARCHIVE_FORMAT_BASE_MASK) == ARCHIVE_FORMAT_7ZIP
-          && archive_read_has_encrypted_entries(value.get()) > 0) {
-        throwFileError(FileErrorKind::Unsupported, "Encrypted 7z archives are not supported by the archive provider.");
+      const auto format = archive_format(value.get()) & ARCHIVE_FORMAT_BASE_MASK;
+      if (archive_read_has_encrypted_entries(value.get()) > 0) {
+        if (format == ARCHIVE_FORMAT_7ZIP) {
+          throwFileError(
+              FileErrorKind::Unsupported, "Encrypted 7z archives are not supported by the archive provider."
+          );
+        }
+        if (format == ARCHIVE_FORMAT_RAR || format == ARCHIVE_FORMAT_RAR_V5) {
+          throwFileError(
+              FileErrorKind::Unsupported, "Encrypted RAR archives are not supported by the archive provider."
+          );
+        }
       }
       if (status == ARCHIVE_EOF) {
+        if (format == ARCHIVE_FORMAT_RAR_V5) {
+          validateRar5End(input, before, work);
+        }
+        // Legacy RAR permits exact EOF without an end marker. Libarchive also
+        // treats a partial next header as EOF; do not accept those leftover bytes.
+        if (format == ARCHIVE_FORMAT_RAR
+            && archive_filter_bytes(value.get(), -1) == before
+            && input.seek(0, SEEK_END) != before) {
+          throwFileError(FileErrorKind::InvalidArgument, "RAR archive has a truncated trailing header.");
+        }
         return false;
       }
       requireArchive(status, value.get(), work);
+      headerOffset = before;
+      if (format == ARCHIVE_FORMAT_RAR && archive_entry_filetype(entry) == AE_IFLNK) {
+        verifyRar4Stored(input, headerOffset, work);
+      }
       return true;
     }
     void skip() { requireArchive(archive_read_data_skip(value.get()), value.get(), work); }
@@ -306,6 +340,9 @@ namespace {
     return current;
   }
   void extractData(Reader& reader, int output, std::uint64_t& total, std::optional<std::uint64_t> expected) {
+    if ((archive_format(reader.value.get()) & ARCHIVE_FORMAT_BASE_MASK) == ARCHIVE_FORMAT_RAR) {
+      verifyRar4Stored(reader.input, reader.headerOffset, reader.work);
+    }
     std::uint64_t end = 0;
     for (;;) {
       reader.work.check();

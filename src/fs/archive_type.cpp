@@ -7,6 +7,29 @@
 #include <archive.h>
 #include <lzma.h>
 
+namespace {
+  bool digits(std::string_view text) {
+    return !text.empty() && std::ranges::all_of(text, [](char c) { return c >= '0' && c <= '9'; });
+  }
+  bool rarVolumeName(std::string_view text) {
+    if (const auto part = text.rfind(".rar."); part != std::string_view::npos && digits(text.substr(part + 5))) {
+      return true;
+    }
+    if (text.ends_with(".rar")) {
+      const auto stem = text.substr(0, text.size() - 4);
+      if (const auto part = stem.rfind(".part"); part != std::string_view::npos && digits(stem.substr(part + 5))) {
+        return true;
+      }
+    }
+    const auto dot = text.rfind('.');
+    if (dot != std::string_view::npos) {
+      const auto suffix = text.substr(dot + 1);
+      return suffix.size() == 3 && suffix[0] >= 'r' && suffix[0] <= 'z' && digits(suffix.substr(1));
+    }
+    return false;
+  }
+} // namespace
+
 bool files::archiveCompressionAvailable(ArchiveCompression compression) {
   switch (compression) {
   case ArchiveCompression::None:
@@ -52,12 +75,21 @@ bool files::isSupportedArchive(const Location& location, const std::optional<std
   const files::GString lower(g_ascii_strdown(name->c_str(), -1));
   const std::string_view text(lower.get());
   if (const auto part = text.rfind(".7z."); part != std::string_view::npos) {
-    const auto digits = text.substr(part + 4);
-    if (!digits.empty() && std::ranges::all_of(digits, [](char c) { return c >= '0' && c <= '9'; })) {
+    const auto index = text.substr(part + 4);
+    if (digits(index)) {
       return false;
     }
   }
-  if (mime && (*mime == "application/zip" || *mime == "application/x-tar" || *mime == "application/x-7z-compressed")) {
+  if (rarVolumeName(text)) {
+    return false;
+  }
+  if (mime
+      && (*mime == "application/zip"
+          || *mime == "application/x-tar"
+          || *mime == "application/x-7z-compressed"
+          || *mime == "application/vnd.rar"
+          || *mime == "application/x-rar"
+          || *mime == "application/x-rar-compressed")) {
     return true;
   }
   if (mime && (*mime == "application/gzip" || *mime == "application/x-compressed-tar")) {
@@ -72,7 +104,7 @@ bool files::isSupportedArchive(const Location& location, const std::optional<std
   if (mime && *mime == "application/x-xz-compressed-tar") {
     return archiveCompressionAvailable(ArchiveCompression::Xz);
   }
-  if (text.ends_with(".zip") || text.ends_with(".tar") || text.ends_with(".7z")) {
+  if (text.ends_with(".zip") || text.ends_with(".tar") || text.ends_with(".7z") || text.ends_with(".rar")) {
     return true;
   }
   if (text.ends_with(".tar.gz") || text.ends_with(".tgz")) {
@@ -95,7 +127,7 @@ std::string files::archiveFolderName(const Location& location) {
        {std::string_view(".zip.001"), std::string_view(".tar.bz2"), std::string_view(".tar.zst"),
         std::string_view(".tar.gz"), std::string_view(".tar.xz"), std::string_view(".txz"), std::string_view(".tbz2"),
         std::string_view(".tzst"), std::string_view(".tbz"), std::string_view(".tgz"), std::string_view(".zip"),
-        std::string_view(".tar"), std::string_view(".7z")}) {
+        std::string_view(".tar"), std::string_view(".7z"), std::string_view(".rar")}) {
     if (text.ends_with(suffix)) {
       name.resize(name.size() - suffix.size());
       break;

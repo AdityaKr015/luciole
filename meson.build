@@ -177,6 +177,7 @@ operations_lib = static_library('files-operations',
   files(
     'src/operations/archive_icons.cpp',
     'src/operations/archive_input.cpp',
+    'src/operations/archive_rar_input.cpp',
     'src/operations/archive_xz_input.cpp',
     'src/operations/archive_service.cpp',
     'src/operations/archive_reader.cpp',
