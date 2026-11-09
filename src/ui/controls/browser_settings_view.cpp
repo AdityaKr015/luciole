@@ -76,60 +76,46 @@ BrowserSettingsView::BrowserSettingsView(
   addChild(ui::row({.align = FlexAlign::Stretch, .flexGrow = 1.0F}, std::move(navigation), std::move(body)));
   section("Browsing");
   addChoice(
-      P::ViewMode, "View", [](const auto& s) { return s.viewMode; },
+      P::ViewMode, "View",
       {{"Grid", files::ViewMode::Grid}, {"List", files::ViewMode::List}, {"Columns", files::ViewMode::Miller}}
   );
-  addNumber(
-      P::GridIconSize, "Icon size", [](const auto& s) { return s.gridIconSize; },
-      {files::kGridIconSizes.begin(), files::kGridIconSizes.end()}
-  );
-  addNumber(
-      P::MillerColumnWidth, "Column width", [](const auto& s) { return s.millerColumnWidth; },
-      {180, 208, 240, 260, 300, 360, 480, 640, 800}
-  );
-  addBool(P::MillerShowParents, "Show parent folders in Columns", [](const auto& s) { return s.millerShowParents; });
+  addNumber(P::GridIconSize, "Icon size", {files::kGridIconSizes.begin(), files::kGridIconSizes.end()});
+  addNumber(P::MillerColumnWidth, "Column width", {180, 208, 240, 260, 300, 360, 480, 640, 800});
+  addBool(P::MillerShowParents, "Show parent folders in Columns");
   addChoice(
-      P::SortBy, "Sort by", [](const auto& s) { return s.sort.field; },
+      P::SortBy, "Sort by",
       {{"Name", files::SortField::Name},
        {"Type", files::SortField::Type},
        {"Size", files::SortField::Size},
        {"Modified", files::SortField::Modified}}
   );
-  addBool(P::SortDescending, "Reverse order", [](const auto& s) { return s.sort.descending; });
-  addBool(P::DirectoriesFirst, "Folders first", [](const auto& s) { return s.sort.directoriesFirst; });
-  addBool(P::ShowHidden, "Show hidden files", [](const auto& s) { return s.showHidden; });
+  addBool(P::SortDescending, "Reverse order");
+  addBool(P::DirectoriesFirst, "Folders first");
+  addBool(P::ShowHidden, "Show hidden files");
   section("Behavior");
   addChoice(
-      P::ActivationMode, "Open items", [](const auto& s) { return s.activationMode; },
+      P::ActivationMode, "Open items",
       {{"Single click", files::ActivationMode::SingleClick}, {"Double click", files::ActivationMode::DoubleClick}}
   );
   addChoice(
-      P::TypingMode, "When typing", [](const auto& s) { return s.typingMode; },
+      P::TypingMode, "When typing",
       {{"Search subfolders", files::TypingMode::Search}, {"Select names", files::TypingMode::Typeahead}}
   );
   section("Sidebar");
-  addBool(P::ShowSidebar, "Show sidebar", [](const auto& s) { return s.showSidebar; });
-  addNumber(
-      P::SidebarWidth, "Sidebar width", [](const auto& s) { return s.sidebarWidth; },
-      widths(files::kMinSidebarWidth, files::kMaxSidebarWidth)
-  );
+  addBool(P::ShowSidebar, "Show sidebar");
+  addNumber(P::SidebarWidth, "Sidebar width", widths(files::kMinSidebarWidth, files::kMaxSidebarWidth));
   section("Preview");
-  addBool(P::ShowPreview, "Show preview", [](const auto& s) { return s.showPreview; });
-  addNumber(P::PreviewWidth, "Preview width", [](const auto& s) { return s.previewWidth; }, widths(208, 800));
+  addBool(P::ShowPreview, "Show preview");
+  addNumber(P::PreviewWidth, "Preview width", widths(208, 800));
   section("List columns");
-  addBool(P::ShowTypeColumn, "Type", [](const auto& s) { return s.columns.type; });
-  addBool(P::ShowSizeColumn, "Size", [](const auto& s) { return s.columns.size; });
-  addBool(P::ShowModifiedColumn, "Modified", [](const auto& s) { return s.columns.modified; });
-  addNumber(
-      P::NameColumnWidth, "Name width (0 = auto)", [](const auto& s) { return s.columnWidths[0]; },
-      widths(160, 16384, true)
-  );
-  addNumber(P::TypeColumnWidth, "Type width", [](const auto& s) { return s.columnWidths[1]; }, widths(64, 2048));
-  addNumber(P::SizeColumnWidth, "Size width", [](const auto& s) { return s.columnWidths[2]; }, widths(64, 2048));
-  addNumber(
-      P::ModifiedColumnWidth, "Modified width", [](const auto& s) { return s.columnWidths[3]; }, widths(64, 2048)
-  );
-  std::vector<Choice> orders;
+  addBool(P::ShowTypeColumn, "Type");
+  addBool(P::ShowSizeColumn, "Size");
+  addBool(P::ShowModifiedColumn, "Modified");
+  addNumber(P::NameColumnWidth, "Name width (0 = auto)", widths(160, 16384, true));
+  addNumber(P::TypeColumnWidth, "Type width", widths(64, 2048));
+  addNumber(P::SizeColumnWidth, "Size width", widths(64, 2048));
+  addNumber(P::ModifiedColumnWidth, "Modified width", widths(64, 2048));
+  Choices<files::DetailsColumnOrder> orders;
   auto order = files::kDefaultDetailsColumnOrder;
   do {
     std::string label;
@@ -143,10 +129,10 @@ BrowserSettingsView::BrowserSettingsView(
     }
     orders.emplace_back(label, order);
   } while (std::ranges::next_permutation(order).found);
-  addChoice(P::ColumnOrder, "Column order", [](const auto& value) { return value.columnOrder; }, orders);
+  addChoice(P::ColumnOrder, "Column order", orders);
   section("Thumbnails");
   addChoice(
-      P::ThumbnailPolicy, "Show thumbnails", [](const auto& value) { return value.thumbnails.policy; },
+      P::ThumbnailPolicy, "Show thumbnails",
       {{"Never", files::ThumbnailPolicy::Never},
        {"Local files", files::ThumbnailPolicy::Local},
        {"All locations", files::ThumbnailPolicy::All}}
@@ -159,18 +145,9 @@ BrowserSettingsView::BrowserSettingsView(
            .maxLines = 2}
       )
   );
-  addNumber(
-      P::ThumbnailMaxFileMib, "Source file limit", [](const auto& value) { return value.thumbnails.maxFileMiB; },
-      {1, 1024}, "MiB"
-  );
-  addNumber(
-      P::ThumbnailMaxMegapixels, "Image pixel limit", [](const auto& value) { return value.thumbnails.maxMegapixels; },
-      {1, 64}, "MP"
-  );
-  addNumber(
-      P::ThumbnailCacheMib, "Disk cache limit", [](const auto& value) { return value.thumbnails.cacheMiB; }, {16, 1024},
-      "MiB"
-  );
+  addNumber(P::ThumbnailMaxFileMib, "Source file limit", {1, 1024}, "MiB");
+  addNumber(P::ThumbnailMaxMegapixels, "Image pixel limit", {1, 64}, "MP");
+  addNumber(P::ThumbnailCacheMib, "Disk cache limit", {16, 1024}, "MiB");
   m_section->addChild(
       ui::button(
           {.out = &m_clearThumbnails,
@@ -260,8 +237,11 @@ void BrowserSettingsView::setCompact(bool compact) {
   m_navigation->setMinWidth(width);
   m_navigation->setMaxWidth(width);
 }
-void BrowserSettingsView::addRow(P key, const std::string& title, Read read, std::unique_ptr<Node> control) {
-  m_reads[key] = std::move(read);
+template <class T>
+void BrowserSettingsView::addRow(
+    files::PreferenceKey<T> key, const std::string& title, std::function<void(const T&)> show,
+    std::unique_ptr<Node> control
+) {
   Button* reset = nullptr;
   m_section->addChild(
       ui::row(
@@ -275,15 +255,22 @@ void BrowserSettingsView::addRow(P key, const std::string& title, Read read, std
                .minWidth = 48.0F,
                .maxWidth = 48.0F,
                .paddingH = 4.0F,
-               .onClick = [this, key] { send(key, std::monostate{}); }}
+               .onClick = [this, key] { send(key, std::optional<T>()); }}
           ),
           std::move(control)
       )
   );
-  m_resets[key] = reset;
+  m_rows[key.id()] = [this, key, reset, show = std::move(show)] {
+    const T& value = files::preferenceValue(m_current, key);
+    show(value);
+    const bool overridden = value != files::preferenceValue(m_inherited, key);
+    reset->setVisible(overridden);
+    reset->setParticipatesInLayout(overridden);
+  };
 }
 
-void BrowserSettingsView::addChoice(P key, const std::string& title, Read read, const std::vector<Choice>& choices) {
+template <class T>
+void BrowserSettingsView::addChoice(files::PreferenceKey<T> key, const std::string& title, const Choices<T>& choices) {
   auto control = std::make_unique<Select>();
   auto* select = control.get();
   std::vector<std::string> options;
@@ -296,27 +283,26 @@ void BrowserSettingsView::addChoice(P key, const std::string& title, Read read, 
   select->setMaxWidth(180.0F);
   select->setFontSize(Style::fontSizeCaption);
   select->setOnSelectionChanged([this, key, choices](std::size_t index, std::string_view) {
-    send(key, choices[index].second);
+    send(key, std::optional<T>(choices[index].second));
   });
-  m_apply[key] = [select, choices](const Value& value) {
-    const auto found = std::ranges::find(choices, value, &Choice::second);
+  const auto show = [select, choices](const T& value) {
+    const auto found = std::ranges::find(choices, value, &Choices<T>::value_type::second);
     select->setSelectedIndexSilently(static_cast<std::size_t>(found - choices.begin()));
   };
-  addRow(key, title, std::move(read), std::move(control));
+  addRow<T>(key, title, show, std::move(control));
 }
 
-void BrowserSettingsView::addBool(P key, const std::string& title, Read read) {
+void BrowserSettingsView::addBool(files::PreferenceKey<bool> key, const std::string& title) {
   Toggle* control = nullptr;
   auto row = ui::row(
       {.justify = FlexJustify::End, .width = 180.0F},
-      ui::toggle({.out = &control, .onChange = [this, key](bool value) { send(key, value); }})
+      ui::toggle({.out = &control, .onChange = [this, key](bool value) { send(key, std::optional(value)); }})
   );
-  m_apply[key] = [control](const Value& value) { control->setCheckedImmediate(std::get<bool>(value)); };
-  addRow(key, title, std::move(read), std::move(row));
+  addRow<bool>(key, title, [control](bool value) { control->setCheckedImmediate(value); }, std::move(row));
 }
 
 void BrowserSettingsView::addNumber(
-    P key, const std::string& title, Read read, const std::vector<int>& values, std::string suffix
+    files::PreferenceKey<int> key, const std::string& title, const std::vector<int>& values, std::string suffix
 ) {
   auto control = std::make_unique<Stepper>();
   auto* stepper = control.get();
@@ -326,7 +312,7 @@ void BrowserSettingsView::addNumber(
   stepper->setStep(16);
   stepper->setValueSuffix(std::move(suffix));
   stepper->setOnValueChanged([this, key, stepper, values](int value) {
-    const int previous = std::get<int>(m_values.at(key));
+    const int previous = files::preferenceValue(m_current, key);
     if (key == P::GridIconSize && !std::ranges::contains(values, value)) {
       const auto next =
           value > previous ? std::ranges::upper_bound(values, value) : std::ranges::lower_bound(values, value);
@@ -338,26 +324,23 @@ void BrowserSettingsView::addNumber(
       stepper->setValue(value > previous ? 160 : 0);
     }
   });
-  stepper->setOnValueCommitted([this, key](int value) { send(key, value); });
-  m_apply[key] = [stepper](const Value& value) {
-    if (stepper->value() != std::get<int>(value) || !stepper->valueField()->inputArea()->focused()) {
-      stepper->setValue(std::get<int>(value));
+  stepper->setOnValueCommitted([this, key](int value) { send(key, std::optional(value)); });
+  const auto show = [stepper](int value) {
+    if (stepper->value() != value || !stepper->valueField()->inputArea()->focused()) {
+      stepper->setValue(value);
     }
   };
-  addRow(key, title, std::move(read), std::move(control));
+  addRow<int>(key, title, show, std::move(control));
 }
 
-void BrowserSettingsView::send(P key, Value value) {
-  m_values[key] = std::holds_alternative<std::monostate>(value) ? m_reads.at(key)(m_inherited) : value;
-  m_apply.at(key)(m_values.at(key));
-  const bool overridden = m_values.at(key) != m_reads.at(key)(m_inherited);
-  m_resets.at(key)->setVisible(overridden);
-  m_resets.at(key)->setParticipatesInLayout(overridden);
+template <class T> void BrowserSettingsView::send(files::PreferenceKey<T> key, std::optional<T> value) {
+  files::preferenceValue(m_current, key) = value.value_or(files::preferenceValue(m_inherited, key));
+  m_rows.at(key.id())();
   m_status->setText("Saving…");
   m_status->setVisible(true);
   m_status->setParticipatesInLayout(true);
   m_status->setColor(colorSpecFromRole(ColorRole::OnSurfaceVariant));
-  m_change({key, value});
+  m_change(value ? files::OverrideEdit(key, *value) : files::OverrideEdit(key, std::nullopt));
 }
 void BrowserSettingsView::sync(
     const files::BrowserSettings& settings, const files::BrowserSettings& inherited, bool busy,
@@ -365,13 +348,10 @@ void BrowserSettingsView::sync(
 ) {
   m_clearThumbnails->setEnabled(!clearingThumbnails);
   m_clearThumbnails->setText(clearingThumbnails ? "Clearing…" : "Clear thumbnail cache");
+  m_current = settings;
   m_inherited = inherited;
-  for (const auto& [key, read] : m_reads) {
-    m_values[key] = read(settings);
-    m_apply.at(key)(m_values.at(key));
-    const bool overridden = m_values.at(key) != m_reads.at(key)(m_inherited);
-    m_resets.at(key)->setVisible(overridden);
-    m_resets.at(key)->setParticipatesInLayout(overridden);
+  for (const auto& [id, show] : m_rows) {
+    show();
   }
   m_status->setText(!error.empty() ? error : clearingThumbnails ? "Clearing cache…" : busy ? "Saving…" : "");
   m_status->setVisible(!error.empty() || busy);

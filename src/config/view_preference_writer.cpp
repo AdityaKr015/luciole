@@ -222,7 +222,7 @@ struct files::ViewPreferenceWriter::State : std::enable_shared_from_this<State> 
 
   void queue(const std::vector<OverrideEdit>& edits) {
     for (const auto& edit : edits) {
-      std::erase_if(pending, [&](const auto& previous) { return previous.preference == edit.preference; });
+      std::erase_if(pending, [&](const auto& previous) { return previous.preference() == edit.preference(); });
       pending.push_back(edit);
     }
     pump();
@@ -286,14 +286,7 @@ void files::ViewPreferenceWriter::setChangedCallback(std::function<void(const st
 }
 
 void files::ViewPreferenceWriter::submit(const std::vector<OverrideEdit>& edits) { m_state->queue(edits); }
-void files::ViewPreferenceWriter::resetAll() {
-  std::vector<OverrideEdit> edits;
-  edits.reserve(static_cast<std::size_t>(BrowserPreference::Count));
-  for (auto index = 0; index < static_cast<int>(BrowserPreference::Count); ++index) {
-    edits.push_back({static_cast<BrowserPreference>(index), std::monostate{}});
-  }
-  submit(edits);
-}
+void files::ViewPreferenceWriter::resetAll() { submit(inheritAllPreferences()); }
 void files::ViewPreferenceWriter::reload() {
   m_state->reloadPending = true;
   m_state->pump();

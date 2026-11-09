@@ -1,71 +1,267 @@
 #include "config/settings.h"
 
+#include "config/toml_decoder.h"
+#include "fs/xdg_dirs.h"
+
 #include <algorithm>
 #include <array>
 #include <cerrno>
-#include <cstdlib>
 #include <fcntl.h>
 #include <format>
 #include <iterator>
 #include <optional>
 #include <sstream>
-#include <stdexcept>
 #include <string_view>
 #include <sys/stat.h>
 #include <system_error>
-#include <toml++/toml.hpp>
+#include <tuple>
+#include <type_traits>
 #include <unistd.h>
 #include <utility>
 
 namespace {
+  using files::BrowserSettings;
   constexpr std::size_t kMaxConfigBytes = 256 * 1024;
 
-  struct ThumbnailInteger {
-    files::BrowserPreference preference;
-    std::string_view key;
-    int minimum, maximum;
-    int files::ThumbnailOptions::* member;
+  template <class T> struct Named {
+    T value;
+    std::string_view name;
   };
-  constexpr auto kThumbnailIntegers = std::to_array<ThumbnailInteger>(
-      {{files::BrowserPreference::ThumbnailMaxFileMib, "browser.thumbnail_max_file_mib", 1, 1024,
-        &files::ThumbnailOptions::maxFileMiB},
-       {files::BrowserPreference::ThumbnailMaxMegapixels, "browser.thumbnail_max_megapixels", 1, 64,
-        &files::ThumbnailOptions::maxMegapixels},
-       {files::BrowserPreference::ThumbnailCacheMib, "browser.thumbnail_cache_mib", 16, 1024,
-        &files::ThumbnailOptions::cacheMiB}}
+  constexpr auto kActivationModes = std::to_array<Named<files::ActivationMode>>(
+      {{files::ActivationMode::SingleClick, "single_click"}, {files::ActivationMode::DoubleClick, "double_click"}}
   );
-  std::optional<std::size_t> thumbnailIntegerIndex(files::BrowserPreference preference) {
-    for (std::size_t i = 0; i < kThumbnailIntegers.size(); ++i) {
-      if (kThumbnailIntegers[i].preference == preference) {
-        return i;
-      }
-    }
-    return std::nullopt;
-  }
-  struct Patch {
-    std::optional<files::ThumbnailPolicy> thumbnailPolicy;
-    std::array<std::optional<int>, 3> thumbnailIntegers;
-    std::optional<files::ActivationMode> activationMode;
-    std::optional<files::TypingMode> typingMode;
-    std::optional<bool> showHidden;
-    std::optional<files::SortField> sortBy;
-    std::optional<files::ViewMode> viewMode;
-    std::optional<int> gridIconSize;
-    std::optional<int> sidebarWidth;
-    std::optional<bool> showSidebar;
-    std::optional<bool> showPreview;
-    std::optional<int> previewWidth;
-    std::optional<int> millerColumnWidth;
-    std::optional<bool> millerShowParents;
-    std::optional<bool> sortDescending;
-    std::optional<bool> directoriesFirst;
-    std::optional<bool> showTypeColumn;
-    std::optional<bool> showSizeColumn;
-    std::optional<bool> showModifiedColumn;
-    std::optional<files::DetailsColumnOrder> columnOrder;
-    std::array<std::optional<int>, 4> columnWidths;
-    bool operator==(const Patch&) const = default;
+  constexpr auto kTypingModes = std::to_array<Named<files::TypingMode>>(
+      {{files::TypingMode::Search, "search"}, {files::TypingMode::Typeahead, "typeahead"}}
+  );
+  constexpr auto kSortFields = std::to_array<Named<files::SortField>>(
+      {{files::SortField::Name, "name"},
+       {files::SortField::Size, "size"},
+       {files::SortField::Modified, "modified"},
+       {files::SortField::Type, "type"}}
+  );
+  constexpr auto kViewModes = std::to_array<Named<files::ViewMode>>(
+      {{files::ViewMode::List, "list"}, {files::ViewMode::Grid, "grid"}, {files::ViewMode::Miller, "miller"}}
+  );
+  constexpr auto kThumbnailPolicies = std::to_array<Named<files::ThumbnailPolicy>>(
+      {{files::ThumbnailPolicy::Never, "never"},
+       {files::ThumbnailPolicy::Local, "local"},
+       {files::ThumbnailPolicy::All, "all"}}
+  );
+
+  // How a preference is spelled in TOML and which values it accepts. Enums
+  // are strings from `names`.
+  template <class T> struct Rule {
+    std::span<const Named<T>> names;
   };
+  template <> struct Rule<bool> {};
+  template <> struct Rule<int> {
+    bool (*accepts)(int);
+    std::string_view expected;
+  };
+  template <> struct Rule<files::DetailsColumnOrder> {};
+
+  bool accepts(const Rule<bool>& /*rule*/, bool /*value*/) { return true; }
+  bool accepts(const Rule<int>& rule, int value) { return rule.accepts(value); }
+  bool accepts(const Rule<files::DetailsColumnOrder>& /*rule*/, const files::DetailsColumnOrder& order) {
+    return files::validDetailsColumnOrder(order);
+  }
+  template <class T>
+    requires std::is_enum_v<T>
+  bool accepts(const Rule<T>& rule, T value) {
+    return std::ranges::contains(rule.names, value, &Named<T>::value);
+  }
+
+  // Shape only; callers check accepts() as well.
+  std::optional<bool> decode(const Rule<bool>& /*rule*/, const toml::node& node) { return node.value_exact<bool>(); }
+  std::optional<int> decode(const Rule<int>& /*rule*/, const toml::node& node) {
+    const auto number = node.value_exact<std::int64_t>();
+    return number && std::in_range<int>(*number) ? std::optional<int>(static_cast<int>(*number)) : std::nullopt;
+  }
+  std::optional<files::DetailsColumnOrder>
+  decode(const Rule<files::DetailsColumnOrder>& /*rule*/, const toml::node& node) {
+    const auto* columns = node.as_array();
+    files::DetailsColumnOrder order{};
+    if (columns == nullptr || columns->size() != order.size()) {
+      return std::nullopt;
+    }
+    for (std::size_t index = 0; index < order.size(); ++index) {
+      const auto* name = columns->get(index)->as_string();
+      const auto column = name != nullptr ? files::detailsColumnFromName(name->get()) : std::nullopt;
+      if (!column) {
+        return std::nullopt;
+      }
+      order[index] = *column;
+    }
+    return order;
+  }
+  template <class T>
+    requires std::is_enum_v<T>
+  std::optional<T> decode(const Rule<T>& rule, const toml::node& node) {
+    const auto* text = node.as_string();
+    if (text == nullptr) {
+      return std::nullopt;
+    }
+    const auto found = std::ranges::find(rule.names, std::string_view(text->get()), &Named<T>::name);
+    return found != rule.names.end() ? std::optional<T>(found->value) : std::nullopt;
+  }
+
+  std::string expected(const Rule<bool>& /*rule*/) { return "expected a boolean"; }
+  std::string expected(const Rule<int>& rule) { return std::string(rule.expected); }
+  std::string expected(const Rule<files::DetailsColumnOrder>& /*rule*/) {
+    return "expected an array containing 'type', 'size', and 'modified' exactly once";
+  }
+  template <class T>
+    requires std::is_enum_v<T>
+  std::string expected(const Rule<T>& rule) {
+    std::string text = "expected ";
+    for (std::size_t index = 0; index < rule.names.size(); ++index) {
+      if (index > 0) {
+        text += rule.names.size() == 2 ? " or " : index + 1 == rule.names.size() ? ", or " : ", ";
+      }
+      text += std::format("'{}'", rule.names[index].name);
+    }
+    return text;
+  }
+
+  void encode(toml::table& table, std::string_view key, const Rule<bool>& /*rule*/, bool value) {
+    table.insert(key, value);
+  }
+  void encode(toml::table& table, std::string_view key, const Rule<int>& /*rule*/, int value) {
+    table.insert(key, value);
+  }
+  void encode(
+      toml::table& table, std::string_view key, const Rule<files::DetailsColumnOrder>& /*rule*/,
+      const files::DetailsColumnOrder& order
+  ) {
+    toml::array columns;
+    for (const auto column : order) {
+      columns.push_back(files::detailsColumnName(column));
+    }
+    table.insert(key, std::move(columns));
+  }
+  template <class T>
+    requires std::is_enum_v<T>
+  void encode(toml::table& table, std::string_view key, const Rule<T>& rule, T value) {
+    table.insert(key, std::ranges::find(rule.names, value, &Named<T>::value)->name);
+  }
+
+  template <class T> struct Descriptor {
+    using Value = T;
+    files::PreferenceKey<T> preference;
+    std::string_view key; // Field name inside [browser].
+    T& (*field)(BrowserSettings&);
+    Rule<T> rule;
+  };
+  template <class T>
+  constexpr Descriptor<T> describe(
+      files::PreferenceKey<T> preference, std::string_view key, std::type_identity_t<T>& (*field)(BrowserSettings&),
+      Rule<T> rule = {}
+  ) {
+    return {.preference = preference, .key = key, .field = field, .rule = rule};
+  }
+  template <int Minimum, int Maximum> bool between(int value) { return value >= Minimum && value <= Maximum; }
+  template <std::size_t Index> bool columnWidth(int value) { return files::validDetailsColumnWidth(Index, value); }
+
+  using P = files::BrowserPreference;
+  using S = BrowserSettings;
+  // Every browser.* setting, in BrowserPreferenceId order. Defaults are BrowserSettings' initializers.
+  constexpr std::tuple kPreferences{
+      describe(
+          P::ActivationMode, "activation_mode", [](S& s) -> auto& { return s.activationMode; }, {kActivationModes}
+      ),
+      describe(P::TypingMode, "typing_mode", [](S& s) -> auto& { return s.typingMode; }, {kTypingModes}),
+      describe(P::ShowHidden, "show_hidden", [](S& s) -> auto& { return s.showHidden; }),
+      describe(P::SortBy, "sort_by", [](S& s) -> auto& { return s.sort.field; }, {kSortFields}),
+      describe(P::SortDescending, "sort_descending", [](S& s) -> auto& { return s.sort.descending; }),
+      describe(P::DirectoriesFirst, "directories_first", [](S& s) -> auto& { return s.sort.directoriesFirst; }),
+      describe(P::ViewMode, "view_mode", [](S& s) -> auto& { return s.viewMode; }, {kViewModes}),
+      describe(
+          P::GridIconSize, "grid_icon_size", [](S& s) -> auto& { return s.gridIconSize; },
+          {[](int value) { return std::ranges::contains(files::kGridIconSizes, value); },
+           "expected integer icon size 32, 48, 64, 80, 96, 128, 160, 192, or 256"}
+      ),
+      describe(
+          P::SidebarWidth, "sidebar_width", [](S& s) -> auto& { return s.sidebarWidth; },
+          {between<files::kMinSidebarWidth, files::kMaxSidebarWidth>, "expected integer sidebar width from 160 to 400"}
+      ),
+      describe(P::ShowSidebar, "show_sidebar", [](S& s) -> auto& { return s.showSidebar; }),
+      describe(P::ShowPreview, "show_preview", [](S& s) -> auto& { return s.showPreview; }),
+      describe(
+          P::PreviewWidth, "preview_width", [](S& s) -> auto& { return s.previewWidth; },
+          {between<208, 800>, "expected integer preview width from 208 to 800"}
+      ),
+      describe(
+          P::MillerColumnWidth, "miller_column_width", [](S& s) -> auto& { return s.millerColumnWidth; },
+          {between<180, 800>, "expected integer column width from 180 to 800"}
+      ),
+      describe(P::MillerShowParents, "miller_show_parents", [](S& s) -> auto& { return s.millerShowParents; }),
+      describe(P::ShowTypeColumn, "show_type_column", [](S& s) -> auto& { return s.columns.type; }),
+      describe(P::ShowSizeColumn, "show_size_column", [](S& s) -> auto& { return s.columns.size; }),
+      describe(P::ShowModifiedColumn, "show_modified_column", [](S& s) -> auto& { return s.columns.modified; }),
+      describe(P::ColumnOrder, "column_order", [](S& s) -> auto& { return s.columnOrder; }),
+      describe(
+          P::NameColumnWidth, files::kDetailsColumnWidthKeys[0], [](S& s) -> auto& { return s.columnWidths[0]; },
+          {columnWidth<0>, "expected 0 (automatic) or an integer width from 160 to 16384"}
+      ),
+      describe(
+          P::TypeColumnWidth, files::kDetailsColumnWidthKeys[1], [](S& s) -> auto& { return s.columnWidths[1]; },
+          {columnWidth<1>, "expected an integer width from 64 to 2048"}
+      ),
+      describe(
+          P::SizeColumnWidth, files::kDetailsColumnWidthKeys[2], [](S& s) -> auto& { return s.columnWidths[2]; },
+          {columnWidth<2>, "expected an integer width from 64 to 2048"}
+      ),
+      describe(
+          P::ModifiedColumnWidth, files::kDetailsColumnWidthKeys[3], [](S& s) -> auto& { return s.columnWidths[3]; },
+          {columnWidth<3>, "expected an integer width from 64 to 2048"}
+      ),
+      describe(
+          P::ThumbnailPolicy, "thumbnail_policy", [](S& s) -> auto& { return s.thumbnails.policy; },
+          {kThumbnailPolicies}
+      ),
+      describe(
+          P::ThumbnailMaxFileMib, "thumbnail_max_file_mib", [](S& s) -> auto& { return s.thumbnails.maxFileMiB; },
+          {between<1, 1024>, "expected an integer from 1 to 1024"}
+      ),
+      describe(
+          P::ThumbnailMaxMegapixels, "thumbnail_max_megapixels",
+          [](S& s) -> auto& { return s.thumbnails.maxMegapixels; }, {between<1, 64>, "expected an integer from 1 to 64"}
+      ),
+      describe(
+          P::ThumbnailCacheMib, "thumbnail_cache_mib", [](S& s) -> auto& { return s.thumbnails.cacheMiB; },
+          {between<16, 1024>, "expected an integer from 16 to 1024"}
+      ),
+  };
+  constexpr std::size_t kPreferenceCount = std::tuple_size_v<decltype(kPreferences)>;
+  static_assert(kPreferenceCount == std::to_underlying(files::BrowserPreferenceId::Count));
+  static_assert(
+      []<std::size_t... I>(std::index_sequence<I...>) {
+        return ((std::get<I>(kPreferences).preference.id() == static_cast<files::BrowserPreferenceId>(I)) && ...);
+      }(std::make_index_sequence<kPreferenceCount>{}),
+      "kPreferences must follow BrowserPreferenceId order"
+  );
+
+  // Calls `visit` with each descriptor index as a std::integral_constant.
+  template <class Visit> void forEachPreference(Visit&& visit) {
+    [&]<std::size_t... I>(std::index_sequence<I...>) {
+      (visit(std::integral_constant<std::size_t, I>{}), ...);
+    }(std::make_index_sequence<kPreferenceCount>{});
+  }
+  template <class Visit> void visitPreference(files::BrowserPreferenceId id, Visit&& visit) {
+    forEachPreference([&](auto index) {
+      if (index == std::to_underlying(id)) {
+        visit(index);
+      }
+    });
+  }
+
+  template <class T> std::string preferenceKey(const Descriptor<T>& descriptor) {
+    return std::format("browser.{}", descriptor.key);
+  }
+
+  // One optional override per descriptor; nullopt inherits.
+  template <class... T> std::tuple<std::optional<T>...> patchFor(const std::tuple<Descriptor<T>...>& descriptors);
+  using Patch = decltype(patchFor(kPreferences));
 
   struct FileDescriptor {
     int fd;
@@ -131,589 +327,77 @@ namespace {
     }
   }
 
-  void issue(
-      files::ConfigIssues& issues, const std::filesystem::path& file, const toml::node& node, std::string key,
-      std::string message
-  ) {
-    const auto& position = node.source().begin;
-    issues.push_back(
-        {.file = file,
-         .line = position.line,
-         .column = position.column,
-         .key = std::move(key),
-         .message = std::move(message)}
-    );
-  }
-
   std::expected<Patch, files::ConfigIssues> parse(const std::filesystem::path& file, std::string_view text) {
-    toml::table table;
-    try {
-      table = toml::parse(text, file.string());
-    } catch (const toml::parse_error& error) {
-      const auto& position = error.source().begin;
-      return std::unexpected(
-          files::ConfigIssues{
-              {.file = file,
-               .line = position.line,
-               .column = position.column,
-               .key = {},
-               .message = std::string(error.description())}
-          }
-      );
+    auto table = files::parseToml(text, file);
+    if (!table) {
+      return std::unexpected(std::move(table.error()));
     }
-    files::ConfigIssues issues;
+    files::TomlDecoder decoder(file);
     Patch patch;
-    for (const auto& [key, node] : table) {
+    for (const auto& [key, node] : *table) {
       if (key == "schema_version") {
-        if (!node.is_integer() || node.as_integer()->get() != 1) {
-          issue(issues, file, node, "schema_version", "expected integer schema version 1");
+        if (!files::isSchemaVersion(node)) {
+          decoder.issue(
+              node, "schema_version", std::format("expected integer schema version {}", files::kSchemaVersion)
+          );
         }
       } else if (key == "browser") {
         const auto* browser = node.as_table();
         if (browser == nullptr) {
-          issue(issues, file, node, "browser", "expected a table");
+          decoder.issue(node, "browser", "expected a table");
           continue;
         }
         for (const auto& [name, value] : *browser) {
-          const auto path = std::format("browser.{}", name.str());
-          const auto* widthKey = std::ranges::find(files::kDetailsColumnWidthKeys, name.str());
-          if (name == "activation_mode") {
-            const auto* mode = value.as_string();
-            if (mode && (mode->get() == "single_click" || mode->get() == "double_click")) {
-              patch.activationMode = mode->get() == "single_click" ? files::ActivationMode::SingleClick
-                                                                   : files::ActivationMode::DoubleClick;
+          bool known = false;
+          forEachPreference([&](auto index) {
+            const auto& descriptor = std::get<index>(kPreferences);
+            if (descriptor.key != name.str()) {
+              return;
+            }
+            known = true;
+            if (const auto decoded = decode(descriptor.rule, value); decoded && accepts(descriptor.rule, *decoded)) {
+              std::get<index>(patch) = decoded;
             } else {
-              issue(issues, file, value, path, "expected 'single_click' or 'double_click'");
+              decoder.issue(value, preferenceKey(descriptor), expected(descriptor.rule));
             }
-          } else if (name == "typing_mode") {
-            const auto* mode = value.as_string();
-            if (mode && (mode->get() == "search" || mode->get() == "typeahead")) {
-              patch.typingMode = mode->get() == "search" ? files::TypingMode::Search : files::TypingMode::Typeahead;
-            } else {
-              issue(issues, file, value, path, "expected 'search' or 'typeahead'");
-            }
-          } else if (widthKey != files::kDetailsColumnWidthKeys.end()) {
-            const auto index = static_cast<std::size_t>(widthKey - files::kDetailsColumnWidthKeys.begin());
-            const auto* width = value.as_integer();
-            if (width != nullptr
-                && width->get() <= files::maximumDetailsColumnWidth(index)
-                && width->get() >= 0
-                && files::validDetailsColumnWidth(index, static_cast<int>(width->get()))) {
-              patch.columnWidths[index] = static_cast<int>(width->get());
-            } else {
-              issue(
-                  issues, file, value, path,
-                  index == 0 ? "expected 0 (automatic) or an integer width from 160 to 16384"
-                             : "expected an integer width from 64 to 2048"
-              );
-            }
-          } else if (name == "column_order") {
-            const auto* columns = value.as_array();
-            files::DetailsColumnOrder order{};
-            bool valid = columns != nullptr && columns->size() == order.size();
-            if (valid) {
-              for (std::size_t index = 0; index < order.size(); ++index) {
-                const auto* text = columns->get(index)->as_string();
-                const auto column = text != nullptr ? files::detailsColumnFromName(text->get()) : std::nullopt;
-                if (!column) {
-                  valid = false;
-                  break;
-                }
-                order[index] = *column;
-              }
-            }
-            if (valid && files::validDetailsColumnOrder(order)) {
-              patch.columnOrder = order;
-            } else {
-              issue(
-                  issues, file, value, path, "expected an array containing 'type', 'size', and 'modified' exactly once"
-              );
-            }
-          } else if (name == "sort_by") {
-            const auto* sort = value.as_string();
-            if (sort != nullptr && sort->get() == "name") {
-              patch.sortBy = files::SortField::Name;
-            } else if (sort != nullptr && sort->get() == "size") {
-              patch.sortBy = files::SortField::Size;
-            } else if (sort != nullptr && sort->get() == "modified") {
-              patch.sortBy = files::SortField::Modified;
-            } else if (sort != nullptr && sort->get() == "type") {
-              patch.sortBy = files::SortField::Type;
-            } else {
-              issue(issues, file, value, path, "expected 'name', 'size', 'modified', or 'type'");
-            }
-          } else if (name == "thumbnail_policy") {
-            const auto* text = value.as_string();
-            if (text && text->get() == "never") {
-              patch.thumbnailPolicy = files::ThumbnailPolicy::Never;
-            } else if (text && text->get() == "local") {
-              patch.thumbnailPolicy = files::ThumbnailPolicy::Local;
-            } else if (text && text->get() == "all") {
-              patch.thumbnailPolicy = files::ThumbnailPolicy::All;
-            } else {
-              issue(issues, file, value, path, "expected 'never', 'local', or 'all'");
-            }
-          } else if (
-              const auto* const spec = std::ranges::find_if(
-                  kThumbnailIntegers, [&](const auto& field) { return field.key.substr(8) == name; }
-              );
-              spec != kThumbnailIntegers.end()
-          ) {
-            const auto* number = value.as_integer();
-            if (number && number->get() >= spec->minimum && number->get() <= spec->maximum) {
-              patch.thumbnailIntegers[static_cast<std::size_t>(spec - kThumbnailIntegers.begin())] =
-                  static_cast<int>(number->get());
-            } else {
-              issue(
-                  issues, file, value, path,
-                  std::format("expected an integer from {} to {}", spec->minimum, spec->maximum)
-              );
-            }
-          } else if (name == "grid_icon_size") {
-            const auto* size = value.as_integer();
-            if (size != nullptr && std::ranges::contains(files::kGridIconSizes, size->get())) {
-              patch.gridIconSize = static_cast<int>(size->get());
-            } else {
-              issue(issues, file, value, path, "expected integer icon size 32, 48, 64, 80, 96, 128, 160, 192, or 256");
-            }
-          } else if (name == "preview_width") {
-            const auto* width = value.as_integer();
-            if (width && width->get() >= 208 && width->get() <= 800) {
-              patch.previewWidth = static_cast<int>(width->get());
-            } else {
-              issue(issues, file, value, path, "expected integer preview width from 208 to 800");
-            }
-          } else if (name == "sidebar_width") {
-            const auto* width = value.as_integer();
-            if (width != nullptr
-                && width->get() >= files::kMinSidebarWidth
-                && width->get() <= files::kMaxSidebarWidth) {
-              patch.sidebarWidth = static_cast<int>(width->get());
-            } else {
-              issue(issues, file, value, path, "expected integer sidebar width from 160 to 400");
-            }
-          } else if (name == "miller_column_width") {
-            const auto* width = value.as_integer();
-            if (width && width->get() >= 180 && width->get() <= 800) {
-              patch.millerColumnWidth = static_cast<int>(width->get());
-            } else {
-              issue(issues, file, value, path, "expected integer column width from 180 to 800");
-            }
-          } else if (name == "view_mode") {
-            const auto* mode = value.as_string();
-            if (mode != nullptr && mode->get() == "list") {
-              patch.viewMode = files::ViewMode::List;
-            } else if (mode != nullptr && mode->get() == "grid") {
-              patch.viewMode = files::ViewMode::Grid;
-            } else if (mode != nullptr && mode->get() == "miller") {
-              patch.viewMode = files::ViewMode::Miller;
-            } else {
-              issue(issues, file, value, path, "expected 'list', 'grid' or 'miller'");
-            }
-          } else {
-            std::optional<bool>* target = nullptr;
-            if (name == "show_hidden") {
-              target = &patch.showHidden;
-            } else if (name == "show_sidebar") {
-              target = &patch.showSidebar;
-            } else if (name == "show_preview") {
-              target = &patch.showPreview;
-            } else if (name == "miller_show_parents") {
-              target = &patch.millerShowParents;
-            } else if (name == "sort_descending") {
-              target = &patch.sortDescending;
-            } else if (name == "directories_first") {
-              target = &patch.directoriesFirst;
-            } else if (name == "show_type_column") {
-              target = &patch.showTypeColumn;
-            } else if (name == "show_size_column") {
-              target = &patch.showSizeColumn;
-            } else if (name == "show_modified_column") {
-              target = &patch.showModifiedColumn;
-            }
-            if (target == nullptr) {
-              issue(issues, file, value, path, "unknown setting");
-            } else if (const auto* boolean = value.as_boolean(); boolean != nullptr) {
-              *target = boolean->get();
-            } else {
-              issue(issues, file, value, path, "expected a boolean");
-            }
+          });
+          if (!known) {
+            decoder.issue(value, std::format("browser.{}", name.str()), "unknown setting");
           }
         }
       } else {
-        issue(issues, file, node, std::string(key.str()), "unknown setting");
+        decoder.issue(node, std::string(key.str()), "unknown setting");
       }
     }
-    if (!issues.empty()) {
-      return std::unexpected(std::move(issues));
+    if (!decoder.issues.empty()) {
+      return std::unexpected(std::move(decoder.issues));
     }
     return patch;
   }
 
-  void apply(files::Settings& settings, const Patch& patch) {
-    if (patch.thumbnailPolicy) {
-      settings.browser.thumbnails.policy = *patch.thumbnailPolicy;
-    }
-    for (std::size_t i = 0; i < kThumbnailIntegers.size(); ++i) {
-      if (patch.thumbnailIntegers[i]) {
-        settings.browser.thumbnails.*kThumbnailIntegers[i].member = *patch.thumbnailIntegers[i];
+  void applyPatch(files::Settings& settings, const Patch& patch) {
+    forEachPreference([&](auto index) {
+      if (const auto& value = std::get<index>(patch)) {
+        std::get<index>(kPreferences).field(settings.browser) = *value;
       }
-    }
-    if (patch.activationMode) {
-      settings.browser.activationMode = *patch.activationMode;
-    }
-    if (patch.typingMode) {
-      settings.browser.typingMode = *patch.typingMode;
-    }
-    for (std::size_t index = 0; index < patch.columnWidths.size(); ++index) {
-      if (patch.columnWidths[index]) {
-        settings.browser.columnWidths[index] = *patch.columnWidths[index];
-      }
-    }
-    if (patch.columnOrder) {
-      settings.browser.columnOrder = *patch.columnOrder;
-    }
-    if (patch.showTypeColumn) {
-      settings.browser.columns.type = *patch.showTypeColumn;
-    }
-    if (patch.showSizeColumn) {
-      settings.browser.columns.size = *patch.showSizeColumn;
-    }
-    if (patch.showModifiedColumn) {
-      settings.browser.columns.modified = *patch.showModifiedColumn;
-    }
-    if (patch.showSidebar) {
-      settings.browser.showSidebar = *patch.showSidebar;
-    }
-    if (patch.showPreview) {
-      settings.browser.showPreview = *patch.showPreview;
-    }
-    if (patch.previewWidth) {
-      settings.browser.previewWidth = *patch.previewWidth;
-    }
-    if (patch.millerColumnWidth) {
-      settings.browser.millerColumnWidth = *patch.millerColumnWidth;
-    }
-    if (patch.millerShowParents) {
-      settings.browser.millerShowParents = *patch.millerShowParents;
-    }
-    if (patch.sidebarWidth) {
-      settings.browser.sidebarWidth = *patch.sidebarWidth;
-    }
-    if (patch.gridIconSize) {
-      settings.browser.gridIconSize = *patch.gridIconSize;
-    }
-    if (patch.viewMode) {
-      settings.browser.viewMode = *patch.viewMode;
-    }
-    if (patch.showHidden) {
-      settings.browser.showHidden = *patch.showHidden;
-    }
-    if (patch.sortBy) {
-      settings.browser.sort.field = *patch.sortBy;
-    }
-    if (patch.sortDescending) {
-      settings.browser.sort.descending = *patch.sortDescending;
-    }
-    if (patch.directoriesFirst) {
-      settings.browser.sort.directoriesFirst = *patch.directoriesFirst;
-    }
-  }
-
-  std::optional<std::size_t> columnWidthIndex(files::BrowserPreference preference) {
-    using P = files::BrowserPreference;
-    switch (preference) {
-    case P::NameColumnWidth:
-      return 0;
-    case P::TypeColumnWidth:
-      return 1;
-    case P::SizeColumnWidth:
-      return 2;
-    case P::ModifiedColumnWidth:
-      return 3;
-    default:
-      return std::nullopt;
-    }
-  }
-
-  std::string_view preferenceKey(files::BrowserPreference preference) {
-    using Preference = files::BrowserPreference;
-    if (const auto index = thumbnailIntegerIndex(preference)) {
-      return kThumbnailIntegers[*index].key;
-    }
-    switch (preference) {
-    case Preference::ThumbnailPolicy:
-      return "browser.thumbnail_policy";
-    case Preference::ThumbnailMaxFileMib:
-    case Preference::ThumbnailMaxMegapixels:
-    case Preference::ThumbnailCacheMib:
-    case Preference::Count:
-      return {};
-    case Preference::ActivationMode:
-      return "browser.activation_mode";
-    case Preference::TypingMode:
-      return "browser.typing_mode";
-    case Preference::NameColumnWidth:
-      return "browser.name_column_width";
-    case Preference::TypeColumnWidth:
-      return "browser.type_column_width";
-    case Preference::SizeColumnWidth:
-      return "browser.size_column_width";
-    case Preference::ModifiedColumnWidth:
-      return "browser.modified_column_width";
-    case Preference::ColumnOrder:
-      return "browser.column_order";
-    case Preference::ShowTypeColumn:
-      return "browser.show_type_column";
-    case Preference::ShowSizeColumn:
-      return "browser.show_size_column";
-    case Preference::ShowModifiedColumn:
-      return "browser.show_modified_column";
-    case Preference::ShowHidden:
-      return "browser.show_hidden";
-    case Preference::SortBy:
-      return "browser.sort_by";
-    case Preference::SortDescending:
-      return "browser.sort_descending";
-    case Preference::DirectoriesFirst:
-      return "browser.directories_first";
-    case Preference::ViewMode:
-      return "browser.view_mode";
-    case Preference::GridIconSize:
-      return "browser.grid_icon_size";
-    case Preference::SidebarWidth:
-      return "browser.sidebar_width";
-    case Preference::ShowSidebar:
-      return "browser.show_sidebar";
-    case Preference::ShowPreview:
-      return "browser.show_preview";
-    case Preference::PreviewWidth:
-      return "browser.preview_width";
-    case Preference::MillerColumnWidth:
-      return "browser.miller_column_width";
-    case Preference::MillerShowParents:
-      return "browser.miller_show_parents";
-    }
-    return {};
+    });
   }
 
   void editPatch(Patch& patch, const files::OverrideEdit& edit) {
-    using Preference = files::BrowserPreference;
-    if (edit.preference == Preference::ThumbnailPolicy) {
-      patch.thumbnailPolicy = std::holds_alternative<std::monostate>(edit.value)
-          ? std::nullopt
-          : std::optional(std::get<files::ThumbnailPolicy>(edit.value));
-      return;
-    }
-    if (const auto index = thumbnailIntegerIndex(edit.preference)) {
-      patch.thumbnailIntegers[*index] =
-          std::holds_alternative<std::monostate>(edit.value) ? std::nullopt : std::optional(std::get<int>(edit.value));
-      return;
-    }
-    if (edit.preference == Preference::ActivationMode) {
-      patch.activationMode = std::holds_alternative<std::monostate>(edit.value)
-          ? std::nullopt
-          : std::optional(std::get<files::ActivationMode>(edit.value));
-      return;
-    }
-    if (edit.preference == Preference::TypingMode) {
-      patch.typingMode = std::holds_alternative<std::monostate>(edit.value)
-          ? std::nullopt
-          : std::optional(std::get<files::TypingMode>(edit.value));
-      return;
-    }
-    if (const auto index = columnWidthIndex(edit.preference)) {
-      patch.columnWidths[*index] = std::holds_alternative<std::monostate>(edit.value)
-          ? std::nullopt
-          : std::optional<int>(std::get<int>(edit.value));
-      return;
-    }
-    if (edit.preference == Preference::ColumnOrder) {
-      patch.columnOrder = std::holds_alternative<std::monostate>(edit.value)
-          ? std::nullopt
-          : std::optional<files::DetailsColumnOrder>(std::get<files::DetailsColumnOrder>(edit.value));
-      return;
-    }
-    if (edit.preference == Preference::MillerColumnWidth) {
-      patch.millerColumnWidth = std::holds_alternative<std::monostate>(edit.value)
-          ? std::nullopt
-          : std::optional<int>(std::get<int>(edit.value));
-      return;
-    }
-    if (edit.preference == Preference::PreviewWidth) {
-      patch.previewWidth = std::holds_alternative<std::monostate>(edit.value)
-          ? std::nullopt
-          : std::optional<int>(std::get<int>(edit.value));
-      return;
-    }
-    if (edit.preference == Preference::SidebarWidth) {
-      patch.sidebarWidth = std::holds_alternative<std::monostate>(edit.value)
-          ? std::nullopt
-          : std::optional<int>(std::get<int>(edit.value));
-      return;
-    }
-    if (edit.preference == Preference::GridIconSize) {
-      patch.gridIconSize = std::holds_alternative<std::monostate>(edit.value)
-          ? std::nullopt
-          : std::optional<int>(std::get<int>(edit.value));
-      return;
-    }
-    if (edit.preference == Preference::ViewMode) {
-      patch.viewMode = std::holds_alternative<std::monostate>(edit.value)
-          ? std::nullopt
-          : std::optional<files::ViewMode>(std::get<files::ViewMode>(edit.value));
-      return;
-    }
-    if (edit.preference == Preference::SortBy) {
-      patch.sortBy = std::holds_alternative<std::monostate>(edit.value)
-          ? std::nullopt
-          : std::optional<files::SortField>(std::get<files::SortField>(edit.value));
-      return;
-    }
-    const auto value = std::holds_alternative<std::monostate>(edit.value)
-        ? std::nullopt
-        : std::optional<bool>(std::get<bool>(edit.value));
-    switch (edit.preference) {
-    case Preference::MillerShowParents:
-      patch.millerShowParents = value;
-      break;
-    case Preference::ShowTypeColumn:
-      patch.showTypeColumn = value;
-      break;
-    case Preference::ShowSizeColumn:
-      patch.showSizeColumn = value;
-      break;
-    case Preference::ShowModifiedColumn:
-      patch.showModifiedColumn = value;
-      break;
-    case Preference::ShowSidebar:
-      patch.showSidebar = value;
-      break;
-    case Preference::ShowPreview:
-      patch.showPreview = value;
-      break;
-    case Preference::ShowHidden:
-      patch.showHidden = value;
-      break;
-    case Preference::SortDescending:
-      patch.sortDescending = value;
-      break;
-    case Preference::DirectoriesFirst:
-      patch.directoriesFirst = value;
-      break;
-    case Preference::ActivationMode:
-    case Preference::TypingMode:
-    case Preference::NameColumnWidth:
-    case Preference::TypeColumnWidth:
-    case Preference::SizeColumnWidth:
-    case Preference::ModifiedColumnWidth:
-    case Preference::SortBy:
-    case Preference::ColumnOrder:
-    case Preference::ViewMode:
-    case Preference::GridIconSize:
-    case Preference::SidebarWidth:
-    case Preference::PreviewWidth:
-    case Preference::MillerColumnWidth:
-    case Preference::ThumbnailPolicy:
-    case Preference::ThumbnailMaxFileMib:
-    case Preference::ThumbnailMaxMegapixels:
-    case Preference::ThumbnailCacheMib:
-    case Preference::Count:
-      break;
-    }
+    visitPreference(edit.preference(), [&](auto index) {
+      std::get<index>(patch) = edit.value(std::get<index>(kPreferences).preference);
+    });
   }
 
   std::string formatPatch(const Patch& patch) {
     toml::table browser;
-    if (patch.thumbnailPolicy) {
-      browser.insert(
-          "thumbnail_policy",
-          *patch.thumbnailPolicy == files::ThumbnailPolicy::Never       ? "never"
-              : *patch.thumbnailPolicy == files::ThumbnailPolicy::Local ? "local"
-                                                                        : "all"
-      );
-    }
-    for (std::size_t i = 0; i < kThumbnailIntegers.size(); ++i) {
-      if (patch.thumbnailIntegers[i]) {
-        browser.insert(kThumbnailIntegers[i].key.substr(8), *patch.thumbnailIntegers[i]);
+    forEachPreference([&](auto index) {
+      if (const auto& value = std::get<index>(patch)) {
+        const auto& descriptor = std::get<index>(kPreferences);
+        encode(browser, descriptor.key, descriptor.rule, *value);
       }
-    }
-    if (patch.activationMode) {
-      browser.insert(
-          "activation_mode",
-          *patch.activationMode == files::ActivationMode::SingleClick ? "single_click" : "double_click"
-      );
-    }
-    if (patch.typingMode) {
-      browser.insert("typing_mode", *patch.typingMode == files::TypingMode::Search ? "search" : "typeahead");
-    }
-    for (std::size_t index = 0; index < patch.columnWidths.size(); ++index) {
-      if (patch.columnWidths[index]) {
-        browser.insert(files::kDetailsColumnWidthKeys[index], *patch.columnWidths[index]);
-      }
-    }
-    if (patch.columnOrder) {
-      toml::array columns;
-      for (const auto column : *patch.columnOrder) {
-        columns.push_back(files::detailsColumnName(column));
-      }
-      browser.insert("column_order", std::move(columns));
-    }
-    if (patch.showTypeColumn) {
-      browser.insert("show_type_column", *patch.showTypeColumn);
-    }
-    if (patch.showSizeColumn) {
-      browser.insert("show_size_column", *patch.showSizeColumn);
-    }
-    if (patch.showModifiedColumn) {
-      browser.insert("show_modified_column", *patch.showModifiedColumn);
-    }
-    if (patch.showSidebar) {
-      browser.insert("show_sidebar", *patch.showSidebar);
-    }
-    if (patch.showPreview) {
-      browser.insert("show_preview", *patch.showPreview);
-    }
-    if (patch.previewWidth) {
-      browser.insert("preview_width", *patch.previewWidth);
-    }
-    if (patch.millerColumnWidth) {
-      browser.insert("miller_column_width", *patch.millerColumnWidth);
-    }
-    if (patch.millerShowParents) {
-      browser.insert("miller_show_parents", *patch.millerShowParents);
-    }
-    if (patch.sidebarWidth) {
-      browser.insert("sidebar_width", *patch.sidebarWidth);
-    }
-    if (patch.gridIconSize) {
-      browser.insert("grid_icon_size", *patch.gridIconSize);
-    }
-    if (patch.viewMode) {
-      browser.insert(
-          "view_mode",
-          *patch.viewMode == files::ViewMode::List       ? "list"
-              : *patch.viewMode == files::ViewMode::Grid ? "grid"
-                                                         : "miller"
-      );
-    }
-    if (patch.showHidden) {
-      browser.insert("show_hidden", *patch.showHidden);
-    }
-    if (patch.sortBy) {
-      const auto* name = *patch.sortBy == files::SortField::Name ? "name"
-          : *patch.sortBy == files::SortField::Size              ? "size"
-          : *patch.sortBy == files::SortField::Type              ? "type"
-                                                                 : "modified";
-      browser.insert("sort_by", name);
-    }
-    if (patch.sortDescending) {
-      browser.insert("sort_descending", *patch.sortDescending);
-    }
-    if (patch.directoriesFirst) {
-      browser.insert("directories_first", *patch.directoriesFirst);
-    }
-    toml::table document{{"schema_version", 1}};
+    });
+    toml::table document{{"schema_version", files::kSchemaVersion}};
     if (!browser.empty()) {
       document.insert("browser", std::move(browser));
     }
@@ -729,21 +413,49 @@ namespace {
   }
 } // namespace
 
+template <class T> T& files::preferenceValue(BrowserSettings& settings, PreferenceKey<T> key) {
+  T* field = nullptr;
+  visitPreference(key.id(), [&](auto index) {
+    const auto& descriptor = std::get<index>(kPreferences);
+    // A key's type always matches its descriptor; other instantiations never run.
+    if constexpr (std::same_as<typename std::remove_cvref_t<decltype(descriptor)>::Value, T>) {
+      field = &descriptor.field(settings);
+    }
+  });
+  return *field;
+}
+
+template <class T> const T& files::preferenceValue(const BrowserSettings& settings, PreferenceKey<T> key) {
+  return preferenceValue(const_cast<BrowserSettings&>(settings), key);
+}
+
+template bool& files::preferenceValue(BrowserSettings&, PreferenceKey<bool>);
+template int& files::preferenceValue(BrowserSettings&, PreferenceKey<int>);
+template files::ActivationMode& files::preferenceValue(BrowserSettings&, PreferenceKey<ActivationMode>);
+template files::TypingMode& files::preferenceValue(BrowserSettings&, PreferenceKey<TypingMode>);
+template files::SortField& files::preferenceValue(BrowserSettings&, PreferenceKey<SortField>);
+template files::ViewMode& files::preferenceValue(BrowserSettings&, PreferenceKey<ViewMode>);
+template files::DetailsColumnOrder& files::preferenceValue(BrowserSettings&, PreferenceKey<DetailsColumnOrder>);
+template files::ThumbnailPolicy& files::preferenceValue(BrowserSettings&, PreferenceKey<ThumbnailPolicy>);
+template const bool& files::preferenceValue(const BrowserSettings&, PreferenceKey<bool>);
+template const int& files::preferenceValue(const BrowserSettings&, PreferenceKey<int>);
+template const files::ActivationMode& files::preferenceValue(const BrowserSettings&, PreferenceKey<ActivationMode>);
+template const files::TypingMode& files::preferenceValue(const BrowserSettings&, PreferenceKey<TypingMode>);
+template const files::SortField& files::preferenceValue(const BrowserSettings&, PreferenceKey<SortField>);
+template const files::ViewMode& files::preferenceValue(const BrowserSettings&, PreferenceKey<ViewMode>);
+template const files::DetailsColumnOrder&
+files::preferenceValue(const BrowserSettings&, PreferenceKey<DetailsColumnOrder>);
+template const files::ThumbnailPolicy& files::preferenceValue(const BrowserSettings&, PreferenceKey<ThumbnailPolicy>);
+
+std::vector<files::OverrideEdit> files::inheritAllPreferences() {
+  std::vector<OverrideEdit> edits;
+  edits.reserve(kPreferenceCount);
+  forEachPreference([&](auto index) { edits.emplace_back(std::get<index>(kPreferences).preference, std::nullopt); });
+  return edits;
+}
+
 files::ConfigPaths files::ConfigPaths::fromEnvironment() {
-  std::filesystem::path directory;
-  if (const char* xdg = std::getenv("XDG_CONFIG_HOME"); xdg != nullptr && *xdg != '\0') {
-    directory = xdg;
-    if (!directory.is_absolute()) {
-      throw std::invalid_argument("XDG_CONFIG_HOME must be an absolute path");
-    }
-  } else {
-    const char* home = std::getenv("HOME");
-    if (home == nullptr || !std::filesystem::path(home).is_absolute()) {
-      throw std::invalid_argument("HOME must be an absolute path when XDG_CONFIG_HOME is unset");
-    }
-    directory = std::filesystem::path(home) / ".config";
-  }
-  directory /= "noctalia-files";
+  const auto directory = configHome() / "noctalia-files";
   return {.base = directory / "config.toml", .overrides = directory / "settings.toml"};
 }
 
@@ -776,7 +488,7 @@ static files::SettingsResult loadLayers(const files::ConfigPaths& paths, bool ov
       auto& errors = parsed.error();
       issues.insert(issues.end(), std::make_move_iterator(errors.begin()), std::make_move_iterator(errors.end()));
     } else {
-      apply(settings, *parsed);
+      applyPatch(settings, *parsed);
     }
   }
   if (!issues.empty()) {
@@ -817,60 +529,14 @@ files::AtomicWriteState files::ConfigService::saveOverrides(std::span<const Over
     return AtomicWriteState::NotCommitted;
   }
   for (const auto& edit : edits) {
-    const auto key = preferenceKey(edit.preference);
-    bool valid = !key.empty();
-    if (!std::holds_alternative<std::monostate>(edit.value)) {
-      if (edit.preference == BrowserPreference::ThumbnailPolicy) {
-        const auto* mode = std::get_if<ThumbnailPolicy>(&edit.value);
-        valid = mode
-            && (*mode == ThumbnailPolicy::Never || *mode == ThumbnailPolicy::Local || *mode == ThumbnailPolicy::All);
-      } else if (const auto index = thumbnailIntegerIndex(edit.preference)) {
-        const auto* number = std::get_if<int>(&edit.value);
-        valid =
-            number && *number >= kThumbnailIntegers[*index].minimum && *number <= kThumbnailIntegers[*index].maximum;
-      } else if (edit.preference == BrowserPreference::ActivationMode) {
-        const auto* mode = std::get_if<ActivationMode>(&edit.value);
-        valid = mode && (*mode == ActivationMode::SingleClick || *mode == ActivationMode::DoubleClick);
-      } else if (edit.preference == BrowserPreference::TypingMode) {
-        const auto* mode = std::get_if<TypingMode>(&edit.value);
-        valid = mode && (*mode == TypingMode::Search || *mode == TypingMode::Typeahead);
-      } else if (const auto index = columnWidthIndex(edit.preference)) {
-        const auto* width = std::get_if<int>(&edit.value);
-        valid = width != nullptr && validDetailsColumnWidth(*index, *width);
-      } else if (edit.preference == BrowserPreference::ColumnOrder) {
-        const auto* order = std::get_if<DetailsColumnOrder>(&edit.value);
-        valid = order != nullptr && validDetailsColumnOrder(*order);
-      } else if (edit.preference == BrowserPreference::SortBy) {
-        const auto* sort = std::get_if<SortField>(&edit.value);
-        valid = sort != nullptr
-            && (*sort == SortField::Name
-                || *sort == SortField::Size
-                || *sort == SortField::Modified
-                || *sort == SortField::Type);
-      } else if (edit.preference == BrowserPreference::GridIconSize) {
-        const auto* size = std::get_if<int>(&edit.value);
-        valid = size != nullptr && std::ranges::contains(kGridIconSizes, *size);
-      } else if (edit.preference == BrowserPreference::MillerColumnWidth) {
-        const auto* width = std::get_if<int>(&edit.value);
-        valid = width && *width >= 180 && *width <= 800;
-      } else if (edit.preference == BrowserPreference::PreviewWidth) {
-        const auto* width = std::get_if<int>(&edit.value);
-        valid = width && *width >= 208 && *width <= 800;
-      } else if (edit.preference == BrowserPreference::SidebarWidth) {
-        const auto* width = std::get_if<int>(&edit.value);
-        valid = width != nullptr && *width >= kMinSidebarWidth && *width <= kMaxSidebarWidth;
-      } else if (edit.preference == BrowserPreference::ViewMode) {
-        const auto* mode = std::get_if<ViewMode>(&edit.value);
-        valid = mode != nullptr && (*mode == ViewMode::List || *mode == ViewMode::Grid || *mode == ViewMode::Miller);
-      } else {
-        valid = valid && std::holds_alternative<bool>(edit.value);
+    visitPreference(edit.preference(), [&](auto index) {
+      const auto& descriptor = std::get<index>(kPreferences);
+      if (const auto value = edit.value(descriptor.preference); value && !accepts(descriptor.rule, *value)) {
+        m_issues.push_back(
+            {.file = m_paths.overrides, .key = preferenceKey(descriptor), .message = "invalid preference value"}
+        );
       }
-    }
-    if (!valid) {
-      m_issues.push_back(
-          {.file = m_paths.overrides, .key = std::string(key), .message = "invalid preference or value type"}
-      );
-    }
+    });
   }
   if (!m_issues.empty()) {
     return AtomicWriteState::NotCommitted;
@@ -897,7 +563,7 @@ files::AtomicWriteState files::ConfigService::saveOverrides(std::span<const Over
             m_issues = parsed.error();
             return std::unexpected("invalid base configuration");
           }
-          apply(candidate, *parsed);
+          applyPatch(candidate, *parsed);
         }
         auto patch = parse(m_paths.overrides, current.value_or(""));
         if (!patch) {
@@ -908,7 +574,7 @@ files::AtomicWriteState files::ConfigService::saveOverrides(std::span<const Over
         for (const auto& edit : edits) {
           editPatch(*patch, edit);
         }
-        apply(candidate, *patch);
+        applyPatch(candidate, *patch);
         if (*patch == previous) {
           return std::nullopt;
         }

@@ -5,8 +5,11 @@
 #include "model/directory_options.h"
 #include "model/thumbnail_options.h"
 
+#include <concepts>
+#include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <variant>
 #include <vector>
@@ -45,7 +48,7 @@ namespace files {
 
   using SettingsResult = std::expected<Settings, ConfigIssues>;
 
-  enum class BrowserPreference : std::uint8_t {
+  enum class BrowserPreferenceId : std::uint8_t {
     ActivationMode,
     TypingMode,
     ShowHidden,
@@ -74,12 +77,81 @@ namespace files {
     ThumbnailCacheMib,
     Count
   };
-  struct OverrideEdit {
-    BrowserPreference preference;
-    std::variant<
-        std::monostate, bool, SortField, ViewMode, int, DetailsColumnOrder, ActivationMode, TypingMode, ThumbnailPolicy>
-        value; // monostate restores inheritance from the base/defaults.
+
+  // Names one overridable browser setting whose value has type T. Only
+  // BrowserPreference creates keys, so a key's type always matches its setting.
+  template <class T> class PreferenceKey {
+  public:
+    using Value = T;
+    constexpr BrowserPreferenceId id() const { return m_id; }
+    bool operator==(const PreferenceKey&) const = default;
+
+  private:
+    friend struct BrowserPreference;
+    constexpr explicit PreferenceKey(BrowserPreferenceId id) : m_id(id) {}
+    BrowserPreferenceId m_id;
   };
+
+  // The browser.* settings that settings.toml can override. settings.cpp maps
+  // each key to its TOML name, codec, bounds, and BrowserSettings field.
+  struct BrowserPreference {
+    using Id = BrowserPreferenceId;
+    static constexpr PreferenceKey<files::ActivationMode> ActivationMode{Id::ActivationMode};
+    static constexpr PreferenceKey<files::TypingMode> TypingMode{Id::TypingMode};
+    static constexpr PreferenceKey<bool> ShowHidden{Id::ShowHidden};
+    static constexpr PreferenceKey<files::SortField> SortBy{Id::SortBy};
+    static constexpr PreferenceKey<bool> SortDescending{Id::SortDescending};
+    static constexpr PreferenceKey<bool> DirectoriesFirst{Id::DirectoriesFirst};
+    static constexpr PreferenceKey<files::ViewMode> ViewMode{Id::ViewMode};
+    static constexpr PreferenceKey<int> GridIconSize{Id::GridIconSize};
+    static constexpr PreferenceKey<int> SidebarWidth{Id::SidebarWidth};
+    static constexpr PreferenceKey<bool> ShowSidebar{Id::ShowSidebar};
+    static constexpr PreferenceKey<bool> ShowPreview{Id::ShowPreview};
+    static constexpr PreferenceKey<int> PreviewWidth{Id::PreviewWidth};
+    static constexpr PreferenceKey<int> MillerColumnWidth{Id::MillerColumnWidth};
+    static constexpr PreferenceKey<bool> MillerShowParents{Id::MillerShowParents};
+    static constexpr PreferenceKey<bool> ShowTypeColumn{Id::ShowTypeColumn};
+    static constexpr PreferenceKey<bool> ShowSizeColumn{Id::ShowSizeColumn};
+    static constexpr PreferenceKey<bool> ShowModifiedColumn{Id::ShowModifiedColumn};
+    static constexpr PreferenceKey<files::DetailsColumnOrder> ColumnOrder{Id::ColumnOrder};
+    static constexpr PreferenceKey<int> NameColumnWidth{Id::NameColumnWidth};
+    static constexpr PreferenceKey<int> TypeColumnWidth{Id::TypeColumnWidth};
+    static constexpr PreferenceKey<int> SizeColumnWidth{Id::SizeColumnWidth};
+    static constexpr PreferenceKey<int> ModifiedColumnWidth{Id::ModifiedColumnWidth};
+    static constexpr PreferenceKey<files::ThumbnailPolicy> ThumbnailPolicy{Id::ThumbnailPolicy};
+    static constexpr PreferenceKey<int> ThumbnailMaxFileMib{Id::ThumbnailMaxFileMib};
+    static constexpr PreferenceKey<int> ThumbnailMaxMegapixels{Id::ThumbnailMaxMegapixels};
+    static constexpr PreferenceKey<int> ThumbnailCacheMib{Id::ThumbnailCacheMib};
+  };
+
+  // The BrowserSettings field a preference reads and writes.
+  template <class T> T& preferenceValue(BrowserSettings& settings, PreferenceKey<T> key);
+  template <class T> const T& preferenceValue(const BrowserSettings& settings, PreferenceKey<T> key);
+
+  // One settings.toml change. std::nullopt removes the override so the base
+  // file or the default applies again.
+  class OverrideEdit {
+  public:
+    template <class T, std::same_as<T> V>
+    OverrideEdit(PreferenceKey<T> key, V value) : m_preference(key.id()), m_value(std::in_place_type<T>, value) {}
+    template <class T> OverrideEdit(PreferenceKey<T> key, std::nullopt_t) : m_preference(key.id()) {}
+
+    BrowserPreferenceId preference() const { return m_preference; }
+    // The new value, or nullopt when the edit restores inheritance or names another preference.
+    template <class T> std::optional<T> value(PreferenceKey<T> key) const {
+      const auto* value = key.id() == m_preference ? std::get_if<T>(&m_value) : nullptr;
+      return value != nullptr ? std::optional<T>(*value) : std::nullopt;
+    }
+
+  private:
+    BrowserPreferenceId m_preference;
+    std::variant<
+        std::monostate, bool, int, SortField, ViewMode, DetailsColumnOrder, ActivationMode, TypingMode, ThumbnailPolicy>
+        m_value;
+  };
+
+  // Edits that remove every override.
+  std::vector<OverrideEdit> inheritAllPreferences();
 
   // Bounded, read-only local file loading. Call outside Render and traversal jobs.
   // Validation reads exactly one required file, without adjacent override files.

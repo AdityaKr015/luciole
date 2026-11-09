@@ -1,13 +1,13 @@
 #include "config/state_store.h"
 
+#include "config/toml_decoder.h"
+#include "fs/xdg_dirs.h"
+
 #include <algorithm>
-#include <cstdlib>
 #include <format>
-#include <initializer_list>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
-#include <toml++/toml.hpp>
 #include <unordered_set>
 #include <utility>
 
@@ -93,51 +93,9 @@ namespace {
   }
 
   // Shape checks retain source positions; cross-record checks retain key paths.
-  class Decoder {
+  class Decoder : public files::TomlDecoder {
   public:
-    explicit Decoder(std::filesystem::path path) : m_path(std::move(path)) {}
-    files::ConfigIssues issues;
-
-    void issue(const toml::node& node, std::string key, std::string message) {
-      const auto& position = node.source().begin;
-      issues.push_back(
-          {.file = m_path,
-           .line = position.line,
-           .column = position.column,
-           .key = std::move(key),
-           .message = std::move(message)}
-      );
-    }
-
-    void keys(const toml::table& table, const std::string& prefix, std::initializer_list<std::string_view> allowed) {
-      for (const auto& [key, value] : table) {
-        if (std::ranges::find(allowed, key.str()) == allowed.end()) {
-          issue(value, prefix + std::string(key.str()), "unknown state field");
-        }
-      }
-    }
-
-    const toml::array*
-    array(const toml::table& table, std::string_view field, const std::string& key, std::size_t max, bool required) {
-      const auto* value = table.get(field);
-      if (value == nullptr && !required) {
-        return nullptr;
-      }
-      if (value == nullptr || !value->is_array() || value->as_array()->size() > max) {
-        issue(value != nullptr ? *value : table, key, std::format("expected an array with at most {} items", max));
-        return nullptr;
-      }
-      return value->as_array();
-    }
-
-    std::optional<std::string> text(const toml::table& table, std::string_view field, const std::string& key) {
-      const auto* node = table.get(field);
-      if (node == nullptr || !node->is_string()) {
-        issue(node != nullptr ? *node : table, key, "expected a string");
-        return std::nullopt;
-      }
-      return node->as_string()->get();
-    }
+    using TomlDecoder::TomlDecoder;
 
     std::optional<files::Location> location(const toml::table& table, std::string_view field, const std::string& key) {
       const auto uri = text(table, field, key);
@@ -162,7 +120,7 @@ namespace {
         issue(node, key, "expected a tab table");
         return std::nullopt;
       }
-      keys(*table, key + ".", {"primary_uri", "secondary_uri", "active_pane"});
+      unknownKeys(*table, key + ".", {"primary_uri", "secondary_uri", "active_pane"}, "unknown state field");
       auto primary = location(*table, "primary_uri", key + ".primary_uri");
       std::optional<files::Location> secondary;
       if (table->contains("secondary_uri")) {
@@ -188,7 +146,7 @@ namespace {
         issue(node, key, "expected a window table");
         return std::nullopt;
       }
-      keys(*table, key + ".", {"tabs", "active_tab"});
+      unknownKeys(*table, key + ".", {"tabs", "active_tab"}, "unknown state field");
       files::SavedWindow result;
       const auto* active = table->get("active_tab");
       if (active == nullptr
@@ -208,9 +166,6 @@ namespace {
       }
       return result;
     }
-
-  private:
-    std::filesystem::path m_path;
   };
 
   std::expected<files::SessionState, files::ConfigIssues>
@@ -218,29 +173,23 @@ namespace {
     if (!text) {
       return files::SessionState{};
     }
-    toml::table table;
-    try {
-      table = toml::parse(*text, path.string());
-    } catch (const toml::parse_error& error) {
-      const auto& at = error.source().begin;
-      return std::unexpected(
-          files::ConfigIssues{
-              {.file = path,
-               .line = at.line,
-               .column = at.column,
-               .key = {},
-               .message = std::string(error.description())}
-          }
-      );
+    auto table = files::parseToml(*text, path);
+    if (!table) {
+      return std::unexpected(std::move(table.error()));
     }
     Decoder decoder(path);
-    decoder.keys(table, "", {"schema_version", "places_customized", "bookmarks", "windows"});
-    const auto* version = table.get("schema_version");
-    if (version == nullptr || !version->is_integer() || version->as_integer()->get() != 1) {
-      decoder.issue(version != nullptr ? *version : table, "schema_version", "expected integer state schema version 1");
+    decoder.unknownKeys(
+        *table, "", {"schema_version", "places_customized", "bookmarks", "windows"}, "unknown state field"
+    );
+    const auto* version = table->get("schema_version");
+    if (version == nullptr || !files::isSchemaVersion(*version)) {
+      decoder.issue(
+          version != nullptr ? *version : *table, "schema_version",
+          std::format("expected integer state schema version {}", files::kSchemaVersion)
+      );
     }
     files::SessionState state;
-    if (const auto* customized = table.get("places_customized")) {
+    if (const auto* customized = table->get("places_customized")) {
       if (!customized->is_boolean()) {
         decoder.issue(*customized, "places_customized", "expected a boolean");
       } else {
@@ -248,7 +197,7 @@ namespace {
       }
     }
     if (const auto* bookmarks =
-            decoder.array(table, "bookmarks", "bookmarks", files::StateStore::bookmarkLimit, state.placesCustomized)) {
+            decoder.array(*table, "bookmarks", "bookmarks", files::StateStore::bookmarkLimit, state.placesCustomized)) {
       for (std::size_t i = 0; i < bookmarks->size(); ++i) {
         const auto key = std::format("bookmarks[{}]", i);
         const auto* bookmark = bookmarks->get(i)->as_table();
@@ -256,7 +205,7 @@ namespace {
           decoder.issue(*bookmarks->get(i), key, "expected a bookmark table");
           continue;
         }
-        decoder.keys(*bookmark, key + ".", {"label", "uri"});
+        decoder.unknownKeys(*bookmark, key + ".", {"label", "uri"}, "unknown state field");
         auto label = decoder.text(*bookmark, "label", key + ".label");
         auto location = decoder.location(*bookmark, "uri", key + ".uri");
         if (label && location) {
@@ -264,7 +213,7 @@ namespace {
         }
       }
     }
-    if (const auto* windows = decoder.array(table, "windows", "windows", kMaxWindows, false)) {
+    if (const auto* windows = decoder.array(*table, "windows", "windows", kMaxWindows, false)) {
       for (std::size_t i = 0; i < windows->size(); ++i) {
         if (auto window = decoder.window(*windows->get(i), std::format("windows[{}]", i))) {
           state.windows.push_back(std::move(*window));
@@ -302,7 +251,7 @@ namespace {
       );
     }
     const toml::table document{
-        {"schema_version", 1},
+        {"schema_version", files::kSchemaVersion},
         {"places_customized", state.placesCustomized},
         {"bookmarks", std::move(bookmarks)},
         {"windows", std::move(windows)}
@@ -338,21 +287,7 @@ std::optional<std::string> files::bookmarkLabelProblem(std::string_view label) {
 
 files::StateStore::StateStore(std::filesystem::path path) : m_path(std::move(path)) {}
 
-std::filesystem::path files::StateStore::pathFromEnvironment() {
-  std::filesystem::path root;
-  if (const char* xdg = std::getenv("XDG_STATE_HOME"); xdg != nullptr && *xdg != '\0') {
-    root = xdg;
-  } else {
-    const char* home = std::getenv("HOME");
-    if (home != nullptr && *home != '\0') {
-      root = std::filesystem::path(home) / ".local/state";
-    }
-  }
-  if (!root.is_absolute()) {
-    throw std::invalid_argument("XDG_STATE_HOME, or HOME when unset, must be an absolute path");
-  }
-  return root / "noctalia-files/state.toml";
-}
+std::filesystem::path files::StateStore::pathFromEnvironment() { return stateHome() / "noctalia-files/state.toml"; }
 
 bool files::StateStore::validPath() const {
   return m_path.is_absolute() && !m_path.native().contains('\0') && m_path.filename() == "state.toml";

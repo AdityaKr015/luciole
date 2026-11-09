@@ -203,7 +203,7 @@ namespace {
         && writer->settings()->browser.viewMode == files::ViewMode::List
         && writer->inheritedSettings()->browser.showHidden
     );
-    writer->submit({{P::ShowHidden, std::monostate{}}});
+    writer->submit({{P::ShowHidden, std::nullopt}});
     until([&] { return !writer->busy(); });
     TEST_CHECK(writer->settings()->browser.showHidden && writer->settings()->browser.gridIconSize == 128);
     const auto good = writer->settings();

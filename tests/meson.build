@@ -33,6 +33,7 @@ test_table = [
   {'name': 'navigation-services', 'deps': [browser_dep, platform_dep, event_loop_dep], 'env': gio_env},
   {'name': 'settings', 'deps': [config_dep, browser_dep], 'env': ['G_DEBUG=fatal-warnings']},
   {'name': 'atomic-file', 'deps': [fs_dep]},
+  {'name': 'xdg-dirs', 'deps': [fs_dep]},
   {'name': 'state-store', 'deps': [config_dep], 'env': gio_env},
 ]
 

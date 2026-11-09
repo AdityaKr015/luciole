@@ -2,12 +2,12 @@
 
 #include "fs/atomic_file.h"
 #include "fs/gio_ptr.h"
+#include "fs/xdg_dirs.h"
 
 #include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cmath>
-#include <cstdlib>
 #include <fcntl.h>
 #include <format>
 #include <gdk-pixbuf/gdk-pixbuf.h>
@@ -94,20 +94,7 @@ namespace {
 
 } // namespace
 
-files::ThumbnailStore::ThumbnailStore() {
-  const char* cache = std::getenv("XDG_CACHE_HOME");
-  if (cache && *cache) {
-    m_root = std::filesystem::path(cache) / "thumbnails";
-  } else {
-    const char* home = std::getenv("HOME");
-    if (!home || !*home) {
-      throw std::runtime_error("HOME is required for the thumbnail cache");
-    }
-    m_root = std::filesystem::path(home) / ".cache/thumbnails";
-  }
-  if (!m_root.is_absolute()) {
-    throw std::runtime_error("XDG_CACHE_HOME must be absolute");
-  }
+files::ThumbnailStore::ThumbnailStore() : m_root(cacheHome() / "thumbnails") {
   m_index = m_root.parent_path() / "noctalia-files/thumbnail-index.json";
 }
 int files::ThumbnailStore::sizeClass(int pixels) {
