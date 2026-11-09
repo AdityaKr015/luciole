@@ -43,10 +43,10 @@ jobs:
             libglvnd freetype2 fontconfig noto-fonts \
             cairo pango harfbuzz \
             libxkbcommon glib2 shared-mime-info \
-            gdk-pixbuf2 glycin libwebp librsvg libpng \
+            gdk-pixbuf2 glycin libheif libwebp librsvg libpng \
             tomlplusplus acl libarchive \
             nlohmann-json stb \
-            python ffmpeg \
+            python ffmpeg poppler \
             just clang
 
       - uses: actions/checkout@v6

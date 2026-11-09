@@ -629,6 +629,9 @@ namespace {
          "-cpu-used", "8", "-still-picture", "1", "-pix_fmt", "yuv444p", "-threads", "1", avif.native()}
     );
     richImage = render(avif, "image/avif");
+    if (!richImage) {
+      std::println(stderr, "AVIF fixture error: {}", richImage.error());
+    }
     TEST_CHECK(richImage && richImage->width == 128 && richImage->height == 64 && richImage->rgba[0] > 180);
     const auto animated = fixture.root / "animated.webp";
     command(

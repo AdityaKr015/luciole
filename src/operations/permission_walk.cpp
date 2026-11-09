@@ -112,6 +112,11 @@ namespace {
       };
       try {
         target->validate();
+        // A discovered hard link can be changed before its separately selected
+        // alias. Capture its ACL too so the job can recognize its own chmod.
+        if (S_ISREG(target->baseline.st_mode) && target->baseline.st_nlink > 1 && !target->aclBaseline) {
+          target->loadAcl(true);
+        }
         row.info = target->inspect(false);
         if (S_ISLNK(target->baseline.st_mode)) {
           skip(row, std::move(target), "Symbolic link skipped; its target was not followed.");

@@ -574,6 +574,11 @@ namespace {
     TEST_CHECK(service.applyRecursive(recursiveEdit()));
     pump.settle(service);
     const auto& snapshot = service.snapshot();
+    if (snapshot.failed()) {
+      std::println(
+          stderr, "Recursive permission failure: {}\n{}", snapshot.error ? snapshot.error->message : "", snapshot.report
+      );
+    }
     TEST_CHECK(snapshot.recursive && snapshot.finished && !snapshot.failed() && snapshot.applied);
     TEST_CHECK(mode(file) == 0644 && mode(nested) == 0604 && mode(tree / ".hidden") == 0604);
     TEST_CHECK(mode(tree / "fifo") == 0604 && mode(f.root / "outside") == outsideMode);
@@ -604,6 +609,35 @@ namespace {
     TEST_CHECK(::chmod((tree / "child").c_str(), 0700) == 0);
     TEST_CHECK(::chmod((tree / "child/nested").c_str(), 0700) == 0);
     TEST_CHECK(mode(file) == 0640 && mode(nested) == 0600);
+  }
+  void recursiveAliases(Pump& pump) {
+    for (const bool discoveredFirst : {true, false}) {
+      Fixture f;
+      const auto tree = f.root / (discoveredFirst ? "a" : "longer-folder");
+      fs::create_directory(tree);
+      const auto file = f.root / (discoveredFirst ? "longer-file" : "a");
+      write(file);
+      TEST_CHECK(::chmod(file.c_str(), 0600) == 0);
+      fs::create_hard_link(file, tree / "alias");
+      S service;
+      // Root path lengths exercise both alias orders independently of readdir.
+      TEST_CHECK(service.prepare(std::vector{entry(file), entry(tree)}));
+      pump.settle(service);
+      TEST_CHECK(service.applyRecursive(recursiveEdit()));
+      pump.settle(service);
+      const auto& snapshot = service.snapshot();
+      if (snapshot.failed()) {
+        std::println(
+            stderr, "Recursive alias failure: {}\n{}", snapshot.error ? snapshot.error->message : "", snapshot.report
+        );
+      }
+      TEST_CHECK(snapshot.recursive && snapshot.finished && !snapshot.failed() && snapshot.applied);
+      TEST_CHECK(mode(file) == 0604 && mode(tree / "alias") == 0604);
+      TEST_CHECK(snapshot.results->size() == 3);
+      for (const auto& row : *snapshot.results) {
+        TEST_CHECK(row.info && row.info->mode == mode(*row.location.nativePath()));
+      }
+    }
   }
   void recursiveFailures(Pump& pump) {
     Fixture f;
@@ -1280,6 +1314,7 @@ int main() {
   bulkCancellation(pump);
   bulkOwnershipCancellation(pump);
   recursiveModes(pump);
+  recursiveAliases(pump);
   recursiveFailures(pump);
   recursiveOwnership(pump);
   recursiveReplacementDuringCollection(pump);
