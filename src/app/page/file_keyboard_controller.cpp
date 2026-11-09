@@ -9,6 +9,7 @@
 #include "browser/miller_columns.h"
 #include "core/input/key_symbols.h"
 #include "render/scene/input_dispatcher.h"
+#include "ui/browser/action_shortcuts.h"
 #include "ui/controls/input.h"
 #include "ui/controls/virtual_grid_view.h"
 #include "ui/style.h"
@@ -97,12 +98,8 @@ bool FileKeyboardController::commandKey(const KeyboardEvent& event) {
       }
       return true;
     }
-    if (event.sym == XKB_KEY_F2 && event.modifiers == 0) {
-      m_page.dispatchAction(Action::Rename);
-      return true;
-    }
-    if (event.sym == XKB_KEY_Return && event.modifiers == KeyMod::Alt) {
-      m_page.dispatchAction(Action::Properties);
+    if (const auto action = files::shortcutAction({Action::Rename, Action::Properties}, event.sym, event.modifiers)) {
+      m_page.dispatchAction(*action);
       return true;
     }
   }
@@ -243,23 +240,15 @@ void FileKeyboardController::textInputDeactivated(TextInputService&) { clearType
 
 bool FileKeyboardController::listKey(const KeyboardEvent& event) {
   auto& model = m_page.browser().model();
-  if (event.sym == XKB_KEY_a && event.modifiers == KeyMod::Ctrl) {
-    m_page.dispatchAction(Action::SelectAll);
+  if (const auto action =
+          files::shortcutAction({Action::SelectAll, Action::ClearSelection}, event.sym, event.modifiers)) {
+    m_page.dispatchAction(*action);
     return true;
   }
-  if (event.modifiers == 0 && KeySymbol::isEscape(event.sym)) {
-    m_page.dispatchAction(Action::ClearSelection);
-    return true;
-  }
-  if ((event.sym == XKB_KEY_i || event.sym == XKB_KEY_I) && event.modifiers == (KeyMod::Ctrl | KeyMod::Shift)) {
+  if (const auto action =
+          files::shortcutAction({Action::InvertSelection, Action::SelectPattern}, event.sym, event.modifiers)) {
     if (!event.repeat) {
-      m_page.dispatchAction(Action::InvertSelection);
-    }
-    return true;
-  }
-  if (event.sym == XKB_KEY_s && event.modifiers == KeyMod::Ctrl) {
-    if (!event.repeat) {
-      m_page.dispatchAction(Action::SelectPattern);
+      m_page.dispatchAction(*action);
     }
     return true;
   }

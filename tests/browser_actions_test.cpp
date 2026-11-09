@@ -1,12 +1,16 @@
 #include "browser/action_registry.h"
 #include "browser/selection_tools.h"
+#include "core/input/key_modifiers.h"
 #include "fs/gio_interop.h"
 #include "test_check.h"
+#include "ui/browser/action_shortcuts.h"
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <print>
 #include <stdexcept>
+#include <xkbcommon/xkbcommon-keysyms.h>
 
 namespace {
   using namespace std::chrono_literals;
@@ -384,9 +388,50 @@ namespace {
     model.setFilter({false, "alpha"});
     TEST_CHECK(!input.append(model, "b", now + 8s));
   }
+  void testActionTable() {
+    TEST_CHECK(R::definitions().size() == files::kBrowserActionCount);
+    for (std::size_t index = 0; index < files::kBrowserActionCount; ++index) {
+      const auto action = R::definitions()[index].action;
+      TEST_CHECK(&R::definition(action) == &R::definitions()[index]);
+      TEST_CHECK(R::fromMenuId(R::menuId(action)) == action);
+    }
+    TEST_CHECK(R::definition(A::MenuBack).label == "Back");
+    TEST_CHECK(!R::fromMenuId(-1));
+    TEST_CHECK(!R::fromMenuId(static_cast<int>(files::kBrowserActionCount)));
+    TEST_CHECK(!R::fromMenuId(9000));
+  }
+  void testShortcuts() {
+    for (const auto& definition : R::definitions()) {
+      TEST_CHECK(files::actionChord(definition.action).has_value() == !definition.shortcut.empty());
+    }
+    const auto chord = [](A action) { return files::actionChord(action).value_or(KeyChord{}); };
+    TEST_CHECK((chord(A::Settings) == KeyChord{XKB_KEY_comma, KeyMod::Ctrl}));
+    TEST_CHECK((chord(A::Back) == KeyChord{XKB_KEY_Left, KeyMod::Alt}));
+    TEST_CHECK((chord(A::Open) == KeyChord{XKB_KEY_Return, 0}));
+    TEST_CHECK((chord(A::QuickPreview) == KeyChord{XKB_KEY_space, 0}));
+    TEST_CHECK((chord(A::Properties) == KeyChord{XKB_KEY_Return, KeyMod::Alt}));
+    TEST_CHECK((chord(A::EditLocation) == KeyChord{XKB_KEY_l, KeyMod::Ctrl}));
+    TEST_CHECK((chord(A::CreateFolder) == KeyChord{XKB_KEY_n, KeyMod::Ctrl | KeyMod::Shift}));
+    TEST_CHECK(
+        files::shortcutMatches(A::CreateFolder, XKB_KEY_N, KeyMod::Ctrl | KeyMod::Shift)
+        && files::shortcutMatches(A::CreateFolder, XKB_KEY_n, KeyMod::Ctrl | KeyMod::Shift)
+        && !files::shortcutMatches(A::CreateFolder, XKB_KEY_n, KeyMod::Ctrl)
+    );
+    TEST_CHECK(
+        files::shortcutMatches(A::CopyFiles, XKB_KEY_c, KeyMod::Ctrl)
+        && !files::shortcutMatches(A::CopyFiles, XKB_KEY_C, KeyMod::Ctrl)
+        && !files::shortcutMatches(A::CopyFiles, XKB_KEY_c, KeyMod::Ctrl | KeyMod::Alt)
+    );
+    TEST_CHECK(!files::shortcutMatches(A::Root, 0, 0));
+    TEST_CHECK(files::shortcutAction({A::Grid, A::List, A::Miller}, XKB_KEY_2, KeyMod::Ctrl) == A::List);
+    TEST_CHECK(files::shortcutAction({A::DeletePermanently, A::Trash}, XKB_KEY_Delete, 0) == A::DeletePermanently);
+    TEST_CHECK(!files::shortcutAction({A::Back, A::Forward}, XKB_KEY_Left, 0));
+  }
 } // namespace
 int main() {
   try {
+    testActionTable();
+    testShortcuts();
     testArchiveActions();
     testTrashActions();
     testLinkActions();

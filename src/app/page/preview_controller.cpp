@@ -11,6 +11,7 @@
 #include "render/render_context.h"
 #include "thumbnails/preview_service.h"
 #include "thumbnails/thumbnail_service.h"
+#include "ui/browser/action_shortcuts.h"
 #include "ui/browser/preview_layout.h"
 #include "ui/builders.h"
 #include "ui/controls/file_preview_view.h"
@@ -120,7 +121,7 @@ bool PreviewController::quickKey(const KeyboardEvent& event) {
   if (!m_quick || !event.pressed || event.preedit || event.modifiers != 0) {
     return false;
   }
-  if (KeySymbol::isSpace(event.sym) || KeySymbol::isEscape(event.sym)) {
+  if (files::shortcutMatches(Action::QuickPreview, event.sym, event.modifiers) || KeySymbol::isEscape(event.sym)) {
     m_page.dismissMenu();
     return true;
   }

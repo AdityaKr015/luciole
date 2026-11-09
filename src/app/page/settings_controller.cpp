@@ -12,6 +12,7 @@
 #include "render/scene/input_area.h"
 #include "render/scene/input_dispatcher.h"
 #include "thumbnails/thumbnail_service.h"
+#include "ui/browser/action_shortcuts.h"
 #include "ui/controls/browser_settings_view.h"
 #include "ui/controls/context_menu.h"
 #include "wayland/popup_surface.h"
@@ -109,7 +110,8 @@ bool SettingsController::key(const KeyboardEvent& event) {
     return false;
   }
   if (event.pressed
-      && (KeySymbol::isEscape(event.sym) || (event.sym == XKB_KEY_comma && event.modifiers == KeyMod::Ctrl))) {
+      && (KeySymbol::isEscape(event.sym)
+          || files::shortcutMatches(files::BrowserAction::Settings, event.sym, event.modifiers))) {
     deferClose();
   } else if (event.pressed && event.sym == XKB_KEY_q && event.modifiers == KeyMod::Ctrl) {
     m_page.surface().close();

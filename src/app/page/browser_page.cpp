@@ -34,6 +34,7 @@
 #include "render/scene/input_area.h"
 #include "render/scene/input_dispatcher.h"
 #include "thumbnails/preview_service.h"
+#include "ui/browser/action_shortcuts.h"
 #include "ui/browser/file_icon.h"
 #include "ui/browser/file_view.h"
 #include "ui/browser/places_sidebar.h"
@@ -915,27 +916,24 @@ bool BrowserPage::escapeGesture(const KeyboardEvent& event) {
   return false;
 }
 
+bool BrowserPage::dispatchShortcut(const KeyboardEvent& event, std::initializer_list<Action> actions) {
+  const auto action = files::shortcutAction(actions, event.sym, event.modifiers);
+  if (action) {
+    dispatchAction(*action);
+  }
+  return action.has_value();
+}
+
 bool BrowserPage::shortcutKey(const KeyboardEvent& event) {
   const bool editing = m_locationBar.textFocused();
   if (!editing
       && !event.repeat
-      && event.modifiers == KeyMod::Ctrl
-      && (event.sym == XKB_KEY_c || event.sym == XKB_KEY_x || event.sym == XKB_KEY_v)) {
-    dispatchAction(
-        event.sym == XKB_KEY_c       ? Action::CopyFiles
-            : event.sym == XKB_KEY_x ? Action::CutFiles
-                                     : Action::PasteFiles
-    );
-    return true;
-  }
-  if (!editing && event.modifiers == 0 && !event.repeat && event.sym == XKB_KEY_F8) {
-    dispatchAction(Action::ShowPreview);
+      && dispatchShortcut(event, {Action::CopyFiles, Action::CutFiles, Action::PasteFiles, Action::ShowPreview})) {
     return true;
   }
   if (!editing
-      && event.modifiers == 0
       && !event.repeat
-      && KeySymbol::isSpace(event.sym)
+      && files::shortcutMatches(Action::QuickPreview, event.sym, event.modifiers)
       && m_dispatcher.focusedArea() == m_list->focusArea()) {
     dispatchAction(Action::QuickPreview);
     return true;
@@ -955,14 +953,7 @@ bool BrowserPage::shortcutKey(const KeyboardEvent& event) {
   if (!editing && (m_detailsHeader.menuKey(event) || m_fileKeys.commandKey(event))) {
     return true;
   }
-  if (!editing
-      && event.modifiers == KeyMod::Ctrl
-      && (event.sym == XKB_KEY_1 || event.sym == XKB_KEY_2 || event.sym == XKB_KEY_3)) {
-    dispatchAction(event.sym == XKB_KEY_1 ? Action::Grid : event.sym == XKB_KEY_2 ? Action::List : Action::Miller);
-    return true;
-  }
-  if (!editing && event.sym == XKB_KEY_h && event.modifiers == KeyMod::Ctrl) {
-    dispatchAction(Action::ShowHidden);
+  if (!editing && dispatchShortcut(event, {Action::Grid, Action::List, Action::Miller, Action::ShowHidden})) {
     return true;
   }
   if (m_list != nullptr
@@ -990,16 +981,16 @@ bool BrowserPage::windowKey(const KeyboardEvent& event) {
     m_surface->close();
     return true;
   }
-  if (event.sym == XKB_KEY_comma && event.modifiers == KeyMod::Ctrl) {
-    dispatchAction(Action::Settings);
+  if (dispatchShortcut(event, {Action::Settings})) {
     return true;
   }
-  if (event.sym == XKB_KEY_l && event.modifiers == KeyMod::Ctrl && m_locationBar.hasLocationInput()) {
+  if (files::shortcutMatches(Action::EditLocation, event.sym, event.modifiers) && m_locationBar.hasLocationInput()) {
     dispatchAction(Action::EditLocation);
     return true;
   }
-  if ((event.sym == XKB_KEY_k || event.sym == XKB_KEY_f)
-      && event.modifiers == KeyMod::Ctrl
+  // Ctrl+K is an extra chord for search besides the table's Ctrl+F.
+  if ((files::shortcutMatches(Action::Search, event.sym, event.modifiers)
+       || (event.sym == XKB_KEY_k && event.modifiers == KeyMod::Ctrl))
       && m_locationBar.hasFilterInput()) {
     dispatchAction(Action::Search);
     return true;
@@ -1008,24 +999,7 @@ bool BrowserPage::windowKey(const KeyboardEvent& event) {
 }
 
 bool BrowserPage::navigationKey(const KeyboardEvent& event, bool editing) {
-  if (!editing && event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Left) {
-    dispatchAction(Action::Back);
-    return true;
-  }
-  if (!editing && event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Right) {
-    dispatchAction(Action::Forward);
-    return true;
-  }
-  if (!editing && event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Up) {
-    dispatchAction(Action::Up);
-    return true;
-  }
-  if (!editing && event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Home) {
-    dispatchAction(Action::Home);
-    return true;
-  }
-  if (!editing && event.sym == XKB_KEY_F5 && event.modifiers == 0) {
-    dispatchAction(Action::Refresh);
+  if (!editing && dispatchShortcut(event, {Action::Back, Action::Forward, Action::Up, Action::Home, Action::Refresh})) {
     return true;
   }
   if (!editing && m_detailsHeader.widthKey(event)) {
@@ -1034,15 +1008,7 @@ bool BrowserPage::navigationKey(const KeyboardEvent& event, bool editing) {
   if (!editing && zoomFromKey(event)) {
     return true;
   }
-  if (!editing && event.sym == XKB_KEY_F9 && event.modifiers == 0 && !event.repeat) {
-    dispatchAction(Action::ShowSidebar);
-    return true;
-  }
-  if (!editing
-      && (event.sym == XKB_KEY_n || event.sym == XKB_KEY_N)
-      && event.modifiers == (KeyMod::Ctrl | KeyMod::Shift)
-      && !event.repeat) {
-    dispatchAction(Action::CreateFolder);
+  if (!editing && !event.repeat && dispatchShortcut(event, {Action::ShowSidebar, Action::CreateFolder})) {
     return true;
   }
   return false;
@@ -1146,187 +1112,133 @@ void BrowserPage::dispatchAction(Action action, const files::ActionRequest& requ
 void BrowserPage::runAction(
     Action action, const files::ActionRequest& request, const std::vector<files::DirectoryEntry>& targets
 ) {
-  switch (action) {
-  case Action::CutFiles:
-  case Action::CopyFiles:
-    copyFiles(action, targets);
-    break;
-  case Action::PasteFiles:
-    m_transferController.paste(request);
-    break;
-  case Action::ShowPreview:
-    m_savedSettings.showPreview = !m_savedSettings.showPreview;
-    m_preferences.submit({{files::BrowserPreference::ShowPreview, m_savedSettings.showPreview}});
-    m_surface->requestLayout();
-    break;
-  case Action::QuickPreview:
-    m_previewController.showQuick();
-    break;
-  case Action::OpenWith:
-    m_applicationChooser.show(targets.front());
-    break;
-  case Action::Compress:
-    m_archiveController.compress(targets);
-    break;
-  case Action::ExtractTo:
-    m_archiveController.extractTo(targets.front().location);
-    break;
-  case Action::ExtractHere:
-    m_archiveController.extractHere(targets.front().location);
-    break;
-  case Action::BrowseArchive:
-    m_archiveController.browse(targets.front().location);
-    break;
-  case Action::CopyPath:
-  case Action::CopyUri:
-  case Action::CopyTargetPath:
-  case Action::CopyTargetUri:
-    copyPaths(action, request, targets);
-    break;
-  case Action::Terminal:
-  case Action::TargetTerminal:
-    openTerminal(action == Action::Terminal ? *request.folder : targets.front().location);
-    break;
-  case Action::Back:
-    (void)browser().back();
-    break;
-  case Action::Forward:
-    (void)browser().forward();
-    break;
-  case Action::Up:
-    (void)browser().up();
-    break;
-  case Action::Home:
-    browser().home();
-    break;
-  case Action::Root:
-    browser().open(files::Location::fromPath("/"));
-    break;
-  case Action::Refresh:
-    browser().refresh();
-    break;
-  case Action::Stop:
-    browser().stop();
-    break;
-  case Action::EditLocation:
-    m_locationBar.beginLocationEdit();
-    break;
-  case Action::Search:
-    m_locationBar.openFilter();
-    break;
-  case Action::Grid:
-    setViewMode(files::ViewMode::Grid);
-    break;
-  case Action::List:
-    setViewMode(files::ViewMode::List);
-    break;
-  case Action::Miller:
-    setViewMode(files::ViewMode::Miller);
-    break;
-  case Action::ShowHidden:
-    toggleHidden();
-    break;
-  case Action::ShowSidebar:
-    m_sidebar.setVisible(!m_sidebar.visible());
-    break;
-  case Action::SortName:
-  case Action::SortType:
-  case Action::SortSize:
-  case Action::SortModified:
-  case Action::Ascending:
-  case Action::Descending:
-  case Action::FoldersFirst:
-    sortAction(action);
-    break;
-  case Action::Open:
-    openTargets(targets);
-    break;
-  case Action::ContainingFolder:
-    showContaining(targets.front().location);
-    break;
-  case Action::OriginalLocation:
-    showContaining(*targets.front().trash.original);
-    break;
-  case Action::Pin:
-    pinTargets(targets);
-    break;
-  case Action::Unpin:
-    unpinTargets(targets);
-    break;
-  case Action::PinCurrent:
-    m_sidebar.pinFolders(
-        {{files::locationBreadcrumbs(*request.folder).back().label, *request.folder}}, m_pins.bookmarks().size()
+  struct Call {
+    Action action;
+    const files::ActionRequest& request;
+    const std::vector<files::DirectoryEntry>& targets;
+  };
+  struct Handler {
+    Action action;
+    void (*run)(BrowserPage& page, const Call& call);
+  };
+  static constexpr auto fileClipboard = [](BrowserPage& page, const Call& call) {
+    page.copyFiles(call.action, call.targets);
+  };
+  static constexpr auto pathClipboard = [](BrowserPage& page, const Call& call) {
+    page.copyPaths(call.action, call.request, call.targets);
+  };
+  static constexpr auto sort = [](BrowserPage& page, const Call& call) { page.sortAction(call.action); };
+  static constexpr auto createItem = [](BrowserPage& page, const Call& call) {
+    page.m_createController.openCreateItem(
+        *call.request.folder,
+        call.action == Action::CreateFolder ? files::CreateKind::Folder : files::CreateKind::EmptyFile
     );
-    break;
-  case Action::UnpinCurrent:
-    m_pins.remove(*request.folder);
-    break;
-  case Action::ReloadPins:
-    m_pins.reload();
-    break;
-  case Action::EmptyTrash:
-    m_trashController.openEmptyTrash();
-    break;
-  case Action::Rename:
-    if (targets.size() == 1) {
-      m_renameController.openFileRename(targets.front());
-    } else {
-      m_batchRename.open(targets);
-    }
-    break;
-  case Action::CreateLink:
-    m_createController.openLinkDialog(targets.front());
-    break;
-  case Action::Trash:
-    m_trashController.trashItems(targets);
-    break;
-  case Action::Restore:
-    m_trashController.restore(targets);
-    break;
-  case Action::DeletePermanently:
-    m_trashController.openEmptyTrash(targets);
-    break;
-  case Action::Properties:
-    m_propertiesController.show(targets);
-    break;
-  case Action::CreateFolder:
-  case Action::CreateFile:
-    m_createController.openCreateItem(
-        *request.folder, action == Action::CreateFolder ? files::CreateKind::Folder : files::CreateKind::EmptyFile
-    );
-    break;
-  case Action::NewDocument:
-    m_createController.openDocumentMenu(request);
-    break;
-  case Action::SelectAll:
-    browser().model().selectAll();
-    break;
-  case Action::InvertSelection:
-    (void)browser().model().invertSelection();
-    break;
-  case Action::ClearSelection:
-    m_list->cancelPointerGesture();
-    browser().model().clearSelection();
-    break;
-  case Action::SelectPattern:
-    openPatternSelection(request);
-    break;
-  case Action::Settings:
-    m_settingsController.toggle();
-    break;
-  case Action::About:
-    m_aboutController.open();
-    break;
-  case Action::ViewMenu:
-    m_menuController.openMenu();
-    break;
-  case Action::SortMenu:
-    m_menuController.openSortMenu();
-    break;
-  case Action::SelectionMenu:
-    m_menuController.openSelectionMenu();
-    break;
-  }
+  };
+  // One handler per action in enum order; the static_assert rejects a missing or misplaced row.
+  static constexpr auto kHandlers = std::to_array<Handler>({
+      {Action::Back, [](BrowserPage& page, const Call&) { (void)page.browser().back(); }},
+      {Action::Forward, [](BrowserPage& page, const Call&) { (void)page.browser().forward(); }},
+      {Action::Up, [](BrowserPage& page, const Call&) { (void)page.browser().up(); }},
+      {Action::Home, [](BrowserPage& page, const Call&) { page.browser().home(); }},
+      {Action::Root, [](BrowserPage& page, const Call&) { page.browser().open(files::Location::fromPath("/")); }},
+      {Action::Refresh, [](BrowserPage& page, const Call&) { page.browser().refresh(); }},
+      {Action::Stop, [](BrowserPage& page, const Call&) { page.browser().stop(); }},
+      {Action::EditLocation, [](BrowserPage& page, const Call&) { page.m_locationBar.beginLocationEdit(); }},
+      {Action::Search, [](BrowserPage& page, const Call&) { page.m_locationBar.openFilter(); }},
+      {Action::Grid, [](BrowserPage& page, const Call&) { page.setViewMode(files::ViewMode::Grid); }},
+      {Action::List, [](BrowserPage& page, const Call&) { page.setViewMode(files::ViewMode::List); }},
+      {Action::Miller, [](BrowserPage& page, const Call&) { page.setViewMode(files::ViewMode::Miller); }},
+      {Action::ShowHidden, [](BrowserPage& page, const Call&) { page.toggleHidden(); }},
+      {Action::ShowSidebar, [](BrowserPage& page, const Call&) { page.m_sidebar.setVisible(!page.m_sidebar.visible()); }},
+      {Action::ShowPreview,
+       [](BrowserPage& page, const Call&) {
+         page.m_savedSettings.showPreview = !page.m_savedSettings.showPreview;
+         page.m_preferences.submit({{files::BrowserPreference::ShowPreview, page.m_savedSettings.showPreview}});
+         page.m_surface->requestLayout();
+       }},
+      {Action::QuickPreview, [](BrowserPage& page, const Call&) { page.m_previewController.showQuick(); }},
+      {Action::OpenWith,
+       [](BrowserPage& page, const Call& call) { page.m_applicationChooser.show(call.targets.front()); }},
+      {Action::SortName, sort},
+      {Action::SortType, sort},
+      {Action::SortSize, sort},
+      {Action::SortModified, sort},
+      {Action::Ascending, sort},
+      {Action::Descending, sort},
+      {Action::FoldersFirst, sort},
+      {Action::Open, [](BrowserPage& page, const Call& call) { page.openTargets(call.targets); }},
+      {Action::ContainingFolder,
+       [](BrowserPage& page, const Call& call) { page.showContaining(call.targets.front().location); }},
+      {Action::OriginalLocation,
+       [](BrowserPage& page, const Call& call) { page.showContaining(*call.targets.front().trash.original); }},
+      {Action::Pin, [](BrowserPage& page, const Call& call) { page.pinTargets(call.targets); }},
+      {Action::Unpin, [](BrowserPage& page, const Call& call) { page.unpinTargets(call.targets); }},
+      {Action::CutFiles, fileClipboard},
+      {Action::CopyFiles, fileClipboard},
+      {Action::PasteFiles, [](BrowserPage& page, const Call& call) { page.m_transferController.paste(call.request); }},
+      {Action::Rename,
+       [](BrowserPage& page, const Call& call) {
+         if (call.targets.size() == 1) {
+           page.m_renameController.openFileRename(call.targets.front());
+         } else {
+           page.m_batchRename.open(call.targets);
+         }
+       }},
+      {Action::CreateLink,
+       [](BrowserPage& page, const Call& call) { page.m_createController.openLinkDialog(call.targets.front()); }},
+      {Action::Trash, [](BrowserPage& page, const Call& call) { page.m_trashController.trashItems(call.targets); }},
+      {Action::Restore, [](BrowserPage& page, const Call& call) { page.m_trashController.restore(call.targets); }},
+      {Action::DeletePermanently,
+       [](BrowserPage& page, const Call& call) { page.m_trashController.openEmptyTrash(call.targets); }},
+      {Action::Properties,
+       [](BrowserPage& page, const Call& call) { page.m_propertiesController.show(call.targets); }},
+      {Action::Compress,
+       [](BrowserPage& page, const Call& call) { page.m_archiveController.compress(call.targets); }},
+      {Action::ExtractHere,
+       [](BrowserPage& page, const Call& call) {
+         page.m_archiveController.extractHere(call.targets.front().location);
+       }},
+      {Action::ExtractTo,
+       [](BrowserPage& page, const Call& call) { page.m_archiveController.extractTo(call.targets.front().location); }},
+      {Action::BrowseArchive,
+       [](BrowserPage& page, const Call& call) { page.m_archiveController.browse(call.targets.front().location); }},
+      {Action::CreateFolder, createItem},
+      {Action::CreateFile, createItem},
+      {Action::NewDocument,
+       [](BrowserPage& page, const Call& call) { page.m_createController.openDocumentMenu(call.request); }},
+      {Action::PinCurrent,
+       [](BrowserPage& page, const Call& call) {
+         const auto& folder = *call.request.folder;
+         page.m_sidebar.pinFolders(
+             {{files::locationBreadcrumbs(folder).back().label, folder}}, page.m_pins.bookmarks().size()
+         );
+       }},
+      {Action::UnpinCurrent, [](BrowserPage& page, const Call& call) { page.m_pins.remove(*call.request.folder); }},
+      {Action::ReloadPins, [](BrowserPage& page, const Call&) { page.m_pins.reload(); }},
+      {Action::EmptyTrash, [](BrowserPage& page, const Call&) { page.m_trashController.openEmptyTrash(); }},
+      {Action::SelectAll, [](BrowserPage& page, const Call&) { page.browser().model().selectAll(); }},
+      {Action::InvertSelection, [](BrowserPage& page, const Call&) { (void)page.browser().model().invertSelection(); }},
+      {Action::SelectPattern, [](BrowserPage& page, const Call& call) { page.openPatternSelection(call.request); }},
+      {Action::ClearSelection,
+       [](BrowserPage& page, const Call&) {
+         page.m_list->cancelPointerGesture();
+         page.browser().model().clearSelection();
+       }},
+      {Action::Settings, [](BrowserPage& page, const Call&) { page.m_settingsController.toggle(); }},
+      {Action::About, [](BrowserPage& page, const Call&) { page.m_aboutController.open(); }},
+      {Action::MenuBack, [](BrowserPage& page, const Call&) { page.m_menuController.openMenu(); }},
+      {Action::SortMenu, [](BrowserPage& page, const Call&) { page.m_menuController.openSortMenu(); }},
+      {Action::SelectionMenu, [](BrowserPage& page, const Call&) { page.m_menuController.openSelectionMenu(); }},
+      {Action::CopyPath, pathClipboard},
+      {Action::CopyUri, pathClipboard},
+      {Action::Terminal, [](BrowserPage& page, const Call& call) { page.openTerminal(*call.request.folder); }},
+      {Action::CopyTargetPath, pathClipboard},
+      {Action::CopyTargetUri, pathClipboard},
+      {Action::TargetTerminal,
+       [](BrowserPage& page, const Call& call) { page.openTerminal(call.targets.front().location); }},
+  });
+  static_assert(files::actionTableInOrder(kHandlers));
+  kHandlers[std::to_underlying(action)].run(*this, {.action = action, .request = request, .targets = targets});
 }
 
 void BrowserPage::copyFiles(Action action, const std::vector<files::DirectoryEntry>& targets) {

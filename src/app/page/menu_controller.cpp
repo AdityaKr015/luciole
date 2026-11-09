@@ -48,7 +48,7 @@ MenuController::actionEntry(Action action, const files::ActionRequest& request, 
   const auto& definition = files::ActionRegistry::definition(action);
   const auto state = m_page.actionState(action, request);
   return {
-      .id = static_cast<int>(action),
+      .id = files::ActionRegistry::menuId(action),
       .label = std::string(definition.label),
       .enabled = state.enabled,
       .checkmark = !radio && state.checked != -1,
@@ -169,14 +169,15 @@ void MenuController::openFileMenu(std::optional<files::EntryId> id, float x, flo
     separator();
     add(Action::Properties);
   }
-  const auto document = std::ranges::find(entries, static_cast<int>(Action::NewDocument), &ContextMenuControlEntry::id);
+  const auto document =
+      std::ranges::find(entries, files::ActionRegistry::menuId(Action::NewDocument), &ContextMenuControlEntry::id);
   const auto documentRow = !id && document != entries.end()
       ? std::optional<std::size_t>(static_cast<std::size_t>(document - entries.begin()))
       : std::nullopt;
   showContextMenu(
       std::move(entries),
       [this, request, x, y](int action) {
-        if (action == static_cast<int>(Action::SortMenu)) {
+        if (action == files::ActionRegistry::menuId(Action::SortMenu)) {
           openSortMenu(LayoutRect{x, y, 1, 1}, false);
           return;
         }
@@ -199,7 +200,9 @@ void MenuController::openFileMenu(std::optional<files::EntryId> id, float x, flo
           );
           return;
         }
-        m_page.dispatchAction(static_cast<Action>(action), request);
+        if (const auto browserAction = files::ActionRegistry::fromMenuId(action)) {
+          m_page.dispatchAction(*browserAction, request);
+        }
       },
       {x, y, 1, 1}
   );
@@ -286,7 +289,7 @@ void MenuController::openBreadcrumbMenu(const files::Location& target, LayoutRec
   const auto request = m_page.actionRequest(false);
   for (const auto action : {Action::CopyPath, Action::CopyUri, Action::Terminal}) {
     auto entry = actionEntry(action, request);
-    entry.id = -1 - static_cast<int>(action);
+    entry.id = -1 - files::ActionRegistry::menuId(action);
     if (action == Action::Terminal) {
       entry.enabled = target.nativePath().has_value() && m_terminal.available();
     }
@@ -305,8 +308,11 @@ void MenuController::openBreadcrumbMenu(const files::Location& target, LayoutRec
       }
       return;
     }
-    const auto action = static_cast<Action>(-1 - id);
-    if (action == Action::Terminal) {
+    const auto action = files::ActionRegistry::fromMenuId(-1 - id);
+    if (!action) {
+      return;
+    }
+    if (*action == Action::Terminal) {
       if (!target.nativePath() || !m_terminal.available()) {
         return;
       }
@@ -317,7 +323,7 @@ void MenuController::openBreadcrumbMenu(const files::Location& target, LayoutRec
         }
       });
     } else if (m_page.clipboard().available()) {
-      m_page.clipboard().setClipboardText(action == Action::CopyUri ? target.uri() : files::locationEditText(target));
+      m_page.clipboard().setClipboardText(*action == Action::CopyUri ? target.uri() : files::locationEditText(target));
     }
   };
   showContextMenu(entries, activate, anchor);
@@ -549,7 +555,7 @@ void MenuController::showActionMenu(
   const auto request = m_page.actionRequest(false);
   std::vector<ContextMenuControlEntry> entries;
   if (back) {
-    entries.push_back(actionEntry(Action::ViewMenu, request));
+    entries.push_back(actionEntry(Action::MenuBack, request));
     entries.push_back({.label = "", .separator = true});
   }
   for (const auto action : actions) {
@@ -562,9 +568,12 @@ void MenuController::showActionMenu(
   showContextMenu(
       std::move(entries),
       [this, request](int id) {
-        const auto action = static_cast<Action>(id);
-        m_page.dispatchAction(action, request);
-        if (!m_page.menuSurface() && action != Action::Search && action != Action::EditLocation) {
+        const auto action = files::ActionRegistry::fromMenuId(id);
+        if (!action) {
+          return;
+        }
+        m_page.dispatchAction(*action, request);
+        if (!m_page.menuSurface() && *action != Action::Search && *action != Action::EditLocation) {
           m_page.focusFileList();
         }
       },
@@ -632,8 +641,8 @@ void MenuController::openMenu() {
                                : WorkspaceCommand::Split,
               std::nullopt, std::nullopt
           );
-        } else {
-          m_page.dispatchAction(static_cast<Action>(id), request);
+        } else if (const auto action = files::ActionRegistry::fromMenuId(id)) {
+          m_page.dispatchAction(*action, request);
         }
       },
       m_page.menuAnchor(), true

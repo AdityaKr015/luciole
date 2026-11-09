@@ -61,6 +61,7 @@
 #include <array>
 #include <chrono>
 #include <cstdlib>
+#include <initializer_list>
 #include <memory>
 #include <string>
 #include <utility>
@@ -241,6 +242,8 @@ private:
   void dispatchPointer(InputDispatcher& dispatcher, const PointerEvent& event, float x, float y);
   std::uint32_t resizeEdges(float x, float y) const;
   bool escapeGesture(const KeyboardEvent& event);
+  // Dispatches the first of `actions` whose table shortcut matches the key.
+  bool dispatchShortcut(const KeyboardEvent& event, std::initializer_list<Action> actions);
   bool shortcutKey(const KeyboardEvent& event);
   bool windowKey(const KeyboardEvent& event);
   bool navigationKey(const KeyboardEvent& event, bool editing);

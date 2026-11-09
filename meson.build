@@ -270,6 +270,7 @@ platform_dep = declare_dependency(link_with: platform_lib, include_directories: 
 
 ui_lib = static_library('files-ui',
   files(
+    'src/ui/browser/action_shortcuts.cpp',
     'src/ui/browser/file_icon.cpp',
     'src/ui/browser/file_view.cpp',
     'src/ui/browser/places_sidebar.cpp',

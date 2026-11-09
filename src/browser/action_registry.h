@@ -2,11 +2,17 @@
 
 #include "browser/directory_model.h"
 
+#include <array>
+#include <cstddef>
 #include <functional>
+#include <optional>
 #include <span>
 #include <string_view>
+#include <utility>
 
 namespace files {
+  // A new action needs a row in kActions (action_registry.cpp) and a handler in BrowserPage::runAction, both in
+  // enum order; static_asserts reject a missing row.
   enum class BrowserAction : std::uint8_t {
     Back,
     Forward,
@@ -63,7 +69,7 @@ namespace files {
     ClearSelection,
     Settings,
     About,
-    ViewMenu,
+    MenuBack,
     SortMenu,
     SelectionMenu,
     CopyPath,
@@ -73,14 +79,9 @@ namespace files {
     CopyTargetUri,
     TargetTerminal
   };
+  // TargetTerminal stays the last enumerator.
+  inline constexpr std::size_t kBrowserActionCount = std::size_t{std::to_underlying(BrowserAction::TargetTerminal)} + 1;
   enum class ActionScope : std::uint8_t { Global, Location, Targets, Selection };
-  struct ActionDefinition {
-    BrowserAction action;
-    std::string_view label;
-    std::string_view shortcut;
-    ActionScope scope = ActionScope::Global;
-    bool destructive = false;
-  };
   struct ActionTarget {
     EntryId id;
     Location location;
@@ -112,10 +113,35 @@ namespace files {
     std::string_view reason;
     int checked = -1;
   };
+  // Runs after the scope checks in ActionRegistry::state(); nullptr means always enabled.
+  using ActionRule = ActionState (*)(const ActionContext& context, const ActionRequest& request);
+  struct ActionDefinition {
+    BrowserAction action;
+    std::string_view label;
+    std::string_view shortcut;
+    ActionScope scope = ActionScope::Global;
+    bool destructive = false;
+    ActionRule rule = nullptr;
+  };
+  // True when a per-action table has one row per action in enum order, so it can be indexed by enum value.
+  template <class Row, std::size_t N> constexpr bool actionTableInOrder(const std::array<Row, N>& rows) {
+    if (N != kBrowserActionCount) {
+      return false;
+    }
+    for (std::size_t index = 0; index < N; ++index) {
+      if (std::to_underlying(rows[index].action) != index) {
+        return false;
+      }
+    }
+    return true;
+  }
   class ActionRegistry {
   public:
     static std::span<const ActionDefinition> definitions();
     static const ActionDefinition& definition(BrowserAction action);
+    static int menuId(BrowserAction action) { return std::to_underlying(action); }
+    // The action a menu entry id names, or nullopt for ids outside the action range.
+    static std::optional<BrowserAction> fromMenuId(int id);
     static ActionRequest capture(const ActionContext& context);
     static bool current(const ActionContext& context, const ActionRequest& request, ActionScope scope);
     static ActionState state(BrowserAction action, const ActionContext& context, const ActionRequest& request);

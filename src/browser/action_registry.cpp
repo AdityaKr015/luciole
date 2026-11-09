@@ -4,87 +4,482 @@
 
 #include <algorithm>
 #include <array>
-#include <stdexcept>
 
 namespace {
   using A = files::BrowserAction;
   using S = files::ActionScope;
-  constexpr auto kActions = std::to_array<files::ActionDefinition>(
-      {{A::Back, "Back", "Alt+Left"},
-       {A::Forward, "Forward", "Alt+Right"},
-       {A::Up, "Parent folder", "Alt+Up"},
-       {A::Home, "Home", "Alt+Home"},
-       {A::Root, "File System", ""},
-       {A::Refresh, "Refresh", "F5"},
-       {A::Stop, "Stop loading", ""},
-       {A::EditLocation, "Edit location", "Ctrl+L"},
-       {A::Search, "Search files", "Ctrl+F"},
-       {A::Grid, "Grid view", "Ctrl+1"},
-       {A::List, "List view", "Ctrl+2"},
-       {A::Miller, "Column view", "Ctrl+3"},
-       {A::ShowHidden, "Show hidden files", "Ctrl+H"},
-       {A::ShowSidebar, "Show sidebar", "F9"},
-       {A::ShowPreview, "Show preview", "F8"},
-       {A::QuickPreview, "Preview", "Space", S::Targets},
-       {A::OpenWith, "Open With…", "", S::Targets},
-       {A::SortName, "Name", ""},
-       {A::SortType, "Type", ""},
-       {A::SortSize, "Size", ""},
-       {A::SortModified, "Modified", ""},
-       {A::Ascending, "Ascending", ""},
-       {A::Descending, "Descending", ""},
-       {A::FoldersFirst, "Folders first", ""},
-       {A::Open, "Open", "Enter", S::Targets},
-       {A::ContainingFolder, "Show in containing folder", "", S::Targets},
-       {A::OriginalLocation, "Show original location", "", S::Targets},
-       {A::Pin, "Pin to sidebar", "", S::Targets},
-       {A::Unpin, "Unpin", "", S::Targets},
-       {A::CutFiles, "Cut", "Ctrl+X", S::Targets},
-       {A::CopyFiles, "Copy", "Ctrl+C", S::Targets},
-       {A::PasteFiles, "Paste", "Ctrl+V", S::Location},
-       {A::Rename, "Rename…", "F2", S::Targets},
-       {A::CreateLink, "Create Link…", "", S::Targets},
-       {A::Trash, "Move to Trash", "Delete", S::Targets},
-       {A::Restore, "Restore", "", S::Targets},
-       {A::DeletePermanently, "Delete Permanently…", "Delete", S::Targets, true},
-       {A::Properties, "Properties", "Alt+Return", S::Targets},
-       {A::Compress, "Compress…", "", S::Targets},
-       {A::ExtractHere, "Extract Here", "", S::Targets},
-       {A::ExtractTo, "Extract To…", "", S::Targets},
-       {A::BrowseArchive, "Browse Archive", "", S::Targets},
-       {A::CreateFolder, "New Folder…", "Ctrl+Shift+N", S::Location},
-       {A::CreateFile, "Empty File…", "", S::Location},
-       {A::NewDocument, "New Document", "", S::Location},
-       {A::PinCurrent, "Pin this folder to sidebar", "", S::Location},
-       {A::UnpinCurrent, "Unpin this folder", "", S::Location},
-       {A::ReloadPins, "Reload pins", ""},
-       {A::EmptyTrash, "Empty Trash…", "", S::Global, true},
-       {A::SelectAll, "Select all", "Ctrl+A", S::Selection},
-       {A::InvertSelection, "Invert selection", "Ctrl+Shift+I", S::Selection},
-       {A::SelectPattern, "Select by pattern…", "Ctrl+S", S::Selection},
-       {A::ClearSelection, "Clear selection", "Escape", S::Selection},
-       {A::Settings, "Settings…", "Ctrl+,"},
-       {A::About, "About Noctalia Files", ""},
-       {A::ViewMenu, "Back", ""},
-       {A::SortMenu, "Sort…", ""},
-       {A::SelectionMenu, "Selection…", ""},
-       {A::CopyPath, "Copy folder path", "", S::Location},
-       {A::CopyUri, "Copy folder URI", "", S::Location},
-       {A::Terminal, "Open Terminal Here", "", S::Location},
-       {A::CopyTargetPath, "Copy path", "", S::Targets},
-       {A::CopyTargetUri, "Copy URI", "", S::Targets},
-       {A::TargetTerminal, "Open in Terminal", "", S::Targets}}
-  );
-  files::ActionState unavailable(std::string_view reason) { return {.enabled = false, .reason = reason}; }
+  using C = files::ActionContext;
+  using R = files::ActionRequest;
+  using State = files::ActionState;
+  using files::DirectoryEntry;
+  using files::FileType;
+
+  State unavailable(std::string_view reason) { return {.enabled = false, .reason = reason}; }
+  State require(bool ok, std::string_view reason) { return ok ? State{} : unavailable(reason); }
+  State checked(bool on) { return {.enabled = true, .reason = {}, .checked = on ? 1 : 0}; }
+
+  bool single(const R& r) { return r.targets.size() == 1; }
+  // Rules run after ActionRegistry::current() verified every target still resolves.
+  template <class Predicate> bool all(const C& c, const R& r, Predicate predicate) {
+    return std::ranges::all_of(r.targets, [&](const auto& target) { return predicate(*c.model.entry(target.id)); });
+  }
+  bool ready(const C& c) {
+    const auto status = c.model.snapshot().status;
+    return status == files::DirectoryStatus::Ready || status == files::DirectoryStatus::Loading;
+  }
+  bool native(const R& r) { return r.folder && r.folder->nativePath().has_value(); }
+  State writable(const C& c) {
+    if (c.operationsBusy) {
+      return unavailable("Another file operation is still finishing.");
+    }
+    if (c.model.snapshot().metadata.filesystem.readOnly == true) {
+      return unavailable("The filesystem is read-only.");
+    }
+    return {};
+  }
+  State openFolder(const C& c, const R&) {
+    return require(c.model.snapshot().location.has_value(), "Open a folder first.");
+  }
+  State visibleRows(const C& c, const R&) { return require(!c.model.rows().empty(), "There are no visible items."); }
+  State clipboard(const C& c, const R&) {
+    return require(c.clipboardAvailable, "The application clipboard is unavailable.");
+  }
+  State folderClipboard(const C& c, const R& r) {
+    if (!r.folder) {
+      return unavailable("Open a folder first.");
+    }
+    return clipboard(c, r);
+  }
+  State fileClipboard(const C& c, const R& r, bool cut) {
+    if (!c.clipboardAvailable) {
+      return unavailable("The application clipboard is unavailable.");
+    }
+    if (!all(c, r, [&](const DirectoryEntry& entry) {
+          return entry.location.nativePath().has_value()
+              && entry.access.read.value_or(true)
+              && (entry.type == FileType::Directory || entry.type == FileType::Regular || entry.symlink)
+              && (!cut || entry.access.rename.value_or(true));
+        })) {
+      return unavailable("Select accessible native files or folders outside Trash.");
+    }
+    return {};
+  }
+  State createItem(const C& c, const R& r) {
+    if (!native(r) || !c.query.empty() || !ready(c)) {
+      return unavailable("Open an available native folder first.");
+    }
+    if (c.model.snapshot().metadata.access.write == false) {
+      return unavailable("Writing to this folder is not permitted.");
+    }
+    return writable(c);
+  }
+  State paste(const C& c, const R& r) {
+    if (!c.clipboardAvailable || !c.clipboardHasFiles) {
+      return unavailable("The clipboard has no available files.");
+    }
+    return createItem(c, r);
+  }
+  State renameOrTrash(const C& c, const R& r, bool rename) {
+    if (const auto state = writable(c); !state.enabled) {
+      return state;
+    }
+    if (rename && !single(r)) {
+      if (r.targets.size() > 4096) {
+        return unavailable("Select at most 4096 items for batch rename.");
+      }
+      const auto parent = r.targets.front().location.parent();
+      if (!parent || !all(c, r, [&](const DirectoryEntry& entry) {
+            const auto other = entry.location.parent();
+            return entry.identity && other && *parent == *other;
+          })) {
+        return unavailable("Batch rename requires identified items from one native folder.");
+      }
+    }
+    if (!all(c, r, [](const DirectoryEntry& entry) { return entry.location.nativePath().has_value(); })) {
+      return unavailable("This operation currently supports native files only.");
+    }
+    if (!rename && (!native(r) || !c.query.empty() || !ready(c))) {
+      return unavailable("Open the containing native folder before moving items to Trash.");
+    }
+    if (!all(c, r, [&](const DirectoryEntry& entry) {
+          return (rename ? entry.access.rename : entry.access.trash).value_or(true);
+        })) {
+      return unavailable("The provider does not permit this operation on every selected item.");
+    }
+    return {};
+  }
+  State trashItems(const C& c, const R& r, bool restore) {
+    if (const auto state = writable(c); !state.enabled) {
+      return state;
+    }
+    if (r.folder != files::Location::trash() || !c.query.empty() || !ready(c)) {
+      return unavailable("Select items directly in Trash first.");
+    }
+    if (!all(c, r, [](const DirectoryEntry& entry) {
+          const auto parent = entry.location.parent();
+          return entry.location.isTrash()
+              && parent
+              && *parent == files::Location::trash()
+              && entry.identity
+              && entry.access.remove.value_or(true);
+        })) {
+      return unavailable("These items cannot be changed by the Trash provider.");
+    }
+    if (restore && !all(c, r, [](const DirectoryEntry& entry) {
+          return entry.trash.original && entry.trash.original->nativePath().has_value();
+        })) {
+      return unavailable("The original location is unavailable for one or more selected items.");
+    }
+    return {};
+  }
+  State archive(const C& c, const R& r, bool compress) {
+    if (c.operationsBusy) {
+      return unavailable("Another file operation is still finishing.");
+    }
+    if (!all(c, r, [](const DirectoryEntry& entry) {
+          return entry.location.nativePath().has_value() && entry.access.read.value_or(true);
+        })) {
+      return unavailable("Archives require readable native items.");
+    }
+    if (compress) {
+      if (!all(c, r, [](const DirectoryEntry& entry) {
+            return entry.type == FileType::Regular || entry.type == FileType::Directory || entry.symlink;
+          })) {
+        return unavailable("Special files cannot be compressed.");
+      }
+    } else if (!single(r) || !all(c, r, [](const DirectoryEntry& entry) {
+                 return entry.type == FileType::Regular
+                     && !entry.symlink
+                     && files::isSupportedArchive(entry.location, entry.contentType);
+               })) {
+      return unavailable("Select one ZIP or TAR archive.");
+    }
+    return {};
+  }
+  State extract(const C& c, const R& r) { return archive(c, r, false); }
+  State open(const C& c, const R& r) {
+    if (!single(r) && !all(c, r, [](const DirectoryEntry& entry) { return entry.type == FileType::Regular; })) {
+      return unavailable("Open folders individually.");
+    }
+    if (!all(c, r, [](const DirectoryEntry& entry) {
+          return !entry.location.isTrash() || (entry.type == FileType::Directory && !entry.symlink);
+        })) {
+      return unavailable("Restore this item before opening it.");
+    }
+    if (!all(c, r, [](const DirectoryEntry& entry) { return entry.access.read.value_or(true); })) {
+      return unavailable("Reading this item is not permitted.");
+    }
+    return {};
+  }
+  State containing(const C&, const R& r) { return require(single(r), "Select exactly one item."); }
+  State originalLocation(const C& c, const R& r) {
+    if (!single(r)) {
+      return unavailable("Select exactly one item.");
+    }
+    return require(
+        c.model.entry(r.targets.front().id)->trash.original.has_value(), "The original location is unavailable."
+    );
+  }
+  State pin(const C& c, const R& r, bool unpin) {
+    if (!all(c, r, [](const DirectoryEntry& entry) {
+          return entry.type == FileType::Directory && !entry.location.isTrash();
+        })) {
+      return unavailable("Only folders outside Trash can be pinned.");
+    }
+    if (!c.pinsEditable) {
+      return unavailable("Reload valid pins before editing them, or wait for the save to finish.");
+    }
+    const bool any = c.pinned
+        && std::ranges::any_of(r.targets, [&](const auto& target) { return c.pinned(target.location) == unpin; });
+    return require(any, unpin ? "These folders are not pinned." : "These folders are already pinned.");
+  }
+  State pinCurrent(const C& c, const R& r, bool unpin) {
+    if (!r.folder || r.folder->isTrash()) {
+      return unavailable("This location cannot be pinned.");
+    }
+    if (!c.pinsEditable) {
+      return unavailable("Reload valid pins before editing them, or wait for the save to finish.");
+    }
+    return require(c.pinned && c.pinned(*r.folder) == unpin, "The pin state changed.");
+  }
+  State terminal(const C& c, const R& r) {
+    if (!c.terminalAvailable) {
+      return unavailable("Install xdg-terminal-exec to open a terminal.");
+    }
+    if (!native(r) || r.folder->isTrash()) {
+      return unavailable("Terminals require a native folder.");
+    }
+    return require(c.model.snapshot().metadata.access.execute != false, "Access to this folder is not permitted.");
+  }
+  State targetTerminal(const C& c, const R& r) {
+    if (!c.terminalAvailable) {
+      return unavailable("Install xdg-terminal-exec to open a terminal.");
+    }
+    return require(
+        single(r)
+            && all(
+                c, r,
+                [](const DirectoryEntry& entry) {
+                  return entry.type == FileType::Directory
+                      && entry.location.nativePath().has_value()
+                      && entry.access.execute.value_or(true);
+                }
+            ),
+        "Select one accessible native folder."
+    );
+  }
+  State createLink(const C& c, const R& r) {
+    if (c.operationsBusy) {
+      return unavailable("Another file operation is still finishing.");
+    }
+    return require(
+        single(r)
+            && all(
+                c, r,
+                [](const DirectoryEntry& entry) {
+                  return entry.location.nativePath().has_value()
+                      && !entry.location.isTrash()
+                      && entry.identity.has_value()
+                      && (entry.type == FileType::Regular
+                          || entry.type == FileType::Directory
+                          || entry.type == FileType::Symlink);
+                }
+            ),
+        "Select one native file, folder or symbolic link."
+    );
+  }
+  State openWith(const C& c, const R& r) {
+    return require(
+        single(r)
+            && all(
+                c, r,
+                [](const DirectoryEntry& entry) {
+                  return entry.type == FileType::Regular && !entry.symlink && entry.access.read != false;
+                }
+            ),
+        "Select one readable file."
+    );
+  }
+  bool sortField(const C& c, files::SortField field) { return c.model.sort().field == field; }
+
+  constexpr auto kActions = std::to_array<files::ActionDefinition>({
+      {.action = A::Back,
+       .label = "Back",
+       .shortcut = "Alt+Left",
+       .rule = [](const C& c, const R&) { return require(c.canBack, "There is no previous folder."); }},
+      {.action = A::Forward,
+       .label = "Forward",
+       .shortcut = "Alt+Right",
+       .rule = [](const C& c, const R&) { return require(c.canForward, "There is no next folder."); }},
+      {.action = A::Up,
+       .label = "Parent folder",
+       .shortcut = "Alt+Up",
+       .rule = [](const C& c, const R&) { return require(c.canUp, "This location has no parent folder."); }},
+      {.action = A::Home, .label = "Home", .shortcut = "Alt+Home"},
+      {.action = A::Root, .label = "File System", .shortcut = ""},
+      {.action = A::Refresh, .label = "Refresh", .shortcut = "F5", .rule = openFolder},
+      {.action = A::Stop,
+       .label = "Stop loading",
+       .shortcut = "",
+       .rule =
+           [](const C& c, const R&) {
+             return require(c.model.snapshot().status == files::DirectoryStatus::Loading, "Nothing is loading.");
+           }},
+      {.action = A::EditLocation, .label = "Edit location", .shortcut = "Ctrl+L"},
+      {.action = A::Search, .label = "Search files", .shortcut = "Ctrl+F", .rule = openFolder},
+      {.action = A::Grid,
+       .label = "Grid view",
+       .shortcut = "Ctrl+1",
+       .rule = [](const C& c, const R&) { return checked(c.viewMode == files::ViewMode::Grid); }},
+      {.action = A::List,
+       .label = "List view",
+       .shortcut = "Ctrl+2",
+       .rule = [](const C& c, const R&) { return checked(c.viewMode == files::ViewMode::List); }},
+      {.action = A::Miller,
+       .label = "Column view",
+       .shortcut = "Ctrl+3",
+       .rule = [](const C& c, const R&) { return checked(c.viewMode == files::ViewMode::Miller); }},
+      {.action = A::ShowHidden,
+       .label = "Show hidden files",
+       .shortcut = "Ctrl+H",
+       .rule = [](const C& c, const R&) { return checked(c.model.filter().showHidden); }},
+      {.action = A::ShowSidebar,
+       .label = "Show sidebar",
+       .shortcut = "F9",
+       .rule = [](const C& c, const R&) { return checked(c.showSidebar); }},
+      {.action = A::ShowPreview,
+       .label = "Show preview",
+       .shortcut = "F8",
+       .rule = [](const C& c, const R&) { return checked(c.showPreview); }},
+      {.action = A::QuickPreview,
+       .label = "Preview",
+       .shortcut = "Space",
+       .scope = S::Targets,
+       .rule = [](const C&, const R& r) { return require(single(r), "Select one item to preview."); }},
+      {.action = A::OpenWith, .label = "Open With…", .shortcut = "", .scope = S::Targets, .rule = openWith},
+      {.action = A::SortName,
+       .label = "Name",
+       .shortcut = "",
+       .rule = [](const C& c, const R&) { return checked(sortField(c, files::SortField::Name)); }},
+      {.action = A::SortType,
+       .label = "Type",
+       .shortcut = "",
+       .rule = [](const C& c, const R&) { return checked(sortField(c, files::SortField::Type)); }},
+      {.action = A::SortSize,
+       .label = "Size",
+       .shortcut = "",
+       .rule = [](const C& c, const R&) { return checked(sortField(c, files::SortField::Size)); }},
+      {.action = A::SortModified,
+       .label = "Modified",
+       .shortcut = "",
+       .rule = [](const C& c, const R&) { return checked(sortField(c, files::SortField::Modified)); }},
+      {.action = A::Ascending,
+       .label = "Ascending",
+       .shortcut = "",
+       .rule = [](const C& c, const R&) { return checked(!c.model.sort().descending); }},
+      {.action = A::Descending,
+       .label = "Descending",
+       .shortcut = "",
+       .rule = [](const C& c, const R&) { return checked(c.model.sort().descending); }},
+      {.action = A::FoldersFirst,
+       .label = "Folders first",
+       .shortcut = "",
+       .rule = [](const C& c, const R&) { return checked(c.model.sort().directoriesFirst); }},
+      {.action = A::Open, .label = "Open", .shortcut = "Enter", .scope = S::Targets, .rule = open},
+      {.action = A::ContainingFolder,
+       .label = "Show in containing folder",
+       .shortcut = "",
+       .scope = S::Targets,
+       .rule = containing},
+      {.action = A::OriginalLocation,
+       .label = "Show original location",
+       .shortcut = "",
+       .scope = S::Targets,
+       .rule = originalLocation},
+      {.action = A::Pin,
+       .label = "Pin to sidebar",
+       .shortcut = "",
+       .scope = S::Targets,
+       .rule = [](const C& c, const R& r) { return pin(c, r, false); }},
+      {.action = A::Unpin,
+       .label = "Unpin",
+       .shortcut = "",
+       .scope = S::Targets,
+       .rule = [](const C& c, const R& r) { return pin(c, r, true); }},
+      {.action = A::CutFiles,
+       .label = "Cut",
+       .shortcut = "Ctrl+X",
+       .scope = S::Targets,
+       .rule = [](const C& c, const R& r) { return fileClipboard(c, r, true); }},
+      {.action = A::CopyFiles,
+       .label = "Copy",
+       .shortcut = "Ctrl+C",
+       .scope = S::Targets,
+       .rule = [](const C& c, const R& r) { return fileClipboard(c, r, false); }},
+      {.action = A::PasteFiles, .label = "Paste", .shortcut = "Ctrl+V", .scope = S::Location, .rule = paste},
+      {.action = A::Rename,
+       .label = "Rename…",
+       .shortcut = "F2",
+       .scope = S::Targets,
+       .rule = [](const C& c, const R& r) { return renameOrTrash(c, r, true); }},
+      {.action = A::CreateLink, .label = "Create Link…", .shortcut = "", .scope = S::Targets, .rule = createLink},
+      {.action = A::Trash,
+       .label = "Move to Trash",
+       .shortcut = "Delete",
+       .scope = S::Targets,
+       .rule = [](const C& c, const R& r) { return renameOrTrash(c, r, false); }},
+      {.action = A::Restore,
+       .label = "Restore",
+       .shortcut = "",
+       .scope = S::Targets,
+       .rule = [](const C& c, const R& r) { return trashItems(c, r, true); }},
+      {.action = A::DeletePermanently,
+       .label = "Delete Permanently…",
+       .shortcut = "Delete",
+       .scope = S::Targets,
+       .destructive = true,
+       .rule = [](const C& c, const R& r) { return trashItems(c, r, false); }},
+      {.action = A::Properties, .label = "Properties", .shortcut = "Alt+Return", .scope = S::Targets},
+      {.action = A::Compress,
+       .label = "Compress…",
+       .shortcut = "",
+       .scope = S::Targets,
+       .rule = [](const C& c, const R& r) { return archive(c, r, true); }},
+      {.action = A::ExtractHere, .label = "Extract Here", .shortcut = "", .scope = S::Targets, .rule = extract},
+      {.action = A::ExtractTo, .label = "Extract To…", .shortcut = "", .scope = S::Targets, .rule = extract},
+      {.action = A::BrowseArchive, .label = "Browse Archive", .shortcut = "", .scope = S::Targets, .rule = extract},
+      {.action = A::CreateFolder,
+       .label = "New Folder…",
+       .shortcut = "Ctrl+Shift+N",
+       .scope = S::Location,
+       .rule = createItem},
+      {.action = A::CreateFile, .label = "Empty File…", .shortcut = "", .scope = S::Location, .rule = createItem},
+      {.action = A::NewDocument, .label = "New Document", .shortcut = "", .scope = S::Location, .rule = createItem},
+      {.action = A::PinCurrent,
+       .label = "Pin this folder to sidebar",
+       .shortcut = "",
+       .scope = S::Location,
+       .rule = [](const C& c, const R& r) { return pinCurrent(c, r, false); }},
+      {.action = A::UnpinCurrent,
+       .label = "Unpin this folder",
+       .shortcut = "",
+       .scope = S::Location,
+       .rule = [](const C& c, const R& r) { return pinCurrent(c, r, true); }},
+      {.action = A::ReloadPins,
+       .label = "Reload pins",
+       .shortcut = "",
+       .rule = [](const C& c, const R&) { return require(!c.pinsBusy, "Pins are being saved."); }},
+      {.action = A::EmptyTrash,
+       .label = "Empty Trash…",
+       .shortcut = "",
+       .destructive = true,
+       .rule = [](
+                   const C& c, const R&
+               ) { return require(c.canEmptyTrash, "Trash is unavailable or another operation is still finishing."); }},
+      {.action = A::SelectAll, .label = "Select all", .shortcut = "Ctrl+A", .scope = S::Selection, .rule = visibleRows},
+      {.action = A::InvertSelection,
+       .label = "Invert selection",
+       .shortcut = "Ctrl+Shift+I",
+       .scope = S::Selection,
+       .rule = visibleRows},
+      {.action = A::SelectPattern,
+       .label = "Select by pattern…",
+       .shortcut = "Ctrl+S",
+       .scope = S::Selection,
+       .rule = visibleRows},
+      {.action = A::ClearSelection, .label = "Clear selection", .shortcut = "Escape", .scope = S::Selection},
+      {.action = A::Settings, .label = "Settings…", .shortcut = "Ctrl+,"},
+      {.action = A::About, .label = "About Noctalia Files", .shortcut = ""},
+      {.action = A::MenuBack, .label = "Back", .shortcut = ""},
+      {.action = A::SortMenu, .label = "Sort…", .shortcut = ""},
+      {.action = A::SelectionMenu, .label = "Selection…", .shortcut = ""},
+      {.action = A::CopyPath,
+       .label = "Copy folder path",
+       .shortcut = "",
+       .scope = S::Location,
+       .rule = folderClipboard},
+      {.action = A::CopyUri, .label = "Copy folder URI", .shortcut = "", .scope = S::Location, .rule = folderClipboard},
+      {.action = A::Terminal, .label = "Open Terminal Here", .shortcut = "", .scope = S::Location, .rule = terminal},
+      {.action = A::CopyTargetPath, .label = "Copy path", .shortcut = "", .scope = S::Targets, .rule = clipboard},
+      {.action = A::CopyTargetUri, .label = "Copy URI", .shortcut = "", .scope = S::Targets, .rule = clipboard},
+      {.action = A::TargetTerminal,
+       .label = "Open in Terminal",
+       .shortcut = "",
+       .scope = S::Targets,
+       .rule = targetTerminal},
+  });
+  static_assert(files::actionTableInOrder(kActions));
 } // namespace
 
 std::span<const files::ActionDefinition> files::ActionRegistry::definitions() { return kActions; }
 const files::ActionDefinition& files::ActionRegistry::definition(BrowserAction action) {
-  const auto* found = std::ranges::find(kActions, action, &ActionDefinition::action);
-  if (found == kActions.end()) {
-    throw std::invalid_argument("unknown browser action");
+  return kActions[std::to_underlying(action)];
+}
+std::optional<files::BrowserAction> files::ActionRegistry::fromMenuId(int id) {
+  if (id < 0 || static_cast<std::size_t>(id) >= kActions.size()) {
+    return std::nullopt;
   }
-  return *found;
+  return kActions[static_cast<std::size_t>(id)].action;
 }
 files::ActionRequest files::ActionRegistry::capture(const ActionContext& context) {
   ActionRequest request{context.context, context.model.snapshot().location, std::string(context.query), {}};
@@ -112,299 +507,15 @@ bool files::ActionRegistry::current(const ActionContext& context, const ActionRe
          });
 }
 files::ActionState files::ActionRegistry::state(BrowserAction action, const ActionContext& c, const ActionRequest& r) {
-  const auto scope = definition(action).scope;
-  if (!current(c, r, scope)) {
+  const auto& row = definition(action);
+  if (!current(c, r, row.scope)) {
     return unavailable("The folder or targets changed. Open the menu again.");
   }
-  const auto& snapshot = c.model.snapshot();
-  if (scope == ActionScope::Targets && r.targets.empty()) {
+  if (row.scope == ActionScope::Targets && r.targets.empty()) {
     return unavailable("Select an item first.");
   }
-  if ((scope == ActionScope::Targets || scope == ActionScope::Selection) && !c.model.selectionAvailable()) {
+  if ((row.scope == ActionScope::Targets || row.scope == ActionScope::Selection) && !c.model.selectionAvailable()) {
     return unavailable("The listing is not available for selection.");
   }
-  const bool ready = snapshot.status == DirectoryStatus::Ready || snapshot.status == DirectoryStatus::Loading;
-  const bool native = r.folder && r.folder->nativePath().has_value();
-  const auto single = [&] { return r.targets.size() == 1; };
-  const auto all = [&](auto predicate) {
-    return std::ranges::all_of(r.targets, [&](const auto& target) { return predicate(*c.model.entry(target.id)); });
-  };
-  const auto anyPinned = [&](bool pinned) {
-    return c.pinned
-        && std::ranges::any_of(r.targets, [&](const auto& target) { return c.pinned(target.location) == pinned; });
-  };
-  const auto writable = [&] -> ActionState {
-    if (c.operationsBusy) {
-      return unavailable("Another file operation is still finishing.");
-    }
-    if (snapshot.metadata.filesystem.readOnly == true) {
-      return unavailable("The filesystem is read-only.");
-    }
-    return {};
-  };
-  switch (action) {
-  case A::CreateLink:
-    if (c.operationsBusy) {
-      return unavailable("Another file operation is still finishing.");
-    }
-    return single() && all([](const auto& entry) {
-             return entry.location.nativePath().has_value()
-                 && !entry.location.isTrash()
-                 && entry.identity.has_value()
-                 && (entry.type == files::FileType::Regular
-                     || entry.type == files::FileType::Directory
-                     || entry.type == files::FileType::Symlink);
-           })
-        ? ActionState{}
-        : unavailable("Select one native file, folder or symbolic link.");
-  case A::ShowPreview:
-    return {.enabled = true, .reason = {}, .checked = c.showPreview ? 1 : 0};
-  case A::QuickPreview:
-    return single() ? ActionState{} : unavailable("Select one item to preview.");
-  case A::OpenWith:
-    return single() && all([](const DirectoryEntry& entry) {
-             return entry.type == files::FileType::Regular && !entry.symlink && entry.access.read != false;
-           })
-        ? ActionState{}
-        : unavailable("Select one readable file.");
-  case A::CopyPath:
-  case A::CopyUri:
-    if (!r.folder) {
-      return unavailable("Open a folder first.");
-    }
-    [[fallthrough]];
-  case A::CopyTargetPath:
-  case A::CopyTargetUri:
-    return c.clipboardAvailable ? ActionState{} : unavailable("The application clipboard is unavailable.");
-  case A::Terminal:
-  case A::TargetTerminal:
-    if (!c.terminalAvailable) {
-      return unavailable("Install xdg-terminal-exec to open a terminal.");
-    }
-    if (action == A::Terminal) {
-      if (!native || r.folder->isTrash()) {
-        return unavailable("Terminals require a native folder.");
-      }
-      if (snapshot.metadata.access.execute == false) {
-        return unavailable("Access to this folder is not permitted.");
-      }
-    } else {
-      if (!single() || !all([](const auto& entry) {
-            return entry.type == files::FileType::Directory
-                && entry.location.nativePath().has_value()
-                && entry.access.execute.value_or(true);
-          })) {
-        return unavailable("Select one accessible native folder.");
-      }
-    }
-    return {};
-  case A::Back:
-    return c.canBack ? ActionState{} : unavailable("There is no previous folder.");
-  case A::Forward:
-    return c.canForward ? ActionState{} : unavailable("There is no next folder.");
-  case A::Up:
-    return c.canUp ? ActionState{} : unavailable("This location has no parent folder.");
-  case A::Refresh:
-  case A::Search:
-    return snapshot.location ? ActionState{} : unavailable("Open a folder first.");
-  case A::Stop:
-    return snapshot.status == DirectoryStatus::Loading ? ActionState{} : unavailable("Nothing is loading.");
-  case A::CutFiles:
-  case A::CopyFiles:
-    if (!c.clipboardAvailable) {
-      return unavailable("The application clipboard is unavailable.");
-    }
-    if (!all([&](const auto& entry) {
-          return entry.location.nativePath().has_value()
-              && entry.access.read.value_or(true)
-              && (entry.type == files::FileType::Directory || entry.type == files::FileType::Regular || entry.symlink)
-              && (action != A::CutFiles || entry.access.rename.value_or(true));
-        })) {
-      return unavailable("Select accessible native files or folders outside Trash.");
-    }
-    return {};
-  case A::PasteFiles:
-    if (!c.clipboardAvailable || !c.clipboardHasFiles) {
-      return unavailable("The clipboard has no available files.");
-    }
-    [[fallthrough]];
-  case A::CreateFolder:
-  case A::CreateFile:
-  case A::NewDocument:
-    if (!native || !c.query.empty() || !ready) {
-      return unavailable("Open an available native folder first.");
-    }
-    if (snapshot.metadata.access.write == false) {
-      return unavailable("Writing to this folder is not permitted.");
-    }
-    return writable();
-  case A::Restore:
-  case A::DeletePermanently:
-    if (const auto state = writable(); !state.enabled) {
-      return state;
-    }
-    if (r.folder != Location::trash() || !c.query.empty() || !ready) {
-      return unavailable("Select items directly in Trash first.");
-    }
-    if (!all([](const auto& entry) {
-          const auto parent = entry.location.parent();
-          return entry.location.isTrash()
-              && parent
-              && *parent == Location::trash()
-              && entry.identity
-              && entry.access.remove.value_or(true);
-        })) {
-      return unavailable("These items cannot be changed by the Trash provider.");
-    }
-    if (action == A::Restore && !all([](const auto& entry) {
-          return entry.trash.original && entry.trash.original->nativePath().has_value();
-        })) {
-      return unavailable("The original location is unavailable for one or more selected items.");
-    }
-    return {};
-  case A::Rename:
-  case A::Trash: {
-    if (const auto state = writable(); !state.enabled) {
-      return state;
-    }
-    if (action == A::Rename && !single()) {
-      if (r.targets.size() > 4096) {
-        return unavailable("Select at most 4096 items for batch rename.");
-      }
-      const auto parent = r.targets.front().location.parent();
-      if (!parent || !all([&](const auto& entry) {
-            const auto other = entry.location.parent();
-            return entry.identity && other && *parent == *other;
-          })) {
-        return unavailable("Batch rename requires identified items from one native folder.");
-      }
-    }
-    if (!all([](const auto& entry) { return entry.location.nativePath().has_value(); })) {
-      return unavailable("This operation currently supports native files only.");
-    }
-    if (action == A::Trash && (!native || !c.query.empty() || !ready)) {
-      return unavailable("Open the containing native folder before moving items to Trash.");
-    }
-    if (!all([&](const auto& entry) {
-          return (action == A::Rename ? entry.access.rename : entry.access.trash).value_or(true);
-        })) {
-      return unavailable("The provider does not permit this operation on every selected item.");
-    }
-    return {};
-  }
-  case A::Compress:
-  case A::ExtractHere:
-  case A::ExtractTo:
-  case A::BrowseArchive:
-    if (c.operationsBusy) {
-      return unavailable("Another file operation is still finishing.");
-    }
-    if (!all([](const auto& entry) {
-          return entry.location.nativePath().has_value() && entry.access.read.value_or(true);
-        })) {
-      return unavailable("Archives require readable native items.");
-    }
-    if (action == A::Compress) {
-      if (!all([](const auto& entry) {
-            return entry.type == files::FileType::Regular || entry.type == files::FileType::Directory || entry.symlink;
-          })) {
-        return unavailable("Special files cannot be compressed.");
-      }
-    } else if (!single() || !all([](const auto& entry) {
-                 return entry.type == files::FileType::Regular
-                     && !entry.symlink
-                     && isSupportedArchive(entry.location, entry.contentType);
-               })) {
-      return unavailable("Select one ZIP or TAR archive.");
-    }
-    return {};
-  case A::Open:
-    if (!single() && !all([](const auto& entry) { return entry.type == files::FileType::Regular; })) {
-      return unavailable("Open folders individually.");
-    }
-    if (!all([](const auto& entry) {
-          return !entry.location.isTrash() || (entry.type == files::FileType::Directory && !entry.symlink);
-        })) {
-      return unavailable("Restore this item before opening it.");
-    }
-    if (!all([](const auto& entry) { return entry.access.read.value_or(true); })) {
-      return unavailable("Reading this item is not permitted.");
-    }
-    return {};
-  case A::ContainingFolder:
-  case A::OriginalLocation:
-    if (!single()) {
-      return unavailable("Select exactly one item.");
-    }
-    if (action == A::OriginalLocation && !c.model.entry(r.targets.front().id)->trash.original) {
-      return unavailable("The original location is unavailable.");
-    }
-    return {};
-  case A::Pin:
-  case A::Unpin:
-    if (!all([](const auto& entry) { return entry.type == files::FileType::Directory && !entry.location.isTrash(); })) {
-      return unavailable("Only folders outside Trash can be pinned.");
-    }
-    if (!c.pinsEditable) {
-      return unavailable("Reload valid pins before editing them, or wait for the save to finish.");
-    }
-    return anyPinned(action == A::Unpin)
-        ? ActionState{}
-        : unavailable(action == A::Unpin ? "These folders are not pinned." : "These folders are already pinned.");
-  case A::PinCurrent:
-  case A::UnpinCurrent:
-    if (!r.folder || r.folder->isTrash()) {
-      return unavailable("This location cannot be pinned.");
-    }
-    if (!c.pinsEditable) {
-      return unavailable("Reload valid pins before editing them, or wait for the save to finish.");
-    }
-    return c.pinned && c.pinned(*r.folder) == (action == A::UnpinCurrent) ? ActionState{}
-                                                                          : unavailable("The pin state changed.");
-  case A::ReloadPins:
-    return c.pinsBusy ? unavailable("Pins are being saved.") : ActionState{};
-  case A::EmptyTrash:
-    return c.canEmptyTrash ? ActionState{}
-                           : unavailable("Trash is unavailable or another operation is still finishing.");
-  case A::SelectAll:
-  case A::InvertSelection:
-  case A::SelectPattern:
-    return c.model.rows().empty() ? unavailable("There are no visible items.") : ActionState{};
-  case A::Grid:
-    return {.reason = {}, .checked = c.viewMode == ViewMode::Grid ? 1 : 0};
-  case A::Miller:
-    return {.reason = {}, .checked = c.viewMode == ViewMode::Miller ? 1 : 0};
-  case A::List:
-    return {.reason = {}, .checked = c.viewMode == ViewMode::List ? 1 : 0};
-  case A::ShowHidden:
-    return {.reason = {}, .checked = c.model.filter().showHidden ? 1 : 0};
-  case A::ShowSidebar:
-    return {.reason = {}, .checked = c.showSidebar ? 1 : 0};
-  case A::SortName:
-    return {.reason = {}, .checked = c.model.sort().field == SortField::Name ? 1 : 0};
-  case A::SortType:
-    return {.reason = {}, .checked = c.model.sort().field == SortField::Type ? 1 : 0};
-  case A::SortSize:
-    return {.reason = {}, .checked = c.model.sort().field == SortField::Size ? 1 : 0};
-  case A::SortModified:
-    return {.reason = {}, .checked = c.model.sort().field == SortField::Modified ? 1 : 0};
-  case A::Ascending:
-    return {.reason = {}, .checked = c.model.sort().descending ? 0 : 1};
-  case A::Descending:
-    return {.reason = {}, .checked = c.model.sort().descending ? 1 : 0};
-  case A::FoldersFirst:
-    return {.reason = {}, .checked = c.model.sort().directoriesFirst ? 1 : 0};
-  case A::Home:
-  case A::Root:
-  case A::EditLocation:
-  case A::Properties:
-  case A::ClearSelection:
-  case A::ViewMenu:
-  case A::SortMenu:
-  case A::SelectionMenu:
-  case A::Settings:
-  case A::About:
-    return {};
-  }
-  return unavailable("Unknown action.");
+  return row.rule != nullptr ? row.rule(c, r) : ActionState{};
 }

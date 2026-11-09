@@ -13,7 +13,7 @@ test_table = [
   {'name': 'preview-service', 'deps': [thumbnails_dep, ui_dep], 'env': gio_env},
   {'name': 'clipboard', 'deps': [clipboard_dep, dependency('wayland-server')], 'env': gio_env},
   {'name': 'file-payload', 'deps': [clipboard_dep], 'env': gio_env},
-  {'name': 'browser-actions', 'deps': [browser_dep], 'env': gio_env},
+  {'name': 'browser-actions', 'deps': [browser_dep, ui_dep], 'env': gio_env},
   {'name': 'empty-trash-service', 'deps': [operations_dep, event_loop_dep], 'env': gio_env},
   {'name': 'restore-service', 'deps': [operations_dep, event_loop_dep], 'env': gio_env},
   {'name': 'trash-browse', 'deps': [browser_dep, event_loop_dep], 'env': gio_env},
