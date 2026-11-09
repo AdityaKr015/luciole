@@ -250,6 +250,22 @@ namespace {
     TEST_CHECK(!files::splitZipPart(files::Location::fromPath("/tmp/test.zip.001.bak")));
   }
   void testCompressedArchiveActions() {
+    files::DirectoryModel sevenZipModel;
+    auto sevenZipData = snapshot();
+    sevenZipData.entries.push_back(entry(7, "package.7Z"));
+    sevenZipModel.applySnapshot(sevenZipData);
+    sevenZipModel.select(7);
+    files::ActionContext sevenZipContext{.model = sevenZipModel, .context = 1, .query = {}, .pinned = {}};
+    const auto sevenZipRequest = R::capture(sevenZipContext);
+    for (const auto action : {A::BrowseArchive, A::ExtractHere, A::ExtractTo}) {
+      TEST_CHECK(R::state(action, sevenZipContext, sevenZipRequest).enabled);
+    }
+    TEST_CHECK(files::archiveFolderName(sevenZipData.entries.back().location) == "package");
+    TEST_CHECK(files::isSupportedArchive(files::Location::fromPath("/tmp/opaque"), "application/x-7z-compressed"));
+    TEST_CHECK(
+        !files::isSupportedArchive(files::Location::fromPath("/tmp/split.7z.001"), "application/x-7z-compressed")
+    );
+    TEST_CHECK(!files::isSupportedArchive(files::Location::fromPath("/tmp/unsupported.rar"), {}));
     for (const auto compression :
          {files::ArchiveCompression::Bzip2, files::ArchiveCompression::Zstd, files::ArchiveCompression::Xz}) {
       const bool bzip = compression == files::ArchiveCompression::Bzip2;

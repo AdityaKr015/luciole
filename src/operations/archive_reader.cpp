@@ -50,6 +50,7 @@ namespace {
         );
         if (!input.split()) {
           requireArchive(archive_read_support_format_tar(value.get()), value.get(), work);
+          requireArchive(archive_read_support_format_7zip(value.get()), value.get(), work);
         }
       }
       requireArchive(archive_read_support_filter_none(value.get()), value.get(), work);
@@ -73,7 +74,11 @@ namespace {
           archive_read_set_passphrase_callback(
               value.get(), this,
               [](struct archive*, void* data) -> const char* {
-                static_cast<Reader*>(data)->work.progress.passwordNeeded.store(true);
+                auto& reader = *static_cast<Reader*>(data);
+                // libarchive cannot decrypt 7z; never offer a futile password loop.
+                if ((archive_format(reader.value.get()) & ARCHIVE_FORMAT_BASE_MASK) != ARCHIVE_FORMAT_7ZIP) {
+                  reader.work.progress.passwordNeeded.store(true);
+                }
                 return nullptr;
               }
           ),
@@ -128,6 +133,10 @@ namespace {
     bool next(struct archive_entry*& entry) {
       work.check();
       const auto status = archive_read_next_header(value.get(), &entry);
+      if ((archive_format(value.get()) & ARCHIVE_FORMAT_BASE_MASK) == ARCHIVE_FORMAT_7ZIP
+          && archive_read_has_encrypted_entries(value.get()) > 0) {
+        throwFileError(FileErrorKind::Unsupported, "Encrypted 7z archives are not supported by the archive provider.");
+      }
       if (status == ARCHIVE_EOF) {
         return false;
       }

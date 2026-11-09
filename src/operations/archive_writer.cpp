@@ -42,6 +42,28 @@ namespace {
     }
     return ARCHIVE_FATAL;
   }
+  int setFormat(struct archive* writer, ArchiveFormat format) {
+    if (format == ArchiveFormat::Zip) {
+      return archive_write_set_format_zip(writer);
+    }
+    if (format != ArchiveFormat::SevenZip) {
+      return archive_write_set_format_pax_restricted(writer);
+    }
+    if (!archive_liblzma_version()) {
+      return ARCHIVE_FATAL;
+    }
+    auto status = archive_write_set_format_7zip(writer);
+    if (status == ARCHIVE_OK) {
+      status = archive_write_set_format_option(writer, "7zip", "compression", "lzma2");
+    }
+    if (status == ARCHIVE_OK) {
+      status = archive_write_set_format_option(writer, "7zip", "compression-level", "6");
+    }
+    if (status == ARCHIVE_OK) {
+      status = archive_write_set_format_option(writer, "7zip", "threads", "1");
+    }
+    return status;
+  }
   void forEachChild(int fd, Work& work, const std::function<void(const std::string&)>& visit) {
     const int duplicate = ::fcntl(fd, F_DUPFD_CLOEXEC, 0);
     if (duplicate < 0) {
@@ -77,14 +99,10 @@ namespace {
     Writer(const std::string& filename, const ArchiveFormatInfo& format, Work& request, const Passwords& passwords)
         : work(request),
           output(opened(::open(filename.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600))) {
-      if (format.format == ArchiveFormat::Zip) {
-        requireArchive(archive_write_set_format_zip(value.get()), value.get(), work);
-        if (!passwords.values.empty()) {
-          requireArchive(archive_write_set_options(value.get(), "zip:encryption=aes256"), value.get(), work);
-          requireArchive(archive_write_set_passphrase(value.get(), passwords.values.back().c_str()), value.get(), work);
-        }
-      } else {
-        requireArchive(archive_write_set_format_pax_restricted(value.get()), value.get(), work);
+      requireArchive(setFormat(value.get(), format.format), value.get(), work);
+      if (format.format == ArchiveFormat::Zip && !passwords.values.empty()) {
+        requireArchive(archive_write_set_options(value.get(), "zip:encryption=aes256"), value.get(), work);
+        requireArchive(archive_write_set_passphrase(value.get(), passwords.values.back().c_str()), value.get(), work);
       }
       requireArchive(addFilter(value.get(), format.compression), value.get(), work);
       requireArchive(archive_write_set_bytes_per_block(value.get(), 0), value.get(), work);
@@ -253,7 +271,8 @@ std::span<const files::ArchiveFormatInfo> files::archiveFormats() {
              ArchiveFormatInfo{ArchiveFormat::TarGzip, "TAR gzip", ".tar.gz", ArchiveCompression::Gzip},
              ArchiveFormatInfo{ArchiveFormat::TarBzip2, "TAR bz2", ".tar.bz2", ArchiveCompression::Bzip2},
              ArchiveFormatInfo{ArchiveFormat::TarZstd, "TAR zstd", ".tar.zst", ArchiveCompression::Zstd},
-             ArchiveFormatInfo{ArchiveFormat::TarXz, "TAR xz", ".tar.xz", ArchiveCompression::Xz}
+             ArchiveFormatInfo{ArchiveFormat::TarXz, "TAR xz", ".tar.xz", ArchiveCompression::Xz},
+             ArchiveFormatInfo{ArchiveFormat::SevenZip, "7z", ".7z"}
          }) {
       if (!archiveCompressionAvailable(item.compression)) {
         continue;
@@ -261,8 +280,7 @@ std::span<const files::ArchiveFormatInfo> files::archiveFormats() {
       const std::unique_ptr<struct archive, decltype(&archive_write_free)> writer(
           archive_write_new(), &archive_write_free
       );
-      const auto format = item.format == ArchiveFormat::Zip ? archive_write_set_format_zip(writer.get())
-                                                            : archive_write_set_format_pax_restricted(writer.get());
+      const auto format = setFormat(writer.get(), item.format);
       const auto filter = addFilter(writer.get(), item.compression);
       if (format == ARCHIVE_OK && filter == ARCHIVE_OK) {
         result.push_back(item);

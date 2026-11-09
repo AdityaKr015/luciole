@@ -1,3 +1,4 @@
+#include "archive_sevenzip_fixtures.h"
 #include "event_loop/glib_poll_source.h"
 #include "fs/gio_ptr.h"
 #include "operations/archive_input.h"
@@ -73,11 +74,12 @@ namespace {
     mode_t kind = AE_IFREG;
     mode_t mode = 0644;
   };
-  void tar(const fs::path& path, const std::vector<Entry>& entries, int filter = ARCHIVE_FILTER_NONE) {
+  void
+  makeArchive(const fs::path& path, const std::vector<Entry>& entries, int format, int filter = ARCHIVE_FILTER_NONE) {
     const std::unique_ptr<struct archive, decltype(&archive_write_free)> writer(
         archive_write_new(), &archive_write_free
     );
-    TEST_CHECK(archive_write_set_format_pax_restricted(writer.get()) == ARCHIVE_OK);
+    TEST_CHECK(archive_write_set_format(writer.get(), format) == ARCHIVE_OK);
     TEST_CHECK(archive_write_add_filter(writer.get(), filter) == ARCHIVE_OK);
     TEST_CHECK(archive_write_set_bytes_per_block(writer.get(), 0) == ARCHIVE_OK);
     TEST_CHECK(archive_write_open_filename(writer.get(), path.c_str()) == ARCHIVE_OK);
@@ -107,6 +109,9 @@ namespace {
       }
     }
     TEST_CHECK(archive_write_close(writer.get()) == ARCHIVE_OK);
+  }
+  void tar(const fs::path& path, const std::vector<Entry>& entries, int filter = ARCHIVE_FILTER_NONE) {
+    makeArchive(path, entries, ARCHIVE_FORMAT_TAR_PAX_RESTRICTED, filter);
   }
   void wait(files::ArchiveService& service, Pump& pump) {
     pump.until([&] { return !service.busy(); });
@@ -784,6 +789,158 @@ namespace {
       TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
     }
   }
+  std::string sevenZipBytes(const sevenzip_fixtures::Fixture& fixture) {
+    gsize size = 0;
+    const std::unique_ptr<guchar, decltype(&g_free)> bytes(g_base64_decode(fixture.base64.data(), &size), &g_free);
+    TEST_CHECK(bytes && size > 32);
+    return {reinterpret_cast<const char*>(bytes.get()), size};
+  }
+  std::string sevenZipPayload(std::string_view marker) {
+    std::string result;
+    result.reserve(marker.size() * 32);
+    for (unsigned i = 0; i < 32; ++i) {
+      result += marker;
+    }
+    return result;
+  }
+  void testSevenZipProviders(const Fixture& fixture, Pump& pump) {
+    for (const auto& reference : sevenzip_fixtures::archives) {
+      if ((reference.name == "bzip2" && !archive_bzlib_version())
+          || (reference.name == "deflate" && !archive_zlib_version())
+          || ((reference.name == "lzma1" || reference.name == "lzma2" || reference.name == "nonsolid")
+              && !archive_liblzma_version())) {
+        continue;
+      }
+      const auto source = fixture.root / (std::string(reference.name) + ".7z");
+      const auto destination = fixture.root / ("sevenzip-" + std::string(reference.name));
+      const auto bytes = sevenZipBytes(reference);
+      write(source, bytes);
+      files::ArchiveService service;
+      TEST_CHECK(service.inspect(location(source)));
+      wait(service, pump);
+      if (reference.encrypted) {
+        TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Unsupported);
+        TEST_CHECK(
+            service.error()->message.contains("Encrypted 7z") && !service.passwordRequest() && !service.catalog()
+        );
+        TEST_CHECK(service.extract(location(source), location(destination)));
+        wait(service, pump);
+        TEST_CHECK(service.error() && !service.passwordRequest() && !fs::exists(destination));
+        continue;
+      }
+      if (service.error()) {
+        throw std::runtime_error(std::string(reference.name) + ": " + service.error()->message);
+      }
+      const auto known = service.catalog();
+      TEST_CHECK(known && known->entries.size() == 3 && known->format == "7-Zip" && !known->encrypted);
+      TEST_CHECK(service.extract(location(source), location(destination), {}, known));
+      wait(service, pump);
+      TEST_CHECK(!service.error() && read(destination / "folder/first.txt") == sevenZipPayload("first payload\n"));
+      TEST_CHECK(read(destination / "second.txt") == sevenZipPayload("second payload\n"));
+      const auto selected = fixture.root / ("sevenzip-selected-" + std::string(reference.name));
+      TEST_CHECK(service.extract(location(source), location(selected), {"second.txt"}, known));
+      wait(service, pump);
+      TEST_CHECK(
+          !service.error()
+          && read(selected / "second.txt") == sevenZipPayload("second payload\n")
+          && !fs::exists(selected / "folder")
+      );
+      TEST_CHECK(service.openMember("second.txt"));
+      wait(service, pump);
+      const auto opened = service.takeOpenedFile();
+      TEST_CHECK(!service.error() && opened && read(*opened->nativePath()) == sevenZipPayload("second payload\n"));
+      TEST_CHECK((fs::status(*opened->nativePath()).permissions() & fs::perms::owner_exec) == fs::perms::none);
+      write(source, bytes);
+      const auto stale = fixture.root / ("sevenzip-stale-" + std::string(reference.name));
+      TEST_CHECK(service.extract(location(source), location(stale), {}, known));
+      wait(service, pump);
+      TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Changed && !fs::exists(stale));
+      service.shutdown();
+      wait(service, pump);
+      TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
+    }
+  }
+  void testSevenZipFailures(const Fixture& fixture, Pump& pump) {
+    const auto bytes = sevenZipBytes(sevenzip_fixtures::archives.front());
+    for (unsigned failure = 0; failure < 9; ++failure) {
+      const auto source = fixture.root / ("bad-sevenzip-" + std::to_string(failure) + ".7z");
+      auto bad = bytes;
+      files::ArchiveLimits limits;
+      if (failure == 0) {
+        bad.resize(bad.size() - 1);
+      } else if (failure == 1) {
+        bad[8] ^= 1;
+      } else if (failure == 2) {
+        bad[32] ^= 1;
+      } else if (failure == 3) {
+        limits.maxExpandedBytes = 4;
+      } else if (failure == 4) {
+        limits.maxEntries = 1;
+      } else if (failure == 5) {
+        limits.maxMetadataBytes = 4;
+      } else if (failure == 6) {
+        limits.maxArchiveBytes = bad.size() - 1;
+      } else if (failure == 7) {
+        bad.resize(16);
+      } else {
+        bad[bad.size() - 1] ^= 1;
+      }
+      write(source, bad);
+      files::ArchiveService service(limits);
+      const auto destination = fixture.root / ("sevenzip-rejected-" + std::to_string(failure));
+      TEST_CHECK(service.extract(location(source), location(destination)));
+      wait(service, pump);
+      if (!service.error()) {
+        std::println(stderr, "7z failure fixture accepted: {}", failure);
+      }
+      TEST_CHECK(service.error() && !service.passwordRequest() && !fs::exists(destination));
+      TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
+    }
+    const auto parts = splitZip(fixture.root / "sevenzip-fake-split", "fake.zip", bytes, bytes.size() / 2);
+    files::ArchiveService service;
+    TEST_CHECK(service.inspect(location(parts.front())));
+    wait(service, pump);
+    TEST_CHECK(service.error() && !service.catalog());
+    const auto source = fixture.root / "sevenzip-cancel.7z";
+    write(source, bytes);
+    const auto output = fixture.root / "sevenzip-cancelled";
+    TEST_CHECK(service.extract(location(source), location(output)));
+    service.cancel();
+    wait(service, pump);
+    TEST_CHECK(service.error() && !fs::exists(output) && fs::is_empty(fixture.root / "tmp"));
+  }
+  void testSevenZipBoundaries(const Fixture& fixture, Pump& pump) {
+    if (!archive_liblzma_version()) {
+      return;
+    }
+    const auto formats = files::archiveFormats();
+    const auto format = std::ranges::find(formats, files::ArchiveFormat::SevenZip, &files::ArchiveFormatInfo::format);
+    TEST_CHECK(
+        format != formats.end() && format->suffix == ".7z" && format->compression == files::ArchiveCompression::None
+    );
+    files::ArchiveService passwordService;
+    TEST_CHECK(!passwordService.compress(
+        {location(fixture.root / "unused")}, location(fixture.root / "password.7z"), format->format, "unsupported"
+    ));
+    const std::vector<std::vector<Entry>> rejected{
+        {{"../sevenzip-escaped", "bad", {}}},
+        {{"/sevenzip-absolute", "bad", {}}},
+        {{"link", {}, "../sevenzip-escaped", AE_IFLNK}},
+        {{"a", {}, "b", AE_IFLNK}, {"b", {}, "a", AE_IFLNK}},
+        {{"same", "first", {}}, {"same", "second", {}}},
+        {{"link", {}, "file", AE_IFLNK}, {"link/child", "bad", {}}}
+    };
+    for (std::size_t i = 0; i < rejected.size(); ++i) {
+      const auto source = fixture.root / ("hostile-sevenzip-" + std::to_string(i) + ".7z");
+      makeArchive(source, rejected[i], ARCHIVE_FORMAT_7ZIP);
+      const auto output = fixture.root / ("hostile-sevenzip-output-" + std::to_string(i));
+      files::ArchiveService service;
+      TEST_CHECK(service.extract(location(source), location(output)));
+      wait(service, pump);
+      TEST_CHECK(service.error() && !fs::exists(output) && fs::is_empty(fixture.root / "tmp"));
+    }
+    TEST_CHECK(!fs::exists(fixture.root / "sevenzip-escaped"));
+  }
   std::string xz(std::string_view bytes) {
     std::string encoded(lzma_stream_buffer_bound(bytes.size()), '\0');
     std::size_t position = 0;
@@ -1100,6 +1257,9 @@ int main(int argc, char** argv) {
     }
     Fixture fixture;
     Pump pump;
+    testSevenZipProviders(fixture, pump);
+    testSevenZipFailures(fixture, pump);
+    testSevenZipBoundaries(fixture, pump);
     testXzTar(fixture, pump);
     testXzFailures(fixture, pump);
     testXzWorkerBoundaries(fixture);

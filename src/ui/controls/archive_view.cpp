@@ -421,11 +421,14 @@ ArchiveDialog::ArchiveDialog(
                               }}));
     std::vector<ui::SegmentedOption> options;
     for (const auto& format : files::archiveFormats()) {
-      options.push_back({.label = std::string(format.label), .glyph = {}, .tooltip = {}});
+      options.push_back({.label = std::string(format.label), .glyph = {}, .tooltip = std::string(format.suffix)});
     }
     body->addChild(
         ui::segmented(
-            {.options = std::move(options), .equalSegmentWidths = true, .onChange = [this](std::size_t index) {
+            {.options = std::move(options),
+             .compact = true,
+             .equalSegmentWidths = true,
+             .onChange = [this](std::size_t index) {
                const auto formats = files::archiveFormats();
                std::string value = m_name->value();
                const auto old = formats[m_format].suffix;

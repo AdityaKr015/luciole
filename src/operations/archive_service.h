@@ -11,7 +11,7 @@
 #include <string_view>
 
 namespace files {
-  enum class ArchiveFormat { Zip, Tar, TarGzip, TarBzip2, TarZstd, TarXz };
+  enum class ArchiveFormat { Zip, Tar, TarGzip, TarBzip2, TarZstd, TarXz, SevenZip };
   enum class ArchiveEntryKind { File, Directory, Symlink, Hardlink };
   enum class ArchivePhase { Idle, Reading, Compressing, Extracting, Transferring, Cleaning, WaitingPassword };
   struct ArchiveFormatInfo {
