@@ -734,6 +734,50 @@ void BrowserPage::pointer(const PointerEvent& event) {
   }
 }
 
+std::optional<files::FileTooltipTarget> BrowserPage::fileTooltipAt(float x, float y) const {
+  if (!m_visible || overlay()) {
+    return std::nullopt;
+  }
+  const files::BrowserController* controller = &browser();
+  const VirtualGridView* view = m_list;
+  std::uint64_t columnId = 0;
+  if (m_miller.enabled()) {
+    const auto column = m_millerView->columnAt(x, y);
+    if (!column) {
+      return std::nullopt;
+    }
+    controller = m_miller.columns()[*column]->browser.get();
+    columnId = m_miller.columns()[*column]->id;
+    view = m_millerView->view(*column);
+  }
+  if (!controller->model().selectionAvailable()) {
+    return std::nullopt;
+  }
+  const auto index = view ? view->itemAtScene(x, y) : std::nullopt;
+  const auto bounds = index ? view->itemRect(*index) : std::nullopt;
+  if (!bounds || *index >= controller->model().rows().size()) {
+    return std::nullopt;
+  }
+  if (m_viewMode == files::ViewMode::Grid) {
+    float centerX = 0, centerY = 0;
+    view->absoluteAnchorForIndex(*index, centerX, centerY);
+    if (!m_gridAdapter.itemHitTest(
+            *index, x - centerX + bounds->width * 0.5F, y - centerY + gridHeight() * 0.5F, bounds->width, gridHeight()
+        )) {
+      return std::nullopt;
+    }
+  }
+  const auto* entry = controller->model().entry(controller->model().rows()[*index]);
+  if (!entry) {
+    return std::nullopt;
+  }
+  return files::FileTooltipTarget{
+      .context = std::format("{}:{}:{}", m_workspaceId, columnId, controller->contextSerial()),
+      .entry = *entry,
+      .typeLabel = std::string(controller->model().typeLabel(entry->id)),
+  };
+}
+
 bool BrowserPage::openInNewTab(float x, float y) {
   if (m_list && m_list->containsScenePoint(x, y)) {
     if (auto index = m_list->itemAtScene(x, y); index && *index < browser().model().rows().size()) {

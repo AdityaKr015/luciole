@@ -1,9 +1,71 @@
 #include "fs/file_query.h"
 
+#include "fs/background_job.h"
 #include "fs/gio_interop.h"
 
 #include <memory>
 #include <utility>
+
+void files::queryFileDetails(
+    const Location& location, const CancelToken& token,
+    std::move_only_function<void(std::expected<FileDetails, FileError>)> done
+) {
+  runJob<FileDetails>(
+      token,
+      [location, token] {
+        GError* rawError = nullptr;
+        const GioPtr<GFileInfo> info(g_file_query_info(
+            gioFile(location).get(),
+            G_FILE_ATTRIBUTE_STANDARD_TYPE "," G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME "," G_FILE_ATTRIBUTE_STANDARD_SIZE
+                                           "," G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE
+                                           "," G_FILE_ATTRIBUTE_TIME_MODIFIED "," G_FILE_ATTRIBUTE_ID_FILE
+                                           "," G_FILE_ATTRIBUTE_ID_FILESYSTEM
+                                           "," G_FILE_ATTRIBUTE_STANDARD_SYMLINK_TARGET,
+            G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, gioCancellable(token), &rawError
+        ));
+        const GErrorPtr error(rawError);
+        if (!info) {
+          throw FileErrorException(error ? fileError(*error) : FileError{FileErrorKind::Other, "Metadata unavailable"});
+        }
+        FileDetails details;
+        if (g_file_info_get_attribute_type(info.get(), G_FILE_ATTRIBUTE_STANDARD_TYPE)
+            == G_FILE_ATTRIBUTE_TYPE_UINT32) {
+          details.type = fileType(g_file_info_get_file_type(info.get()));
+        }
+        details.identity = readFileIdentity(info.get());
+        if (g_file_info_get_attribute_type(info.get(), G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME)
+            == G_FILE_ATTRIBUTE_TYPE_STRING) {
+          details.displayName = g_file_info_get_display_name(info.get());
+        }
+        if (auto mime = readFastContentType(info.get())) {
+          const GString description(g_content_type_get_description(mime->c_str()));
+          if (description) {
+            details.typeDescription = description.get();
+          }
+        }
+        if (g_file_info_get_attribute_type(info.get(), G_FILE_ATTRIBUTE_STANDARD_SIZE)
+            == G_FILE_ATTRIBUTE_TYPE_UINT64) {
+          details.size = g_file_info_get_attribute_uint64(info.get(), G_FILE_ATTRIBUTE_STANDARD_SIZE);
+        }
+        if (g_file_info_get_attribute_type(info.get(), G_FILE_ATTRIBUTE_TIME_MODIFIED)
+            == G_FILE_ATTRIBUTE_TYPE_UINT64) {
+          details.modifiedSeconds = g_file_info_get_attribute_uint64(info.get(), G_FILE_ATTRIBUTE_TIME_MODIFIED);
+        }
+        if (g_file_info_get_attribute_type(info.get(), G_FILE_ATTRIBUTE_STANDARD_SYMLINK_TARGET)
+            == G_FILE_ATTRIBUTE_TYPE_BYTE_STRING) {
+          const char* target = g_file_info_get_symlink_target(info.get());
+          const GString display(g_filename_display_name(target));
+          details.linkTarget = display.get();
+        }
+        return details;
+      },
+      [token, done = std::move(done)](auto reply) mutable {
+        if (!token.cancelled()) {
+          done(std::move(reply));
+        }
+      }
+  );
+}
 
 void files::queryFileType(
     const Location& location, const CancelToken& token,

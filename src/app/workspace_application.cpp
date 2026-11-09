@@ -1224,9 +1224,16 @@ void WorkspaceApplication::syncTooltip(Host& host) {
     host.tooltip->dismiss();
     return;
   }
+  std::optional<files::FileTooltipTarget> file;
+  for (auto tab : host.mounted) {
+    file = m_pages.at(tab)->fileTooltipAt(host.pointerX, host.pointerY);
+    if (file) {
+      break;
+    }
+  }
   host.tooltip->sync(
       host.surface.renderTarget().renderer(), *host.root, host.pointerX, host.pointerY,
-      {static_cast<float>(host.surface.width()), static_cast<float>(host.surface.height())}
+      {static_cast<float>(host.surface.width()), static_cast<float>(host.surface.height())}, std::move(file)
   );
 }
 

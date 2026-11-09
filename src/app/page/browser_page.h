@@ -43,6 +43,7 @@
 #include "render/scene/input_dispatcher.h"
 #include "thumbnails/preview_service.h"
 #include "ui/browser/file_icon.h"
+#include "ui/browser/file_tooltip.h"
 #include "ui/browser/file_view.h"
 #include "ui/browser/places_sidebar.h"
 #include "ui/controls/context_menu.h"
@@ -102,6 +103,7 @@ public:
   files::BrowserSettings options() const;
   std::optional<files::Location> location() const;
   std::string title() const;
+  std::optional<files::FileTooltipTarget> fileTooltipAt(float x, float y) const;
   void preferencesChanged(const std::string& error);
   void placesChanged();
   void clipboardChanged();

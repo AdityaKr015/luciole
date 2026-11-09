@@ -25,6 +25,7 @@ test_table = [
   {'name': 'transfer-service', 'deps': [operations_dep, event_loop_dep], 'timeout': 90, 'env': gio_env},
   {'name': 'places', 'deps': [browser_dep, event_loop_dep], 'env': gio_env},
   {'name': 'file-icon', 'deps': [thumbnails_dep, imaging_dep, system_dep, event_loop_dep], 'env': gio_env},
+  {'name': 'file-tooltip', 'deps': [ui_dep, fs_dep, event_loop_dep], 'env': gio_env},
   {'name': 'view-preference-writer', 'deps': [config_dep, event_loop_dep], 'env': ['G_DEBUG=fatal-warnings']},
   {'name': 'directory-session', 'deps': [fs_dep, event_loop_dep], 'env': gio_env},
   {'name': 'directory-model', 'deps': [browser_dep, event_loop_dep], 'env': gio_env},

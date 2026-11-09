@@ -11,6 +11,21 @@
 #include <string>
 
 namespace files {
+  struct FileDetails {
+    FileType type = FileType::Unknown;
+    std::optional<std::string> displayName;
+    std::optional<std::string> typeDescription;
+    std::optional<std::uint64_t> size;
+    std::optional<std::uint64_t> modifiedSeconds;
+    std::optional<FileIdentity> identity;
+    std::optional<std::string> linkTarget;
+  };
+  // Queries one item without following links or enumerating children. No content sniffing.
+  // Cancelled replies are suppressed; done runs on the initiating main context.
+  void queryFileDetails(
+      const Location& location, const CancelToken& token,
+      std::move_only_function<void(std::expected<FileDetails, FileError>)> done
+  );
   // Follows symlinks. done runs on the main context unless token was cancelled first.
   void queryFileType(
       const Location& location, const CancelToken& token,
