@@ -1,4 +1,4 @@
-#include "app/glib_poll_source.h"
+#include "event_loop/glib_poll_source.h"
 #include "operations/restore_service.h"
 #include "operations/trash_item.h"
 #include "test_check.h"

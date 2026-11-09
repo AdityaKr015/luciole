@@ -1,5 +1,5 @@
-#include "app/glib_poll_source.h"
 #include "browser/path_completion.h"
+#include "event_loop/glib_poll_source.h"
 #include "fs/file_metadata.h"
 #include "platform/terminal_launcher.h"
 #include "test_check.h"

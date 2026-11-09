@@ -1,7 +1,7 @@
 #pragma once
 
-#include "config/atomic_file.h"
 #include "config/diagnostic.h"
+#include "fs/atomic_file.h"
 #include "fs/location.h"
 
 #include <string_view>

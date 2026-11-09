@@ -1,8 +1,8 @@
 #include "ui/controls/archive_view.h"
 
-#include "browser/file_icon.h"
 #include "core/input/key_symbols.h"
 #include "fs/gio_ptr.h"
+#include "ui/browser/file_icon.h"
 #include "ui/builders.h"
 #include "ui/controls/scroll_view.h"
 

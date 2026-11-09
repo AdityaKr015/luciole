@@ -1,7 +1,7 @@
 #pragma once
 
-#include "browser/file_view.h"
 #include "browser/miller_columns.h"
+#include "ui/browser/file_view.h"
 #include "ui/controls/box.h"
 #include "ui/controls/scrollbar.h"
 

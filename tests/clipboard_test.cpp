@@ -1,4 +1,4 @@
-#include "platform/text_clipboard.h"
+#include "clipboard/text_clipboard.h"
 #include "test_check.h"
 
 #include <algorithm>

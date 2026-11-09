@@ -3,8 +3,8 @@
 #include "core/application_identity.h"
 #include "core/files/resource_paths.h"
 #include "core/ui_strings.h"
+#include "imaging/pixbuf_image_decoder.h"
 #include "noctalia_files_build_info.h"
-#include "platform/pixbuf_image_decoder.h"
 #include "ui/palette.h"
 
 #include <cstdlib>

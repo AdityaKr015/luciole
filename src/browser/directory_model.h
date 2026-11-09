@@ -1,7 +1,7 @@
 #pragma once
 
-#include "browser/directory_options.h"
 #include "fs/directory_session.h"
+#include "model/directory_options.h"
 
 #include <functional>
 #include <span>

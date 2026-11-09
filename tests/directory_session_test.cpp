@@ -1,4 +1,4 @@
-#include "app/glib_poll_source.h"
+#include "event_loop/glib_poll_source.h"
 #include "fs/directory_session.h"
 #include "test_check.h"
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "fs/location.h"
+#include "fs/transfer_types.h"
 
 #include <cstdint>
 #include <functional>
@@ -9,8 +10,6 @@
 #include <vector>
 
 namespace files {
-  enum class TransferAction { Move, Copy };
-  enum class TransferOutcome { Moved, Copied, Skipped, Failed, Cancelled, Partial };
   enum class TransferConflictChoice { Replace, Skip, KeepBoth, Cancel, Merge };
   struct TransferConflict {
     std::uint64_t id;
@@ -32,16 +31,6 @@ namespace files {
     Location destination;
     TransferAction action = TransferAction::Move;
     bool allowMerge = true; // Archive publication keeps its separate all-or-nothing folder policy.
-  };
-  struct TransferResult {
-    TransferResult(Location location, TransferOutcome value = TransferOutcome::Failed, std::string message = {})
-        : source(std::move(location)), outcome(value), error(std::move(message)) {}
-    Location source;
-    TransferOutcome outcome = TransferOutcome::Failed;
-    std::string error;
-    std::vector<TransferResult> children;
-    bool retryable = false;
-    std::optional<Location> destination;
   };
 
   // One serial native-filesystem job. Workers never access browser models or UI.

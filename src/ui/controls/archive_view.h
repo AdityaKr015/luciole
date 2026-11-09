@@ -1,7 +1,7 @@
 #pragma once
 
-#include "browser/file_icon_cache.h"
 #include "operations/archive_service.h"
+#include "thumbnails/file_icon_cache.h"
 #include "ui/controls/flex.h"
 #include "ui/controls/virtual_grid_view.h"
 

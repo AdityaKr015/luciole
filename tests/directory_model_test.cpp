@@ -1,6 +1,6 @@
-#include "app/glib_poll_source.h"
-#include "browser/details_columns.h"
 #include "browser/directory_model.h"
+#include "event_loop/glib_poll_source.h"
+#include "model/details_columns.h"
 #include "test_check.h"
 
 #include <algorithm>

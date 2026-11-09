@@ -1,8 +1,8 @@
-#include "browser/preview_layout.h"
-#include "browser/preview_service.h"
-#include "browser/thumbnail_worker.h"
 #include "core/log.h"
 #include "test_check.h"
+#include "thumbnails/preview_service.h"
+#include "thumbnails/thumbnail_worker.h"
+#include "ui/browser/preview_layout.h"
 
 #include <chrono>
 #include <filesystem>

@@ -1,14 +1,15 @@
-#include "app/glib_poll_source.h"
-#include "browser/png_decoder.h"
-#include "browser/thumbnail_provider.h"
-#include "browser/thumbnail_service.h"
-#include "browser/thumbnail_store.h"
-#include "browser/thumbnail_worker.h"
 #include "core/log.h"
-#include "platform/pixbuf_image_decoder.h"
+#include "event_loop/glib_poll_source.h"
+#include "imaging/pixbuf_image_decoder.h"
+#include "imaging/png_decoder.h"
+#include "imaging/raster_decoder.h"
 #include "render/core/image_orientation.h"
 #include "render/core/image_resize.h"
 #include "test_check.h"
+#include "thumbnails/thumbnail_provider.h"
+#include "thumbnails/thumbnail_service.h"
+#include "thumbnails/thumbnail_store.h"
+#include "thumbnails/thumbnail_worker.h"
 
 #include <algorithm>
 #include <chrono>
@@ -110,29 +111,29 @@ namespace {
     const GioPtr<GCancellable> cancel(g_cancellable_new());
     const auto original = picture();
     auto data = png(original);
-    auto decoded = files::decodeThumbnail(data, 128, 1000000, cancel.get());
+    auto decoded = files::decodeRasterImage(data, 128, 1000000, cancel.get());
     TEST_CHECK(decoded && decoded->rgba == original.rgba && decoded->width == 32 && decoded->height == 16);
-    TEST_CHECK(!files::decodeThumbnail(data, 128, 100, cancel.get()));
-    auto small = files::decodeThumbnail(data, 8, 1000000, cancel.get());
+    TEST_CHECK(!files::decodeRasterImage(data, 128, 100, cancel.get()));
+    auto small = files::decodeRasterImage(data, 8, 1000000, cancel.get());
     TEST_CHECK(small && small->width == 8 && small->height == 4 && small->rgba[3] >= 127 && small->rgba[3] <= 129);
     // Exercise the full-size output allowed by system loaders, independently of their scaling support.
     const GioPtr<GdkPixbuf> fullSize(gdk_pixbuf_new(GDK_COLORSPACE_RGB, true, 8, 1600, 900));
     gdk_pixbuf_fill(fullSize.get(), 0x20408080U);
-    auto fitted = files::fitThumbnailPixels(fullSize.get(), 512, 2'000'000);
+    auto fitted = files::fitRasterPixels(fullSize.get(), 512, 2'000'000);
     TEST_CHECK(
         fitted && fitted->width == 512 && fitted->height == 288 && fitted->rgba[0] == 32 && fitted->rgba[3] == 128
     );
-    TEST_CHECK(!files::fitThumbnailPixels(fullSize.get(), 512, 1'000'000));
+    TEST_CHECK(!files::fitRasterPixels(fullSize.get(), 512, 1'000'000));
     const std::string svg =
         "<svg xmlns='http://www.w3.org/2000/svg'><image href='https://invalid.example/a.png'/></svg>";
-    TEST_CHECK(!files::decodeThumbnail(
+    TEST_CHECK(!files::decodeRasterImage(
         {reinterpret_cast<const std::uint8_t*>(svg.data()), svg.size()}, 128, 1000000, cancel.get()
     ));
     std::uint8_t* webp = nullptr;
     const auto length =
         WebPEncodeLosslessRGBA(original.rgba.data(), original.width, original.height, original.width * 4, &webp);
     TEST_CHECK(length > 0);
-    decoded = files::decodeThumbnail({webp, length}, 128, 1000000, cancel.get());
+    decoded = files::decodeRasterImage({webp, length}, 128, 1000000, cancel.get());
     WebPFree(webp);
     TEST_CHECK(decoded && decoded->rgba == original.rgba);
     const GioPtr<GdkPixbuf> pixbuf(gdk_pixbuf_new(GDK_COLORSPACE_RGB, false, 8, 32, 16));
@@ -147,22 +148,22 @@ namespace {
     const std::array<std::uint8_t, 36> exif{0xff, 0xe1, 0, 34, 'E', 'x', 'i', 'f', 0, 0, 'I', 'I', 42, 0, 8, 0, 0, 0, 1,
                                             0,    0x12, 1, 3,  0,   1,   0,   0,   0, 6, 0,   0,   0,  0, 0, 0, 0};
     oriented.insert(oriented.begin() + 2, exif.begin(), exif.end());
-    decoded = files::decodeThumbnail(oriented, 128, 1000000, cancel.get());
+    decoded = files::decodeRasterImage(oriented, 128, 1000000, cancel.get());
     TEST_CHECK(decoded && decoded->width == 16 && decoded->height == 32);
     TEST_CHECK(!files::readThumbnailPng(std::span(data).first(20), 128));
     data[20] ^= 1;
     TEST_CHECK(!files::readThumbnailPng(data, 128));
     g_cancellable_cancel(cancel.get());
-    TEST_CHECK(!files::decodeThumbnail(png(original), 128, 1000000, cancel.get()));
+    TEST_CHECK(!files::decodeRasterImage(png(original), 128, 1000000, cancel.get()));
   }
   void testRasterFormats() {
     const GioPtr<GCancellable> cancel(g_cancellable_new());
     const std::vector<std::uint8_t> gif{'G', 'I',  'F', '8', '9', 'a', 1, 0, 1, 0, 0x80, 0, 0, 0,    0, 0, 255, 255,
                                         255, 0x2c, 0,   0,   0,   0,   1, 0, 1, 0, 0,    2, 2, 0x44, 1, 0, 0x3b};
-    auto decoded = files::decodeThumbnail(gif, 128, 1000000, cancel.get());
+    auto decoded = files::decodeRasterImage(gif, 128, 1000000, cancel.get());
     TEST_CHECK(decoded && decoded->width == 1 && decoded->height == 1 && decoded->rgba[3] == 255);
     const std::vector<std::uint8_t> pnm{'P', '6', '\n', '2', ' ', '1', '\n', '2', '5', '5', '\n', 255, 0, 0, 0, 255, 0};
-    decoded = files::decodeThumbnail(pnm, 128, 1000000, cancel.get());
+    decoded = files::decodeRasterImage(pnm, 128, 1000000, cancel.get());
     TEST_CHECK(
         decoded && decoded->width == 2 && decoded->height == 1 && decoded->rgba[0] == 255 && decoded->rgba[5] == 255
     );
@@ -183,7 +184,7 @@ namespace {
     bmp[28] = 24;
     bmp[56] = 255;
     bmp[58] = 255;
-    decoded = files::decodeThumbnail(bmp, 128, 1000000, cancel.get());
+    decoded = files::decodeRasterImage(bmp, 128, 1000000, cancel.get());
     TEST_CHECK(decoded && decoded->width == 2 && decoded->rgba[0] == 255 && decoded->rgba[5] == 255);
     const auto pngData = png(picture());
     std::vector<std::uint8_t> ico(22);
@@ -196,7 +197,7 @@ namespace {
     put32(ico, 14, static_cast<std::uint32_t>(pngData.size()));
     put32(ico, 18, 22);
     ico.insert(ico.end(), pngData.begin(), pngData.end());
-    decoded = files::decodeThumbnail(ico, 128, 1000000, cancel.get());
+    decoded = files::decodeRasterImage(ico, 128, 1000000, cancel.get());
     TEST_CHECK(decoded && decoded->rgba == picture().rgba);
     // Verify both PNG-backed and 32-bit DIB icon transparency.
     ico.resize(22);
@@ -214,7 +215,7 @@ namespace {
     dib[45] = 255;
     dib[47] = 255;
     ico.insert(ico.end(), dib.begin(), dib.end());
-    decoded = files::decodeThumbnail(ico, 128, 1000000, cancel.get());
+    decoded = files::decodeRasterImage(ico, 128, 1000000, cancel.get());
     TEST_CHECK(
         decoded
         && decoded->width == 2
@@ -223,17 +224,17 @@ namespace {
         && decoded->rgba[3] == 128
         && decoded->rgba[5] == 255
     );
-    TEST_CHECK(!files::decodeThumbnail(ico, 128, 1, cancel.get()));
+    TEST_CHECK(!files::decodeRasterImage(ico, 128, 1, cancel.get()));
     put32(ico, 26, 0x80000000U);
-    TEST_CHECK(!files::decodeThumbnail(ico, 128, 1000000, cancel.get()));
+    TEST_CHECK(!files::decodeRasterImage(ico, 128, 1000000, cancel.get()));
     const std::array<std::uint8_t, 8> transparentRedBlue{255, 0, 0, 0, 0, 0, 255, 255};
     const auto resized = resizeToRgba(transparentRedBlue.data(), 2, 1, ResizeSourceLayout::Rgba, 1, 1);
     TEST_CHECK(resized.size() == 4 && resized[0] < 5 && resized[2] > 250 && resized[3] >= 125 && resized[3] <= 130);
     auto corrupt = pngData;
     corrupt[20] ^= 1;
-    TEST_CHECK(!files::decodeThumbnail(corrupt, 128, 1000000, cancel.get()));
-    TEST_CHECK(!files::decodePng(pngData.data(), pngData.size(), 100));
-    const auto theme = files::decodePng(pngData.data(), pngData.size());
+    TEST_CHECK(!files::decodeRasterImage(corrupt, 128, 1000000, cancel.get()));
+    TEST_CHECK(!files::decodePng(pngData, 100));
+    const auto theme = files::decodePng(pngData);
     TEST_CHECK(theme && theme->pixels == picture().rgba);
     files::installPixbufImageDecoder();
     const auto providerBytes = png(picture(128, 64));

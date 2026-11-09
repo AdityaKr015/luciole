@@ -1,10 +1,10 @@
 #include "app/cli.h"
 
 #include "app/application.h"
-#include "browser/thumbnail_worker.h"
 #include "config/settings.h"
 #include "noctalia_files_build_info.h"
 #include "noctalia_files_completions.h"
+#include "thumbnails/thumbnail_worker.h"
 
 #include <cstdio>
 #include <cstdlib>

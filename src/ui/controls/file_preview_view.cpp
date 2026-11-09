@@ -1,6 +1,6 @@
 #include "ui/controls/file_preview_view.h"
 
-#include "browser/preview_layout.h"
+#include "ui/browser/preview_layout.h"
 #include "ui/builders.h"
 #include "ui/controls/button.h"
 #include "ui/controls/label.h"

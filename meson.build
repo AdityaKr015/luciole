@@ -69,7 +69,7 @@ build_config.set_quoted('NOCTALIA_FILES_BUILD_TYPE', get_option('buildtype'))
 build_config.set_quoted('NOCTALIA_FILES_COMPILER', cpp.get_id() + ' ' + cpp.version())
 build_config.set_quoted('NOCTALIA_FILES_INSTALL_ASSETSDIR', get_option('prefix') / get_option('datadir') / 'noctalia-files/assets')
 build_info = configure_file(
-  input: 'src/core/build_info.h.in',
+  input: 'src/app/build_info.h.in',
   output: 'noctalia_files_build_info.h',
   configuration: build_config,
 )
@@ -85,10 +85,14 @@ completions = configure_file(
 )
 src_inc = include_directories('src')
 
-# One static library per module. Each library's dependencies list only the
-# modules its sources include, so the build graph documents the layering.
+# One static library per module. A module's dependencies list only the modules
+# its sources include, following the layering in CONTRIBUTING.md. Modules that
+# must not see lib/ (fs, model, config, browser, operations) never depend on
+# noctalia_ui_dep, so including a lib/ header from them fails to compile.
+model_dep = declare_dependency(include_directories: src_inc)
+
 event_loop_lib = static_library('files-event-loop',
-  files('src/app/glib_poll_source.cpp'),
+  files('src/event_loop/glib_poll_source.cpp'),
   include_directories: src_inc,
   dependencies: [gio, noctalia_ui_dep],
 )
@@ -99,6 +103,7 @@ event_loop_dep = declare_dependency(link_with: event_loop_lib, include_directori
 fs_lib = static_library('files-fs',
   files(
     'src/fs/archive_type.cpp',
+    'src/fs/atomic_file.cpp',
     'src/fs/directory_session.cpp',
     'src/fs/file_icon_source.cpp',
     'src/fs/file_metadata.cpp',
@@ -114,16 +119,17 @@ fs_dep = declare_dependency(link_with: fs_lib, include_directories: src_inc, dep
 
 config_lib = static_library('files-config',
   files(
-    'src/config/atomic_file.cpp',
     'src/config/diagnostic.cpp',
     'src/config/settings.cpp',
     'src/config/state_store.cpp',
     'src/config/view_preference_writer.cpp',
   ),
   include_directories: src_inc,
-  dependencies: [fs_dep, tomlplusplus],
+  dependencies: [model_dep, fs_dep, tomlplusplus],
 )
-config_dep = declare_dependency(link_with: config_lib, include_directories: src_inc, dependencies: fs_dep)
+config_dep = declare_dependency(link_with: config_lib, include_directories: src_inc,
+  dependencies: [model_dep, fs_dep],
+)
 
 browser_lib = static_library('files-browser',
   files(
@@ -138,10 +144,10 @@ browser_lib = static_library('files-browser',
     'src/browser/tab_workspace.cpp',
   ),
   include_directories: src_inc,
-  dependencies: [fs_dep, config_dep],
+  dependencies: [model_dep, fs_dep, config_dep],
 )
 browser_dep = declare_dependency(link_with: browser_lib, include_directories: src_inc,
-  dependencies: [fs_dep, config_dep],
+  dependencies: [model_dep, fs_dep, config_dep],
 )
 
 libacl = dependency('libacl')
@@ -169,6 +175,21 @@ operations_dep = declare_dependency(link_with: operations_lib, include_directori
   dependencies: [fs_dep, libacl, libarchive],
 )
 
+libpng = dependency('libpng')
+imaging_lib = static_library('files-imaging',
+  files(
+    'src/imaging/pixbuf_image_decoder.cpp',
+    'src/imaging/png_decoder.cpp',
+    'src/imaging/raster_decoder.cpp',
+    'src/imaging/svg_rasterizer.cpp',
+  ),
+  include_directories: src_inc,
+  dependencies: [fs_dep, noctalia_ui_dep, gdk_pixbuf, glycin, libpng, dependency('librsvg-2.0')],
+)
+imaging_dep = declare_dependency(link_with: imaging_lib, include_directories: src_inc,
+  dependencies: [fs_dep, noctalia_ui_dep, gdk_pixbuf],
+)
+
 system_lib = static_library('files-system',
   files(
     'src/system/freedesktop_key_file.cpp',
@@ -182,53 +203,57 @@ system_dep = declare_dependency(link_with: system_lib, include_directories: src_
   dependencies: [gio, noctalia_ui_dep],
 )
 
-libpng = dependency('libpng')
 thumbnails_lib = static_library('files-thumbnails',
   files(
-    'src/browser/file_icon_cache.cpp',
-    'src/browser/png_decoder.cpp',
-    'src/browser/preview_service.cpp',
-    'src/browser/thumbnail_codec.cpp',
-    'src/browser/thumbnail_provider.cpp',
-    'src/browser/thumbnail_service.cpp',
-    'src/browser/thumbnail_store.cpp',
-    'src/browser/thumbnail_worker.cpp',
+    'src/thumbnails/file_icon_cache.cpp',
+    'src/thumbnails/preview_service.cpp',
+    'src/thumbnails/thumbnail_codec.cpp',
+    'src/thumbnails/thumbnail_provider.cpp',
+    'src/thumbnails/thumbnail_service.cpp',
+    'src/thumbnails/thumbnail_store.cpp',
+    'src/thumbnails/thumbnail_worker.cpp',
   ),
   include_directories: src_inc,
-  dependencies: [fs_dep, config_dep, system_dep, noctalia_ui_dep, gdk_pixbuf, glycin, libpng,
-    dependency('nlohmann_json')],
+  dependencies: [model_dep, fs_dep, imaging_dep, system_dep, noctalia_ui_dep, libpng, dependency('nlohmann_json')],
 )
 thumbnails_dep = declare_dependency(link_with: thumbnails_lib, include_directories: src_inc,
-  dependencies: [fs_dep, config_dep, system_dep, noctalia_ui_dep, gdk_pixbuf, libpng],
+  dependencies: [model_dep, fs_dep, imaging_dep, noctalia_ui_dep],
 )
 
 wayland_client = dependency('wayland-client')
+clipboard_lib = static_library('files-clipboard',
+  files(
+    'src/clipboard/file_payload.cpp',
+    'src/clipboard/text_clipboard.cpp',
+  ),
+  include_directories: src_inc,
+  dependencies: [fs_dep, noctalia_ui_dep, wayland_client],
+)
+clipboard_dep = declare_dependency(link_with: clipboard_lib, include_directories: src_inc,
+  dependencies: [fs_dep, noctalia_ui_dep, wayland_client],
+)
+
 platform_lib = static_library('files-platform',
   files(
-    'src/platform/artwork_loader.cpp',
     'src/platform/desktop_integration.cpp',
     'src/platform/file_launcher.cpp',
-    'src/platform/file_payload.cpp',
-    'src/platform/pixbuf_image_decoder.cpp',
     'src/platform/terminal_launcher.cpp',
-    'src/platform/text_clipboard.cpp',
   ),
   protocol_sources,
   protocol_headers,
   include_directories: src_inc,
-  dependencies: [fs_dep, operations_dep, thumbnails_dep, noctalia_ui_dep, wayland_client,
-    dependency('wayland-cursor'), dependency('librsvg-2.0')],
+  dependencies: [fs_dep, noctalia_ui_dep, wayland_client, dependency('wayland-cursor')],
 )
 platform_dep = declare_dependency(link_with: platform_lib, include_directories: src_inc,
-  dependencies: [fs_dep, operations_dep, thumbnails_dep, noctalia_ui_dep, wayland_client],
+  dependencies: [fs_dep, noctalia_ui_dep, wayland_client],
   sources: protocol_headers,
 )
 
 ui_lib = static_library('files-ui',
   files(
-    'src/browser/file_icon.cpp',
-    'src/browser/file_view.cpp',
-    'src/browser/places_sidebar.cpp',
+    'src/ui/browser/file_icon.cpp',
+    'src/ui/browser/file_view.cpp',
+    'src/ui/browser/places_sidebar.cpp',
     'src/ui/controls/acl_editor.cpp',
     'src/ui/controls/archive_view.cpp',
     'src/ui/controls/batch_rename_dialog.cpp',
@@ -245,10 +270,10 @@ ui_lib = static_library('files-ui',
     'src/ui/controls/tooltip_presenter.cpp',
   ),
   include_directories: src_inc,
-  dependencies: [browser_dep, config_dep, operations_dep, thumbnails_dep, noctalia_ui_dep],
+  dependencies: [model_dep, browser_dep, config_dep, operations_dep, thumbnails_dep, noctalia_ui_dep],
 )
 ui_dep = declare_dependency(link_with: ui_lib, include_directories: src_inc,
-  dependencies: [browser_dep, config_dep, operations_dep, thumbnails_dep, noctalia_ui_dep],
+  dependencies: [model_dep, browser_dep, config_dep, operations_dep, thumbnails_dep, noctalia_ui_dep],
 )
 
 app = executable('noctalia-files',
@@ -263,8 +288,8 @@ app = executable('noctalia-files',
   build_info,
   completions,
   include_directories: include_directories('src', '.'),
-  dependencies: [ui_dep, platform_dep, system_dep, event_loop_dep, browser_dep, config_dep, operations_dep,
-    thumbnails_dep, noctalia_ui_dep, wayland_client, dependency('threads')],
+  dependencies: [ui_dep, clipboard_dep, platform_dep, imaging_dep, system_dep, event_loop_dep, browser_dep,
+    config_dep, operations_dep, thumbnails_dep, noctalia_ui_dep, wayland_client, dependency('threads')],
   install: true,
 )
 

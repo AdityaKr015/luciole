@@ -1,7 +1,7 @@
 #pragma once
 
-#include "browser/file_icon.h"
-#include "browser/preview_service.h"
+#include "thumbnails/preview_service.h"
+#include "ui/browser/file_icon.h"
 #include "ui/controls/flex.h"
 
 class Label;

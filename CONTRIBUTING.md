@@ -43,7 +43,7 @@ clang-format inserts braces around every control statement body and clang-tidy e
 
 ### Source Conventions
 
-- `src/` is the include root; project includes are relative to it (`#include "app/application.h"`).
+- `src/` and `lib/` are the include roots; project includes are relative to them (`#include "app/application.h"`, `#include "ui/style.h"`).
 - Headers use `#pragma once` and sit beside their sources; there is no separate `include/` tree.
 - Brace the body of every `if`, `else`, `for`, and `while`, including single statements.
 - Use `[[nodiscard]]` only where ignoring the result is likely a bug: a call with side effects that reports failure or hands back something the caller must own, consume or keep (a handle, token or id), and `&&` builders. Mark result and status types with `struct [[nodiscard]] Name` instead of each function that returns them. Getters and pure functions go without it.
@@ -52,13 +52,34 @@ clang-format inserts braces around every control statement body and clang-tidy e
 
 Comments explain what the current code does and any non-obvious constraint a reader needs. Do not narrate history, rejected alternatives, or "why we don't do X"; git holds that. If a comment is longer than the code it describes, cut it down.
 
+### Module layering
+
+Each directory under `src/` builds as one static library in `meson.build` (`ui/browser` and `ui/controls` together form `ui`), and its dependencies list only the modules it may include. A module includes only these:
+
+- `model`: plain option and enum types; nothing from `src/` or `lib/`.
+- `fs`: GIO file access, locations, atomic writes, transfer result types; no other module.
+- `event_loop`: poll sources for the main loop; `lib/core`.
+- `config`: settings and state; `model`, `fs`.
+- `browser`: directory models and controllers without view code; `model`, `fs`, `config`, `lib/core`. Never `lib/render`, `lib/ui`, `lib/wayland`, or `src/ui`.
+- `operations`: file jobs; `fs`, `model`.
+- `imaging`: image decoders and the shared `image_limits.h`; `fs`, `lib`.
+- `system`: icon themes and desktop entries; `lib`.
+- `thumbnails`: thumbnail cache, workers, previews, and the file icon cache; `imaging`, `system`, `fs`, `model`, `lib`.
+- `clipboard` (Wayland clipboard and drag and drop payloads) and `platform` (launchers, desktop integration): `fs`, `lib`.
+- `ui`: views and controls; any module above. `ui/controls` may include `browser/`, never the reverse.
+- `app`: everything.
+
+All modules share the `src/` include root, so Meson cannot reject an include of a forbidden `src/` module; review catches those. `model`, `fs`, `config`, `browser`, and `operations` do not depend on `noctalia_ui_dep`, so any `lib/` include there fails to compile; give `browser` that dependency only once it needs `lib/core`.
+
 ### Code shared with noctalia-shell
 
-Large parts of `src/` (UI controls, render, Wayland surfaces, core helpers) are copied from [noctalia-shell](https://github.com/noctalia-dev/noctalia). Make generic fixes there first and resync the copy, so the two trees do not drift apart.
+`lib/` (UI controls, render, Wayland surfaces, core helpers) is copied from [noctalia-shell](https://github.com/noctalia-dev/noctalia); do not edit it here. Make generic fixes there first and resync the copy, so the two trees do not drift apart.
 
 ## Testing
 
-Write test checks with `TEST_CHECK` and `TEST_NEAR` from `tests/test_check.h`, never `assert` or a per-file helper. `assert` compiles away under `NDEBUG`, so a release build would pass a broken test silently; `TEST_CHECK` prints the failed expression with its file and line and exits non-zero. The header refuses to compile with `NDEBUG`, so test executables set `override_options: ['b_ndebug=false']` in `meson.build`. Wrap an expression that contains a top-level comma in an extra pair of parentheses: `TEST_CHECK((ids == std::vector<int>{1, 2}))`.
+Write test checks with `TEST_CHECK` and `TEST_NEAR` from `tests/test_check.h`, never `assert` or a per-file helper. `assert` compiles away under `NDEBUG`, so a release build would pass a broken test silently; `TEST_CHECK` prints the failed expression with its file and line and exits non-zero. The header refuses to compile with `NDEBUG`, so test executables set `override_options: ['b_ndebug=false']` in `tests/meson.build`. Wrap an expression that contains a top-level comma in an extra pair of parentheses: `TEST_CHECK((ids == std::vector<int>{1, 2}))`.
+
+Tests are listed in the table in `tests/meson.build`: each links the module libraries it exercises and never lists `src/` files.
 
 ## Commit Messages
 

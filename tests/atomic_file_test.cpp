@@ -1,4 +1,4 @@
-#include "config/atomic_file.h"
+#include "fs/atomic_file.h"
 #include "test_check.h"
 
 #include <csignal>

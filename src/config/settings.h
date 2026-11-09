@@ -1,9 +1,9 @@
 #pragma once
 
-#include "browser/directory_options.h"
-#include "browser/thumbnail_options.h"
-#include "config/atomic_file.h"
 #include "config/diagnostic.h"
+#include "fs/atomic_file.h"
+#include "model/directory_options.h"
+#include "model/thumbnail_options.h"
 
 #include <expected>
 #include <filesystem>
