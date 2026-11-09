@@ -14,7 +14,7 @@ Owned text files must not contain em dashes or trailing whitespace and must end 
 
 ### Lint
 
-Code must pass clang-tidy with warnings treated as errors, using the same `.clang-tidy` check set as noctalia. `just lint` checks the whole tree; while iterating, lint only the `.cpp` files you touched:
+Code must pass clang-tidy with warnings treated as errors, using the same `.clang-tidy` check set as noctalia. `src/.clang-tidy` adds one project rule on top: functions in `src/` stay under 250 lines (`readability-function-size`); split a feature out instead of growing an orchestrator. `just lint` checks the whole tree; while iterating, lint only the `.cpp` files you touched:
 
 ```sh
 clang-tidy -p build-debug --warnings-as-errors='*' <touched .cpp files...>
@@ -72,6 +72,8 @@ Each directory under `src/` builds as one static library in `meson.build` (`ui/b
 All modules share the `src/` include root, so Meson cannot reject an include of a forbidden `src/` module; review catches those. `model`, `fs`, `config`, `browser`, and `operations` do not depend on `noctalia_ui_dep`, so any `lib/` include there fails to compile; give `browser` that dependency only once it needs `lib/core`.
 
 GIO file types stay behind `fs/`: public headers outside `fs/`, `thumbnails/`, and `imaging/` never mention `GFile`, `GFileInfo`, `GFileType`, or `GCancellable`. `browser`, `config`, `ui`, and `app` use the typed `fs/` API (`Location`, `FileType`, `CancelToken`, `runJob`, `fs/file_query.h`). Modules that drive GIO themselves (`operations`, `thumbnails`, `imaging`, `platform`, `clipboard`) reach it through `fs/gio_interop.h` in their `.cpp` files.
+
+Inside `app`, `WorkspaceApplication` owns windows, tabs, and the `OperationHub`, which runs every file job independently of tabs and hands a job to another tab when its tab closes. Each tab is a `BrowserPage` (`app/page/`) that only orchestrates feature controllers; a new feature gets its own controller behind the `PageContext` interface (see the comment in `app/page/page_context.h`). Actions are declared once in `browser/action_registry.cpp`, with their handler row in `BrowserPage::runAction`.
 
 ### Code shared with noctalia-shell
 
