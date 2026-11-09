@@ -239,6 +239,15 @@ void FileKeyboardController::textInputActivated(TextInputService&) {}
 void FileKeyboardController::textInputDeactivated(TextInputService&) { clearTypeahead(); }
 
 bool FileKeyboardController::listKey(const KeyboardEvent& event) {
+  if (listFocused()
+      && event.pressed
+      && event.modifiers == 0
+      && (KeySymbol::isLeft(event.sym) || KeySymbol::isRight(event.sym))
+      && m_page.browser().treeKey(KeySymbol::isRight(event.sym) != Style::rtl())) {
+    m_keyboardReveal = m_page.browser().model().selection().focused;
+    m_page.requestSync();
+    return true;
+  }
   auto& model = m_page.browser().model();
   if (const auto action =
           files::shortcutAction({Action::SelectAll, Action::ClearSelection}, event.sym, event.modifiers)) {

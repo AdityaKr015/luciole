@@ -1,5 +1,6 @@
 #include "browser/browser_controller.h"
 
+#include "browser/directory_tree.h"
 #include "browser/location_presentation.h"
 #include "fs/file_query.h"
 
@@ -74,6 +75,7 @@ files::BrowserController::~BrowserController() {
   m_session.setChangedCallback({});
   m_search.setChangedCallback({});
   m_model.setChangedCallback({});
+  m_tree.reset();
 }
 
 void files::BrowserController::advanceContext() {
@@ -242,6 +244,9 @@ bool files::BrowserController::up() {
 void files::BrowserController::refresh() {
   m_message.clear();
   if (m_query.empty()) {
+    if (m_tree) {
+      m_tree->refresh();
+    }
     m_session.refresh();
   } else {
     startSearch();
@@ -249,6 +254,9 @@ void files::BrowserController::refresh() {
 }
 
 void files::BrowserController::stop() {
+  if (m_tree) {
+    m_tree->clear();
+  }
   m_restoring = false;
   m_restoredViewport.reset();
   advanceContext();
@@ -388,9 +396,16 @@ void files::BrowserController::setSearchQuery(std::string text) {
 }
 
 void files::BrowserController::publish(DirectorySnapshot snapshot) {
-  snapshot.generation = ++m_revision;
+  snapshot.generation = m_revision = std::max(m_revision, m_model.snapshot().generation) + 1;
   m_publishing = true;
-  m_model.applySnapshot(std::move(snapshot));
+  if (m_tree && m_query.empty()) {
+    m_tree->setRoot(std::move(snapshot));
+  } else {
+    if (m_tree) {
+      m_tree->clear();
+    }
+    m_model.applySnapshot(std::move(snapshot));
+  }
   const auto status = m_model.snapshot().status;
   if (m_restoring && (status == DirectoryStatus::Ready || status == DirectoryStatus::Error)) {
     const auto& visit = m_history[m_historyIndex];
@@ -426,6 +441,45 @@ void files::BrowserController::publish(DirectorySnapshot snapshot) {
   }
   m_publishing = false;
   notify();
+}
+
+void files::BrowserController::setExpandableFolders(bool enabled) {
+  if (enabled == expandableFolders()) {
+    return;
+  }
+  m_tree.reset();
+  if (enabled) {
+    m_tree = std::make_unique<DirectoryTree>(m_model);
+  }
+  if (m_query.empty()) {
+    publish(m_session.snapshot());
+  }
+}
+bool files::BrowserController::toggleFolder(EntryId id) { return m_tree && m_query.empty() && m_tree->toggle(id); }
+files::TreeRowInfo files::BrowserController::treeRow(EntryId id) const {
+  return m_tree && m_query.empty() ? m_tree->row(id) : TreeRowInfo{};
+}
+bool files::BrowserController::treeKey(bool expand) {
+  if (!m_tree || !m_query.empty() || !m_model.selection().focused) {
+    return false;
+  }
+  const auto id = *m_model.selection().focused;
+  const auto info = m_tree->row(id);
+  if (expand) {
+    if (info.expandable && !info.expanded) {
+      (void)m_tree->expand(id);
+    } else if (info.expanded) {
+      const auto found = std::ranges::find_if(m_model.rows(), [&](auto row) { return m_model.treeParent(row) == id; });
+      if (found != m_model.rows().end()) {
+        m_model.select(*found);
+      }
+    }
+  } else if (info.expanded) {
+    (void)m_tree->collapse(id);
+  } else if (const auto parent = m_model.treeParent(id)) {
+    m_model.select(*parent);
+  }
+  return true;
 }
 
 void files::BrowserController::activate(EntryId id) {

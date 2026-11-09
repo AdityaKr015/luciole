@@ -213,6 +213,8 @@ namespace {
           {between<files::kMinSidebarWidth, files::kMaxSidebarWidth>, "expected integer sidebar width from 160 to 400"}
       ),
       describe(P::ShowSidebar, "show_sidebar", [](S& s) -> auto& { return s.showSidebar; }),
+      describe(P::SidebarTree, "sidebar_tree", [](S& s) -> auto& { return s.sidebarTree; }),
+      describe(P::ExpandableFolders, "expandable_folders", [](S& s) -> auto& { return s.expandableFolders; }),
       describe(P::ShowPreview, "show_preview", [](S& s) -> auto& { return s.showPreview; }),
       describe(
           P::PreviewWidth, "preview_width", [](S& s) -> auto& { return s.previewWidth; },

@@ -42,6 +42,7 @@ namespace {
 } // namespace
 
 struct files::DirectorySession::State : std::enable_shared_from_this<State> {
+  std::size_t entryLimit = 0;
   struct Scan {
     GioPtr<GCancellable> cancellable{g_cancellable_new()};
     GioPtr<GFileEnumerator> enumerator;
@@ -335,10 +336,23 @@ struct files::DirectorySession::State : std::enable_shared_from_this<State> {
             } else if (infos == nullptr) {
               state->complete(std::nullopt);
             } else {
+              bool limited = false;
               for (const GList* item = infos; item != nullptr; item = item->next) {
+                if (state->entryLimit && state->scan->entries.size() >= state->entryLimit) {
+                  limited = true;
+                  break;
+                }
                 state->append(G_FILE_INFO(item->data));
               }
-              state->nextBatch();
+              if (limited) {
+                state->complete(
+                    FileError{
+                        FileErrorKind::Unsupported, "Tree entry limit reached. Open this folder to see all items."
+                    }
+                );
+              } else {
+                state->nextBatch();
+              }
             }
           }
           g_list_free_full(infos, g_object_unref);
@@ -379,7 +393,9 @@ struct files::DirectorySession::State : std::enable_shared_from_this<State> {
   }
 };
 
-files::DirectorySession::DirectorySession() : m_state(std::make_shared<State>()) {}
+files::DirectorySession::DirectorySession(std::size_t entryLimit) : m_state(std::make_shared<State>()) {
+  m_state->entryLimit = entryLimit;
+}
 
 files::DirectorySession::~DirectorySession() {
   m_state->changed = {};

@@ -54,7 +54,7 @@ namespace files {
   // IDs last for this session; they are neither inodes nor persistent bookmarks.
   class DirectorySession {
   public:
-    DirectorySession();
+    explicit DirectorySession(std::size_t entryLimit = 0);
     ~DirectorySession();
     DirectorySession(const DirectorySession&) = delete;
     DirectorySession& operator=(const DirectorySession&) = delete;

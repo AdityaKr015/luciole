@@ -5,6 +5,9 @@
 #include <algorithm>
 
 namespace files {
+  inline float treePrefixWidth(std::size_t depth, float nameWidth, float iconSize) {
+    return std::min(static_cast<float>(depth) * 16.0F, std::max(0.0F, nameWidth - iconSize - 80.0F)) + 20.0F;
+  }
   struct FileViewMetrics {
     float inset, iconSize, nameTop, captionTop, parentTop, height, minWidth, gap;
   };

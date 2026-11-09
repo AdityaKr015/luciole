@@ -9,7 +9,9 @@
 #include <limits>
 #include <utility>
 
-bool files::DirectoryModel::applySnapshot(DirectorySnapshot snapshot) {
+bool files::DirectoryModel::applySnapshot(
+    DirectorySnapshot snapshot, std::unordered_map<EntryId, EntryId> parents, bool preserveRootOrder
+) {
   if (snapshot.generation < m_snapshot.generation) {
     return false;
   }
@@ -25,6 +27,8 @@ bool files::DirectoryModel::applySnapshot(DirectorySnapshot snapshot) {
   } else if (snapshot.status == DirectoryStatus::Ready || snapshot.status == DirectoryStatus::Error) {
     m_selectionAvailable = true;
   }
+  m_preserveRootOrder = preserveRootOrder;
+  m_treeParents = std::move(parents);
   m_snapshot = std::move(snapshot);
   m_presentations.clear();
   m_presentations.reserve(m_snapshot.entries.size());
@@ -184,12 +188,57 @@ void files::DirectoryModel::rebuildProjection() {
     }
   }
   std::ranges::sort(m_rows, [this](EntryId left, EntryId right) { return less(left, right); });
+  if (!m_treeParents.empty() || m_preserveRootOrder) {
+    std::unordered_map<EntryId, std::vector<EntryId>> children;
+    std::vector<EntryId> roots;
+    for (const auto id : m_rows) {
+      if (const auto parent = treeParent(id)) {
+        children[*parent].push_back(id);
+      } else {
+        roots.push_back(id);
+      }
+    }
+    if (m_preserveRootOrder) {
+      std::ranges::sort(roots, {}, [&](EntryId id) { return m_presentations.at(id).sourceIndex; });
+    }
+    m_rows.clear();
+    std::unordered_set<EntryId> visited;
+    const auto append = [&](this auto&& self, EntryId id, std::size_t depth) -> void {
+      if (depth > 32 || !visited.insert(id).second) {
+        return;
+      }
+      m_rows.push_back(id);
+      if (const auto found = children.find(id); found != children.end()) {
+        for (const auto child : found->second) {
+          self(child, depth + 1);
+        }
+      }
+    };
+    for (const auto id : roots) {
+      append(id, 0);
+    }
+  }
   m_positions.clear();
   m_positions.reserve(m_rows.size());
   for (std::size_t i = 0; i < m_rows.size(); ++i) {
     m_positions.emplace(m_rows[i], i);
   }
   reconcileSelection();
+}
+
+std::optional<files::EntryId> files::DirectoryModel::treeParent(EntryId id) const {
+  const auto found = m_treeParents.find(id);
+  return found == m_treeParents.end() ? std::nullopt : std::optional(found->second);
+}
+std::size_t files::DirectoryModel::treeDepth(EntryId id) const {
+  std::size_t depth = 0;
+  while (const auto parent = treeParent(id)) {
+    id = *parent;
+    if (++depth >= 32) {
+      break;
+    }
+  }
+  return depth;
 }
 
 bool files::DirectoryModel::canSelect() const { return m_selectionAvailable; }

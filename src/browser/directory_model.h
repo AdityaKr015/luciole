@@ -40,7 +40,11 @@ namespace files {
     DirectoryModel& operator=(DirectoryModel&&) = delete;
 
     // Returns false for an obsolete generation. Observers must not throw.
-    bool applySnapshot(DirectorySnapshot snapshot);
+    bool applySnapshot(
+        DirectorySnapshot snapshot, std::unordered_map<EntryId, EntryId> parents = {}, bool preserveRootOrder = false
+    );
+    std::optional<EntryId> treeParent(EntryId id) const;
+    std::size_t treeDepth(EntryId id) const;
     void setChangedCallback(std::function<void()> callback);
     void setSort(SortOptions options);
     void setFilter(FilterOptions options);
@@ -92,10 +96,12 @@ namespace files {
     std::string m_filterKey;
     std::unordered_map<EntryId, Presentation> m_presentations;
     std::vector<EntryId> m_rows;
+    std::unordered_map<EntryId, EntryId> m_treeParents;
     std::unordered_map<EntryId, std::size_t> m_positions;
     SelectionState m_selection;
     std::optional<EntryId> m_scrollAnchor;
     bool m_selectionAvailable = false;
+    bool m_preserveRootOrder = false;
     std::function<void()> m_changed;
   };
 } // namespace files

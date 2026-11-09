@@ -108,6 +108,7 @@ private:
   bool m_placesDirty = true;
   int m_sidebarWidth = files::kDefaultSidebarWidth;
   bool m_showSidebar = true;
+  bool m_sidebarTree = false;
   int m_sidebarStartWidth = files::kDefaultSidebarWidth;
   int m_sidebarStartVisibleWidth = files::kDefaultSidebarWidth;
   float m_sidebarPressX = 0;

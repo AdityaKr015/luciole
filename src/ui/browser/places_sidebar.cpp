@@ -4,6 +4,7 @@
 #include "core/input/key_modifiers.h"
 #include "core/input/key_symbols.h"
 #include "model/directory_options.h"
+#include "ui/browser/sidebar_tree_view.h"
 #include "ui/builders.h"
 
 #include <algorithm>
@@ -38,6 +39,9 @@ void files::PlacesSidebar::setRenameCallback(std::function<void(const Bookmark&)
   m_rename = std::move(callback);
 }
 InputArea* files::PlacesSidebar::focusArea(const Location& location) const {
+  if (m_tree) {
+    return m_tree->focusArea(location);
+  }
   const auto found = std::ranges::find_if(m_rows, [&](const auto& row) { return row.bookmark.location == location; });
   return found == m_rows.end() ? nullptr : found->button->inputArea();
 }
@@ -46,6 +50,9 @@ void files::PlacesSidebar::invalidate() {
   markLayoutDirty();
 }
 std::optional<files::Bookmark> files::PlacesSidebar::folderAt(float x, float y) const {
+  if (m_tree) {
+    return m_tree->folderAt(x, y);
+  }
   if (!containsScenePoint(x, y)) {
     return std::nullopt;
   }
@@ -62,6 +69,9 @@ std::optional<files::Bookmark> files::PlacesSidebar::folderAt(float x, float y) 
   return std::nullopt;
 }
 std::optional<LayoutRect> files::PlacesSidebar::folderRect(const Location& location) const {
+  if (m_tree) {
+    return m_tree->folderRect(location);
+  }
   for (const auto& row : m_rows) {
     if (row.bookmark.location == location) {
       float x = 0, y = 0;
@@ -76,11 +86,17 @@ std::optional<LayoutRect> files::PlacesSidebar::folderRect(const Location& locat
   return std::nullopt;
 }
 void files::PlacesSidebar::cancelDragCandidate() {
+  if (m_tree) {
+    m_tree->cancelDragCandidate();
+  }
   m_dragCandidate.reset();
   m_dragged = false;
 }
 void files::PlacesSidebar::sync(std::optional<Location> current) {
   m_current = std::move(current);
+  if (m_tree) {
+    m_tree->sync(m_current, m_showHidden);
+  }
   bool highlighted = false;
   for (auto& row : m_rows) {
     const bool selected = !highlighted
@@ -174,7 +190,60 @@ void files::PlacesSidebar::addRow(const Bookmark& bookmark, const std::string& g
   m_rows.push_back({bookmark, index, raw});
   m_scroll->content()->addChild(std::move(button));
 }
+void files::PlacesSidebar::setTreeEnabled(bool enabled) {
+  if (std::exchange(m_treeEnabled, enabled) != enabled) {
+    invalidate();
+  }
+}
+void files::PlacesSidebar::setShowHidden(bool showHidden) {
+  if (std::exchange(m_showHidden, showHidden) != showHidden && m_tree) {
+    m_tree->sync(m_current, showHidden);
+  }
+}
 void files::PlacesSidebar::rebuild() {
+  if (m_treeEnabled) {
+    m_scroll->setVisible(false);
+    m_scroll->setParticipatesInLayout(false);
+    if (!m_tree) {
+      auto tree = std::make_unique<SidebarTreeView>();
+      m_tree = tree.get();
+      tree->open = [this](const Location& location) {
+        if (m_open) {
+          m_open(location);
+        }
+      };
+      tree->context = [this](const Bookmark& bookmark, float x, float y) {
+        if (m_context) {
+          m_context(bookmark, x, y);
+        }
+      };
+      tree->drag = [this](const Bookmark& bookmark) {
+        if (m_drag) {
+          m_drag(bookmark);
+        }
+      };
+      tree->rename = [this](const Bookmark& bookmark) {
+        if (m_rename) {
+          m_rename(bookmark);
+        }
+      };
+      tree->changed = [this] {
+        if (m_changed) {
+          m_changed();
+        }
+      };
+      addChild(std::move(tree));
+    }
+    m_tree->setRoots(m_pins);
+    m_tree->sync(m_current, m_showHidden);
+    return;
+  }
+  if (m_tree) {
+    removeChild(m_tree);
+    m_tree = nullptr;
+  }
+  m_scroll->setVisible(true);
+  m_scroll->setParticipatesInLayout(true);
   cancelDragCandidate();
   m_rows.clear();
   auto* content = m_scroll->content();
@@ -208,6 +277,9 @@ LayoutSize files::PlacesSidebar::doMeasure(Renderer& renderer, const LayoutConst
     m_dirty = false;
     rebuild();
   }
+  if (m_tree) {
+    m_tree->prepare();
+  }
   return Flex::doMeasure(renderer, constraints);
 }
 void files::PlacesSidebar::doArrange(Renderer& renderer, const LayoutRect& rect) {
@@ -215,9 +287,15 @@ void files::PlacesSidebar::doArrange(Renderer& renderer, const LayoutRect& rect)
     m_dirty = false;
     rebuild();
   }
+  if (m_tree) {
+    m_tree->prepare();
+  }
   Flex::doArrange(renderer, rect);
 }
 std::optional<std::size_t> files::PlacesSidebar::dropSlot(float x, float y) const {
+  if (m_tree) {
+    return m_tree->dropSlot(x, y);
+  }
   float localX = 0, localY = 0;
   if (!Node::mapFromScene(this, x, y, localX, localY)
       || localX < 0
@@ -236,6 +314,9 @@ std::optional<std::size_t> files::PlacesSidebar::dropSlot(float x, float y) cons
   return m_pins.bookmarks().size();
 }
 LayoutRect files::PlacesSidebar::dropLine(std::size_t slot) const {
+  if (m_tree) {
+    return m_tree->dropLine(slot);
+  }
   float x = 0, y = 0;
   Node::absolutePosition(this, x, y);
   const float top = y;
@@ -257,9 +338,16 @@ LayoutRect files::PlacesSidebar::dropLine(std::size_t slot) const {
   return {x + 8.0F, std::clamp(line, top + 2.0F, top + height() - 3.0F), width() - 16.0F, 2.0F};
 }
 void files::PlacesSidebar::dragScroll(float delta) {
+  if (m_tree) {
+    m_tree->dragScroll(delta);
+    return;
+  }
   m_scroll->requestScrollToOffset(m_scroll->scrollOffset() + delta);
 }
 float files::PlacesSidebar::dragScrollSpeed(float x, float y) const {
+  if (m_tree) {
+    return m_tree->dragScrollSpeed(x, y);
+  }
   float localX = 0, localY = 0;
   if (!Node::mapFromScene(this, x, y, localX, localY) || localX < 0 || localX >= width()) {
     return 0;

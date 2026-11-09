@@ -109,6 +109,7 @@ BrowserPage::BrowserPage(
     }
     return viewport;
   });
+  m_browser.setExpandableFolders(settings.expandableFolders && settings.viewMode == files::ViewMode::List);
   m_sidebar.load(settings);
   m_detailsHeader.load(settings);
   m_activationMode = settings.activationMode;
@@ -1761,8 +1762,6 @@ bool BrowserPage::zoomFromScroll(const PointerEvent& event) {
 void BrowserPage::syncBrowser() {
   m_propertiesController.updateApply();
   m_fileKeys.syncContext();
-  const auto& model = browser().model();
-  const auto& snapshot = model.snapshot();
   if (m_visitSerial != browser().visitSerial()) {
     m_visitSerial = browser().visitSerial();
     const auto& viewport = browser().viewport();
@@ -1773,6 +1772,11 @@ void BrowserPage::syncBrowser() {
     m_detailsHeader.setOffset(0);
     m_fileKeys.resetReveal();
   }
+  m_browser.setExpandableFolders(
+      m_savedSettings.expandableFolders && m_viewMode == files::ViewMode::List && !m_miller.enabled()
+  );
+  const auto& model = browser().model();
+  const auto& snapshot = model.snapshot();
   if (m_locationBar.syncLocation(snapshot.location)) {
     m_siblingCompletion.cancel();
     resetFileView();

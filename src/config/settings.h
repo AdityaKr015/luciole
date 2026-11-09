@@ -25,6 +25,8 @@ namespace files {
     int gridIconSize = kDefaultGridIconSize;
     int sidebarWidth = kDefaultSidebarWidth;
     bool showSidebar = true;
+    bool sidebarTree = false;
+    bool expandableFolders = false;
     bool showPreview = true;
     int previewWidth = 320;
     int millerColumnWidth = 260;
@@ -65,6 +67,8 @@ namespace files {
     ShowEmblems,
     SidebarWidth,
     ShowSidebar,
+    SidebarTree,
+    ExpandableFolders,
     ShowPreview,
     PreviewWidth,
     MillerColumnWidth,
@@ -129,6 +133,8 @@ namespace files {
     static constexpr PreferenceKey<bool> ShowEmblems{Id::ShowEmblems};
     static constexpr PreferenceKey<int> SidebarWidth{Id::SidebarWidth};
     static constexpr PreferenceKey<bool> ShowSidebar{Id::ShowSidebar};
+    static constexpr PreferenceKey<bool> SidebarTree{Id::SidebarTree};
+    static constexpr PreferenceKey<bool> ExpandableFolders{Id::ExpandableFolders};
     static constexpr PreferenceKey<bool> ShowPreview{Id::ShowPreview};
     static constexpr PreferenceKey<int> PreviewWidth{Id::PreviewWidth};
     static constexpr PreferenceKey<int> MillerColumnWidth{Id::MillerColumnWidth};

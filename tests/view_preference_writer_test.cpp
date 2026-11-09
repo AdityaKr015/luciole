@@ -49,13 +49,21 @@ namespace {
          {files::BrowserPreference::ThumbnailCacheMib, 64}}
     );
     using P = files::BrowserPreference;
-    writer.submit({{P::Density, files::ViewDensity::Compact}, {P::ShowSizeCaption, false}, {P::ShowEmblems, true}});
+    writer.submit(
+        {{P::Density, files::ViewDensity::Compact},
+         {P::ShowSizeCaption, false},
+         {P::ShowEmblems, true},
+         {P::SidebarTree, false},
+         {P::ExpandableFolders, true}}
+    );
     writer.submit(
         {{P::Density, files::ViewDensity::Comfortable},
          {P::ShowSizeCaption, true},
          {P::ShowTypeCaption, true},
          {P::ShowModifiedCaption, true},
-         {P::ShowEmblems, false}}
+         {P::ShowEmblems, false},
+         {P::SidebarTree, true},
+         {P::ExpandableFolders, false}}
     );
     writer.saveGridIconSize(96);
     writer.saveGridIconSize(64);
@@ -104,6 +112,8 @@ namespace {
         && loaded->browser.thumbnails.cacheMiB == 64
         && loaded->browser.sidebarWidth == 280
         && !loaded->browser.showSidebar
+        && loaded->browser.sidebarTree
+        && !loaded->browser.expandableFolders
         && loaded->browser.sort == finalSort
         && loaded->browser.columns == hiddenColumns
         && loaded->browser.columnOrder == finalOrder

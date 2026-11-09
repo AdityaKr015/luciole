@@ -1,0 +1,390 @@
+#include "ui/browser/sidebar_tree_view.h"
+
+#include "browser/location_presentation.h"
+#include "core/input/key_modifiers.h"
+#include "core/input/key_symbols.h"
+#include "ui/builders.h"
+#include "ui/controls/button.h"
+#include "ui/controls/scroll_view.h"
+#include "ui/controls/virtual_grid_view.h"
+
+#include <algorithm>
+
+namespace {
+  class TreeButton final : public Button {
+  public:
+    TreeButton() {
+      setVariant(ButtonVariant::Ghost);
+      setContentAlign(ButtonContentAlign::Start);
+      setControlHeight(36);
+      setGlyph("folder");
+      setText(" ");
+      label()->setUseMarkup(false);
+      inputArea()->setHitTestVisible(false);
+      auto prefix = ui::row(
+          {.out = &m_prefix, .justify = FlexJustify::End},
+          ui::glyph({.out = &m_arrow, .glyph = "chevron-right", .glyphSize = 14})
+      );
+      insertChildAt(0, std::move(prefix));
+    }
+    void bind(
+        const files::TreeRowInfo& info, const std::string& text, const std::string& glyph, bool selected, bool hovered,
+        float width
+    ) {
+      const float prefix = std::min(static_cast<float>(info.depth) * 14.0F, std::max(0.0F, width - 110.0F)) + 18.0F;
+      m_prefix->setMinWidth(prefix);
+      m_prefix->setMaxWidth(prefix);
+      m_arrow->setVisible(info.expandable);
+      m_arrow->setGlyph(info.expanded ? "chevron-down" : Style::rtl() ? "chevron-left" : "chevron-right");
+      m_arrow->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimary : ColorRole::OnSurfaceVariant));
+      setGlyph(glyph);
+      setText(info.status.empty() ? text : text + " · " + info.status);
+      setSelected(selected);
+      setHoveredVisual(hovered);
+    }
+
+  private:
+    Flex* m_prefix = nullptr;
+    Glyph* m_arrow = nullptr;
+  };
+} // namespace
+
+class files::SidebarTreeView::Adapter final : public VirtualGridAdapter {
+public:
+  explicit Adapter(SidebarTreeView& owner) : m_owner(owner) {}
+  std::size_t itemCount() const override { return m_owner.m_model.rows().size(); }
+  std::unique_ptr<Node> createTile() override { return std::make_unique<TreeButton>(); }
+  void bindTile(Node& tile, std::size_t index, bool, bool hovered) override {
+    const auto id = m_owner.m_model.rows()[index];
+    const auto* entry = m_owner.m_model.entry(id);
+    const auto glyph = m_owner.m_glyphs.find(id);
+    auto& button = static_cast<TreeButton&>(tile);
+    button.bind(
+        m_owner.m_tree.row(id), entry->displayName, glyph == m_owner.m_glyphs.end() ? "folder" : glyph->second,
+        m_owner.m_current == entry->location, hovered, m_owner.width()
+    );
+    button.setKeyboardFocusHint(m_owner.m_grid->focusArea()->focused() && m_owner.m_model.selection().focused == id);
+  }
+  std::string itemTooltip(std::size_t index) const override {
+    const auto id = m_owner.m_model.rows()[index];
+    const auto info = m_owner.m_tree.row(id);
+    return locationEditText(m_owner.m_model.entry(id)->location) + (info.status.empty() ? "" : "\n" + info.status);
+  }
+  bool onPointerPress(std::size_t index, float x, float, float width, float) override {
+    m_pressed = m_owner.m_model.rows()[index];
+    const auto info = m_owner.m_tree.row(*m_pressed);
+    const float prefix = std::min(static_cast<float>(info.depth) * 14.0F, std::max(0.0F, width - 110.0F)) + 18.0F;
+    const float leading = Style::rtl() ? width - x : x;
+    m_expand = info.expandable && leading < prefix + Style::spaceMd;
+    m_dragged = false;
+    m_owner.m_model.select(*m_pressed);
+    return true;
+  }
+  bool onPointerDrag(std::optional<std::size_t>, float, float, float, float) override {
+    if (!m_dragged && m_pressed && !m_expand && m_owner.m_pinIndices.contains(*m_pressed) && m_owner.drag) {
+      m_dragged = true;
+      if (const auto bookmark = m_owner.bookmark(*m_pressed)) {
+        m_owner.drag(*bookmark);
+      }
+    }
+    return false;
+  }
+  PointerReleaseResult onPointerRelease(std::optional<std::size_t> index) override {
+    const auto pressed = std::exchange(m_pressed, std::nullopt);
+    if (!pressed || m_dragged || !index || *index >= itemCount() || m_owner.m_model.rows()[*index] != *pressed) {
+      return {};
+    }
+    return {.rebind = true, .activateIndex = index};
+  }
+  void onActivate(std::size_t index) override {
+    const auto id = m_owner.m_model.rows()[index];
+    if (m_expand) {
+      (void)m_owner.m_tree.toggle(id);
+    } else if (m_owner.open) {
+      const auto target = m_owner.m_model.entry(id)->location;
+      m_owner.open(target);
+    }
+  }
+  void onPointerCancel() override {
+    m_pressed.reset();
+    m_dragged = false;
+  }
+  void onSecondaryActivate(std::size_t index, float x, float y) override {
+    const auto bookmark = m_owner.bookmark(m_owner.m_model.rows()[index]);
+    if (bookmark && m_owner.context) {
+      m_owner.context(*bookmark, x, y);
+    }
+  }
+
+private:
+  SidebarTreeView& m_owner;
+  std::optional<EntryId> m_pressed;
+  bool m_expand = false, m_dragged = false;
+};
+
+files::SidebarTreeView::SidebarTreeView() : m_adapter(std::make_unique<Adapter>(*this)) {
+  setDirection(FlexDirection::Vertical);
+  setAlign(FlexAlign::Stretch);
+  setFlexGrow(1);
+  setPadding(8);
+  addChild(
+      ui::label(
+          {.text = "Folders",
+           .fontSize = Style::fontSizeCaption,
+           .fontWeight = FontWeight::SemiBold,
+           .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
+           .height = 24}
+      )
+  );
+  auto grid = std::make_unique<VirtualGridView>();
+  m_grid = grid.get();
+  grid->setFlexGrow(1);
+  grid->setColumns(1);
+  grid->setSquareCells(false);
+  grid->setCellHeight(36);
+  grid->setRowGap(4);
+  grid->setAdapter(m_adapter.get());
+  grid->focusArea()->setTabFocusKey("sidebar-tree");
+  grid->focusArea()->setRetainsFocusOnPointerRelease(true);
+  grid->scrollView().setReserveScrollbarGutter(true);
+  grid->focusArea()->setOnKeyDown([this](const InputArea::KeyData& event) {
+    if (event.pressed && !event.preedit && key(event.sym, event.modifiers)) {
+      markLayoutDirty();
+      if (changed) {
+        changed();
+      }
+    }
+  });
+  grid->focusArea()->setOnFocusGain([this] {
+    m_dirty = true;
+    markLayoutDirty();
+    if (changed) {
+      changed();
+    }
+  });
+  grid->focusArea()->setOnFocusLoss([this] {
+    m_dirty = true;
+    markLayoutDirty();
+    if (changed) {
+      changed();
+    }
+  });
+  addChild(std::move(grid));
+  m_model.setChangedCallback([this] {
+    m_dirty = true;
+    markLayoutDirty();
+    if (changed) {
+      changed();
+    }
+  });
+  m_tree.setChangedCallback([this] {
+    m_dirty = true;
+    markLayoutDirty();
+    if (changed) {
+      changed();
+    }
+  });
+}
+files::SidebarTreeView::~SidebarTreeView() {
+  m_grid->focusArea()->setOnFocusGain({});
+  m_grid->focusArea()->setOnFocusLoss({});
+  m_grid->focusArea()->setOnKeyDown({});
+  m_grid->setAdapter(nullptr);
+  m_model.setChangedCallback({});
+  m_tree.setChangedCallback({});
+}
+void files::SidebarTreeView::setRoots(const PinService& pins) {
+  DirectorySnapshot snapshot;
+  snapshot.status = DirectoryStatus::Ready;
+  std::map<std::string, EntryId> roots;
+  m_pinIndices.clear();
+  m_glyphs.clear();
+  m_pinCount = pins.bookmarks().size();
+  for (std::size_t i = 0; i < pins.bookmarks().size(); ++i) {
+    const auto& pin = pins.bookmarks()[i];
+    const auto prior = m_rootIds.find(pin.location.uri());
+    const auto id = prior == m_rootIds.end() ? m_nextRoot++ : prior->second;
+    roots.emplace(pin.location.uri(), id);
+    m_pinIndices.emplace(id, i);
+    const auto known = std::ranges::find_if(pins.userPlaces(), [&](const auto& place) {
+      return place.bookmark.location == pin.location;
+    });
+    m_glyphs.emplace(id, known == pins.userPlaces().end() ? "folder" : known->glyphName);
+    snapshot.entries.push_back(
+        {.id = id,
+         .location = pin.location,
+         .name = {},
+         .displayName = pin.label,
+         .type = FileType::Directory,
+         .size = {},
+         .modifiedSeconds = {},
+         .etag = {},
+         .parentDisplayName = {}}
+    );
+  }
+  m_rootIds = std::move(roots);
+  m_tree.setRoot(std::move(snapshot));
+}
+void files::SidebarTreeView::sync(std::optional<Location> current, bool showHidden) {
+  if (m_current == current && m_model.filter().showHidden == showHidden) {
+    return;
+  }
+  m_current = std::move(current);
+  m_model.setFilter({.showHidden = showHidden, .text = {}});
+  m_dirty = true;
+  markLayoutDirty();
+}
+void files::SidebarTreeView::prepare() {
+  if (!std::exchange(m_dirty, false)) {
+    return;
+  }
+  m_grid->notifyDataChanged();
+  const auto focused = m_model.selection().focused;
+  const auto found = focused ? std::ranges::find(m_model.rows(), *focused) : m_model.rows().end();
+  m_grid->setSelectedIndex(
+      found == m_model.rows().end() ? std::nullopt : std::optional<std::size_t>(found - m_model.rows().begin()),
+      std::exchange(m_reveal, false)
+  );
+}
+std::optional<files::Bookmark> files::SidebarTreeView::bookmark(EntryId id) const {
+  const auto* entry = m_model.entry(id);
+  return entry ? std::optional(Bookmark{entry->displayName, entry->location}) : std::nullopt;
+}
+InputArea* files::SidebarTreeView::focusArea(const Location& location) {
+  const auto found =
+      std::ranges::find_if(m_model.rows(), [&](EntryId id) { return m_model.entry(id)->location == location; });
+  if (found == m_model.rows().end()) {
+    return nullptr;
+  }
+  m_reveal = true;
+  m_model.select(*found);
+  return m_grid->focusArea();
+}
+std::optional<files::Bookmark> files::SidebarTreeView::folderAt(float x, float y) const {
+  const auto index = m_grid->itemAtScene(x, y);
+  return index ? bookmark(m_model.rows()[*index]) : std::nullopt;
+}
+std::optional<LayoutRect> files::SidebarTreeView::folderRect(const Location& location) const {
+  for (std::size_t i = 0; i < m_model.rows().size(); ++i) {
+    if (m_model.entry(m_model.rows()[i])->location == location) {
+      if (const auto rect = m_grid->itemRect(i)) {
+        return rect;
+      }
+    }
+  }
+  return std::nullopt;
+}
+std::optional<std::size_t> files::SidebarTreeView::dropSlot(float x, float y) const {
+  if (!containsScenePoint(x, y) || folderAt(x, y)) {
+    return std::nullopt;
+  }
+  for (std::size_t i = 0; i < m_model.rows().size(); ++i) {
+    const auto id = m_model.rows()[i];
+    if (m_pinIndices.contains(id)) {
+      if (const auto rect = m_grid->itemRect(i); rect && y < rect->y + rect->height * 0.5F) {
+        return m_pinIndices.at(id);
+      }
+    }
+  }
+  return m_pinCount;
+}
+LayoutRect files::SidebarTreeView::dropLine(std::size_t slot) const {
+  float x = 0, y = 0;
+  Node::absolutePosition(this, x, y);
+  for (std::size_t i = 0; i < m_model.rows().size(); ++i) {
+    const auto found = m_pinIndices.find(m_model.rows()[i]);
+    if (found != m_pinIndices.end() && found->second >= slot) {
+      if (const auto rect = m_grid->itemRect(i)) {
+        return {rect->x, rect->y - 2, rect->width, 2};
+      }
+    }
+  }
+  float line = y;
+  for (std::size_t i = 0; i < m_model.rows().size(); ++i) {
+    if (const auto rect = m_grid->itemRect(i)) {
+      line = std::max(line, rect->y + rect->height + 2);
+    }
+  }
+  return {x, std::min(line, y + height() - 2), width(), 2};
+}
+void files::SidebarTreeView::dragScroll(float delta) { m_grid->scrollDuringDrag(delta); }
+float files::SidebarTreeView::dragScrollSpeed(float x, float y) const {
+  if (!containsScenePoint(x, y)) {
+    return 0;
+  }
+  float localX = 0, localY = 0;
+  Node::mapFromScene(this, x, y, localX, localY);
+  return localY < 28 ? -6 : localY > height() - 28 ? 6 : 0;
+}
+void files::SidebarTreeView::cancelDragCandidate() { m_grid->cancelPointerGesture(); }
+bool files::SidebarTreeView::key(std::uint32_t sym, std::uint32_t modifiers) {
+  if (m_model.rows().empty()) {
+    return false;
+  }
+  auto id = m_model.selection().focused.value_or(m_model.rows().front());
+  const auto bookmark = this->bookmark(id);
+  if (!modifiers && KeySymbol::isEnterOrSpace(sym)) {
+    if (open && bookmark) {
+      open(bookmark->location);
+    }
+    return true;
+  }
+  if (sym == XKB_KEY_Menu || (sym == XKB_KEY_F10 && modifiers == KeyMod::Shift)) {
+    if (context && bookmark) {
+      const auto rect = folderRect(bookmark->location);
+      if (rect) {
+        context(*bookmark, rect->x + rect->width / 2, rect->y + rect->height / 2);
+      }
+    }
+    return true;
+  }
+  if (!modifiers && sym == XKB_KEY_F2 && m_pinIndices.contains(id)) {
+    if (rename && bookmark) {
+      rename(*bookmark);
+    }
+    return true;
+  }
+  if (modifiers) {
+    return false;
+  }
+  const auto info = m_tree.row(id);
+  if (KeySymbol::isRight(sym) != Style::rtl() && (KeySymbol::isRight(sym) || KeySymbol::isLeft(sym))) {
+    if (!info.expanded) {
+      (void)m_tree.expand(id);
+    } else {
+      const auto child =
+          std::ranges::find_if(m_model.rows(), [&](EntryId row) { return m_model.treeParent(row) == id; });
+      if (child != m_model.rows().end()) {
+        id = *child;
+      }
+    }
+  } else if (KeySymbol::isLeft(sym) || KeySymbol::isRight(sym)) {
+    if (info.expanded) {
+      (void)m_tree.collapse(id);
+    } else if (const auto parent = m_model.treeParent(id)) {
+      id = *parent;
+    }
+  } else {
+    auto index = static_cast<std::ptrdiff_t>(std::ranges::find(m_model.rows(), id) - m_model.rows().begin());
+    if (sym == XKB_KEY_Down) {
+      ++index;
+    } else if (sym == XKB_KEY_Up) {
+      --index;
+    } else if (KeySymbol::isHome(sym)) {
+      index = 0;
+    } else if (KeySymbol::isEnd(sym)) {
+      index = static_cast<std::ptrdiff_t>(m_model.rows().size()) - 1;
+    } else if (sym == XKB_KEY_Page_Down) {
+      index += static_cast<std::ptrdiff_t>(m_grid->pageItemStride());
+    } else if (sym == XKB_KEY_Page_Up) {
+      index -= static_cast<std::ptrdiff_t>(m_grid->pageItemStride());
+    } else {
+      return false;
+    }
+    index = std::clamp<std::ptrdiff_t>(index, 0, static_cast<std::ptrdiff_t>(m_model.rows().size()) - 1);
+    id = m_model.rows()[static_cast<std::size_t>(index)];
+  }
+  m_reveal = true;
+  m_model.select(id);
+  return true;
+}

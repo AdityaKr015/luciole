@@ -32,6 +32,7 @@ SidebarController::SidebarController(
 void SidebarController::load(const files::BrowserSettings& settings) {
   m_sidebarWidth = settings.sidebarWidth;
   m_showSidebar = settings.showSidebar;
+  m_sidebarTree = settings.sidebarTree;
 }
 
 void SidebarController::applySettings(
@@ -39,6 +40,12 @@ void SidebarController::applySettings(
 ) {
   if (force || before.showSidebar != settings.showSidebar) {
     setVisible(settings.showSidebar, false);
+  }
+  if (force || before.sidebarTree != settings.sidebarTree) {
+    m_sidebarTree = settings.sidebarTree;
+    if (m_places) {
+      m_places->setTreeEnabled(m_sidebarTree);
+    }
   }
   if (force || before.sidebarWidth != settings.sidebarWidth) {
     m_sidebarWidth = settings.sidebarWidth;
@@ -124,6 +131,8 @@ void SidebarController::reuseFrom(SidebarController& previous) {
 }
 
 void SidebarController::configureCallbacks() {
+  m_places->setChangedCallback([this] { m_page.requestSync(); });
+  m_places->setTreeEnabled(m_sidebarTree);
   m_places->setOpenCallback([this](const files::Location& location) {
     m_page.setActionMessage({});
     m_page.browser().open(location);
@@ -246,7 +255,10 @@ void SidebarController::showDropLine(Renderer& renderer, std::size_t slot) {
   m_placeDropLine->arrange(renderer, m_places->dropLine(slot));
 }
 
-void SidebarController::sync(const std::optional<files::Location>& location) { m_places->sync(location); }
+void SidebarController::sync(const std::optional<files::Location>& location) {
+  m_places->setShowHidden(m_page.browser().model().filter().showHidden);
+  m_places->sync(location);
+}
 
 void SidebarController::onFrame() {
   m_sidebarResizeLine->setFill(colorSpecFromRole(

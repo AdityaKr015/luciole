@@ -5,9 +5,13 @@
 #include "ui/controls/scroll_view.h"
 
 namespace files {
+  class SidebarTreeView;
   class PlacesSidebar final : public Flex {
   public:
     explicit PlacesSidebar(PinService& pins);
+    void setTreeEnabled(bool enabled);
+    void setShowHidden(bool showHidden);
+    void setChangedCallback(std::function<void()> callback) { m_changed = std::move(callback); }
     void invalidate();
     void sync(std::optional<Location> current);
     void cancelDragCandidate();
@@ -36,6 +40,9 @@ namespace files {
     void rebuild();
     void addRow(const Bookmark& bookmark, const std::string& glyph, std::size_t index);
     PinService& m_pins;
+    SidebarTreeView* m_tree = nullptr;
+    bool m_treeEnabled = false, m_showHidden = false;
+    std::function<void()> m_changed;
     ScrollView* m_scroll = nullptr;
     Label* m_heading = nullptr;
     std::vector<Row> m_rows;

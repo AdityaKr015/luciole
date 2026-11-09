@@ -1,5 +1,6 @@
 #include "ui/browser/file_view.h"
 
+#include "browser/directory_tree.h"
 #include "browser/entry_details.h"
 #include "core/input/key_modifiers.h"
 #include "core/log.h"
@@ -62,6 +63,10 @@ namespace {
            .align = FlexAlign::Center,
            .gap = Style::spaceSm,
            .configure = [](Flex& container) { container.setPadding(0, Style::spaceMd); }},
+          ui::row(
+              {.out = &m_treePrefix, .justify = FlexJustify::End, .visible = false, .participatesInLayout = false},
+              ui::glyph({.out = &m_expander, .glyph = "chevron-right", .glyphSize = 14.0F})
+          ),
           std::move(icon),
           ui::column(
               {.out = &m_nameColumn, .align = FlexAlign::Stretch},
@@ -95,8 +100,14 @@ namespace {
     void bind(
         const files::DirectoryEntry& entry, std::string_view typeLabel, bool selected, bool focused, bool hovered,
         files::DetailsColumns columns, files::DetailsColumnOrder order, bool cut, bool path,
-        files::BrowsePresentation presentation, bool readOnly
+        files::BrowsePresentation presentation, bool readOnly, const files::TreeRowInfo& tree
     ) {
+      m_tree = tree;
+      m_treePrefix->setVisible(tree.enabled);
+      m_treePrefix->setParticipatesInLayout(tree.enabled);
+      m_expander->setVisible(tree.expandable);
+      m_expander->setGlyph(tree.expanded ? "chevron-down" : Style::rtl() ? "chevron-left" : "chevron-right");
+      m_expander->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurfaceVariant));
       m_columns = columns;
       m_columnOrder = order;
       m_icon->setOpacity(cut ? 0.4F : entry.hidden ? kHiddenIconOpacity : 1.0F);
@@ -111,7 +122,7 @@ namespace {
       m_iconSize = files::fileRowIconSize(presentation);
       m_icon->setIconSize(m_iconSize);
       m_icon->setEmblems(presentation.showEmblems && entry.symlink, presentation.showEmblems && readOnly);
-      m_name->setText(entry.displayName);
+      m_name->setText(tree.status.empty() ? entry.displayName : entry.displayName + " · " + tree.status);
       m_parent->setText(entry.parentDisplayName);
       m_parent->setVisible(!entry.parentDisplayName.empty());
       m_parent->setParticipatesInLayout(!entry.parentDisplayName.empty());
@@ -151,8 +162,12 @@ namespace {
         label->setMinWidth(columns.width(column));
         label->setMaxWidth(columns.width(column));
       }
-      const float nameWidth =
-          m_miller ? std::max(32.0F, width() - m_iconSize - 64.0F) : columns.nameWidth - m_iconSize - 16.0F;
+      const float prefix = m_tree.enabled ? files::treePrefixWidth(m_tree.depth, columns.nameWidth, m_iconSize) : 0.0F;
+      m_treePrefix->setMinWidth(prefix);
+      m_treePrefix->setMaxWidth(prefix);
+      const float nameWidth = m_miller
+          ? std::max(32.0F, width() - m_iconSize - 64.0F)
+          : std::max(1.0F, columns.nameWidth - m_iconSize - 16.0F - (m_tree.enabled ? prefix + Style::spaceSm : 0.0F));
       m_nameColumn->setMinWidth(nameWidth);
       m_nameColumn->setMaxWidth(nameWidth);
       m_name->setMaxWidth(nameWidth);
@@ -168,6 +183,9 @@ namespace {
   private:
     Box* m_background = nullptr;
     Flex* m_row = nullptr;
+    Flex* m_treePrefix = nullptr;
+    Glyph* m_expander = nullptr;
+    files::TreeRowInfo m_tree;
     Flex* m_nameColumn = nullptr;
     files::FileIcon* m_icon = nullptr;
     Label* m_name = nullptr;
@@ -377,18 +395,32 @@ void files::FileViewAdapter::bindTile(Node& tile, std::size_t index, bool, bool 
       static_cast<FileRow&>(tile).bind(
           *entry, model.typeLabel(id), selected, focused, hovered, m_columns, m_columnOrder,
           m_cut && m_cut(entry->location), m_pathEntry == id && !m_columnActive, m_presentation,
-          entry->access.write == false || m_readOnly == true
+          entry->access.write == false || m_readOnly == true,
+          m_mode == ViewMode::List ? m_browser.treeRow(id) : TreeRowInfo{}
       );
     }
   }
 }
 
-bool files::FileViewAdapter::onPointerPress(std::size_t index, float, float, float, float) {
+bool files::FileViewAdapter::onPointerPress(std::size_t index, float x, float, float width, float) {
   if (index >= itemCount()) {
     return true;
   }
   const auto modifiers = m_modifiers();
-  m_pressed = m_browser.model().rows()[index];
+  const auto id = m_browser.model().rows()[index];
+  const auto tree = m_mode == ViewMode::List ? m_browser.treeRow(id) : TreeRowInfo{};
+  const float startX = Style::rtl() ? width - x : x;
+  const float prefix = treePrefixWidth(tree.depth, m_columns.nameWidth, fileRowIconSize(m_presentation));
+  if (tree.expandable
+      && modifiers == 0
+      && startX >= Style::spaceMd + prefix - 20.0F
+      && startX < Style::spaceMd + prefix) {
+    onPointerCancel();
+    m_expanderPress = id;
+    return true;
+  }
+  m_expanderPress.reset();
+  m_pressed = id;
   m_dragged = false;
   m_plainClick = modifiers == 0;
   m_collapseSelectionOnClick = m_plainClick && m_browser.model().selection().selected.contains(*m_pressed);
@@ -403,6 +435,11 @@ bool files::FileViewAdapter::onPointerPress(std::size_t index, float, float, flo
 }
 
 bool files::FileViewAdapter::onPointerDrag(std::optional<std::size_t>, float, float, float, float) {
+  if (m_expanderPress) {
+    m_expanderPress.reset();
+    m_pressed.reset();
+    return false;
+  }
   const bool first = !m_dragged;
   m_dragged = true;
   if (first && m_drag && m_pressed && m_browser.model().entry(*m_pressed) != nullptr) {
@@ -412,6 +449,13 @@ bool files::FileViewAdapter::onPointerDrag(std::optional<std::size_t>, float, fl
 }
 
 VirtualGridAdapter::PointerReleaseResult files::FileViewAdapter::onPointerRelease(std::optional<std::size_t> index) {
+  if (const auto expander = std::exchange(m_expanderPress, std::nullopt)) {
+    m_lastClick.reset();
+    if (index && *index < itemCount() && m_browser.model().rows()[*index] == *expander) {
+      (void)m_browser.toggleFolder(*expander);
+    }
+    return {.rebind = true, .activateIndex = std::nullopt};
+  }
   m_areaSelection = false;
   m_areaRows.clear();
   m_areaBaseline.clear();
@@ -449,6 +493,7 @@ VirtualGridAdapter::PointerReleaseResult files::FileViewAdapter::onPointerReleas
 void files::FileViewAdapter::onPointerCancel() {
   const bool dragged = std::exchange(m_dragged, false);
   m_pressed.reset();
+  m_expanderPress.reset();
   m_lastClick.reset();
   m_areaSelection = false;
   m_areaRows.clear();

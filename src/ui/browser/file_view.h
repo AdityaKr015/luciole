@@ -60,6 +60,7 @@ namespace files {
     std::function<bool()> m_focused;
     std::function<bool(const Location&)> m_cut;
     std::optional<EntryId> m_pressed;
+    std::optional<EntryId> m_expanderPress;
     std::optional<EntryId> m_lastClick;
     std::chrono::steady_clock::time_point m_lastClickTime;
     std::function<void(EntryId)> m_activate;

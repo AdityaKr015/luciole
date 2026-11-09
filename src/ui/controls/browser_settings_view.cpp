@@ -109,11 +109,13 @@ BrowserSettingsView::BrowserSettingsView(
   );
   section("Sidebar");
   addBool(P::ShowSidebar, "Show sidebar");
+  addBool(P::SidebarTree, "Show folder tree");
   addNumber(P::SidebarWidth, "Sidebar width", widths(files::kMinSidebarWidth, files::kMaxSidebarWidth));
   section("Preview");
   addBool(P::ShowPreview, "Show preview");
   addNumber(P::PreviewWidth, "Preview width", widths(208, 800));
   section("List columns");
+  addBool(P::ExpandableFolders, "Expandable folders");
   addBool(P::ShowTypeColumn, "Type");
   addBool(P::ShowSizeColumn, "Size");
   addBool(P::ShowModifiedColumn, "Modified");

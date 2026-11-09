@@ -29,6 +29,7 @@ test_table = [
   {'name': 'file-tooltip', 'deps': [ui_dep, fs_dep, event_loop_dep], 'env': gio_env},
   {'name': 'view-preference-writer', 'deps': [config_dep, event_loop_dep], 'env': ['G_DEBUG=fatal-warnings']},
   {'name': 'directory-session', 'deps': [fs_dep, event_loop_dep], 'env': gio_env},
+  {'name': 'directory-tree', 'deps': [browser_dep], 'timeout': 60, 'env': gio_env},
   {'name': 'directory-model', 'deps': [browser_dep, event_loop_dep], 'env': gio_env},
   {'name': 'file-launcher', 'deps': [platform_dep, event_loop_dep], 'wrapper': files('file_launcher_test.py')},
   {'name': 'browser-controller', 'deps': [browser_dep, event_loop_dep], 'env': gio_env},

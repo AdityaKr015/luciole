@@ -6,6 +6,8 @@
 #include <glib.h>
 
 namespace files {
+  class DirectoryTree;
+  struct TreeRowInfo;
   struct BrowseViewport {
     ViewMode mode = ViewMode::Grid;
     int iconSize = 48;
@@ -61,6 +63,11 @@ namespace files {
     void setSearchComposing(bool composing);
     bool searchPending() const { return m_searchPending; }
     void activate(EntryId id);
+    void setExpandableFolders(bool enabled);
+    bool expandableFolders() const { return m_tree != nullptr; }
+    bool toggleFolder(EntryId id);
+    bool treeKey(bool expand);
+    TreeRowInfo treeRow(EntryId id) const;
 
     std::uint64_t contextSerial() const { return m_contextSerial; }
     bool canBack() const;
@@ -84,6 +91,7 @@ namespace files {
     void startSearch();
     void publishPendingSearch();
     DirectoryModel m_model;
+    std::unique_ptr<DirectoryTree> m_tree;
     DirectorySession m_session;
     RecursiveSearch m_search;
     std::string m_query;
