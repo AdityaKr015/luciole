@@ -1,9 +1,10 @@
 #include "ui/controls/name_editor.h"
 
 #include "ui/builders.h"
+#include "ui/controls/dialog_chrome.h"
 
 NameEditor::NameEditor(
-    float width, const std::string& title, const std::string& value, std::string hint,
+    float width, const std::string& title, const std::string& glyph, const std::string& value, std::string hint,
     std::function<std::optional<std::string>(const std::string&)> validate, std::function<void(std::string)> submit,
     std::function<void()> cancel, std::string action, std::string busyAction
 )
@@ -11,26 +12,8 @@ NameEditor::NameEditor(
       m_validate(std::move(validate)), m_submit(std::move(submit)) {
   setDirection(FlexDirection::Vertical);
   setAlign(FlexAlign::Stretch);
-  setGap(Style::spaceMd);
-  setPadding(Style::spaceMd);
-  setFill(colorSpecFromRole(ColorRole::SurfaceContainer));
-  setBorder(colorSpecFromRole(ColorRole::OutlineVariant), Style::borderWidth);
-  setRadius(Style::radiusLg);
-  addChild(
-      ui::row(
-          {.align = FlexAlign::Center, .gap = Style::spaceSm},
-          ui::label({.text = title, .fontWeight = FontWeight::SemiBold, .flexGrow = 1.0F}),
-          ui::button(
-              {.glyph = "x",
-               .controlHeight = Style::controlHeightSm,
-               .variant = ButtonVariant::Default,
-               .tooltip = "Close",
-               .minWidth = Style::controlHeightSm,
-               .maxWidth = Style::controlHeightSm,
-               .onClick = cancel}
-          )
-      )
-  );
+  files::applyDialogStyle(*this);
+  addChild(files::dialogHeader(title, glyph, cancel));
   addChild(
       ui::input(
           {.out = &m_input,

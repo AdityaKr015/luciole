@@ -1,6 +1,7 @@
 #include "ui/controls/batch_rename_dialog.h"
 
 #include "ui/builders.h"
+#include "ui/controls/dialog_chrome.h"
 #include "ui/controls/file_error_text.h"
 #include "ui/controls/input.h"
 #include "ui/controls/scroll_view.h"
@@ -112,28 +113,8 @@ BatchRenameDialog::BatchRenameDialog(
     : m_adapter(std::make_unique<Adapter>(*this)), m_preview(std::move(preview)) {
   setDirection(FlexDirection::Vertical);
   setAlign(FlexAlign::Stretch);
-  setGap(Style::spaceSm);
-  setPadding(Style::spaceMd);
-  setFill(colorSpecFromRole(ColorRole::SurfaceContainer));
-  setRadius(Style::radiusLg);
-  setBorder(colorSpecFromRole(ColorRole::OutlineVariant), Style::borderWidth);
-  addChild(
-      ui::row(
-          {.align = FlexAlign::Center, .gap = Style::spaceSm},
-          ui::label(
-              {.text = std::format("Rename {} items", count), .fontWeight = FontWeight::SemiBold, .flexGrow = 1.0F}
-          ),
-          ui::button(
-              {.glyph = "x",
-               .controlHeight = Style::controlHeightSm,
-               .variant = ButtonVariant::Default,
-               .tooltip = "Close",
-               .minWidth = Style::controlHeightSm,
-               .maxWidth = Style::controlHeightSm,
-               .onClick = std::move(close)}
-          )
-      )
-  );
+  files::applyDialogStyle(*this);
+  addChild(files::dialogHeader(std::format("Rename {} items", count), "forms", std::move(close)));
   auto scroll =
       ui::scrollView({.out = &m_scroll, .viewportPaddingH = 0.0F, .viewportPaddingV = 0.0F, .flexGrow = 1.0F});
   scroll->setReserveScrollbarGutter(true);

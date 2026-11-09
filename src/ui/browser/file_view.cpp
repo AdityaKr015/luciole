@@ -62,7 +62,7 @@ namespace {
           {.out = &m_row,
            .align = FlexAlign::Center,
            .gap = Style::spaceSm,
-           .configure = [](Flex& container) { container.setPadding(0, Style::spaceMd); }},
+           .configure = [](Flex& container) { container.setPadding(0, Style::spaceSm); }},
           ui::row(
               {.out = &m_treePrefix, .justify = FlexJustify::End, .visible = false, .participatesInLayout = false},
               ui::glyph({.out = &m_expander, .glyph = "chevron-right", .glyphSize = 14.0F})
@@ -413,8 +413,8 @@ bool files::FileViewAdapter::onPointerPress(std::size_t index, float x, float, f
   const float prefix = treePrefixWidth(tree.depth, m_columns.nameWidth, fileRowIconSize(m_presentation));
   if (tree.expandable
       && modifiers == 0
-      && startX >= Style::spaceMd + prefix - 20.0F
-      && startX < Style::spaceMd + prefix) {
+      && startX >= Style::spaceSm + prefix - 20.0F
+      && startX < Style::spaceSm + prefix) {
     onPointerCancel();
     m_expanderPress = id;
     return true;

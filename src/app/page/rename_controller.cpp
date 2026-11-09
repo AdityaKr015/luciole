@@ -42,7 +42,7 @@ void RenameController::openFileRename(files::DirectoryEntry target) {
   const float width = std::min(420.0F, static_cast<float>(surface.width()) - 32.0F);
   const bool validText = g_utf8_validate(target.name.data(), static_cast<gssize>(target.name.size()), nullptr);
   auto editor = std::make_unique<NameEditor>(
-      width, target.type == files::FileType::Directory && !target.symlink ? "Rename folder" : "Rename file",
+      width, target.type == files::FileType::Directory && !target.symlink ? "Rename folder" : "Rename file", "pencil",
       validText ? target.name : "", validText ? "" : "Enter a new UTF-8 name for this item.", files::filenameProblem,
       [this](std::string name) { submitFileRename(std::move(name)); }, [this] { m_page.dismissMenu(); }
   );
@@ -166,7 +166,7 @@ void RenameController::openPlaceRename(const files::Bookmark& bookmark) {
   auto& surface = m_page.surface();
   const float width = std::min(440.0F, static_cast<float>(surface.width()) - 32.0F);
   auto editor = std::make_unique<NameEditor>(
-      width, "Rename place", current.label, "Changes the sidebar label only.",
+      width, "Rename place", "pencil", current.label, "Changes the sidebar label only.",
       [](const std::string& label) -> std::optional<std::string> {
         if (const auto error = files::bookmarkLabelProblem(label)) {
           return error;

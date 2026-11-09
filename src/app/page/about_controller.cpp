@@ -5,6 +5,7 @@
 #include "noctalia_files_build_info.h"
 #include "platform/file_launcher.h"
 #include "ui/builders.h"
+#include "ui/controls/dialog_chrome.h"
 #include "ui/controls/scroll_view.h"
 #include "ui/palette.h"
 #include "ui/style.h"
@@ -73,26 +74,10 @@ void AboutController::open() {
       )
   );
   auto root = ui::column(
-      {.align = FlexAlign::Stretch,
-       .gap = Style::spaceMd,
-       .padding = Style::spaceMd,
-       .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
-       .radius = Style::radiusLg,
-       .border = colorSpecFromRole(ColorRole::OutlineVariant)},
-      ui::row(
-          {.align = FlexAlign::Center},
-          ui::label({.text = "About Noctalia Files", .fontWeight = FontWeight::SemiBold, .flexGrow = 1.0F}),
-          ui::button(
-              {.glyph = "x",
-               .controlHeight = Style::controlHeightSm,
-               .variant = ButtonVariant::Default,
-               .minWidth = Style::controlHeightSm,
-               .maxWidth = Style::controlHeightSm,
-               .onClick = [this] { m_page.dismissMenu(); }}
-          )
-      ),
-      std::move(body)
+      {.align = FlexAlign::Stretch},
+      files::dialogHeader("About Noctalia Files", "info-circle", [this] { m_page.dismissMenu(); }), std::move(body)
   );
+  files::applyDialogStyle(*root);
   m_page.showCenteredDialog(std::move(root), 588.0F);
   if (m_page.menuSurface()) {
     m_page.activeDialog().bind(ActiveDialog::Kind::About, [this] {

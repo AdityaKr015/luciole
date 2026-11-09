@@ -10,6 +10,7 @@
 #include "platform/desktop_integration.h"
 #include "render/scene/input_dispatcher.h"
 #include "ui/builders.h"
+#include "ui/controls/dialog_chrome.h"
 #include "ui/controls/file_error_text.h"
 #include "ui/palette.h"
 #include "ui/style.h"
@@ -205,13 +206,10 @@ void TransferController::syncConflict() {
   };
   Button* keepBoth = nullptr;
   auto root = ui::column(
-      {.align = FlexAlign::Stretch,
-       .gap = Style::spaceMd,
-       .padding = Style::spaceMd,
-       .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
-       .radius = Style::radiusLg,
-       .border = colorSpecFromRole(ColorRole::OutlineVariant)},
-      ui::label({.text = "Item already exists", .fontWeight = FontWeight::SemiBold}),
+      {.align = FlexAlign::Stretch},
+      files::dialogHeader(
+          "Item already exists", "alert-triangle", [choose] { choose(files::TransferConflictChoice::Cancel); }
+      ),
       ui::label(
           {.text = conflict->name,
            .maxWidth = width - 24.0F,
@@ -295,6 +293,7 @@ void TransferController::syncConflict() {
           )
       )
   );
+  files::applyDialogStyle(*root);
   UiPhaseScope phase(UiPhase::Layout);
   LayoutConstraints constraints;
   constraints.setExactWidth(width);

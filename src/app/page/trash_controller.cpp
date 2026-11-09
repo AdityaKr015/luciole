@@ -9,6 +9,7 @@
 #include "platform/desktop_integration.h"
 #include "render/scene/input_dispatcher.h"
 #include "ui/builders.h"
+#include "ui/controls/dialog_chrome.h"
 #include "ui/controls/file_error_text.h"
 #include "ui/palette.h"
 #include "ui/style.h"
@@ -93,15 +94,9 @@ void TrashController::openEmptyTrash(std::optional<std::vector<files::DirectoryE
   Label* size = nullptr;
   Button* confirm = nullptr;
   auto root = ui::column(
-      {.align = FlexAlign::Stretch,
-       .gap = Style::spaceMd,
-       .padding = Style::spaceMd,
-       .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
-       .radius = Style::radiusLg,
-       .border = colorSpecFromRole(ColorRole::OutlineVariant)},
-      ui::label(
-          {.text = selection ? "Delete selected items permanently?" : "Empty Trash?",
-           .fontWeight = FontWeight::SemiBold}
+      {.align = FlexAlign::Stretch},
+      files::dialogHeader(
+          selection ? "Delete selected items permanently?" : "Empty Trash?", "trash", [this] { m_page.dismissMenu(); }
       ),
       ui::label(
           {.out = &message,
@@ -135,6 +130,7 @@ void TrashController::openEmptyTrash(std::optional<std::vector<files::DirectoryE
           )
       )
   );
+  files::applyDialogStyle(*root);
   UiPhaseScope phase(UiPhase::Layout);
   LayoutConstraints constraints;
   constraints.setExactWidth(width);

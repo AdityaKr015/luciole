@@ -48,6 +48,6 @@ private:
   Flex* m_section = nullptr;
   std::vector<Flex*> m_pages;
   std::vector<class Button*> m_navButtons;
-  // Shows m_current's value in a row's control and whether it overrides m_inherited.
+  // Shows m_current's value in a row's control.
   std::map<files::BrowserPreferenceId, std::function<void()>> m_rows;
 };

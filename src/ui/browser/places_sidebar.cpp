@@ -6,6 +6,7 @@
 #include "model/directory_options.h"
 #include "ui/browser/sidebar_tree_view.h"
 #include "ui/builders.h"
+#include "ui/controls/card_style.h"
 
 #include <algorithm>
 #include <cmath>
@@ -15,12 +16,15 @@ files::PlacesSidebar::PlacesSidebar(PinService& pins) : m_pins(pins) {
   setAlign(FlexAlign::Stretch);
   setMinWidth(static_cast<float>(kDefaultSidebarWidth));
   setMaxWidth(static_cast<float>(kDefaultSidebarWidth));
-  setFill(colorSpecFromRole(ColorRole::SurfaceContainer));
-  setRadius(Style::radiusXl);
-  setPadding(Style::spaceXs);
+  files::applySideListStyle(*this);
+  setPadding(files::kSideListPadding);
   addChild(
       ui::scrollView(
-          {.out = &m_scroll, .viewportPaddingH = 8.0F, .viewportPaddingV = 12.0F, .fillWidth = true, .flexGrow = 1.0F}
+          {.out = &m_scroll,
+           .viewportPaddingH = files::kSideListViewportPaddingH,
+           .viewportPaddingV = files::kSideListViewportPaddingV,
+           .fillWidth = true,
+           .flexGrow = 1.0F}
       )
   );
   m_scroll->content()->setAlign(FlexAlign::Stretch);
@@ -113,8 +117,8 @@ void files::PlacesSidebar::addRow(const Bookmark& bookmark, const std::string& g
        .glyph = glyph,
        .contentAlign = ButtonContentAlign::Start,
        .variant = ButtonVariant::Ghost,
-       .paddingH = 8.0F,
-       .gap = 8.0F,
+       .paddingH = files::kSideListRowPaddingH,
+       .gap = files::kSideListRowGap,
        .onClick = [this, location = bookmark.location] {
          if (m_open) {
            m_open(location);

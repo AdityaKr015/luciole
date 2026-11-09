@@ -13,7 +13,7 @@ public:
   enum class Kind : std::uint8_t {
     None,
     Menu,
-    Dropdown,
+    Settings,
     PatternSelection,
     EmptyTrash,
     CreateItem,

@@ -663,11 +663,8 @@ void LocationBarController::rebuildBreadcrumbs() {
   for (std::size_t i = 0; i < crumbs.size(); ++i) {
     Node* separator = nullptr;
     if (i != 0) {
-      separator = m_breadcrumbs->addChild(
-          ui::glyph(
-              {.glyph = "chevron-right", .glyphSize = 12.0F, .color = colorSpecFromRole(ColorRole::OnSurfaceVariant)}
-          )
-      );
+      separator =
+          m_breadcrumbs->addChild(ui::label({.text = "/", .color = colorSpecFromRole(ColorRole::OnSurfaceVariant)}));
     }
     const auto target = crumbs[i].location;
     auto* partButton = static_cast<Button*>(m_breadcrumbs->addChild(

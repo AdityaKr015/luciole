@@ -56,10 +56,7 @@ void DetailsHeaderController::applySettings(
 std::unique_ptr<Flex> DetailsHeaderController::buildHeader() {
   m_appliedColumnOrder = files::kDefaultDetailsColumnOrder;
   auto row = ui::row(
-      {.out = &m_detailsHeaderRow,
-       .align = FlexAlign::Center,
-       .paddingH = Style::spaceMd - Style::spaceXs,
-       .participatesInLayout = false}
+      {.out = &m_detailsHeaderRow, .align = FlexAlign::Center, .paddingH = 0.0F, .participatesInLayout = false}
   );
   row->addChild(
       ui::button(
@@ -70,7 +67,7 @@ std::unique_ptr<Flex> DetailsHeaderController::buildHeader() {
            .contentAlign = ButtonContentAlign::Start,
            .variant = ButtonVariant::Ghost,
            .tooltip = "Sort by name; click again to reverse",
-           .paddingH = Style::spaceXs,
+           .paddingH = Style::spaceSm,
            .onClick = [this] { sortBy(files::SortField::Name); }}
       )
   );
@@ -85,7 +82,7 @@ std::unique_ptr<Flex> DetailsHeaderController::buildHeader() {
              .contentAlign = ButtonContentAlign::Start,
              .variant = ButtonVariant::Ghost,
              .tooltip = std::format("Sort by {}; click again to reverse", files::detailsColumnName(column)),
-             .paddingH = Style::spaceXs,
+             .paddingH = Style::spaceSm,
              .onClick = [this, column] { sortBy(files::detailsColumnSort(column)); }}
         )
     );
@@ -486,7 +483,7 @@ void DetailsHeaderController::layoutHeader(Renderer& renderer) {
       return next->visible() && (Style::rtl() ? next->x() < header->x() : next->x() > header->x());
     });
     line->setVisible(followed || active);
-    line->setColor(colorSpecFromRole(active ? ColorRole::Primary : ColorRole::OnSurfaceVariant));
+    line->setColor(colorSpecFromRole(active ? ColorRole::Primary : ColorRole::OutlineVariant));
     line->arrange(renderer, {3.5F, 4.0F, 1.0F, std::max(0.0F, handle->height() - 8.0F)});
   }
 }

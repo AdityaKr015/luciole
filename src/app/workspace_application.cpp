@@ -541,8 +541,9 @@ void WorkspaceApplication::pointer(const PointerEvent& event) {
   const auto x = static_cast<float>(event.sx), y = static_cast<float>(event.sy);
   if (host->previewDragWidth) {
     if (event.type == PointerEvent::Type::Motion) {
-      host->previewDragWidth =
-          std::clamp(static_cast<int>(std::lround(host->surface.width() - kWorkspaceInset - x)), 208, 800);
+      host->previewDragWidth = std::clamp(
+          static_cast<int>(std::lround(host->surface.width() - kWorkspaceInset - x - kWorkspaceInset * 0.5F)), 208, 800
+      );
       host->surface.requestLayout();
     } else if (event.type == PointerEvent::Type::Button && !event.pressed && event.button == BTN_LEFT) {
       active.savePreviewWidth(*host->previewDragWidth);
@@ -555,7 +556,11 @@ void WorkspaceApplication::pointer(const PointerEvent& event) {
   }
   if (host->resizing) {
     if (event.type == PointerEvent::Type::Motion) {
-      m_model.resize(host->id, (x - host->browsingBounds.x) / host->browsingBounds.width);
+      m_model.resize(
+          host->id,
+          (x - host->browsingBounds.x - kWorkspaceInset * 0.5F)
+              / std::max(1.0F, host->browsingBounds.width - kWorkspaceInset)
+      );
       host->surface.requestLayout();
     }
     if (event.type == PointerEvent::Type::Button && !event.pressed) {
@@ -1273,6 +1278,8 @@ void WorkspaceApplication::prepare(Host& host) {
       }
       host.surface.requestLayout();
     });
+    divider->setOnEnter([&host](const auto&) { host.surface.requestLayout(); });
+    divider->setOnLeave([&host] { host.surface.requestLayout(); });
     host.divider = divider.get();
     auto line = ui::box({.fill = colorSpecFromRole(ColorRole::OutlineVariant), .width = 1.0F});
     divider->addChild(std::move(line));
@@ -1384,17 +1391,21 @@ void WorkspaceApplication::prepare(Host& host) {
   const float left = kWorkspaceInset + sidebar;
   const float right = width - kWorkspaceInset;
   const bool split = visible.size() == 2;
-  const float previewBudget = right - left - kMinimumPaneWidth * (split ? 2.0F : 1.0F);
+  // Cards (sidebar, panes, docked preview) are separated by kWorkspaceInset; dividers sit centered in the gaps.
+  const float gap = kWorkspaceInset;
+  const float previewBudget = right - left - kMinimumPaneWidth * (split ? 2.0F : 1.0F) - (split ? gap : 0.0F) - gap;
   const float previewWidth = active.previewVisible() && previewBudget >= kMinimumPreviewWidth
       ? std::min(static_cast<float>(host.previewDragWidth.value_or(active.previewWidth())), previewBudget)
       : 0;
   host.previewDivider->setVisible(previewWidth > 0);
+  // Like the sidebar handle: resize lines show only while hovered, focused or dragged.
   host.previewResizeLine->setFill(colorSpecFromRole(
-      host.previewDragWidth || host.previewDivider->focused() ? ColorRole::Primary
-          : host.previewDivider->hovered()                    ? ColorRole::OnSurfaceVariant
-                                                              : ColorRole::OutlineVariant
+      host.previewDragWidth || host.previewDivider->focused() ? ColorRole::Primary : ColorRole::OnSurfaceVariant
   ));
-  host.previewDivider->arrange(renderer, {right - previewWidth - 3, top, 6, bodyHeight});
+  host.previewResizeLine->setVisible(
+      host.previewDragWidth || host.previewDivider->focused() || host.previewDivider->hovered()
+  );
+  host.previewDivider->arrange(renderer, {right - previewWidth - gap * 0.5F - 3, top, 6, bodyHeight});
   host.previewDivider->children().front()->arrange(renderer, {2.5F, 0, 1, bodyHeight});
   for (auto tab : visible) {
     m_pages.at(tab)->setPreviewBounds(
@@ -1403,18 +1414,24 @@ void WorkspaceApplication::prepare(Host& host) {
             : std::nullopt
     );
   }
-  const float content = std::max(1.0F, right - left - previewWidth);
+  const float content = std::max(1.0F, right - left - previewWidth - (previewWidth > 0 ? gap : 0.0F));
   host.browsingBounds = {left, top, content, bodyHeight};
-  const float minimumPane = std::min(kMinimumPaneWidth, content * 0.5F);
-  const float first = split ? std::clamp(content * window.fraction, minimumPane, content - minimumPane) : content;
+  const float panes = split ? std::max(1.0F, content - gap) : content;
+  const float minimumPane = std::min(kMinimumPaneWidth, panes * 0.5F);
+  const float first = split ? std::clamp(panes * window.fraction, minimumPane, panes - minimumPane) : content;
   host.divider->setVisible(split);
-  host.divider->arrange(renderer, {left + first - 3, top, 6, bodyHeight});
-  host.divider->children().front()->arrange(renderer, {2.5F, 0, 1.0F, bodyHeight});
+  host.divider->arrange(renderer, {left + first + gap * 0.5F - 3, top, 6, bodyHeight});
+  auto* splitLine = host.divider->children().front().get();
+  splitLine->setVisible(host.resizing || host.divider->focused() || host.divider->hovered());
+  static_cast<Box*>(splitLine)->setFill(
+      colorSpecFromRole(host.resizing || host.divider->focused() ? ColorRole::Primary : ColorRole::OnSurfaceVariant)
+  );
+  splitLine->arrange(renderer, {2.5F, 0, 1.0F, bodyHeight});
   for (std::size_t index = 0; index < visible.size(); ++index) {
     const auto tab = visible[index];
     m_pages.at(tab)->prepare(
-        {left + (index ? first : 0), top, index ? content - first : first, bodyHeight}, tab == window.active,
-        host.root.get(), index == 0, index == visible.size() - 1 && previewWidth == 0
+        {left + (index ? first + gap : 0), top, index ? panes - first : first, bodyHeight}, tab == window.active,
+        host.root.get()
     );
   }
   active.layoutNavigation(renderer);

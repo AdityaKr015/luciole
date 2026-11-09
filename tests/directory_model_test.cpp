@@ -164,21 +164,21 @@ namespace {
 
   void testDetailsLayout() {
     const auto wide = files::DetailsColumns::forWidth(1000);
-    TEST_CHECK(wide.contentWidth == 1000 && wide.nameWidth == 558 && wide.showType);
+    TEST_CHECK(wide.contentWidth == 1000 && wide.nameWidth == 566 && wide.showType);
     const auto ultrawide = files::DetailsColumns::forWidth(4000);
-    TEST_CHECK(ultrawide.nameWidth == 3558 && ultrawide.contentWidth == 4000);
+    TEST_CHECK(ultrawide.nameWidth == 3566 && ultrawide.contentWidth == 4000);
     const auto bounded = files::DetailsColumns::forWidth(100000);
     TEST_CHECK(files::validDetailsColumnWidth(0, static_cast<int>(bounded.nameWidth)));
     const files::DetailsColumnWidths requested{400, 200, 96, 180, 156, 156, 128, 128, 112, 260};
     const auto narrow = files::DetailsColumns::forWidth(300, {}, requested);
     const auto expanded = files::DetailsColumns::forWidth(1600, {}, requested);
     TEST_CHECK(
-        narrow == expanded && narrow.contentWidth == 892 && narrow.showType && narrow.showSize && narrow.showModified
+        narrow == expanded && narrow.contentWidth == 884 && narrow.showType && narrow.showSize && narrow.showModified
     );
     const auto hidden = files::DetailsColumns::forWidth(300, {false, false, false}, requested);
-    TEST_CHECK(hidden.contentWidth == 416 && hidden.nameWidth == 400);
+    TEST_CHECK(hidden.contentWidth == 408 && hidden.nameWidth == 400);
     const auto automatic = files::DetailsColumns::forWidth(300);
-    TEST_CHECK(automatic.nameWidth == 160 && automatic.contentWidth == 602 && automatic.showType);
+    TEST_CHECK(automatic.nameWidth == 160 && automatic.contentWidth == 594 && automatic.showType);
   }
 
   void testDetailsColumnMoves() {

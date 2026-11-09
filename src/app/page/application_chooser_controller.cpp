@@ -5,6 +5,7 @@
 #include "platform/file_launcher.h"
 #include "ui/browser/file_icon.h"
 #include "ui/builders.h"
+#include "ui/controls/dialog_chrome.h"
 #include "ui/controls/scroll_view.h"
 #include "ui/palette.h"
 #include "ui/style.h"
@@ -32,19 +33,10 @@ void ApplicationChooserController::show(const files::DirectoryEntry& entry) {
       )
   );
   auto root = ui::column(
-      {.align = FlexAlign::Stretch,
-       .gap = Style::spaceMd,
-       .padding = Style::spaceMd,
-       .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
-       .radius = Style::radiusLg,
-       .border = colorSpecFromRole(ColorRole::OutlineVariant)},
-      ui::row(
-          {.align = FlexAlign::Center},
-          ui::label({.text = "Open With", .fontWeight = FontWeight::SemiBold, .flexGrow = 1}),
-          ui::button({.glyph = "x", .variant = ButtonVariant::Ghost, .onClick = [this] { m_page.dismissMenu(); }})
-      ),
+      {.align = FlexAlign::Stretch}, files::dialogHeader("Open With", "apps", [this] { m_page.dismissMenu(); }),
       std::move(scroll)
   );
+  files::applyDialogStyle(*root);
   m_page.showCenteredDialog(std::move(root), 440.0F);
   if (!m_page.menuSurface()) {
     return;

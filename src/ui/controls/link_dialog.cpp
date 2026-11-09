@@ -2,6 +2,7 @@
 
 #include "fs/filename.h"
 #include "ui/builders.h"
+#include "ui/controls/dialog_chrome.h"
 #include "ui/controls/input.h"
 #include "ui/controls/scroll_view.h"
 #include "ui/controls/segmented.h"
@@ -13,26 +14,8 @@ LinkDialog::LinkDialog(
     : m_submit(std::move(submit)) {
   setDirection(FlexDirection::Vertical);
   setAlign(FlexAlign::Stretch);
-  setGap(Style::spaceSm);
-  setPadding(Style::spaceMd);
-  setFill(colorSpecFromRole(ColorRole::SurfaceContainer));
-  setRadius(Style::radiusLg);
-  setBorder(colorSpecFromRole(ColorRole::OutlineVariant), Style::borderWidth);
-  addChild(
-      ui::row(
-          {.align = FlexAlign::Center, .gap = Style::spaceSm},
-          ui::label({.text = "Create link", .fontWeight = FontWeight::SemiBold, .flexGrow = 1.0F}),
-          ui::button(
-              {.glyph = "x",
-               .controlHeight = Style::controlHeightSm,
-               .variant = ButtonVariant::Default,
-               .tooltip = "Close",
-               .minWidth = Style::controlHeightSm,
-               .maxWidth = Style::controlHeightSm,
-               .onClick = cancel}
-          )
-      )
-  );
+  files::applyDialogStyle(*this);
+  addChild(files::dialogHeader("Create link", "link", cancel));
   auto scroll =
       ui::scrollView({.out = &m_scroll, .viewportPaddingH = 0.0F, .viewportPaddingV = 0.0F, .flexGrow = 1.0F});
   scroll->setReserveScrollbarGutter(true);

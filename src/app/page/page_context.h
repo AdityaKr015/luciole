@@ -83,7 +83,7 @@ public:
   virtual void focusFileList() = 0;
   // Focuses the sidebar entry for `location` once no popup or overlay is open.
   virtual void restorePlaceFocus(files::Location location) = 0;
-  // Closes Settings, the active dialog, drags and location editing before a full-page overlay opens.
+  // Closes the active dialog, drags and location editing before a full-page overlay opens.
   virtual void prepareOverlay() = 0;
   // Hosts full-page overlays.
   virtual Node& sceneRoot() = 0;

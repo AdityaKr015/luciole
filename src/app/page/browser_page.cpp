@@ -40,6 +40,7 @@
 #include "ui/browser/file_view_metrics.h"
 #include "ui/browser/places_sidebar.h"
 #include "ui/builders.h"
+#include "ui/controls/card_style.h"
 #include "ui/controls/context_menu.h"
 #include "ui/controls/input.h"
 #include "ui/controls/miller_view.h"
@@ -119,7 +120,6 @@ BrowserPage::BrowserPage(
     m_connection.extension<files::DesktopIntegration>().setCursorShape(serial, shape);
   });
   m_dispatcher.setFocusChangeCallback([this](InputArea*, InputArea* focused) {
-    m_settingsController.revealFocus(focused);
     if (m_list != nullptr && focused != m_list->focusArea()) {
       m_fileKeys.clearTypeahead();
     }
@@ -205,7 +205,6 @@ BrowserPage::~BrowserPage() {
   m_preview.setChangedCallback({});
   m_preview.clear();
   closeMenu();
-  m_settingsController.close();
   m_archiveController.close();
   m_dispatcher.setSceneRoot(nullptr);
   unmount();
@@ -427,12 +426,14 @@ void BrowserPage::setForeignDrop(
 }
 
 bool BrowserPage::popupOwns(wl_surface* surface) const {
-  return (m_menuSurface && m_menuSurface->wlSurface() == surface) || m_createController.documentOwns(surface);
+  return (m_menuSurface && m_menuSurface->wlSurface() == surface)
+      || m_createController.documentOwns(surface)
+      || m_settingsController.dropdownOwns(surface);
 }
 
 bool BrowserPage::popup() const { return m_menuSurface != nullptr; }
 
-bool BrowserPage::overlay() const { return m_settingsController.open() || m_archiveController.open(); }
+bool BrowserPage::overlay() const { return m_archiveController.open(); }
 
 bool BrowserPage::previewVisible() const { return m_savedSettings.showPreview && !overlay(); }
 
@@ -475,7 +476,7 @@ void BrowserPage::rebind(files::WindowSurface& surface) {
   m_surface = &surface;
 }
 
-void BrowserPage::prepare(LayoutRect bounds, bool active, Node* host, bool roundLeft, bool roundRight) {
+void BrowserPage::prepare(LayoutRect bounds, bool active, Node* host) {
   m_pageBounds = bounds;
   if (!m_visible) {
     m_visible = true;
@@ -492,13 +493,10 @@ void BrowserPage::prepare(LayoutRect bounds, bool active, Node* host, bool round
   stampFocusKeys(*m_toolbar);
   stampFocusKeys(*m_sidebar.bundle());
   m_body->setBorder(
-      colorSpecFromRole(active ? (split ? ColorRole::Primary : ColorRole::OutlineVariant) : ColorRole::Surface),
-      split && active ? 2.0F : 1.0F
+      colorSpecFromRole(split && active ? ColorRole::Primary : ColorRole::OutlineVariant),
+      split && active ? Style::focusRingWidth : Style::borderWidth
   );
-  m_body->setRadii(
-      {roundLeft ? kWorkspaceRadius : 0.0F, roundRight ? kWorkspaceRadius : 0.0F, roundRight ? kWorkspaceRadius : 0.0F,
-       roundLeft ? kWorkspaceRadius : 0.0F}
-  );
+  m_body->setRadius(kWorkspaceRadius);
   if (active && !m_active) {
     m_active = true;
     m_dispatcher.setSceneRoot(host);
@@ -634,6 +632,9 @@ void BrowserPage::outputChanged(wl_output* output) {
 }
 
 void BrowserPage::pointer(const PointerEvent& event) {
+  if (m_settingsController.dropdownPointer(event)) {
+    return;
+  }
   if (m_menuSurface != nullptr && event.type == PointerEvent::Type::Button && event.pressed) {
     const bool inPopup = m_createController.documentOwns(event.surface)
         || (event.surface == m_menuSurface->wlSurface()
@@ -929,13 +930,13 @@ void BrowserPage::keyboard(const KeyboardEvent& event) {
     if (m_previewController.quickKey(event)) {
       return;
     }
+    if (m_settingsController.key(event)) {
+      return;
+    }
     m_menuController.key(event);
     return;
   }
   if (m_archiveController.key(event)) {
-    return;
-  }
-  if (m_settingsController.key(event)) {
     return;
   }
   if (event.pressed && !event.preedit && shortcutKey(event)) {
@@ -1404,7 +1405,7 @@ void BrowserPage::unpinTargets(const std::vector<files::DirectoryEntry>& targets
 void BrowserPage::openPatternSelection(const files::ActionRequest& request) {
   const float width = std::min(440.0F, static_cast<float>(m_surface->width()) - 32.0F);
   auto editor = std::make_unique<NameEditor>(
-      width, "Select by pattern", m_selectionPattern,
+      width, "Select by pattern", "cursor-text", m_selectionPattern,
       "Use * for any text and ? for one character. Matches visible names, ignoring case.",
       files::selectionPatternProblem,
       [this, request](std::string pattern) {
@@ -1530,7 +1531,7 @@ void BrowserPage::applySettings(const files::BrowserSettings& settings, bool for
   m_dispatcher.cancelPointerCapture();
   m_listAdapter.onPointerCancel();
   m_gridAdapter.onPointerCancel();
-  if (m_menuController.menu() && !m_settingsController.open()) {
+  if (m_menuController.menu()) {
     closeMenu();
   }
   if (m_settingsController.open() && (force || before.viewMode != settings.viewMode)) {
@@ -2032,14 +2033,14 @@ void BrowserPage::layoutFrame(Renderer& renderer) {
   // List headers own their vertical insets so their labels and resize
   // markers are centered between the pane edge and the header rule.
   m_paneContentFrame->setPadding(
-      details && !m_paneHeader->visible() ? 0.0F : Style::radiusMd, Style::radiusMd, 0.0F, Style::radiusMd
+      details && !m_paneHeader->visible() ? 0.0F : Style::radiusMd, files::kSideListPadding, 0.0F,
+      files::kSideListPadding
   );
   m_filePane->setPadding(details ? 0.0F : Style::spaceSm, Style::spaceSm, Style::spaceSm, Style::spaceSm);
   m_root->arrange(
       renderer, LayoutRect{0, 0, static_cast<float>(m_surface->width()), static_cast<float>(m_surface->height())}
   );
   m_body->arrange(renderer, m_pageBounds);
-  m_settingsController.layout(renderer, m_pageBounds, m_surface->width() < 800);
   m_archiveController.layout(renderer, m_pageBounds);
   if (m_detailsHeader.layoutColumns(m_miller.enabled())) {
     m_root->arrange(renderer, {0, 0, static_cast<float>(m_surface->width()), static_cast<float>(m_surface->height())});
@@ -2056,9 +2057,7 @@ void BrowserPage::layoutFrame(Renderer& renderer) {
   m_dragDrop.layout(renderer);
   m_locationBar.layoutCompletions(renderer);
   m_thumbnails.endFrame();
-  m_sidebar.restoreFocus(
-      std::move(placesFocus), m_menuSurface != nullptr || m_settingsController.open() || m_archiveController.open()
-  );
+  m_sidebar.restoreFocus(std::move(placesFocus), m_menuSurface != nullptr || m_archiveController.open());
   m_fileKeys.notifyStateChanged();
 }
 
@@ -2079,7 +2078,9 @@ void BrowserPage::buildScene() {
                .align = FlexAlign::Stretch,
                .flexGrow = 1.0F,
                .configure =
-                   [](Flex& frame) { frame.setPadding(Style::radiusMd, Style::radiusMd, 0.0F, Style::radiusMd); }},
+                   [](Flex& frame) {
+                     frame.setPadding(Style::radiusMd, files::kSideListPadding, 0.0F, files::kSideListPadding);
+                   }},
               ui::row(
                   {.out = &m_paneHeader,
                    .align = FlexAlign::Center,
@@ -2343,7 +2344,6 @@ files::WindowSurface& BrowserPage::surface() { return *m_surface; }
 bool BrowserPage::popupAvailable() { return !m_popupAvailable || m_popupAvailable(); }
 
 void BrowserPage::prepareOverlay() {
-  m_settingsController.close();
   closeMenu();
   cancelDrag();
   m_locationBar.clearCompletions();

@@ -4,6 +4,7 @@
 #include "ui/browser/preview_layout.h"
 #include "ui/builders.h"
 #include "ui/controls/button.h"
+#include "ui/controls/card_style.h"
 #include "ui/controls/file_metadata_view.h"
 #include "ui/controls/label.h"
 #include "ui/style.h"
@@ -18,9 +19,7 @@ FilePreviewView::FilePreviewView(
   setAlign(FlexAlign::Stretch);
   setPadding(Style::spaceMd);
   setGap(Style::spaceMd);
-  setFill(colorSpecFromRole(ColorRole::SurfaceContainer));
-  setRadius(Style::radiusXl);
-  setBorder(colorSpecFromRole(ColorRole::OutlineVariant), Style::borderWidth);
+  files::applyCardStyle(*this);
   addChild(
       ui::row(
           {.align = FlexAlign::Center, .gap = Style::spaceSm, .minHeight = 24.0F},
@@ -87,7 +86,6 @@ FilePreviewView::FilePreviewView(
 void FilePreviewView::sync(
     const files::PreviewSnapshot& snapshot, float width, float height, std::string_view typeLabel, bool quick
 ) {
-  setRadii(quick ? Radii(Style::radiusXl) : Radii(0, Style::radiusXl, Style::radiusXl, 0));
   setPadding(Style::spaceMd, Style::spaceMd, quick ? Style::spaceMd : Style::borderWidth, Style::spaceMd);
   const float budget = std::max(40.0F, width - Style::spaceMd * 2 - Style::scrollbarWidth - Style::scrollbarGap);
   m_heading->setMaxWidth(std::max(1.0F, width - Style::spaceMd * 2 - Style::controlHeightSm - Style::spaceSm));

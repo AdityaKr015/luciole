@@ -21,7 +21,7 @@ namespace files {
       const auto index = static_cast<std::size_t>(column);
       return index == 0 ? typeWidth : index == 1 ? sizeWidth : index == 2 ? modifiedWidth : extraWidths[index - 3];
     }
-    float contentWidth = 602.0F;
+    float contentWidth = 594.0F;
 
     static DetailsColumns forWidth(
         float width, DetailsColumnVisibility visibility = {},
@@ -34,7 +34,7 @@ namespace files {
         }
       }
       const float name =
-          requested[0] == 0 ? std::clamp(width - 16.0F - metadata, 160.0F, 16384.0F) : static_cast<float>(requested[0]);
+          requested[0] == 0 ? std::clamp(width - 8.0F - metadata, 160.0F, 16384.0F) : static_cast<float>(requested[0]);
       DetailsColumns result{
           .showType = visibility.type,
           .showSize = visibility.size,
@@ -43,7 +43,7 @@ namespace files {
           .typeWidth = static_cast<float>(requested[1]) - 8.0F,
           .sizeWidth = static_cast<float>(requested[2]) - 8.0F,
           .modifiedWidth = static_cast<float>(requested[3]) - 8.0F,
-          .contentWidth = 16.0F + name + metadata
+          .contentWidth = 8.0F + name + metadata
       };
       for (std::size_t i = 0; i < result.extraVisible.size(); ++i) {
         result.extraVisible[i] = detailsColumnVisible(visibility, static_cast<DetailsColumn>(i + 3));

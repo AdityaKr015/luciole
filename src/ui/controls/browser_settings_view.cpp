@@ -1,6 +1,9 @@
 #include "ui/controls/browser_settings_view.h"
 
 #include "ui/builders.h"
+#include "ui/controls/button.h"
+#include "ui/controls/card_style.h"
+#include "ui/controls/dialog_chrome.h"
 #include "ui/controls/select.h"
 #include "ui/controls/stepper.h"
 
@@ -28,39 +31,20 @@ BrowserSettingsView::BrowserSettingsView(
     : m_change(std::move(change)) {
   setDirection(FlexDirection::Vertical);
   setAlign(FlexAlign::Stretch);
-  setFill(colorSpecFromRole(ColorRole::Surface));
-  addChild(
-      ui::row(
-          {.align = FlexAlign::Center, .padding = Style::spaceMd},
-          ui::label(
-              {.text = "Settings",
-               .fontSize = Style::fontSizeHeader,
-               .fontWeight = FontWeight::SemiBold,
-               .flexGrow = 1.0F}
-          ),
-          ui::button(
-              {.glyph = "x",
-               .variant = ButtonVariant::Default,
-               .tooltip = "Close settings",
-               .minWidth = Style::controlHeight,
-               .maxWidth = Style::controlHeight,
-               .onClick = std::move(close)}
-          )
-      )
-  );
+  files::applyDialogStyle(*this);
+  addChild(files::dialogHeader("Settings", "settings", std::move(close)));
   auto navigation = ui::column(
-      {.out = &m_navigation,
-       .align = FlexAlign::Stretch,
-       .fill = colorSpecFromRole(ColorRole::SurfaceContainerLow),
-       .width = 152.0F},
+      {.out = &m_navigation, .align = FlexAlign::Stretch, .width = 192.0F},
       ui::scrollView(
           {.out = &m_navigationScroll,
-           .viewportPaddingH = Style::spaceSm,
-           .viewportPaddingV = Style::spaceSm,
+           .viewportPaddingH = files::kSideListViewportPaddingH,
+           .viewportPaddingV = files::kSideListViewportPaddingV,
            .fillWidth = true,
            .flexGrow = 1.0F}
       )
   );
+  files::applySideListStyle(*navigation);
+  navigation->setPadding(files::kSideListPadding);
   m_navigationScroll->content()->setAlign(FlexAlign::Stretch);
   m_navigationScroll->content()->setGap(Style::spaceXs);
   auto body = ui::scrollView(
@@ -72,8 +56,11 @@ BrowserSettingsView::BrowserSettingsView(
        .configure = [](ScrollView& view) { view.setReserveScrollbarGutter(true); }}
   );
   m_body->content()->setAlign(FlexAlign::Stretch);
-  m_body->content()->setPadding(16.0F);
-  addChild(ui::row({.align = FlexAlign::Stretch, .flexGrow = 1.0F}, std::move(navigation), std::move(body)));
+  addChild(
+      ui::row(
+          {.align = FlexAlign::Stretch, .gap = Style::spaceMd, .flexGrow = 1.0F}, std::move(navigation), std::move(body)
+      )
+  );
   section("Browsing");
   addChoice(
       P::ViewMode, "View",
@@ -183,20 +170,18 @@ BrowserSettingsView::BrowserSettingsView(
   addBool(P::ShowTypeCaption, "File type");
   addBool(P::ShowModifiedCaption, "Modified date");
   selectPage(0);
-  addChild(
-      ui::column(
-          {.align = FlexAlign::Stretch, .paddingH = Style::spaceMd},
-          ui::label(
-              {.out = &m_status, .fontSize = Style::fontSizeCaption, .maxLines = 3, .configure = [](Label& label) {
-                 label.setUseMarkup(false);
-               }}
-          )
-      )
-  );
+  // Fixed footer: status text never changes the dialog's layout.
   addChild(
       ui::row(
-          {.justify = FlexJustify::End, .gap = Style::spaceSm, .padding = Style::spaceMd},
-          ui::button({.text = "Reset all settings", .variant = ButtonVariant::Default, .onClick = std::move(reset)})
+          {.align = FlexAlign::Center, .gap = Style::spaceMd},
+          ui::label(
+              {.out = &m_status,
+               .fontSize = Style::fontSizeCaption,
+               .maxLines = 2,
+               .flexGrow = 1.0F,
+               .configure = [](Label& label) { label.setUseMarkup(false); }}
+          ),
+          ui::button({.text = "Reset all settings", .variant = ButtonVariant::Destructive, .onClick = std::move(reset)})
       )
   );
 }
@@ -215,11 +200,10 @@ void BrowserSettingsView::section(const std::string& title, std::string_view cus
           {.out = &button,
            .text = title,
            .glyph = glyph,
-           .fontSize = Style::fontSizeCaption,
            .contentAlign = ButtonContentAlign::Start,
-           .variant = ButtonVariant::Tab,
-           .paddingH = 8.0F,
-           .gap = 6.0F,
+           .variant = ButtonVariant::Ghost,
+           .paddingH = files::kSideListRowPaddingH,
+           .gap = files::kSideListRowGap,
            .onClick = [this, index] { selectPage(index); }}
       )
   );
@@ -254,7 +238,7 @@ void BrowserSettingsView::selectPage(std::size_t selected) {
   for (std::size_t index = 0; index < m_pages.size(); ++index) {
     m_pages[index]->setVisible(index == selected);
     m_pages[index]->setParticipatesInLayout(index == selected);
-    m_navButtons[index]->setVariant(index == selected ? ButtonVariant::TabActive : ButtonVariant::Tab);
+    m_navButtons[index]->setSelected(index == selected);
   }
   m_body->requestScrollToOffset(0);
   m_navigationScroll->requestScrollIntoView(m_navButtons[selected]);
@@ -269,31 +253,14 @@ void BrowserSettingsView::addRow(
     files::PreferenceKey<T> key, const std::string& title, std::function<void(const T&)> show,
     std::unique_ptr<Node> control
 ) {
-  Button* reset = nullptr;
   m_section->addChild(
       ui::row(
           {.align = FlexAlign::Center, .gap = 8.0F, .paddingV = 6.0F},
           ui::label({.text = title, .fontWeight = FontWeight::SemiBold, .maxLines = 2, .flexGrow = 1.0F}),
-          ui::button(
-              {.out = &reset,
-               .text = "Reset",
-               .fontSize = Style::fontSizeCaption,
-               .variant = ButtonVariant::Ghost,
-               .minWidth = 48.0F,
-               .maxWidth = 48.0F,
-               .paddingH = 4.0F,
-               .onClick = [this, key] { send(key, std::optional<T>()); }}
-          ),
           std::move(control)
       )
   );
-  m_rows[key.id()] = [this, key, reset, show = std::move(show)] {
-    const T& value = files::preferenceValue(m_current, key);
-    show(value);
-    const bool overridden = value != files::preferenceValue(m_inherited, key);
-    reset->setVisible(overridden);
-    reset->setParticipatesInLayout(overridden);
-  };
+  m_rows[key.id()] = [this, key, show = std::move(show)] { show(files::preferenceValue(m_current, key)); };
 }
 
 template <class T>
@@ -361,11 +328,13 @@ void BrowserSettingsView::addNumber(
 }
 
 template <class T> void BrowserSettingsView::send(files::PreferenceKey<T> key, std::optional<T> value) {
+  // Choosing the inherited value stores no override.
+  if (value && *value == files::preferenceValue(m_inherited, key)) {
+    value.reset();
+  }
   files::preferenceValue(m_current, key) = value.value_or(files::preferenceValue(m_inherited, key));
   m_rows.at(key.id())();
   m_status->setText("Saving…");
-  m_status->setVisible(true);
-  m_status->setParticipatesInLayout(true);
   m_status->setColor(colorSpecFromRole(ColorRole::OnSurfaceVariant));
   m_change(value ? files::OverrideEdit(key, *value) : files::OverrideEdit(key, std::nullopt));
 }
@@ -381,8 +350,6 @@ void BrowserSettingsView::sync(
     show();
   }
   m_status->setText(!error.empty() ? error : clearingThumbnails ? "Clearing cache…" : busy ? "Saving…" : "");
-  m_status->setVisible(!error.empty() || busy);
-  m_status->setParticipatesInLayout(!error.empty() || busy);
   m_status->setColor(colorSpecFromRole(error.empty() ? ColorRole::OnSurfaceVariant : ColorRole::Error));
 }
 void BrowserSettingsView::reveal(const Node* node) {

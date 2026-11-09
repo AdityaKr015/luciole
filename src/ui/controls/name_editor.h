@@ -13,7 +13,7 @@ class Button;
 class NameEditor final : public Flex {
 public:
   NameEditor(
-      float width, const std::string& title, const std::string& value, std::string hint,
+      float width, const std::string& title, const std::string& glyph, const std::string& value, std::string hint,
       std::function<std::optional<std::string>(const std::string&)> validate, std::function<void(std::string)> submit,
       std::function<void()> cancel, std::string action = "Rename", std::string busyAction = "Renaming…"
   );

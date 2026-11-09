@@ -4,6 +4,7 @@
 #include "fs/gio_ptr.h"
 #include "ui/browser/file_icon.h"
 #include "ui/builders.h"
+#include "ui/controls/dialog_chrome.h"
 #include "ui/controls/file_error_text.h"
 #include "ui/controls/scroll_view.h"
 
@@ -402,12 +403,8 @@ ArchiveDialog::ArchiveDialog(
     : m_submit(std::move(submit)) {
   setDirection(FlexDirection::Vertical);
   setAlign(FlexAlign::Stretch);
-  setGap(Style::spaceSm);
-  setPadding(Style::spaceMd);
-  setFill(colorSpecFromRole(ColorRole::SurfaceContainer));
-  setRadius(Style::radiusLg);
-  setBorder(colorSpecFromRole(ColorRole::OutlineVariant), 1);
-  addChild(ui::label({.text = compress ? "Compress" : "Extract Archive", .fontWeight = FontWeight::SemiBold}));
+  files::applyDialogStyle(*this);
+  addChild(files::dialogHeader(compress ? "Compress" : "Extract Archive", compress ? "file-zip" : "archive", cancel));
   auto scroll =
       ui::scrollView({.out = &m_scroll, .viewportPaddingH = 0.0F, .viewportPaddingV = 0.0F, .flexGrow = 1.0F});
   scroll->setReserveScrollbarGutter(true);
@@ -537,12 +534,8 @@ ArchivePasswordDialog::ArchivePasswordDialog(
     : m_submit(std::move(submit)), m_format(format) {
   setDirection(FlexDirection::Vertical);
   setAlign(FlexAlign::Stretch);
-  setGap(Style::spaceSm);
-  setPadding(Style::spaceMd);
-  setFill(colorSpecFromRole(ColorRole::SurfaceContainer));
-  setRadius(Style::radiusLg);
-  setBorder(colorSpecFromRole(ColorRole::OutlineVariant), Style::borderWidth);
-  addChild(ui::label({.text = "Archive password", .fontWeight = FontWeight::SemiBold}));
+  files::applyDialogStyle(*this);
+  addChild(files::dialogHeader("Archive password", "lock", cancel));
   addChild(ui::label({.text = std::move(name), .maxLines = 2, .configure = [](Label& label) {
                         label.setUseMarkup(false);
                       }}));

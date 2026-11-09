@@ -16,6 +16,7 @@
 #include "ui/builders.h"
 #include "ui/controls/acl_editor.h"
 #include "ui/controls/bulk_acl_editor.h"
+#include "ui/controls/dialog_chrome.h"
 #include "ui/controls/file_metadata_view.h"
 #include "ui/controls/folder_totals_view.h"
 #include "ui/controls/permission_editor.h"
@@ -527,25 +528,8 @@ void PropertiesController::show(const std::vector<files::DirectoryEntry>& target
     propertyTabs.push_back({.label = "Results", .glyph = {}, .tooltip = {}});
   }
   auto root = ui::column(
-      {.align = FlexAlign::Stretch,
-       .gap = Style::spaceMd,
-       .padding = Style::spaceMd,
-       .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
-       .radius = Style::radiusLg,
-       .border = colorSpecFromRole(ColorRole::OutlineVariant)},
-      ui::row(
-          {.align = FlexAlign::Center, .gap = Style::spaceSm},
-          ui::label({.text = "Properties", .fontWeight = FontWeight::SemiBold, .flexGrow = 1.0F}),
-          ui::button(
-              {.glyph = "x",
-               .controlHeight = Style::controlHeightSm,
-               .variant = ButtonVariant::Default,
-               .tooltip = "Close",
-               .minWidth = Style::controlHeightSm,
-               .maxWidth = Style::controlHeightSm,
-               .onClick = [this] { m_page.dismissMenu(); }}
-          )
-      ),
+      {.align = FlexAlign::Stretch},
+      files::dialogHeader("Properties", "list-details", [this] { m_page.dismissMenu(); }),
       ui::segmented(
           {.out = &tabs,
            .options = std::move(propertyTabs),
@@ -576,6 +560,7 @@ void PropertiesController::show(const std::vector<files::DirectoryEntry>& target
       ),
       std::move(body.node)
   );
+  files::applyDialogStyle(*root);
   if (editable) {
     if (withResults) {
       root->addChild(

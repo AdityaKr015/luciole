@@ -1,33 +1,30 @@
 #include "app/page/settings_controller.h"
 
 #include "app/page/active_dialog.h"
-#include "app/page/archive_controller.h"
-#include "app/page/menu_controller.h"
 #include "app/page/page_context.h"
 #include "config/view_preference_writer.h"
-#include "core/deferred_call.h"
-#include "core/input/key_modifiers.h"
-#include "core/input/key_symbols.h"
 #include "platform/desktop_integration.h"
 #include "render/scene/input_area.h"
 #include "render/scene/input_dispatcher.h"
 #include "thumbnails/thumbnail_service.h"
 #include "ui/browser/action_shortcuts.h"
 #include "ui/controls/browser_settings_view.h"
-#include "ui/controls/context_menu.h"
+#include "ui/controls/select_dropdown_popup.h"
 #include "wayland/popup_surface.h"
+#include "wayland/wayland_connection.h"
 #include "wayland/wayland_seat.h"
 
+#include <algorithm>
 #include <utility>
-#include <vector>
 
 SettingsController::SettingsController(
     PageContext& page, files::ViewPreferenceWriter& preferences, files::ThumbnailService& thumbnails,
-    InputDispatcher& dispatcher, ArchiveController& archive, MenuController& menus,
-    std::function<void()> clearThumbnails
+    WaylandConnection& connection, RenderContext& renderer, std::function<void()> clearThumbnails
 )
-    : m_page(page), m_preferences(preferences), m_thumbnails(thumbnails), m_dispatcher(dispatcher), m_archive(archive),
-      m_menus(menus), m_clearThumbnails(std::move(clearThumbnails)) {}
+    : m_page(page), m_preferences(preferences), m_thumbnails(thumbnails), m_connection(connection),
+      m_renderer(renderer), m_clearThumbnails(std::move(clearThumbnails)) {}
+
+SettingsController::~SettingsController() = default;
 
 void SettingsController::preferencesChanged(const std::string& error) {
   m_error = error;
@@ -42,7 +39,9 @@ void SettingsController::onFrame() {
     }
     if (m_view) {
       sync();
-      m_page.surface().requestLayout();
+      if (auto* surface = m_page.menuSurface()) {
+        surface->requestLayout();
+      }
     }
   }
 }
@@ -56,127 +55,130 @@ void SettingsController::sync() {
   );
 }
 
-void SettingsController::deferClose() {
-  const std::weak_ptr<int> lifetime = m_lifetime;
-  DeferredCall::callLater([this, lifetime] {
-    if (!lifetime.expired()) {
-      close();
-    }
-  });
-}
-
-void SettingsController::close() {
-  if (!m_view) {
-    return;
+void SettingsController::teardown() {
+  if (m_dropdown) {
+    m_dropdown->closeSelectDropdown();
+    m_dropdown.reset();
   }
-  m_page.closeMenu();
   m_viewLifetime.reset();
-  m_dispatcher.cancelPointerCapture();
+  m_view = nullptr;
   m_page.focusFileList();
-  auto* settings = std::exchange(m_view, nullptr);
-  auto removed = m_page.sceneRoot().removeChild(settings);
-  m_page.surface().requestLayout();
 }
 
 void SettingsController::toggle() {
   if (m_view) {
-    deferClose();
+    m_page.dismissMenu();
     return;
   }
-  m_archive.close();
-  // Settings is closed, so this closes the active dialog, drags and location editing.
-  m_page.prepareOverlay();
   m_viewLifetime = std::make_shared<int>(0);
   auto root = std::make_unique<BrowserSettingsView>(
       [this](files::OverrideEdit edit) {
         m_preferences.submit({edit});
-        m_page.surface().requestLayout();
+        if (auto* surface = m_page.menuSurface()) {
+          surface->requestLayout();
+        }
       },
-      [this] { m_preferences.resetAll(); }, [this] { deferClose(); }, [this] { m_clearThumbnails(); }
+      [this] { m_preferences.resetAll(); }, [this] { m_page.dismissMenu(); }, [this] { m_clearThumbnails(); }
   );
-  root->setParticipatesInLayout(false);
-  root->setZIndex(1000);
   root->setPopupContext(this);
   m_view = root.get();
   sync();
-  m_page.sceneRoot().addChild(std::move(root));
-  m_dispatcher.cancelPointerCapture();
-  m_dispatcher.setFocus(m_dispatcher.firstTabFocusUnder(m_view));
-  m_page.surface().requestLayout();
+  auto& surface = m_page.surface();
+  const float width = std::min(880.0F, static_cast<float>(surface.width()) - 32.0F);
+  const float height = std::min(640.0F, static_cast<float>(surface.height()) - 64.0F);
+  m_view->setCompact(width < 720.0F);
+  root->setSize(width, height);
+  m_page.showPopup(
+      std::move(root), nullptr, {(surface.width() - width) * 0.5F, (surface.height() - height) * 0.5F, 1, 1}, width,
+      height, false
+  );
+  if (!m_page.menuSurface()) {
+    m_view = nullptr;
+    m_viewLifetime.reset();
+    return;
+  }
+  m_page.activeDialog().bind(ActiveDialog::Kind::Settings, [this] { teardown(); });
+  m_page.setDialogSize(width, height);
+  m_page.menuDispatcher().setFocusChangeCallback([this](InputArea*, InputArea* focused) {
+    if (m_view) {
+      m_view->reveal(focused);
+      m_page.menuSurface()->requestLayout();
+    }
+  });
+  m_page.menuDispatcher().setFocus(m_page.menuDispatcher().firstTabFocusUnder(m_view));
 }
 
 bool SettingsController::key(const KeyboardEvent& event) {
   if (!m_view) {
     return false;
   }
-  if (event.pressed
-      && (KeySymbol::isEscape(event.sym)
-          || files::shortcutMatches(files::BrowserAction::Settings, event.sym, event.modifiers))) {
-    deferClose();
-  } else if (event.pressed && event.sym == XKB_KEY_q && event.modifiers == KeyMod::Ctrl) {
-    m_page.surface().close();
-  } else if (event.pressed && KeySymbol::isTab(event.sym)) {
-    (void)m_dispatcher.cycleTabFocusInSubtree(m_view, (event.modifiers & KeyMod::Shift) != 0);
-  } else {
-    m_dispatcher.keyEvent(event.sym, event.utf32, event.modifiers, event.pressed, event.preedit);
+  if (isSelectDropdownOpen()) {
+    m_dropdown->onKeyboardEvent(event);
+    return true;
   }
-  m_page.surface().requestLayout();
-  return true;
+  if (event.pressed && files::shortcutMatches(files::BrowserAction::Settings, event.sym, event.modifiers)) {
+    m_page.dismissMenu();
+    return true;
+  }
+  return false;
 }
 
-void SettingsController::layout(Renderer& renderer, LayoutRect bounds, bool compact) {
-  if (m_view) {
-    m_view->setCompact(compact);
-    m_view->arrange(renderer, bounds);
-  }
+bool SettingsController::dropdownOwns(const wl_surface* surface) const {
+  return isSelectDropdownOpen() && m_dropdown->wlSurface() == surface;
 }
 
-void SettingsController::revealFocus(InputArea* focused) {
-  if (m_view) {
-    m_view->reveal(focused);
-    m_page.surface().requestLayout();
+bool SettingsController::dropdownPointer(const PointerEvent& event) {
+  if (!isSelectDropdownOpen()) {
+    return false;
   }
+  if (event.surface == m_dropdown->wlSurface()) {
+    (void)m_dropdown->onPointerEvent(event);
+    return true;
+  }
+  if (event.type == PointerEvent::Type::Button && event.pressed) {
+    // Like a native select: a press outside only closes the dropdown.
+    m_dropdown->closeSelectDropdown();
+    return true;
+  }
+  return false;
 }
 
 void SettingsController::openSelectDropdown(const DropdownRequest& request, DropdownCallbacks callbacks) {
-  if (!m_view) {
+  auto* dialog = m_page.menuSurface();
+  if (!m_view || !dialog) {
+    if (callbacks.onDismiss) {
+      callbacks.onDismiss();
+    }
     return;
   }
-  std::vector<ContextMenuControlEntry> entries;
-  entries.reserve(request.options.size());
-  for (std::size_t index = 0; index < request.options.size(); ++index) {
-    entries.push_back(
-        {.id = static_cast<int>(index),
-         .label = request.options[index],
-         .checkmark = true,
-         .toggleState = index == request.selectedIndex ? 1 : 0}
-    );
+  if (!m_dropdown) {
+    m_dropdown = std::make_unique<SelectDropdownPopup>(m_connection, m_renderer);
   }
-  const std::weak_ptr<int> lifetime = m_viewLifetime;
-  m_menus.showContextMenu(
-      std::move(entries),
-      [lifetime, select = callbacks.onSelect](int index) {
-        if (!lifetime.expired() && select) {
-          select(static_cast<std::size_t>(index));
-        }
-      },
-      {static_cast<float>(request.anchorX), static_cast<float>(request.anchorY),
-       static_cast<float>(request.anchorWidth), static_cast<float>(request.anchorHeight)},
-      true, request.menuWidth
+  m_dropdown->setParent(
+      dialog->xdgSurface(), dialog->wlSurface(), m_connection.outputForSurface(m_page.surface().wlSurface())
   );
-  if (auto* menu = m_menus.menu()) {
-    menu->setHighlightedIndex(request.selectedIndex);
-    m_menus.revealHighlight();
+  const std::weak_ptr<int> lifetime = m_viewLifetime;
+  m_dropdown->openSelectDropdown(
+      request,
+      {.onSelect =
+           [lifetime, select = std::move(callbacks.onSelect)](std::size_t index) {
+             if (!lifetime.expired() && select) {
+               select(index);
+             }
+           },
+       .onDismiss =
+           [lifetime, dismiss = std::move(callbacks.onDismiss)] {
+             if (!lifetime.expired() && dismiss) {
+               dismiss();
+             }
+           }}
+  );
+}
+
+void SettingsController::closeSelectDropdown() {
+  if (m_dropdown) {
+    m_dropdown->closeSelectDropdown();
   }
-  m_page.activeDialog().bind(ActiveDialog::Kind::Dropdown, [lifetime, dismiss = callbacks.onDismiss] {
-    if (!lifetime.expired() && dismiss) {
-      dismiss();
-    }
-  });
 }
 
-void SettingsController::closeSelectDropdown() { m_page.dismissMenu(); }
-
-bool SettingsController::isSelectDropdownOpen() const {
-  return m_page.menuSurface() && m_page.activeDialog().kind() == ActiveDialog::Kind::Dropdown;
-}
+bool SettingsController::isSelectDropdownOpen() const { return m_dropdown && m_dropdown->isSelectDropdownOpen(); }

@@ -142,7 +142,7 @@ public:
   bool contains(float x, float y) const;
   files::WindowSurface* boundSurface() const;
   void rebind(files::WindowSurface& surface);
-  void prepare(LayoutRect bounds, bool active, Node* host, bool roundLeft = true, bool roundRight = true);
+  void prepare(LayoutRect bounds, bool active, Node* host);
   void deactivate();
   void hide();
   void mount(Node& host);
@@ -340,11 +340,9 @@ private:
       m_detailsHeader,
       m_locationBar
   };
-  SettingsController m_settingsController{
-      *this, m_preferences, m_thumbnails, m_dispatcher, m_archiveController, m_menuController, [this] {
-        m_thumbnails.clearCache();
-      }
-  };
+  SettingsController m_settingsController{*this,        m_preferences, m_thumbnails,
+                                          m_connection, m_renderer,    [this] {
+        m_thumbnails.clearCache(); }};
   AboutController m_aboutController{*this, m_launcher};
   ApplicationChooserController m_applicationChooser{*this, m_launcher, m_icons};
   PreviewController m_previewController{*this, m_preview, m_thumbnails, m_icons, m_renderer, m_applicationChooser};

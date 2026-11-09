@@ -292,6 +292,7 @@ void CreateController::openCreateItem(
       kind == files::CreateKind::Folder ? "New folder"
           : document                    ? "New document"
                                         : "New file",
+      kind == files::CreateKind::Folder ? "folder-plus" : "file-plus",
       source                                  ? display
           : kind == files::CreateKind::Folder ? "New Folder"
                                               : "New File",
