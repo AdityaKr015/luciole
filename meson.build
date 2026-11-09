@@ -49,6 +49,11 @@ if cpp.get_define('_LIBCPP_VERSION', prefix: '#include <version>') != ''
   add_project_link_arguments('-lc++experimental', language: 'cpp')
 endif
 
+# Recent GLib headers use __COUNTER__, which clang 23 rejects as a C2y extension under
+# -Wpedantic -Werror. lib/ adds GLib with -I and its own -Wpedantic after project arguments,
+# so mark the GLib include directory as a system directory instead (-isystem wins over -I).
+add_project_arguments('-isystem', dependency('glib-2.0').get_variable(pkgconfig: 'includedir') / 'glib-2.0', language: 'cpp')
+
 if get_option('native_optimizations')
   add_project_arguments('-march=native', '-mtune=native', language: 'cpp')
 endif
