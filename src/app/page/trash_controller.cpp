@@ -84,7 +84,7 @@ void TrashController::restoreChanged() {
 }
 
 void TrashController::openEmptyTrash(std::optional<std::vector<files::DirectoryEntry>> selection) {
-  if (!m_page.canEmptyTrash()) {
+  if (!m_page.fileJobsIdle()) {
     m_page.actionError("Another file operation is still finishing.");
     return;
   }

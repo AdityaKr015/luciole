@@ -72,11 +72,11 @@ BrowserPage::BrowserPage(
       m_surface(&surface), m_browser(settings.sort, settings.showHidden), m_icons(icons),
       m_listAdapter(
           m_browser, m_icons, m_thumbnails, files::ViewMode::List, [this] { return m_connection.keyboardModifiers(); },
-          [this] { return m_fileKeyboardFocus && m_list != nullptr && m_list->focusArea()->focused(); }
+          [this] { return m_fileKeys.keyboardFocus() && m_list != nullptr && m_list->focusArea()->focused(); }
       ),
       m_gridAdapter(
           m_browser, m_icons, m_thumbnails, files::ViewMode::Grid, [this] { return m_connection.keyboardModifiers(); },
-          [this] { return m_fileKeyboardFocus && m_list != nullptr && m_list->focusArea()->focused(); }
+          [this] { return m_fileKeys.keyboardFocus() && m_list != nullptr && m_list->focusArea()->focused(); }
       ),
       m_preferences(preferences), m_savedSettings(settings), m_pins(pins), m_viewMode(settings.viewMode),
       m_clipboard(clipboard) {
@@ -106,7 +106,7 @@ BrowserPage::BrowserPage(
     files::BrowseViewport viewport{.mode = m_viewMode, .iconSize = static_cast<int>(gridIconSize())};
     if (m_list) {
       viewport.vertical = m_list->scrollView().scrollOffset();
-      viewport.horizontal = m_detailsOffset;
+      viewport.horizontal = m_detailsHeader.offset();
       viewport.withinRow = m_list->firstVisibleOffset();
       if (const auto first = m_list->firstVisibleIndex(); first && *first < browser().model().rows().size()) {
         viewport.first = browser().model().rows()[*first];
@@ -114,30 +114,19 @@ BrowserPage::BrowserPage(
     }
     return viewport;
   });
-  m_sidebarWidth = settings.sidebarWidth;
-  m_showSidebar = settings.showSidebar;
-  m_columnVisibility = settings.columns;
-  m_columnOrder = settings.columnOrder;
-  m_columnWidths = settings.columnWidths;
+  m_sidebar.load(settings);
+  m_detailsHeader.load(settings);
   m_activationMode = settings.activationMode;
-  m_typingMode = settings.typingMode;
+  m_fileKeys.setTypingMode(settings.typingMode);
   m_dispatcher.setCursorShapeCallback([this](std::uint32_t serial, std::uint32_t shape) {
     m_connection.extension<files::DesktopIntegration>().setCursorShape(serial, shape);
   });
   m_dispatcher.setFocusChangeCallback([this](InputArea*, InputArea* focused) {
     m_settingsController.revealFocus(focused);
     if (m_list != nullptr && focused != m_list->focusArea()) {
-      clearTypeahead();
+      m_fileKeys.clearTypeahead();
     }
-    if (m_nameHeader == nullptr || m_viewMode != files::ViewMode::List) {
-      return;
-    }
-    for (std::size_t index = 0; index < 4; ++index) {
-      if (widthHeader(index)->inputArea() == focused) {
-        m_revealDetailsHeader = widthHeader(index);
-        m_surface->requestLayout();
-      }
-    }
+    m_detailsHeader.focusChanged(focused);
   });
   m_browser.setChangedCallback([this] {
     m_browserDirty = true;
@@ -151,7 +140,7 @@ BrowserPage::BrowserPage(
   });
   m_miller.setFileActivatedCallback([this](const files::Location& target) { m_launcher.open(target); });
   m_launcher.setChangedCallback([this](const std::string& error) {
-    m_actionError = error.empty() ? "" : std::format("Could not open the file: {}", error);
+    m_statusBar.setMessage(error.empty() ? "" : std::format("Could not open the file: {}", error));
     m_aboutController.launcherChanged(error);
     m_browserDirty = true;
     m_surface->requestUpdate();
@@ -222,12 +211,8 @@ BrowserPage::BrowserPage(
       m_menuController.openFileMenu(id, x, y);
     });
     adapter->setDragCallback(
-        [this](const std::vector<files::EntryId>& ids) { startFileDrag(ids); },
-        [this] {
-          if (m_drag && !m_drag->sourcePin && !m_systemDrag) {
-            cancelDrag();
-          }
-        }
+        [this](const std::vector<files::EntryId>& ids) { m_dragDrop.startFileDrag(ids); },
+        [this] { m_dragDrop.cancelFileDrag(); }
     );
   }
 }
@@ -249,10 +234,10 @@ void BrowserPage::focusMiller(std::size_t index, bool reveal) {
     m_millerFocusPending = true;
   }
   if (changed) {
-    clearTypeahead();
+    m_fileKeys.clearTypeahead();
     m_visitSerial = 0;
     m_pendingHistoryViewport.reset();
-    m_keyboardReveal.reset();
+    m_fileKeys.resetReveal();
     m_thumbnailContext = 0;
     m_browserDirty = true;
     if (reveal) {
@@ -263,8 +248,7 @@ void BrowserPage::focusMiller(std::size_t index, bool reveal) {
 }
 
 BrowserPage::~BrowserPage() {
-  m_dragScroll.stop();
-  m_externalScroll.stop();
+  m_dragDrop.stop();
   m_transferController.stopProgress();
   m_archives.setChangedCallback({});
   m_transfers.setChangedCallback({});
@@ -352,9 +336,9 @@ files::BrowserSettings BrowserPage::options() const {
   auto value = m_savedSettings;
   value.viewMode = m_viewMode;
   value.gridIconSize = static_cast<int>(gridIconSize());
-  value.columns = m_columnVisibility;
-  value.columnOrder = m_columnOrder;
-  value.columnWidths = m_columnWidths;
+  value.columns = m_detailsHeader.columnVisibility();
+  value.columnOrder = m_detailsHeader.columnOrder();
+  value.columnWidths = m_detailsHeader.columnWidths();
   value.sort = browser().model().sort();
   value.showHidden = browser().model().filter().showHidden;
   return value;
@@ -376,7 +360,7 @@ void BrowserPage::preferencesChanged(const std::string& error) {
 }
 
 void BrowserPage::placesChanged() {
-  m_placesDirty = true;
+  m_sidebar.markDirty();
   m_browserDirty = true;
   m_surface->requestUpdate();
 }
@@ -386,89 +370,22 @@ void BrowserPage::clipboardChanged() {
   m_surface->requestUpdate();
 }
 
-void BrowserPage::clearExternalDrop() {
-  m_externalDraggingHere = false;
-  m_refreshExternalDrop = false;
-  m_externalScroll.stop();
-  m_externalScrollDelta = 0;
-  if (m_externalDropTarget || m_externalPinSlot) {
-    m_externalDropTarget.reset();
-    m_externalPinSlot.reset();
-    m_surface->requestLayout();
-  }
-}
+void BrowserPage::clearExternalDrop() { m_dragDrop.clearExternalDrop(); }
 
-const std::vector<files::Bookmark>* BrowserPage::draggedFolders() const {
-  return m_systemDrag && m_drag && m_drag->foldersOnly ? &m_drag->bookmarks : nullptr;
-}
+const std::vector<files::Bookmark>* BrowserPage::draggedFolders() const { return m_dragDrop.draggedFolders(); }
 
 files::FileDropTarget BrowserPage::externalDrop(float x, float y, const std::vector<files::Bookmark>* pins) {
-  clearExternalDrop();
+  m_dragDrop.clearExternalDrop();
   if (!m_visible || overlay() || popup() || actionContext().operationsBusy) {
     return {};
   }
   m_pointerX = x;
   m_pointerY = y;
-
-  m_externalDraggingHere = true;
-  updateExternalScroll();
-  // External offers are decoded only after a drop. Native worker validation
-  // still checks self/descendant/alias targets before any filesystem change.
-  if (pins && m_showSidebar && m_pins.editable() && !m_places->folderAt(x, y)) {
-    if (const auto slot = m_places->dropSlot(x, y)) {
-      m_externalPinSlot = slot;
-      updateExternalScroll();
-      m_surface->requestLayout();
-      const std::weak_ptr<int> lifetime = m_lifetime;
-      return {
-          .receive =
-              [this, lifetime, bookmarks = *pins,
-               slot = *slot](const files::FilePayload&, files::TransferAction, const files::DropCompletion& finish) {
-                if (lifetime.expired() || !m_visible || !m_pins.editable()) {
-                  finish(false);
-                  return;
-                }
-                finish(m_pins.add(bookmarks, slot));
-              },
-          .preferred = files::TransferAction::Copy
-      };
-    }
-  }
-  m_externalHover = true;
-  const auto target = dropTarget();
-  m_externalHover = false;
-  if (!target) {
-    return {};
-  }
-  return externalDestination(target->location, target->rect);
+  return m_dragDrop.externalDrop(x, y, pins);
 }
 
 files::FileDropTarget BrowserPage::externalDestination(const files::Location& destination, LayoutRect rect) {
-  if (!m_visible || overlay() || popup() || actionContext().operationsBusy || !destination.nativePath()) {
-    return {};
-  }
-  m_externalDropTarget = DropTarget{destination, rect};
-  updateExternalScroll();
-  m_surface->requestLayout();
-  const auto context = browser().contextSerial();
-  const std::weak_ptr<int> lifetime = m_lifetime;
-  return {
-      .receive =
-          [this, lifetime, context,
-           destination](files::FilePayload payload, files::TransferAction action, files::DropCompletion finish) {
-            if (lifetime.expired()
-                || context != browser().contextSerial()
-                || !m_visible
-                || overlay()
-                || actionContext().operationsBusy) {
-              finish(false);
-              return;
-            }
-            m_transferController.receiveDrop(std::move(payload), destination, action, std::move(finish));
-          },
-      .preferred = (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0 ? files::TransferAction::Copy
-                                                                          : files::TransferAction::Move
-  };
+  return m_dragDrop.externalDestination(destination, rect);
 }
 
 void BrowserPage::iconsReady() {
@@ -478,35 +395,7 @@ void BrowserPage::iconsReady() {
   }
 }
 
-void BrowserPage::configurePlacesCallbacks() {
-  m_places->setOpenCallback([this](const files::Location& location) {
-    m_actionError.clear();
-    browser().open(location);
-    m_dispatcher.setFocus(m_list->focusArea());
-  });
-  m_places->setContextCallback([this](const files::Bookmark& bookmark, float x, float y) {
-    m_menuController.openPlaceMenu(bookmark, x, y);
-  });
-  m_places->setDragCallback([this](const files::Bookmark& bookmark) { startPlaceDrag(bookmark); });
-  m_places->setRenameCallback([this](const files::Bookmark& bookmark) {
-    m_renameController.openPlaceRename(bookmark);
-  });
-}
-
-void BrowserPage::reusePlacesFrom(BrowserPage& previous) {
-  if (&previous == this || !m_sidebarBundle || !previous.m_sidebarBundle) {
-    return;
-  }
-  auto ready = previous.m_sidebarBundle->removeChild(previous.m_places);
-  auto placeholder = m_sidebarBundle->removeChild(m_places);
-  std::swap(m_places, previous.m_places);
-  m_sidebarBundle->insertChildAt(0, std::move(ready));
-  previous.m_sidebarBundle->insertChildAt(0, std::move(placeholder));
-  m_placesDirty = previous.m_placesDirty;
-  previous.m_placesDirty = true;
-  configurePlacesCallbacks();
-  previous.configurePlacesCallbacks();
-}
+void BrowserPage::reusePlacesFrom(BrowserPage& previous) { m_sidebar.reuseFrom(previous.m_sidebar); }
 
 void BrowserPage::workspaceError(const std::string& message) { actionError(message); }
 
@@ -514,7 +403,7 @@ void BrowserPage::setWorkspaceId(files::TabId id) { m_workspaceId = id; }
 
 bool BrowserPage::owns(const Node* node) const {
   for (; node; node = node->parent()) {
-    if (node == m_root || node == m_toolbar || node == m_sidebarBundle) {
+    if (node == m_root || node == m_toolbar || node == m_sidebar.bundle()) {
       return true;
     }
   }
@@ -530,12 +419,7 @@ InputArea* BrowserPage::cycleFocus(bool reverse) {
   return m_dispatcher.focusedArea();
 }
 
-bool BrowserPage::completeLocationOnTab(std::uint32_t modifiers) {
-  return m_editingLocation
-      && m_location != nullptr
-      && m_dispatcher.focusedArea() == m_location->inputArea()
-      && completionKey(XKB_KEY_Tab, modifiers);
-}
+bool BrowserPage::completeLocationOnTab(std::uint32_t modifiers) { return m_locationBar.completeOnTab(modifiers); }
 
 void BrowserPage::nativeFocus() {
   if (m_active) {
@@ -577,13 +461,13 @@ void BrowserPage::pauseThumbnails(bool pause) {
 }
 
 void BrowserPage::configurationChanged() {
-  clearExternalDrop();
-  m_blankLocationClick.reset();
+  m_dragDrop.clearExternalDrop();
+  m_locationBar.cancelBlankClick();
   if (m_menuSurface && m_dialogHeight) {
     m_dialogResizePending = true;
     m_menuSurface->requestLayout();
   }
-  if (m_resizingSidebar || m_columnDrag || m_columnResize || (m_millerView && m_millerView->resizing())) {
+  if (m_sidebar.resizing() || m_detailsHeader.gestureActive() || (m_millerView && m_millerView->resizing())) {
     m_dispatcher.cancelPointerCapture();
   }
 }
@@ -595,7 +479,7 @@ void BrowserPage::setPopupAvailable(std::function<bool()> callback) { m_popupAva
 void BrowserPage::setForeignDrop(
     std::function<std::optional<std::pair<files::Location, LayoutRect>>(float, float)> callback
 ) {
-  m_foreignDrop = std::move(callback);
+  m_dragDrop.setForeignDrop(std::move(callback));
 }
 
 bool BrowserPage::popupOwns(wl_surface* surface) const {
@@ -627,14 +511,14 @@ void BrowserPage::layoutNavigation(Renderer& renderer) {
     return;
   }
   m_toolbar->arrange(renderer, {m_toolbar->x(), m_toolbar->y(), m_toolbar->width(), m_toolbar->height()});
-  layoutBreadcrumbs(renderer);
-  layoutCompletions(renderer);
-  if (std::exchange(m_refreshExternalDrop, false)) {
-    m_clipboard.refreshDrag();
+  if (m_locationBar.layoutBreadcrumbs(renderer)) {
+    m_dragDrop.requestDropRefresh();
   }
+  m_locationBar.layoutCompletions(renderer);
+  m_dragDrop.refreshDrop();
 }
 
-bool BrowserPage::dragging() const { return m_drag.has_value(); }
+bool BrowserPage::dragging() const { return m_dragDrop.dragging(); }
 
 bool BrowserPage::pointerCaptured() const { return m_dispatcher.pointerCaptured(); }
 
@@ -662,7 +546,7 @@ void BrowserPage::prepare(LayoutRect bounds, bool active, Node* host, bool round
   prepareFrame(true, true);
   stampFocusKeys(*m_root);
   stampFocusKeys(*m_toolbar);
-  stampFocusKeys(*m_sidebarBundle);
+  stampFocusKeys(*m_sidebar.bundle());
   m_body->setBorder(
       colorSpecFromRole(active ? (split ? ColorRole::Primary : ColorRole::OutlineVariant) : ColorRole::Surface),
       split && active ? 2.0F : 1.0F
@@ -689,7 +573,7 @@ void BrowserPage::prepare(LayoutRect bounds, bool active, Node* host, bool round
 }
 
 void BrowserPage::deactivate() {
-  clearExternalDrop();
+  m_dragDrop.clearExternalDrop();
   m_previewController.hidePane();
   m_active = false;
   if (m_root) {
@@ -702,8 +586,8 @@ void BrowserPage::deactivate() {
   }
   m_transferController.keepConflict();
   closeMenu();
-  clearTypeahead();
-  cancelDrag();
+  m_fileKeys.clearTypeahead();
+  m_dragDrop.cancelDrag();
   m_dispatcher.setSceneRoot(m_root);
   m_dispatcher.setTextInputContext(nullptr, nullptr);
 }
@@ -715,7 +599,7 @@ void BrowserPage::hide() {
         m_viewMode,
         static_cast<int>(gridIconSize()),
         m_list->scrollView().scrollOffset(),
-        m_detailsOffset,
+        m_detailsHeader.offset(),
         m_list->firstVisibleOffset(),
         m_list->firstVisibleIndex() && *m_list->firstVisibleIndex() < browser().model().rows().size()
             ? std::optional(browser().model().rows()[*m_list->firstVisibleIndex()])
@@ -735,15 +619,11 @@ void BrowserPage::mount(Node& host) {
   if (m_detachedRoot) {
     host.addChild(std::move(m_detachedRoot));
   }
-  if (m_detachedDragOverlay) {
-    host.addChild(std::move(m_detachedDragOverlay));
-  }
+  m_dragDrop.mount(host);
 }
 
 void BrowserPage::unmount() {
-  if (m_dragOverlay && m_dragOverlay->parent()) {
-    m_detachedDragOverlay = m_dragOverlay->parent()->removeChild(m_dragOverlay);
-  }
+  m_dragDrop.unmount();
   if (m_root && m_root->parent()) {
     m_detachedRoot = m_root->parent()->removeChild(m_root);
   }
@@ -760,19 +640,11 @@ void BrowserPage::returnToolbar(std::unique_ptr<Node> node) {
   }
 }
 
-void BrowserPage::takeSidebar(Node& host) {
-  if (m_detachedSidebar) {
-    host.addChild(std::move(m_detachedSidebar));
-  }
-}
+void BrowserPage::takeSidebar(Node& host) { m_sidebar.take(host); }
 
-void BrowserPage::returnSidebar() {
-  if (m_sidebarBundle && m_sidebarBundle->parent()) {
-    m_detachedSidebar = m_sidebarBundle->parent()->removeChild(m_sidebarBundle);
-  }
-}
+void BrowserPage::returnSidebar() { m_sidebar.giveBack(); }
 
-Node* BrowserPage::sidebar() const { return m_sidebarBundle; }
+Node* BrowserPage::sidebar() const { return m_sidebar.bundle(); }
 
 void BrowserPage::ensureScene() {
   if (!m_root) {
@@ -781,11 +653,9 @@ void BrowserPage::ensureScene() {
   }
 }
 
-float BrowserPage::sidebarWidth() const {
-  return m_showSidebar ? static_cast<float>(std::min(m_sidebarWidth, sidebarMaximumWidth())) + kWorkspaceInset : 0.0F;
-}
+float BrowserPage::sidebarWidth() const { return m_sidebar.width(); }
 
-float BrowserPage::sidebarControlWidth() const { return m_showSidebar ? sidebarWidth() - kSidebarGapInset : 0.0F; }
+float BrowserPage::sidebarControlWidth() const { return m_sidebar.controlWidth(); }
 
 void BrowserPage::pumpJobs() {
   if (m_root) {
@@ -807,27 +677,7 @@ void BrowserPage::transferTo(const files::Location& destination, bool copy) {
 }
 
 std::optional<std::pair<files::Location, LayoutRect>> BrowserPage::foreignTarget(float x, float y) const {
-  if (!m_visible || !m_filePane->containsScenePoint(x, y) || overlay()) {
-    return std::nullopt;
-  }
-  if (const auto index = m_list->visible() ? m_list->itemAtScene(x, y) : std::nullopt) {
-    const auto& rows = browser().model().rows();
-    if (*index >= rows.size()) {
-      return std::nullopt;
-    }
-    const auto* entry = browser().model().entry(rows[*index]);
-    if (!entry || entry->symlink || entry->type != files::FileType::Directory || !entry->location.nativePath()) {
-      return std::nullopt;
-    }
-    if (auto rect = m_list->itemRect(*index)) {
-      return std::pair(entry->location, *rect);
-    }
-    return std::nullopt;
-  }
-  if (location() && location()->nativePath() && browser().searchQuery().empty()) {
-    return std::pair(*location(), sceneRect(*m_filePane));
-  }
-  return std::nullopt;
+  return m_dragDrop.foreignTarget(x, y);
 }
 
 void BrowserPage::outputChanged(wl_output* output) {
@@ -865,216 +715,64 @@ void BrowserPage::pointer(const PointerEvent& event) {
   if (dispatcher == &m_menuDispatcher) {
     m_batchRename.pointer(x, y, event.type == PointerEvent::Type::Motion || event.type == PointerEvent::Type::Enter);
   }
-  if (dispatcher == &m_dispatcher
+  const bool page = dispatcher == &m_dispatcher;
+  if (page
       && event.type == PointerEvent::Type::Button
       && event.pressed
       && event.button == BTN_MIDDLE
-      && m_workspaceRequest) {
-    if (m_list && m_list->containsScenePoint(x, y)) {
-      if (auto index = m_list->itemAtScene(x, y); index && *index < browser().model().rows().size()) {
-        const auto* entry = browser().model().entry(browser().model().rows()[*index]);
-        if (entry && entry->type == files::FileType::Directory) {
-          m_workspaceRequest(WorkspaceCommand::NewTab, entry->location);
-        }
-        return;
-      }
-    }
-    for (const auto& [location, button] : m_dropBreadcrumbs) {
-      if (button->containsScenePoint(x, y)) {
-        m_workspaceRequest(WorkspaceCommand::NewTab, location);
-        return;
-      }
-    }
-    if (m_places) {
-      if (auto folder = m_places->folderAt(x, y)) {
-        m_workspaceRequest(WorkspaceCommand::NewTab, folder->location);
-        return;
-      }
-    }
+      && m_workspaceRequest
+      && openInNewTab(x, y)) {
+    return;
   }
-
-  if (overlay() && dispatcher == &m_dispatcher) {
-    m_pointerX = x;
-    m_pointerY = y;
-    if (event.type == PointerEvent::Type::Button && event.pressed) {
-      m_popupSerial = event.serial;
-    }
-    switch (event.type) {
-    case PointerEvent::Type::Enter:
-      dispatcher->pointerEnter(x, y, event.serial);
-      break;
-    case PointerEvent::Type::Leave:
-      dispatcher->pointerLeave();
-      break;
-    case PointerEvent::Type::Motion:
-      dispatcher->pointerMotion(x, y, event.serial);
-      break;
-    case PointerEvent::Type::Button:
-      dispatcher->pointerButton(x, y, event.button, event.pressed, event.serial, event.time, event.touch);
-      break;
-    case PointerEvent::Type::Axis:
-      dispatcher->pointerAxis(
-          x, y, event.axis, event.axisSource, event.axisValue, event.axisDiscrete, event.axisValue120, event.axisLines,
-          event.axisGestureSerial
-      );
-      break;
-    }
-    m_surface->requestUpdate();
+  if (overlay() && page) {
+    pointerOverlay(*dispatcher, event, x, y);
     return;
   }
   m_pointerX = x;
   m_pointerY = y;
-  if (dispatcher == &m_dispatcher && m_miller.enabled() && event.type == PointerEvent::Type::Button && event.pressed) {
-    if (const auto column = m_millerView->columnAt(x, y)) {
-      focusMiller(*column, false);
-      m_miller.interact(*column);
-    }
-  }
-  if (dispatcher == &m_dispatcher
-      && m_miller.enabled()
-      && event.type == PointerEvent::Type::Axis
-      && m_filePane->containsScenePoint(x, y)
-      && (event.axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL || m_connection.keyboardModifiers() == KeyMod::Shift)) {
-    const float delta = event.axisValue120 != 0
-        ? static_cast<float>(event.axisValue120) / 120.0F * Style::scrollWheelStep
-        : event.axisDiscrete != 0 ? static_cast<float>(event.axisDiscrete) * Style::scrollWheelStep
-                                  : static_cast<float>(event.axisValue);
-    if (std::isfinite(delta)) {
-      m_millerView->scrollBy(delta);
-    }
-    m_surface->requestLayout();
+  if (page && millerPointer(event, x, y)) {
     return;
   }
-  if (dispatcher == &m_dispatcher && event.type == PointerEvent::Type::Button && event.button == BTN_LEFT) {
-    m_fileDragSerial = event.pressed && !event.touch ? event.serial : 0;
+  if (page) {
+    m_dragDrop.trackButton(event);
+    m_locationBar.pointer(event, x, y);
   }
-  if (dispatcher == &m_dispatcher
-      && m_blankLocationClick
-      && (event.type == PointerEvent::Type::Leave
-          || event.type == PointerEvent::Type::Axis
-          || (event.type == PointerEvent::Type::Motion
-              && (std::abs(x - m_blankLocationClick->x) > 6.0F || std::abs(y - m_blankLocationClick->y) > 6.0F)))) {
-    m_blankLocationClick.reset();
-  }
-  if (dispatcher == &m_dispatcher
-      && event.type == PointerEvent::Type::Button
-      && event.pressed
-      && m_editingLocation
-      && m_completionFrame
-      && !m_completionFrame->containsScenePoint(x, y)) {
-    clearCompletions();
-  }
-  if (event.type == PointerEvent::Type::Button && event.pressed && dispatcher == &m_dispatcher) {
-    clearTypeahead();
+  if (event.type == PointerEvent::Type::Button && event.pressed && page) {
+    m_fileKeys.clearTypeahead();
   }
   if (event.type == PointerEvent::Type::Button && event.pressed) {
     m_popupSerial = event.serial;
-    if (dispatcher == &m_dispatcher) {
-      m_fileKeyboardFocus = false;
+    if (page) {
+      m_fileKeys.setKeyboardFocus(false);
       m_browserDirty = true;
       m_surface->requestUpdate();
     }
   }
-  if (dispatcher == &m_dispatcher
-      && m_columnDrag
-      && m_columnDrag->active
-      && event.type == PointerEvent::Type::Button
-      && event.button == BTN_LEFT
-      && !event.pressed) {
-    finishColumnDrag(x, y);
+  if (page && (m_detailsHeader.release(event, x, y) || m_detailsHeader.contextPress(event, x, y))) {
     return;
   }
-  if (dispatcher == &m_dispatcher
+  if (page
       && event.type == PointerEvent::Type::Button
       && event.pressed
       && event.button == BTN_RIGHT
-      && m_listHeader->visible()
-      && m_listHeader->containsScenePoint(x, y)) {
-    std::optional<files::DetailsColumn> column;
-    for (const auto candidate : m_columnOrder) {
-      auto* header = columnHeader(candidate);
-      if (header->visible() && header->containsScenePoint(x, y)) {
-        column = candidate;
-      }
-    }
-    m_menuController.openColumnsMenu({x, y, 1, 1}, column);
-    return;
-  }
-  if (dispatcher == &m_dispatcher
-      && event.type == PointerEvent::Type::Button
-      && event.pressed
-      && event.button == BTN_RIGHT
-      && m_notice != nullptr
-      && m_noticeArea->visible()
+      && m_statusBar.noticeShown()
       && m_filePane->containsScenePoint(x, y)
-      && (!m_listHeader->visible() || !m_listHeader->containsScenePoint(x, y))) {
+      && !m_detailsHeader.headerContains(x, y)) {
     m_menuController.openFileMenu(std::nullopt, x, y);
     return;
   }
-  if (dispatcher == &m_dispatcher
-      && m_drag
+  if (page
+      && m_dragDrop.dragging()
       && event.type == PointerEvent::Type::Button
       && event.button == BTN_LEFT
       && !event.pressed) {
-    finishDrag(x, y);
+    m_dragDrop.finishDrag();
     return;
   }
-  if (dispatcher == &m_dispatcher && event.type == PointerEvent::Type::Button && event.pressed) {
-    const bool twice = event.button == BTN_LEFT
-        && m_lastBreadcrumb
-        && !m_editingLocation
-        && browser().model().snapshot().location == m_lastBreadcrumb
-        && std::chrono::steady_clock::now() - m_breadcrumbClickTime < std::chrono::milliseconds(400)
-        && std::abs(x - m_breadcrumbClickX) <= 6.0F
-        && std::abs(y - m_breadcrumbClickY) <= 6.0F;
-    m_lastBreadcrumb.reset();
-    float localX = 0, localY = 0;
-    if (twice
-        && m_locationArea != nullptr
-        && Node::mapFromScene(m_locationArea, x, y, localX, localY)
-        && localX >= 0
-        && localY >= 0
-        && localX < m_locationArea->width()
-        && localY < m_locationArea->height()) {
-      // Recognize the second press across the ancestor navigation's scene rebuild.
-      m_breadcrumbEditTarget = browser().model().snapshot().location;
-      m_browserDirty = true;
-      m_surface->requestUpdate();
-      return;
-    }
+  if (page && m_locationBar.press(event, x, y)) {
+    return;
   }
-  if (dispatcher == &m_dispatcher && event.type == PointerEvent::Type::Button && event.pressed) {
-    const auto& location = browser().model().snapshot().location;
-    const bool blank = event.button == BTN_LEFT
-        && m_connection.keyboardModifiers() == 0
-        && !m_editingLocation
-        && location
-        && m_locationArea
-        && m_locationArea->containsScenePoint(x, y)
-        && !(m_breadcrumbOverflow && m_breadcrumbOverflow->visible() && m_breadcrumbOverflow->containsScenePoint(x, y))
-        && std::ranges::none_of(m_dropBreadcrumbs, [x, y](const auto& crumb) {
-                         return crumb.second->containsScenePoint(x, y);
-                       });
-    if (blank) {
-      const auto now = std::chrono::steady_clock::now();
-      const bool twice = m_blankLocationClick
-          && m_blankLocationClick->location == location
-          && m_blankLocationClick->context == browser().contextSerial()
-          && now - m_blankLocationClick->time < std::chrono::milliseconds(400)
-          && std::abs(x - m_blankLocationClick->x) <= 6.0F
-          && std::abs(y - m_blankLocationClick->y) <= 6.0F;
-      if (twice) {
-        m_blankLocationClick.reset();
-        m_breadcrumbEditTarget = location;
-        m_surface->requestUpdate();
-        return;
-      }
-      m_blankLocationClick = LocationBlankClick{*location, browser().contextSerial(), now, x, y};
-    } else {
-      m_blankLocationClick.reset();
-    }
-  }
-  if (dispatcher == &m_dispatcher
+  if (page
       && event.type == PointerEvent::Type::Button
       && event.pressed
       && event.button == BTN_LEFT
@@ -1087,53 +785,7 @@ void BrowserPage::pointer(const PointerEvent& event) {
       return;
     }
   }
-  switch (event.type) {
-  case PointerEvent::Type::Enter:
-    dispatcher->pointerEnter(x, y, event.serial);
-    break;
-  case PointerEvent::Type::Leave:
-    dispatcher->pointerLeave();
-    if (dispatcher == &m_dispatcher && !m_systemDrag) {
-      cancelDrag();
-    }
-    break;
-  case PointerEvent::Type::Motion:
-    dispatcher->pointerMotion(x, y, event.serial);
-    if (dispatcher == &m_dispatcher && m_drag) {
-      updateDrag();
-    }
-    break;
-  case PointerEvent::Type::Button:
-    dispatcher->pointerButton(x, y, event.button, event.pressed, event.serial, event.time, event.touch);
-    break;
-  case PointerEvent::Type::Axis:
-    if (dispatcher == &m_menuDispatcher) {
-      m_createController.menuScrolled();
-    }
-    if (dispatcher == &m_dispatcher
-        && m_viewMode == files::ViewMode::List
-        && m_filePane->containsScenePoint(x, y)
-        && (event.axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL
-            || (event.axis == WL_POINTER_AXIS_VERTICAL_SCROLL && m_connection.keyboardModifiers() == KeyMod::Shift))) {
-      if (!m_columnResize && !m_columnDrag) {
-        InputArea::PointerData data;
-        data.axisValue = event.axisValue;
-        data.axisDiscrete = event.axisDiscrete;
-        data.axisValue120 = event.axisValue120;
-        data.axisLines = event.axisLines;
-        scrollDetails(m_detailsOffset + data.scrollDelta(Style::scrollWheelStep));
-      }
-      break;
-    }
-    if (dispatcher == &m_dispatcher && zoomFromScroll(event)) {
-      break;
-    }
-    dispatcher->pointerAxis(
-        x, y, event.axis, event.axisSource, event.axisValue, event.axisDiscrete, event.axisValue120, event.axisLines,
-        event.axisGestureSerial
-    );
-    break;
-  }
+  dispatchPointer(*dispatcher, event, x, y);
   if (dispatcher == &m_createController.documentDispatcher() && event.type != PointerEvent::Type::Leave) {
     m_createController.documentPointer();
   }
@@ -1143,37 +795,144 @@ void BrowserPage::pointer(const PointerEvent& event) {
   }
 }
 
+bool BrowserPage::openInNewTab(float x, float y) {
+  if (m_list && m_list->containsScenePoint(x, y)) {
+    if (auto index = m_list->itemAtScene(x, y); index && *index < browser().model().rows().size()) {
+      const auto* entry = browser().model().entry(browser().model().rows()[*index]);
+      if (entry && entry->type == files::FileType::Directory) {
+        m_workspaceRequest(WorkspaceCommand::NewTab, entry->location);
+      }
+      return true;
+    }
+  }
+  for (const auto& [location, button] : m_locationBar.breadcrumbs()) {
+    if (button->containsScenePoint(x, y)) {
+      m_workspaceRequest(WorkspaceCommand::NewTab, location);
+      return true;
+    }
+  }
+  if (m_sidebar.hasPlaces()) {
+    if (auto folder = m_sidebar.places().folderAt(x, y)) {
+      m_workspaceRequest(WorkspaceCommand::NewTab, folder->location);
+      return true;
+    }
+  }
+  return false;
+}
+
+void BrowserPage::pointerOverlay(InputDispatcher& dispatcher, const PointerEvent& event, float x, float y) {
+  m_pointerX = x;
+  m_pointerY = y;
+  if (event.type == PointerEvent::Type::Button && event.pressed) {
+    m_popupSerial = event.serial;
+  }
+  switch (event.type) {
+  case PointerEvent::Type::Enter:
+    dispatcher.pointerEnter(x, y, event.serial);
+    break;
+  case PointerEvent::Type::Leave:
+    dispatcher.pointerLeave();
+    break;
+  case PointerEvent::Type::Motion:
+    dispatcher.pointerMotion(x, y, event.serial);
+    break;
+  case PointerEvent::Type::Button:
+    dispatcher.pointerButton(x, y, event.button, event.pressed, event.serial, event.time, event.touch);
+    break;
+  case PointerEvent::Type::Axis:
+    dispatcher.pointerAxis(
+        x, y, event.axis, event.axisSource, event.axisValue, event.axisDiscrete, event.axisValue120, event.axisLines,
+        event.axisGestureSerial
+    );
+    break;
+  }
+  m_surface->requestUpdate();
+}
+
+bool BrowserPage::millerPointer(const PointerEvent& event, float x, float y) {
+  if (m_miller.enabled() && event.type == PointerEvent::Type::Button && event.pressed) {
+    if (const auto column = m_millerView->columnAt(x, y)) {
+      focusMiller(*column, false);
+      m_miller.interact(*column);
+    }
+  }
+  if (m_miller.enabled()
+      && event.type == PointerEvent::Type::Axis
+      && m_filePane->containsScenePoint(x, y)
+      && (event.axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL || m_connection.keyboardModifiers() == KeyMod::Shift)) {
+    const float delta = event.axisValue120 != 0
+        ? static_cast<float>(event.axisValue120) / 120.0F * Style::scrollWheelStep
+        : event.axisDiscrete != 0 ? static_cast<float>(event.axisDiscrete) * Style::scrollWheelStep
+                                  : static_cast<float>(event.axisValue);
+    if (std::isfinite(delta)) {
+      m_millerView->scrollBy(delta);
+    }
+    m_surface->requestLayout();
+    return true;
+  }
+  return false;
+}
+
+void BrowserPage::dispatchPointer(InputDispatcher& dispatcher, const PointerEvent& event, float x, float y) {
+  const bool page = &dispatcher == &m_dispatcher;
+  switch (event.type) {
+  case PointerEvent::Type::Enter:
+    dispatcher.pointerEnter(x, y, event.serial);
+    break;
+  case PointerEvent::Type::Leave:
+    dispatcher.pointerLeave();
+    if (page) {
+      m_dragDrop.cancelLocalDrag();
+    }
+    break;
+  case PointerEvent::Type::Motion:
+    dispatcher.pointerMotion(x, y, event.serial);
+    if (page && m_dragDrop.dragging()) {
+      m_dragDrop.updateDrag();
+    }
+    break;
+  case PointerEvent::Type::Button:
+    dispatcher.pointerButton(x, y, event.button, event.pressed, event.serial, event.time, event.touch);
+    break;
+  case PointerEvent::Type::Axis:
+    if (&dispatcher == &m_menuDispatcher) {
+      m_createController.menuScrolled();
+    }
+    if (page
+        && m_viewMode == files::ViewMode::List
+        && m_filePane->containsScenePoint(x, y)
+        && (event.axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL
+            || (event.axis == WL_POINTER_AXIS_VERTICAL_SCROLL && m_connection.keyboardModifiers() == KeyMod::Shift))) {
+      m_detailsHeader.scrollWheel(event);
+      break;
+    }
+    if (page && zoomFromScroll(event)) {
+      break;
+    }
+    dispatcher.pointerAxis(
+        x, y, event.axis, event.axisSource, event.axisValue, event.axisDiscrete, event.axisValue120, event.axisLines,
+        event.axisGestureSerial
+    );
+    break;
+  }
+}
+
 void BrowserPage::keyboard(const KeyboardEvent& event) {
   if (event.pressed) {
     m_popupSerial = m_connection.lastInputSerial();
-    m_lastBreadcrumb.reset();
-    m_blankLocationClick.reset();
-    if ((m_columnDrag || m_columnResize || (m_millerView && m_millerView->resizing()))
-        && KeySymbol::isEscape(event.sym)) {
-      m_dispatcher.cancelPointerCapture();
-      return;
-    }
-    if (m_resizingSidebar && KeySymbol::isEscape(event.sym)) {
-      m_dispatcher.cancelPointerCapture();
-      return;
-    }
-    if (m_drag && KeySymbol::isEscape(event.sym)) {
-      cancelDrag();
+    m_locationBar.keyPressed();
+    if (escapeGesture(event)) {
       return;
     }
   }
-  if (event.pressed
-      && event.modifiers == 0
-      && KeySymbol::isEscape(event.sym)
-      && (!m_typeahead.text().empty() || !m_typeaheadPreedit.empty())) {
-    clearTypeahead();
+  if (m_fileKeys.escapeKey(event)) {
     return;
   }
-  if (m_columnDrag || m_columnResize) {
+  if (m_detailsHeader.gestureActive()) {
     return;
   }
-  if (m_drag) {
-    updateDrag();
+  if (m_dragDrop.dragging()) {
+    m_dragDrop.updateDrag();
     return;
   }
   if (m_menuSurface != nullptr) {
@@ -1192,257 +951,180 @@ void BrowserPage::keyboard(const KeyboardEvent& event) {
   if (m_settingsController.key(event)) {
     return;
   }
-  if (event.pressed && !event.preedit) {
-    const bool editing = (m_location != nullptr && m_dispatcher.focusedArea() == m_location->inputArea())
-        || (m_filterInput != nullptr && m_dispatcher.focusedArea() == m_filterInput->inputArea());
-    if (!editing
-        && !event.repeat
-        && event.modifiers == KeyMod::Ctrl
-        && (event.sym == XKB_KEY_c || event.sym == XKB_KEY_x || event.sym == XKB_KEY_v)) {
-      dispatchAction(
-          event.sym == XKB_KEY_c       ? Action::CopyFiles
-              : event.sym == XKB_KEY_x ? Action::CutFiles
-                                       : Action::PasteFiles
-      );
-      return;
-    }
-    if (!editing && event.modifiers == 0 && !event.repeat && event.sym == XKB_KEY_F8) {
-      dispatchAction(Action::ShowPreview);
-      return;
-    }
-    if (!editing
-        && event.modifiers == 0
-        && !event.repeat
-        && KeySymbol::isSpace(event.sym)
-        && m_dispatcher.focusedArea() == m_list->focusArea()) {
-      dispatchAction(Action::QuickPreview);
-      return;
-    }
-    if (!m_typeaheadPreedit.empty()) {
-      if (KeySymbol::isEscape(event.sym)) {
-        clearTypeahead();
-      }
-      return;
-    }
-    if ((event.sym == XKB_KEY_Menu && event.modifiers == 0)
-        || (event.sym == XKB_KEY_F10 && event.modifiers == KeyMod::Shift)) {
-      if (m_breadcrumbOverflow
-          && m_breadcrumbOverflow->visible()
-          && m_dispatcher.focusedArea() == m_breadcrumbOverflow->inputArea()) {
-        openBreadcrumbOverflow();
-        return;
-      }
-      for (const auto& [target, button] : m_dropBreadcrumbs) {
-        if (m_dispatcher.focusedArea() == button->inputArea()) {
-          m_menuController.openBreadcrumbMenu(target, sceneRect(*button));
-          return;
-        }
-      }
-    }
-    if (m_editingLocation && completionKey(event.sym, event.modifiers)) {
-      return;
-    }
-    if (KeySymbol::isTab(event.sym)) {
-      (void)m_dispatcher.cycleTabFocus((event.modifiers & KeyMod::Shift) != 0);
-      m_surface->requestRedraw();
-      return;
-    }
-    if (event.sym == XKB_KEY_F11 && !event.repeat) {
-      m_surface->toggleFullscreen();
-      return;
-    }
-    if (event.sym == XKB_KEY_q && event.modifiers == KeyMod::Ctrl) {
-      m_surface->close();
-      return;
-    }
-    if (event.sym == XKB_KEY_comma && event.modifiers == KeyMod::Ctrl) {
-      dispatchAction(Action::Settings);
-      return;
-    }
-    if (event.sym == XKB_KEY_l && event.modifiers == KeyMod::Ctrl && m_location != nullptr) {
-      dispatchAction(Action::EditLocation);
-      return;
-    }
-    if ((event.sym == XKB_KEY_k || event.sym == XKB_KEY_f)
-        && event.modifiers == KeyMod::Ctrl
-        && m_filterInput != nullptr) {
-      dispatchAction(Action::Search);
-      return;
-    }
-    if (m_editingLocation && event.modifiers == 0 && KeySymbol::isEscape(event.sym)) {
-      endLocationEdit(true);
-      return;
-    }
-    if (m_filterOpen && event.modifiers == 0 && KeySymbol::isEscape(event.sym) && !m_editingLocation) {
-      closeFilter();
-      return;
-    }
-    if (!editing && event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Left) {
-      dispatchAction(Action::Back);
-      return;
-    }
-    if (!editing && event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Right) {
-      dispatchAction(Action::Forward);
-      return;
-    }
-    if (!editing && event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Up) {
-      dispatchAction(Action::Up);
-      return;
-    }
-    if (!editing && event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Home) {
-      dispatchAction(Action::Home);
-      return;
-    }
-    if (!editing && event.sym == XKB_KEY_F5 && event.modifiers == 0) {
-      dispatchAction(Action::Refresh);
-      return;
-    }
-    if (!editing
-        && m_viewMode == files::ViewMode::List
-        && event.modifiers == KeyMod::Ctrl
-        && (event.sym == XKB_KEY_Left || event.sym == XKB_KEY_Right)) {
-      for (std::size_t index = 0; index < 4; ++index) {
-        if (m_dispatcher.focusedArea() == widthHeader(index)->inputArea()) {
-          auto widths = m_columnWidths;
-          const int delta = (event.sym == XKB_KEY_Right ? 16 : -16) * (Style::rtl() ? -1 : 1);
-          widths[index] = std::clamp(
-              static_cast<int>(std::lround(headerWidth(index))) + delta, files::minimumDetailsColumnWidth(index),
-              files::maximumDetailsColumnWidth(index)
-          );
-          if (index != 0 && widths[0] == 0 && widths[index] != m_columnWidths[index]) {
-            widths[0] = static_cast<int>(std::lround(m_detailsColumns.nameWidth));
-          }
-          setDetailsColumnWidths(widths);
-          m_revealDetailsHeader = widthHeader(index);
-          return;
-        }
-      }
-    }
-    if (!editing && zoomFromKey(event)) {
-      return;
-    }
-    if (!editing && event.sym == XKB_KEY_F9 && event.modifiers == 0 && !event.repeat) {
-      dispatchAction(Action::ShowSidebar);
-      return;
-    }
-    if (!editing
-        && (event.sym == XKB_KEY_n || event.sym == XKB_KEY_N)
-        && event.modifiers == (KeyMod::Ctrl | KeyMod::Shift)
-        && !event.repeat) {
-      dispatchAction(Action::CreateFolder);
-      return;
-    }
-    if (!editing
-        && ((event.sym == XKB_KEY_Menu && event.modifiers == 0)
-            || (event.sym == XKB_KEY_F10 && event.modifiers == KeyMod::Shift))) {
-      for (auto* header : {m_nameHeader, m_typeHeader, m_sizeHeader, m_modifiedHeader}) {
-        if (m_dispatcher.focusedArea() == header->inputArea()) {
-          std::optional<files::DetailsColumn> column;
-          for (const auto candidate : m_columnOrder) {
-            if (columnHeader(candidate) == header) {
-              column = candidate;
-            }
-          }
-          auto anchor = sceneRect(*header);
-          const auto viewport = sceneRect(*m_detailsHeaderViewport);
-          const float left = std::max(anchor.x, viewport.x);
-          anchor.width = std::max(1.0F, std::min(anchor.x + anchor.width, viewport.x + viewport.width) - left);
-          anchor.x = left;
-          m_menuController.openColumnsMenu(anchor, column);
-          return;
-        }
-      }
-    }
-    if (!editing
-        && m_list != nullptr
-        && m_dispatcher.focusedArea() == m_list->focusArea()
-        && (event.sym == XKB_KEY_Menu || (event.sym == XKB_KEY_F10 && event.modifiers == KeyMod::Shift))) {
-      auto id = browser().model().selection().focused;
-      float x = 240, y = 100;
-      if (id) {
-        if (!browser().model().selection().selected.contains(*id)) {
-          browser().model().select(*id);
-        }
-        const auto& rows = browser().model().rows();
-        const auto found = std::ranges::find(rows, *id);
-        if (found != rows.end()) {
-          if (const auto rect = m_list->itemRect(static_cast<std::size_t>(found - rows.begin()))) {
-            x = rect->x + rect->width * 0.5F;
-            y = rect->y + rect->height * 0.5F;
-          }
-        }
-      }
-      m_menuController.openFileMenu(id, x, y);
-      return;
-    }
-    if (!editing && m_list != nullptr && m_dispatcher.focusedArea() == m_list->focusArea() && !event.repeat) {
-      if (event.sym == XKB_KEY_Delete && (event.modifiers == 0 || event.modifiers == KeyMod::Shift)) {
-        const auto& folder = browser().model().snapshot().location;
-        if (folder && folder->isTrash()) {
-          dispatchAction(Action::DeletePermanently);
-        } else if (event.modifiers == 0) {
-          dispatchAction(Action::Trash);
-        }
-        return;
-      }
-      if (event.sym == XKB_KEY_F2 && event.modifiers == 0) {
-        dispatchAction(Action::Rename);
-        return;
-      }
-      if (event.sym == XKB_KEY_Return && event.modifiers == KeyMod::Alt) {
-        dispatchAction(Action::Properties);
-        return;
-      }
-    }
-    if (!editing
-        && event.modifiers == KeyMod::Ctrl
-        && (event.sym == XKB_KEY_1 || event.sym == XKB_KEY_2 || event.sym == XKB_KEY_3)) {
-      dispatchAction(event.sym == XKB_KEY_1 ? Action::Grid : event.sym == XKB_KEY_2 ? Action::List : Action::Miller);
-      return;
-    }
-    if (!editing && event.sym == XKB_KEY_h && event.modifiers == KeyMod::Ctrl) {
-      dispatchAction(Action::ShowHidden);
-      return;
-    }
-    if (m_list != nullptr && m_dispatcher.focusedArea() == m_list->focusArea() && listKey(event)) {
-      m_fileKeyboardFocus = !KeySymbol::isEscape(event.sym);
-      m_browserDirty = true;
-      m_surface->requestUpdate();
-      return;
-    }
+  if (event.pressed && !event.preedit && shortcutKey(event)) {
+    return;
   }
-  if (event.pressed
-      && !event.preedit
-      && m_typingMode == files::TypingMode::Typeahead
-      && m_list != nullptr
-      && m_dispatcher.focusedArea() == m_list->focusArea()
-      && (event.modifiers & (KeyMod::Ctrl | KeyMod::Alt | KeyMod::Super)) == 0) {
-    if (g_unichar_isprint(event.utf32)) {
-      char text[8]{};
-      const int length = g_unichar_to_utf8(event.utf32, text);
-      applyTypeahead(std::string(text, static_cast<std::size_t>(length)));
-      return;
-    }
-    if (event.sym == XKB_KEY_BackSpace && !m_typeahead.text().empty()) {
-      const auto& text = m_typeahead.text();
-      const char* previous = g_utf8_find_prev_char(text.data(), text.data() + text.size());
-      typeaheadChanged(m_typeahead.erase(
-          browser().model(), static_cast<std::uint32_t>(text.data() + text.size() - previous),
-          files::TypeaheadSelection::Clock::now()
-      ));
-      return;
-    }
-  }
-  if (event.pressed
-      && !event.preedit
-      && m_typingMode == files::TypingMode::Search
-      && m_list != nullptr
-      && m_dispatcher.focusedArea() == m_list->focusArea()
-      && (event.modifiers & (KeyMod::Ctrl | KeyMod::Alt | KeyMod::Super)) == 0
-      && (g_unichar_isprint(event.utf32) || (m_filterOpen && event.sym == XKB_KEY_BackSpace))) {
-    openFilter(false);
+  if (m_fileKeys.typeKey(event)) {
+    return;
   }
   m_dispatcher.keyEvent(event.sym, event.utf32, event.modifiers, event.pressed, event.preedit);
+}
+
+bool BrowserPage::escapeGesture(const KeyboardEvent& event) {
+  if ((m_detailsHeader.gestureActive() || (m_millerView && m_millerView->resizing()))
+      && KeySymbol::isEscape(event.sym)) {
+    m_dispatcher.cancelPointerCapture();
+    return true;
+  }
+  if (m_sidebar.resizing() && KeySymbol::isEscape(event.sym)) {
+    m_dispatcher.cancelPointerCapture();
+    return true;
+  }
+  if (m_dragDrop.dragging() && KeySymbol::isEscape(event.sym)) {
+    m_dragDrop.cancelDrag();
+    return true;
+  }
+  return false;
+}
+
+bool BrowserPage::shortcutKey(const KeyboardEvent& event) {
+  const bool editing = m_locationBar.textFocused();
+  if (!editing
+      && !event.repeat
+      && event.modifiers == KeyMod::Ctrl
+      && (event.sym == XKB_KEY_c || event.sym == XKB_KEY_x || event.sym == XKB_KEY_v)) {
+    dispatchAction(
+        event.sym == XKB_KEY_c       ? Action::CopyFiles
+            : event.sym == XKB_KEY_x ? Action::CutFiles
+                                     : Action::PasteFiles
+    );
+    return true;
+  }
+  if (!editing && event.modifiers == 0 && !event.repeat && event.sym == XKB_KEY_F8) {
+    dispatchAction(Action::ShowPreview);
+    return true;
+  }
+  if (!editing
+      && event.modifiers == 0
+      && !event.repeat
+      && KeySymbol::isSpace(event.sym)
+      && m_dispatcher.focusedArea() == m_list->focusArea()) {
+    dispatchAction(Action::QuickPreview);
+    return true;
+  }
+  if (m_fileKeys.preeditKey(event)) {
+    return true;
+  }
+  if (m_locationBar.menuKey(event) || m_locationBar.completionKey(event)) {
+    return true;
+  }
+  if (windowKey(event) || m_locationBar.escapeKey(event)) {
+    return true;
+  }
+  if (navigationKey(event, editing)) {
+    return true;
+  }
+  if (!editing && (m_detailsHeader.menuKey(event) || m_fileKeys.commandKey(event))) {
+    return true;
+  }
+  if (!editing
+      && event.modifiers == KeyMod::Ctrl
+      && (event.sym == XKB_KEY_1 || event.sym == XKB_KEY_2 || event.sym == XKB_KEY_3)) {
+    dispatchAction(event.sym == XKB_KEY_1 ? Action::Grid : event.sym == XKB_KEY_2 ? Action::List : Action::Miller);
+    return true;
+  }
+  if (!editing && event.sym == XKB_KEY_h && event.modifiers == KeyMod::Ctrl) {
+    dispatchAction(Action::ShowHidden);
+    return true;
+  }
+  if (m_list != nullptr
+      && m_dispatcher.focusedArea() == m_list->focusArea()
+      && (millerKey(event) || m_fileKeys.listKey(event))) {
+    m_fileKeys.setKeyboardFocus(!KeySymbol::isEscape(event.sym));
+    m_browserDirty = true;
+    m_surface->requestUpdate();
+    return true;
+  }
+  return false;
+}
+
+bool BrowserPage::windowKey(const KeyboardEvent& event) {
+  if (KeySymbol::isTab(event.sym)) {
+    (void)m_dispatcher.cycleTabFocus((event.modifiers & KeyMod::Shift) != 0);
+    m_surface->requestRedraw();
+    return true;
+  }
+  if (event.sym == XKB_KEY_F11 && !event.repeat) {
+    m_surface->toggleFullscreen();
+    return true;
+  }
+  if (event.sym == XKB_KEY_q && event.modifiers == KeyMod::Ctrl) {
+    m_surface->close();
+    return true;
+  }
+  if (event.sym == XKB_KEY_comma && event.modifiers == KeyMod::Ctrl) {
+    dispatchAction(Action::Settings);
+    return true;
+  }
+  if (event.sym == XKB_KEY_l && event.modifiers == KeyMod::Ctrl && m_locationBar.hasLocationInput()) {
+    dispatchAction(Action::EditLocation);
+    return true;
+  }
+  if ((event.sym == XKB_KEY_k || event.sym == XKB_KEY_f)
+      && event.modifiers == KeyMod::Ctrl
+      && m_locationBar.hasFilterInput()) {
+    dispatchAction(Action::Search);
+    return true;
+  }
+  return false;
+}
+
+bool BrowserPage::navigationKey(const KeyboardEvent& event, bool editing) {
+  if (!editing && event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Left) {
+    dispatchAction(Action::Back);
+    return true;
+  }
+  if (!editing && event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Right) {
+    dispatchAction(Action::Forward);
+    return true;
+  }
+  if (!editing && event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Up) {
+    dispatchAction(Action::Up);
+    return true;
+  }
+  if (!editing && event.modifiers == KeyMod::Alt && event.sym == XKB_KEY_Home) {
+    dispatchAction(Action::Home);
+    return true;
+  }
+  if (!editing && event.sym == XKB_KEY_F5 && event.modifiers == 0) {
+    dispatchAction(Action::Refresh);
+    return true;
+  }
+  if (!editing && m_detailsHeader.widthKey(event)) {
+    return true;
+  }
+  if (!editing && zoomFromKey(event)) {
+    return true;
+  }
+  if (!editing && event.sym == XKB_KEY_F9 && event.modifiers == 0 && !event.repeat) {
+    dispatchAction(Action::ShowSidebar);
+    return true;
+  }
+  if (!editing
+      && (event.sym == XKB_KEY_n || event.sym == XKB_KEY_N)
+      && event.modifiers == (KeyMod::Ctrl | KeyMod::Shift)
+      && !event.repeat) {
+    dispatchAction(Action::CreateFolder);
+    return true;
+  }
+  return false;
+}
+
+bool BrowserPage::millerKey(const KeyboardEvent& event) {
+  if (m_miller.enabled() && event.modifiers == 0 && (event.sym == XKB_KEY_Left || event.sym == XKB_KEY_Right)) {
+    const bool next = (event.sym == XKB_KEY_Right) != Style::rtl();
+    if (next) {
+      if (m_miller.enter()) {
+        focusMiller(m_miller.focused());
+        m_millerFocusPending = true;
+      }
+    } else if (m_miller.focused() > 0) {
+      focusMiller(m_miller.focused() - 1);
+      m_dispatcher.setFocus(m_list->focusArea());
+    }
+    return true;
+  }
+  return false;
 }
 
 files::ActionContext BrowserPage::actionContext() const {
@@ -1464,10 +1146,10 @@ files::ActionContext BrowserPage::actionContext() const {
           || m_transferController.pastePending(),
       .pinsEditable = m_pins.editable(),
       .pinsBusy = m_pins.busy(),
-      .canEmptyTrash = canEmptyTrash(),
+      .canEmptyTrash = fileJobsIdle(),
       .pinned = [this](const auto& location) { return m_pins.contains(location); },
       .viewMode = m_viewMode,
-      .showSidebar = m_showSidebar,
+      .showSidebar = m_sidebar.visible(),
       .showPreview = m_savedSettings.showPreview,
       .clipboardAvailable = m_clipboard.available(),
       .clipboardHasFiles = m_clipboard.hasFiles(),
@@ -1507,8 +1189,8 @@ void BrowserPage::dispatchAction(Action action, const files::ActionRequest& requ
     actionError(std::string(state.reason));
     return;
   }
-  m_actionError.clear();
-  clearTypeahead();
+  m_statusBar.clearMessage();
+  m_fileKeys.clearTypeahead();
   const bool selectionAction = files::ActionRegistry::definition(action).scope == files::ActionScope::Selection;
   if (selectionAction) {
     if (m_miller.enabled()) {
@@ -1523,18 +1205,22 @@ void BrowserPage::dispatchAction(Action action, const files::ActionRequest& requ
       targets.push_back(*entry);
     }
   }
+  runAction(action, request, targets);
+  if (!m_menuSurface && selectionAction) {
+    m_dispatcher.setFocus(m_list->focusArea());
+  }
+  m_browserDirty = true;
+  m_surface->requestUpdate();
+}
+
+void BrowserPage::runAction(
+    Action action, const files::ActionRequest& request, const std::vector<files::DirectoryEntry>& targets
+) {
   switch (action) {
   case Action::CutFiles:
-  case Action::CopyFiles: {
-    files::FilePayload payload{.locations = {}, .cut = action == Action::CutFiles};
-    for (const auto& target : targets) {
-      payload.locations.push_back(target.location);
-    }
-    if (!m_clipboard.setFiles(std::move(payload))) {
-      actionError("The file selection could not be copied to the clipboard.");
-    }
+  case Action::CopyFiles:
+    copyFiles(action, targets);
     break;
-  }
   case Action::PasteFiles:
     m_transferController.paste(request);
     break;
@@ -1564,41 +1250,13 @@ void BrowserPage::dispatchAction(Action action, const files::ActionRequest& requ
   case Action::CopyPath:
   case Action::CopyUri:
   case Action::CopyTargetPath:
-  case Action::CopyTargetUri: {
-    std::string text;
-    const bool uri = action == Action::CopyUri || action == Action::CopyTargetUri;
-    const auto append = [&](const files::Location& location) {
-      if (!text.empty()) {
-        text += '\n';
-      }
-      text += uri ? location.uri() : files::locationEditText(location);
-    };
-    if (action == Action::CopyPath || action == Action::CopyUri) {
-      append(*request.folder);
-    } else {
-      for (const auto& target : targets) {
-        append(target.location);
-      }
-    }
-    if (text.size() > 1024 * 1024) {
-      actionError("The selected paths exceed the clipboard text limit.");
-    } else {
-      m_clipboard.setClipboardText(std::move(text));
-    }
+  case Action::CopyTargetUri:
+    copyPaths(action, request, targets);
     break;
-  }
   case Action::Terminal:
-  case Action::TargetTerminal: {
-    const auto target = action == Action::Terminal ? *request.folder : targets.front().location;
-    const auto context = browser().contextSerial();
-    const std::weak_ptr<int> lifetime = m_lifetime;
-    m_terminal.open(target, [this, lifetime, context](std::string error) {
-      if (!lifetime.expired() && context == browser().contextSerial() && !error.empty()) {
-        actionError(std::move(error));
-      }
-    });
+  case Action::TargetTerminal:
+    openTerminal(action == Action::Terminal ? *request.folder : targets.front().location);
     break;
-  }
   case Action::Back:
     (void)browser().back();
     break;
@@ -1621,10 +1279,10 @@ void BrowserPage::dispatchAction(Action action, const files::ActionRequest& requ
     browser().stop();
     break;
   case Action::EditLocation:
-    beginLocationEdit();
+    m_locationBar.beginLocationEdit();
     break;
   case Action::Search:
-    openFilter();
+    m_locationBar.openFilter();
     break;
   case Action::Grid:
     setViewMode(files::ViewMode::Grid);
@@ -1639,7 +1297,7 @@ void BrowserPage::dispatchAction(Action action, const files::ActionRequest& requ
     toggleHidden();
     break;
   case Action::ShowSidebar:
-    setSidebarVisible(!m_showSidebar);
+    m_sidebar.setVisible(!m_sidebar.visible());
     break;
   case Action::SortName:
   case Action::SortType:
@@ -1647,38 +1305,11 @@ void BrowserPage::dispatchAction(Action action, const files::ActionRequest& requ
   case Action::SortModified:
   case Action::Ascending:
   case Action::Descending:
-  case Action::FoldersFirst: {
-    auto options = browser().model().sort();
-    const auto field = action == Action::SortName ? files::SortField::Name
-        : action == Action::SortType              ? files::SortField::Type
-        : action == Action::SortSize              ? files::SortField::Size
-                                                  : files::SortField::Modified;
-    if (action == Action::Ascending || action == Action::Descending) {
-      options.descending = action == Action::Descending;
-    } else if (action == Action::FoldersFirst) {
-      options.directoriesFirst = !options.directoriesFirst;
-    } else if (options.field != field) {
-      options.field = field;
-      options.descending = false;
-    }
-    changeSort(options);
+  case Action::FoldersFirst:
+    sortAction(action);
     break;
-  }
   case Action::Open:
-    if (m_miller.enabled()
-        && targets.size() == 1
-        && targets.front().type == files::FileType::Directory
-        && !targets.front().symlink
-        && browser().searchQuery().empty()) {
-      (void)browser().model().select(targets.front().id);
-      if (m_miller.enter()) {
-        m_millerFocusPending = true;
-      }
-    } else {
-      for (const auto& target : targets) {
-        browser().activate(target.id);
-      }
-    }
+    openTargets(targets);
     break;
   case Action::ContainingFolder:
     showContaining(targets.front().location);
@@ -1686,27 +1317,14 @@ void BrowserPage::dispatchAction(Action action, const files::ActionRequest& requ
   case Action::OriginalLocation:
     showContaining(*targets.front().trash.original);
     break;
-  case Action::Pin: {
-    std::vector<files::Bookmark> pins;
-    for (const auto& target : targets) {
-      if (!m_pins.contains(target.location)) {
-        pins.push_back({target.displayName, target.location});
-      }
-    }
-    pinFolders(std::move(pins), m_pins.bookmarks().size());
+  case Action::Pin:
+    pinTargets(targets);
     break;
-  }
-  case Action::Unpin: {
-    std::vector<files::Location> locations;
-    locations.reserve(targets.size());
-    for (const auto& target : targets) {
-      locations.push_back(target.location);
-    }
-    m_pins.removeMany(locations);
+  case Action::Unpin:
+    unpinTargets(targets);
     break;
-  }
   case Action::PinCurrent:
-    pinFolders(
+    m_sidebar.pinFolders(
         {{files::locationBreadcrumbs(*request.folder).back().label, *request.folder}}, m_pins.bookmarks().size()
     );
     break;
@@ -1779,11 +1397,104 @@ void BrowserPage::dispatchAction(Action action, const files::ActionRequest& requ
     m_menuController.openSelectionMenu();
     break;
   }
-  if (!m_menuSurface && selectionAction) {
-    m_dispatcher.setFocus(m_list->focusArea());
+}
+
+void BrowserPage::copyFiles(Action action, const std::vector<files::DirectoryEntry>& targets) {
+  files::FilePayload payload{.locations = {}, .cut = action == Action::CutFiles};
+  for (const auto& target : targets) {
+    payload.locations.push_back(target.location);
   }
-  m_browserDirty = true;
-  m_surface->requestUpdate();
+  if (!m_clipboard.setFiles(std::move(payload))) {
+    actionError("The file selection could not be copied to the clipboard.");
+  }
+}
+
+void BrowserPage::copyPaths(
+    Action action, const files::ActionRequest& request, const std::vector<files::DirectoryEntry>& targets
+) {
+  std::string text;
+  const bool uri = action == Action::CopyUri || action == Action::CopyTargetUri;
+  const auto append = [&](const files::Location& location) {
+    if (!text.empty()) {
+      text += '\n';
+    }
+    text += uri ? location.uri() : files::locationEditText(location);
+  };
+  if (action == Action::CopyPath || action == Action::CopyUri) {
+    append(*request.folder);
+  } else {
+    for (const auto& target : targets) {
+      append(target.location);
+    }
+  }
+  if (text.size() > 1024 * 1024) {
+    actionError("The selected paths exceed the clipboard text limit.");
+  } else {
+    m_clipboard.setClipboardText(std::move(text));
+  }
+}
+
+void BrowserPage::openTerminal(const files::Location& target) {
+  const auto context = browser().contextSerial();
+  const std::weak_ptr<int> lifetime = m_lifetime;
+  m_terminal.open(target, [this, lifetime, context](std::string error) {
+    if (!lifetime.expired() && context == browser().contextSerial() && !error.empty()) {
+      actionError(std::move(error));
+    }
+  });
+}
+
+void BrowserPage::sortAction(Action action) {
+  auto options = browser().model().sort();
+  const auto field = action == Action::SortName ? files::SortField::Name
+      : action == Action::SortType              ? files::SortField::Type
+      : action == Action::SortSize              ? files::SortField::Size
+                                                : files::SortField::Modified;
+  if (action == Action::Ascending || action == Action::Descending) {
+    options.descending = action == Action::Descending;
+  } else if (action == Action::FoldersFirst) {
+    options.directoriesFirst = !options.directoriesFirst;
+  } else if (options.field != field) {
+    options.field = field;
+    options.descending = false;
+  }
+  changeSort(options);
+}
+
+void BrowserPage::openTargets(const std::vector<files::DirectoryEntry>& targets) {
+  if (m_miller.enabled()
+      && targets.size() == 1
+      && targets.front().type == files::FileType::Directory
+      && !targets.front().symlink
+      && browser().searchQuery().empty()) {
+    (void)browser().model().select(targets.front().id);
+    if (m_miller.enter()) {
+      m_millerFocusPending = true;
+    }
+  } else {
+    for (const auto& target : targets) {
+      browser().activate(target.id);
+    }
+  }
+}
+
+void BrowserPage::pinTargets(const std::vector<files::DirectoryEntry>& targets) {
+  std::vector<files::Bookmark> pins;
+  for (const auto& target : targets) {
+    if (!m_pins.contains(target.location)) {
+      pins.push_back({target.displayName, target.location});
+    }
+  }
+  m_sidebar.pinFolders(std::move(pins), m_pins.bookmarks().size());
+}
+
+void BrowserPage::unpinTargets(const std::vector<files::DirectoryEntry>& targets) {
+  std::vector<files::Location> locations;
+  locations.reserve(targets.size());
+  for (const auto& target : targets) {
+    locations.push_back(target.location);
+  }
+  m_pins.removeMany(locations);
 }
 
 void BrowserPage::openPatternSelection(const files::ActionRequest& request) {
@@ -1827,16 +1538,53 @@ void BrowserPage::openPatternSelection(const files::ActionRequest& request) {
 }
 
 void BrowserPage::actionError(std::string message) {
-  m_actionError = std::move(message);
+  m_statusBar.setMessage(std::move(message));
   m_browserDirty = true;
   m_surface->requestUpdate();
 }
 
-void BrowserPage::setActionMessage(std::string message) { m_actionError = std::move(message); }
+void BrowserPage::setActionMessage(std::string message) { m_statusBar.setMessage(std::move(message)); }
 
 void BrowserPage::revealOnReload(std::vector<files::Location> targets) { m_revealTargets = std::move(targets); }
 
-void BrowserPage::restorePlaceFocus(files::Location location) { m_restorePlaceFocus = std::move(location); }
+void BrowserPage::restorePlaceFocus(files::Location location) { m_sidebar.focusPlace(std::move(location)); }
+
+bool BrowserPage::fileJobsIdle() const {
+  return !m_archives.busy()
+      && !m_transfers.busy()
+      && !m_restore.busy()
+      && !m_trash.busy()
+      && !m_trash.canTrash()
+      && !m_emptyTrash.pending()
+      && !renameBusy()
+      && !m_creator.busy();
+}
+
+void BrowserPage::requestSync() {
+  m_browserDirty = true;
+  m_surface->requestUpdate();
+}
+
+float BrowserPage::pointerX() const { return m_pointerX; }
+
+float BrowserPage::pointerY() const { return m_pointerY; }
+
+Node& BrowserPage::upButton() { return *m_up; }
+
+VirtualGridView* BrowserPage::fileList() { return m_list; }
+
+Flex& BrowserPage::filePane() { return *m_filePane; }
+
+MillerView& BrowserPage::millerView() { return *m_millerView; }
+
+files::ViewMode BrowserPage::viewMode() const { return m_viewMode; }
+
+void BrowserPage::resetFileView() {
+  m_listAdapter.onPointerCancel();
+  m_gridAdapter.onPointerCancel();
+  m_viewAnchor.reset();
+  m_list->scrollView().requestScrollToOffset(0);
+}
 
 bool BrowserPage::targetsCurrent(const std::vector<files::DirectoryEntry>& targets) {
   const bool current = std::ranges::all_of(targets, [this](const auto& target) {
@@ -1858,23 +1606,6 @@ bool BrowserPage::requestCurrent(const files::ActionRequest& request, files::Act
 bool BrowserPage::operationsBusy() const { return actionContext().operationsBusy; }
 
 bool BrowserPage::visible() const { return m_visible; }
-
-void BrowserPage::pinFolders(std::vector<files::Bookmark> bookmarks, std::size_t before) {
-  if (!m_pins.add(std::move(bookmarks), before)) {
-    actionError(m_pins.busy() ? "Pins are being saved. Try again shortly." : "Reload valid pins before editing them.");
-  }
-}
-
-bool BrowserPage::canEmptyTrash() const {
-  return !m_archives.busy()
-      && !m_transfers.busy()
-      && !m_restore.busy()
-      && !m_trash.busy()
-      && !m_trash.canTrash()
-      && !m_emptyTrash.pending()
-      && !renameBusy()
-      && !m_creator.busy();
-}
 
 void BrowserPage::operationProgressTick() {
   m_batchRename.progressTick();
@@ -1931,27 +1662,16 @@ void BrowserPage::applySettings(const files::BrowserSettings& settings, bool for
     }
   }
   if (force || before.activationMode != settings.activationMode || before.typingMode != settings.typingMode) {
-    clearTypeahead();
+    m_fileKeys.clearTypeahead();
     m_activationMode = settings.activationMode;
-    m_typingMode = settings.typingMode;
+    m_fileKeys.setTypingMode(settings.typingMode);
     for (auto* adapter : {&m_listAdapter, &m_gridAdapter}) {
       adapter->setActivationMode(m_activationMode);
     }
   }
-  if (force || before.showSidebar != settings.showSidebar) {
-    setSidebarVisible(settings.showSidebar, false);
-  }
-  if (force || before.sidebarWidth != settings.sidebarWidth) {
-    m_sidebarWidth = settings.sidebarWidth;
-  }
-  if (m_settingsController.open() && (force || before.columns != settings.columns)) {
-    m_columnVisibility = settings.columns;
-  }
-  if (m_settingsController.open() && (force || before.columnOrder != settings.columnOrder)) {
-    m_columnOrder = settings.columnOrder;
-  }
-  if (m_settingsController.open() && (force || before.columnWidths != settings.columnWidths)) {
-    m_columnWidths = settings.columnWidths;
+  m_sidebar.applySettings(before, settings, force);
+  if (m_settingsController.open()) {
+    m_detailsHeader.applySettings(before, settings, force);
   }
   if (!m_cachePaused && (force || before.thumbnails != settings.thumbnails)) {
     m_thumbnails.setOptions(settings.thumbnails);
@@ -1991,989 +1711,7 @@ void BrowserPage::showCenteredDialog(std::unique_ptr<Flex> root, float preferred
   m_menuSurface->requestLayout();
 }
 
-bool BrowserPage::dragCurrent() const {
-  if (!m_drag) {
-    return false;
-  }
-  if (m_drag->sourcePin) {
-    return m_pins.editable() && m_pins.contains(*m_drag->sourcePin);
-  }
-  return !m_archives.busy()
-      && !m_transfers.busy()
-      && !m_restore.busy()
-      && !m_trash.busy()
-      && !m_trash.canTrash()
-      && !m_emptyTrash.pending()
-      && !renameBusy()
-      && !m_creator.busy()
-      && std::ranges::all_of(m_drag->entries, [this](const auto& target) {
-           const auto* entry = browser().model().entry(target.id);
-           return entry != nullptr
-               && entry->location == target.location
-               && std::ranges::contains(browser().model().rows(), target.id);
-         });
-}
-
-bool BrowserPage::validDropFolder(const files::Location& destination) const {
-  if (m_externalHover) {
-    if (!destination.nativePath()) {
-      return false;
-    }
-    const auto* payload = m_clipboard.dragFiles();
-    if (!payload) {
-      return true;
-    }
-    bool differentParent = false;
-    for (const auto& source : payload->locations) {
-      if (source == destination || destination.isInside(source)) {
-        return false;
-      }
-      differentParent |= source.parent() != destination;
-    }
-    return differentParent || (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0;
-  }
-  if (!m_drag || m_drag->sourcePin || !destination.nativePath()) {
-    return false;
-  }
-  bool anyDifferentParent = false;
-  for (const auto& source : m_drag->entries) {
-    if (!source.location.nativePath() || source.location == destination) {
-      return false;
-    }
-    const auto* entry = browser().model().entry(source.id);
-    if (entry == nullptr) {
-      return false;
-    }
-    if (entry->type == files::FileType::Directory && destination.isInside(source.location)) {
-      return false;
-    }
-    anyDifferentParent = anyDifferentParent || source.location.parent() != destination;
-  }
-  return anyDifferentParent || (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0;
-}
-
-std::optional<BrowserPage::DropTarget> BrowserPage::dropTarget() const {
-  if (!m_externalHover && (!m_drag || m_drag->sourcePin)) {
-    return std::nullopt;
-  }
-  if (const auto place = m_showSidebar ? m_places->folderAt(m_pointerX, m_pointerY) : std::nullopt) {
-    if (validDropFolder(place->location)) {
-      if (const auto rect = m_places->folderRect(place->location)) {
-        return DropTarget{place->location, *rect};
-      }
-    }
-    return std::nullopt;
-  }
-  if (!m_editingLocation && m_breadcrumbScroll->containsScenePoint(m_pointerX, m_pointerY)) {
-    for (const auto& [location, button] : m_dropBreadcrumbs) {
-      if (button->containsScenePoint(m_pointerX, m_pointerY) && validDropFolder(location)) {
-        return DropTarget{location, sceneRect(*button)};
-      }
-    }
-  }
-  if (m_up->containsScenePoint(m_pointerX, m_pointerY) && browser().model().snapshot().location) {
-    if (const auto location = browser().model().snapshot().location->parent()) {
-      if (validDropFolder(*location)) {
-        return DropTarget{*location, sceneRect(*m_up)};
-      }
-    }
-  }
-  if (!m_externalHover && m_foreignDrop) {
-    if (auto target = m_foreignDrop(m_pointerX, m_pointerY); target && validDropFolder(target->first)) {
-      return DropTarget{target->first, target->second};
-    }
-  }
-  if (!m_filePane->containsScenePoint(m_pointerX, m_pointerY)) {
-    return std::nullopt;
-  }
-  if (m_miller.enabled()) {
-    if (const auto index = m_millerView->columnAt(m_pointerX, m_pointerY)) {
-      const auto* grid = m_millerView->view(*index);
-      const auto& model = m_miller.columns()[*index]->browser->model();
-      if (const auto row = grid->itemAtScene(m_pointerX, m_pointerY)) {
-        if (*row < model.rows().size()) {
-          const auto* entry = model.entry(model.rows()[*row]);
-          if (entry
-              && entry->type == files::FileType::Directory
-              && !entry->symlink
-              && validDropFolder(entry->location)) {
-            return DropTarget{entry->location, *grid->itemRect(*row), entry->id};
-          }
-        }
-        return std::nullopt;
-      }
-      const auto& folder = model.snapshot().location;
-      if (folder && validDropFolder(*folder)) {
-        return DropTarget{*folder, sceneRect(*grid)};
-      }
-    }
-    return std::nullopt;
-  }
-  if (m_list->visible()) {
-    if (const auto index = m_list->itemAtScene(m_pointerX, m_pointerY)) {
-      const auto& rows = browser().model().rows();
-      if (*index < rows.size()) {
-        const auto* entry = browser().model().entry(rows[*index]);
-        if (entry != nullptr
-            && entry->type == files::FileType::Directory
-            && !entry->symlink
-            && validDropFolder(entry->location)) {
-          if (const auto rect = m_list->itemRect(*index)) {
-            return DropTarget{entry->location, *rect, entry->id};
-          }
-        }
-      }
-      return std::nullopt;
-    }
-  }
-  const auto& location = browser().model().snapshot().location;
-  if (location && validDropFolder(*location)) {
-    return DropTarget{*location, sceneRect(*m_filePane)};
-  }
-  return std::nullopt;
-}
-
-std::optional<std::size_t> BrowserPage::pinDropSlot() const {
-  if (!m_drag || !m_pins.editable() || !m_showSidebar) {
-    return std::nullopt;
-  }
-  if (!m_drag->sourcePin && (!m_drag->foldersOnly || m_places->folderAt(m_pointerX, m_pointerY))) {
-    return std::nullopt;
-  }
-  return m_places->dropSlot(m_pointerX, m_pointerY);
-}
-
-void BrowserPage::startFileDrag(const std::vector<files::EntryId>& ids) {
-  if (ids.empty()
-      || m_archives.busy()
-      || m_transfers.busy()
-      || m_restore.busy()
-      || m_trash.busy()
-      || m_trash.canTrash()
-      || m_emptyTrash.pending()
-      || renameBusy()
-      || m_creator.busy()) {
-    return;
-  }
-  Drag drag;
-  drag.foldersOnly = true;
-  for (const auto id : ids) {
-    const auto* entry = browser().model().entry(id);
-    if (entry == nullptr
-        || entry->location.isTrash()
-        || (entry->type != files::FileType::Directory && entry->type != files::FileType::Regular && !entry->symlink)) {
-      return;
-    }
-    drag.foldersOnly = drag.foldersOnly && entry->type == files::FileType::Directory && !entry->symlink;
-    drag.entries.push_back({id, entry->location});
-    drag.bookmarks.push_back({entry->displayName, entry->location});
-  }
-  const auto* entry = browser().model().entry(ids.front());
-  if (entry) {
-    m_dragArtwork = m_thumbnails.prepared(*entry);
-    if (!m_dragArtwork || !m_dragArtwork->pixels) {
-      m_dragArtwork = m_icons.request(
-          entry->icon,
-          static_cast<int>(
-              std::ceil((m_viewMode == files::ViewMode::Grid ? gridIconSize() : 24) * m_surface->effectiveBufferScale())
-          )
-      );
-    }
-  }
-  m_drag = std::move(drag);
-  files::FilePayload payload;
-  for (const auto& target : m_drag->entries) {
-    payload.locations.push_back(target.location);
-  }
-  const std::weak_ptr<int> lifetime = m_lifetime;
-  const auto cursorSerial = m_connection.extension<files::DesktopIntegration>().pointerEnterSerial();
-  m_systemDrag = m_clipboard.startDrag(
-      std::move(payload), m_surface->wlSurface(), m_fileDragSerial,
-      m_dragArtwork && m_dragArtwork->pixels ? &*m_dragArtwork->pixels : nullptr,
-      [this, lifetime] {
-        if (!lifetime.expired()) {
-          m_systemDrag = false;
-          cancelDrag();
-        }
-      },
-      (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0        ? std::optional(files::TransferAction::Copy)
-          : (m_connection.keyboardModifiers() & KeyMod::Shift) != 0 ? std::optional(files::TransferAction::Move)
-                                                                    : std::nullopt,
-      [this, lifetime, cursorSerial](std::optional<files::TransferAction> action) {
-        if (!lifetime.expired()) {
-          const auto shape = action == files::TransferAction::Copy ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY
-              : action == files::TransferAction::Move              ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE
-                                                                   : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP;
-          m_connection.extension<files::DesktopIntegration>().setCursorShape(cursorSerial, shape);
-        }
-      }
-  );
-  if (m_systemDrag) {
-    m_dispatcher.cancelPointerCapture();
-    m_connection.extension<files::DesktopIntegration>().setCursorShape(
-        cursorSerial, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP
-    );
-    m_surface->requestLayout();
-  } else {
-    updateDrag();
-  }
-}
-
-void BrowserPage::startPlaceDrag(const files::Bookmark& bookmark) {
-  if (!m_pins.editable()) {
-    return;
-  }
-  m_drag = Drag{.entries = {}, .bookmarks = {bookmark}, .sourcePin = bookmark.location, .foldersOnly = true};
-  updateDrag();
-}
-
-void BrowserPage::cancelDrag() {
-  if (m_systemDrag) {
-    m_systemDrag = false;
-    m_clipboard.cancelDrag();
-  }
-  if (!m_drag) {
-    return;
-  }
-  m_drag.reset();
-  m_dragArtwork.reset();
-  m_lastDropTarget.reset();
-  m_dragScroll.stop();
-  m_dragScrollDelta = 0;
-  m_places->cancelDragCandidate();
-  m_dispatcher.cancelPointerCapture();
-  if (m_dragIcon != nullptr) {
-    m_dragIcon->setVisible(false);
-    m_dragCount->setVisible(false);
-    m_placeDropLine->setVisible(false);
-    m_folderDropHighlight->setVisible(false);
-  }
-  m_connection.extension<files::DesktopIntegration>().setCursorShape(
-      m_connection.lastInputSerial(), WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT
-  );
-  m_surface->requestLayout();
-}
-
-VirtualGridView* BrowserPage::dragView() const {
-  if (m_miller.enabled()) {
-    if (const auto index = m_millerView->columnAt(m_pointerX, m_pointerY)) {
-      return m_millerView->view(*index);
-    }
-  }
-  return m_list;
-}
-
-float BrowserPage::dragScrollSpeed(bool& places) const {
-  places = m_showSidebar && m_places->containsScenePoint(m_pointerX, m_pointerY);
-  if (places) {
-    return m_places->dragScrollSpeed(m_pointerX, m_pointerY);
-  }
-  if ((!m_drag && !m_externalDraggingHere) || (m_drag && m_drag->sourcePin) || !m_list->visible()) {
-    return 0;
-  }
-  auto& scroll = dragView()->scrollView();
-  if (!scroll.containsScenePoint(m_pointerX, m_pointerY)) {
-    return 0;
-  }
-  float x = 0, y = 0;
-  Node::absolutePosition(&scroll, x, y);
-  if (m_pointerY < y + 32 && scroll.scrollOffset() > 0) {
-    return -6;
-  }
-  if (m_pointerY > y + scroll.height() - 32 && scroll.scrollOffset() < scroll.maxScrollOffset()) {
-    return 6;
-  }
-  return 0;
-}
-
-void BrowserPage::updateExternalScroll() {
-  bool places = false;
-  if (!m_externalDraggingHere || dragScrollSpeed(places) == 0 || m_externalScroll.active()) {
-    return;
-  }
-  m_externalScroll.startRepeating(std::chrono::milliseconds(16), [this] {
-    if (!m_externalDraggingHere) {
-      m_externalScroll.stop();
-      return;
-    }
-    bool places = false;
-    const float speed = dragScrollSpeed(places);
-    if (speed == 0) {
-      m_externalScroll.stop();
-      return;
-    }
-    m_externalScrollInPlaces = places;
-    m_externalScrollDelta = std::clamp(m_externalScrollDelta + speed, -18.0F, 18.0F);
-    m_surface->requestLayout();
-  });
-}
-
-void BrowserPage::updateDrag() {
-  if (m_systemDrag) {
-    return;
-  }
-  if (!dragCurrent()) {
-    cancelDrag();
-    return;
-  }
-  m_lastDropTarget = dropTarget();
-  bool places = false;
-  const auto speed = dragScrollSpeed(places);
-  if (places != m_dragScrollInPlaces) {
-    m_dragScrollDelta = 0;
-    m_dragScrollInPlaces = places;
-  }
-  if (speed == 0) {
-    m_dragScroll.stop();
-    m_dragScrollDelta = 0;
-  } else if (!m_dragScroll.active()) {
-    m_dragScroll.startRepeating(std::chrono::milliseconds(16), [this] {
-      if (!dragCurrent()) {
-        cancelDrag();
-        return;
-      }
-      bool places = false;
-      const auto speed = dragScrollSpeed(places);
-      if (places != m_dragScrollInPlaces) {
-        m_dragScrollDelta = 0;
-        m_dragScrollInPlaces = places;
-      }
-      if (speed == 0) {
-        m_dragScroll.stop();
-        return;
-      }
-      m_dragScrollDelta = std::clamp(m_dragScrollDelta + speed, -18.0F, 18.0F);
-      m_surface->requestLayout();
-    });
-  }
-  m_surface->requestLayout();
-}
-
-void BrowserPage::layoutDrag(Renderer& renderer) {
-  m_dragOverlay->setFrameSize(static_cast<float>(m_surface->width()), static_cast<float>(m_surface->height()));
-  if (m_drag && !m_systemDrag && !dragCurrent()) {
-    cancelDrag();
-  }
-  const bool active = m_drag.has_value() && !m_systemDrag;
-  m_dragIcon->setVisible(active);
-  m_dragCount->setVisible(active && m_drag->bookmarks.size() > 1);
-  m_placeDropLine->setVisible(false);
-  m_folderDropHighlight->setVisible(false);
-  if (!active) {
-    if (m_externalPinSlot) {
-      m_placeDropLine->setVisible(true);
-      m_placeDropLine->arrange(renderer, m_places->dropLine(*m_externalPinSlot));
-    }
-    if (m_externalDropTarget) {
-      m_folderDropHighlight->setVisible(true);
-      m_folderDropHighlight->arrange(renderer, m_externalDropTarget->rect);
-    }
-    return;
-  }
-  files::FileIconSource icon{.names = {"folder"}, .filePath = {}, .desktopFile = {}};
-  if (m_drag->sourcePin == files::Location::trash()) {
-    icon.names = {"user-trash"};
-  }
-  if (!m_drag->entries.empty()) {
-    if (const auto* entry = browser().model().entry(m_drag->entries.front().id)) {
-      icon = entry->icon;
-    }
-  }
-  m_dragIcon->bind(icon, colorSpecFromRole(ColorRole::OnSurface));
-  const float x = std::clamp(m_pointerX + 12, 0.0F, static_cast<float>(m_surface->width()) - 48.0F);
-  const float y = std::clamp(m_pointerY + 12, 0.0F, static_cast<float>(m_surface->height()) - 48.0F);
-  m_dragIcon->arrange(renderer, {x, y, 40, 40});
-  m_dragCountLabel->setText(std::to_string(m_drag->bookmarks.size()));
-  m_dragCount->arrange(renderer, {x + 24, y + 28, 30, 20});
-  m_lastDropTarget = dropTarget();
-  const auto slot = pinDropSlot();
-  if (m_lastDropTarget) {
-    m_folderDropHighlight->setVisible(true);
-    m_folderDropHighlight->arrange(renderer, m_lastDropTarget->rect);
-  } else if (slot) {
-    m_placeDropLine->setVisible(true);
-    m_placeDropLine->arrange(renderer, m_places->dropLine(*slot));
-  }
-  const bool copy = (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0;
-  const auto shape = slot
-      ? (m_drag->sourcePin ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY)
-      : m_lastDropTarget ? (copy ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE)
-                         : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP;
-  m_connection.extension<files::DesktopIntegration>().setCursorShape(m_connection.lastInputSerial(), shape);
-}
-
-void BrowserPage::finishDrag(float x, float y) {
-  m_pointerX = x;
-  m_pointerY = y;
-  const bool current = dragCurrent();
-  const auto target = dropTarget();
-  const auto previous = m_lastDropTarget;
-  const auto slot = pinDropSlot();
-  const auto drag = *m_drag;
-  const bool copy = (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0;
-  cancelDrag();
-  if (!current) {
-    return;
-  }
-  if (target && previous && target->location == previous->location && target->entry == previous->entry) {
-    std::vector<files::Location> sources;
-    sources.reserve(drag.entries.size());
-    for (const auto& entry : drag.entries) {
-      sources.push_back(entry.location);
-    }
-    m_actionError.clear();
-    (void)m_transfers.start(
-        {std::move(sources), target->location, copy ? files::TransferAction::Copy : files::TransferAction::Move}
-    );
-  } else if (slot) {
-    pinFolders(drag.bookmarks, *slot);
-  }
-}
-
-void BrowserPage::clearTypeahead() {
-  if (m_typeahead.text().empty() && m_typeaheadPreedit.empty()) {
-    return;
-  }
-  m_typeahead.clear();
-  m_typeaheadPreedit.clear();
-  m_typeaheadTimer.stop();
-  m_browserDirty = true;
-  m_surface->requestUpdate();
-  m_textInput.notifyClientStateChanged(this, TextInputChangeCause::Other);
-}
-
-void BrowserPage::typeaheadChanged(std::optional<files::EntryId> match, TextInputChangeCause cause) {
-  if (match) {
-    m_keyboardReveal = match;
-  }
-  m_typeaheadContext = browser().contextSerial();
-  m_fileKeyboardFocus = true;
-  m_browserDirty = true;
-  m_surface->requestUpdate();
-  m_typeaheadTimer.start(files::TypeaheadSelection::timeout, [this] {
-    if (m_typeaheadPreedit.empty()) {
-      clearTypeahead();
-    }
-  });
-  m_textInput.notifyClientStateChanged(this, cause);
-}
-
-void BrowserPage::applyTypeahead(const std::string& text, TextInputChangeCause cause, bool composing) {
-  m_dispatcher.cancelPointerCapture();
-  m_list->cancelPointerGesture();
-  typeaheadChanged(
-      m_typeahead.append(browser().model(), text, files::TypeaheadSelection::Clock::now(), composing), cause
-  );
-}
-
-TextInputState BrowserPage::textInputState() const {
-  if (m_typingMode == files::TypingMode::Search) {
-    return m_filterInput->textInputState();
-  }
-  const auto bounds = m_status ? sceneRect(*m_status) : LayoutRect{};
-  return {
-      .surroundingText = m_typeahead.text(),
-      .cursor = static_cast<std::int32_t>(m_typeahead.text().size()),
-      .anchor = static_cast<std::int32_t>(m_typeahead.text().size()),
-      .cursorRectX = static_cast<int>(bounds.x),
-      .cursorRectY = static_cast<int>(bounds.y),
-      .cursorRectHeight = std::max(1, static_cast<int>(bounds.height))
-  };
-}
-
-void BrowserPage::textInputApplyEdit(const TextInputEdit& edit) {
-  if (m_typingMode == files::TypingMode::Typeahead) {
-    const auto now = files::TypeaheadSelection::Clock::now();
-    if (edit.hasDelete && edit.deleteBeforeLength != 0 && edit.deleteAfterLength == 0 && !m_typeahead.text().empty()) {
-      typeaheadChanged(
-          m_typeahead.erase(browser().model(), edit.deleteBeforeLength, now, !m_typeaheadPreedit.empty()),
-          TextInputChangeCause::InputMethod
-      );
-    }
-    if (edit.hasCommitText && !edit.commitText.empty()) {
-      const bool composing = !m_typeaheadPreedit.empty();
-      m_typeaheadPreedit.clear();
-      applyTypeahead(edit.commitText, TextInputChangeCause::InputMethod, composing);
-    }
-    if (edit.hasPreedit
-        && (!edit.preeditText.empty() || !m_typeaheadPreedit.empty())
-        && edit.preeditText.size() <= 256
-        && g_utf8_validate(edit.preeditText.data(), static_cast<gssize>(edit.preeditText.size()), nullptr)) {
-      m_typeaheadPreedit = edit.preeditText;
-      m_typeaheadContext = browser().contextSerial();
-      if (!m_typeaheadPreedit.empty()) {
-        m_typeaheadTimer.stop();
-      } else {
-        typeaheadChanged(std::nullopt, TextInputChangeCause::InputMethod);
-      }
-      m_browserDirty = true;
-      m_surface->requestUpdate();
-    }
-    return;
-  }
-  if ((edit.hasCommitText && !edit.commitText.empty())
-      || (edit.hasPreedit && !edit.preeditText.empty())
-      || (edit.hasDelete && !browser().searchQuery().empty())) {
-    openFilter(false, true);
-    m_filterInput->textInputApplyEdit(edit);
-  }
-}
-
-void BrowserPage::textInputResetPreedit() {
-  if (!m_typeaheadPreedit.empty()) {
-    m_typeaheadPreedit.clear();
-    m_browserDirty = true;
-    m_surface->requestUpdate();
-  }
-}
-
-void BrowserPage::textInputActivated(TextInputService&) {}
-
-void BrowserPage::textInputDeactivated(TextInputService&) { clearTypeahead(); }
-
-void BrowserPage::clearCompletions() {
-  m_pathCompletion.cancel();
-  m_completionText.clear();
-  m_completionItems = {};
-  m_completionIndex.reset();
-  m_completionDirty = true;
-  m_surface->requestLayout();
-}
-
-void BrowserPage::requestCompletions(const std::string& text) {
-  clearCompletions();
-  if (!m_editingLocation || !browser().model().snapshot().location || m_location->composing()) {
-    return;
-  }
-  const auto edit = m_location->textInputState();
-  if (edit.cursor != static_cast<std::int32_t>(text.size()) || edit.anchor != edit.cursor) {
-    return;
-  }
-  const auto context = browser().contextSerial();
-  m_pathCompletion.complete(
-      text, *browser().model().snapshot().location, browser().model().filter().showHidden,
-      [this, text, context](files::PathSuggestions suggestions) {
-        if (!m_editingLocation
-            || context != browser().contextSerial()
-            || m_location->value() != text
-            || m_location->composing()) {
-          return;
-        }
-        const auto edit = m_location->textInputState();
-        if (edit.cursor != static_cast<std::int32_t>(text.size()) || edit.anchor != edit.cursor) {
-          return;
-        }
-        m_completionText = text;
-        m_completionContext = context;
-        m_completionItems = std::move(suggestions);
-        m_completionIndex.reset();
-        m_completionDirty = true;
-        m_surface->requestLayout();
-      }
-  );
-}
-
-void BrowserPage::acceptCompletion(std::size_t index, bool navigate) {
-  if (index >= m_completionItems.items.size()) {
-    return;
-  }
-  const auto suggestion = m_completionItems.items[index];
-  clearCompletions();
-  if (navigate) {
-    browser().open(suggestion.location);
-    endLocationEdit(true);
-  } else {
-    m_location->setValue(suggestion.text);
-    m_location->selectRange(suggestion.text.size(), suggestion.text.size());
-    m_dispatcher.setFocus(m_location->inputArea());
-  }
-}
-
-bool BrowserPage::completionKey(std::uint32_t key, std::uint32_t modifiers) {
-  const auto edit = m_location->textInputState();
-  if (m_location->composing()
-      || m_completionContext != browser().contextSerial()
-      || m_location->value() != m_completionText
-      || edit.cursor != static_cast<std::int32_t>(m_completionText.size())
-      || edit.anchor != edit.cursor) {
-    clearCompletions();
-    return false;
-  }
-  if (modifiers != 0 && (!KeySymbol::isTab(key) || modifiers != KeyMod::Shift)) {
-    return false;
-  }
-  if (m_completionItems.items.empty()) {
-    return false;
-  }
-  if (KeySymbol::isEscape(key)) {
-    clearCompletions();
-    return true;
-  }
-  if (KeySymbol::isTab(key)) {
-    acceptCompletion(m_completionIndex.value_or(0), false);
-    return true;
-  }
-  if (KeySymbol::isEnter(key) && m_completionIndex) {
-    acceptCompletion(*m_completionIndex, true);
-    return true;
-  }
-  if (KeySymbol::isDown(key) || KeySymbol::isUp(key)) {
-    const auto count = m_completionItems.items.size();
-    m_completionIndex = m_completionIndex
-        ? (*m_completionIndex + count + (KeySymbol::isDown(key) ? 1 : count - 1)) % count
-        : KeySymbol::isDown(key) ? 0
-                                 : count - 1;
-    m_completionDirty = true;
-    m_surface->requestLayout();
-    return true;
-  }
-  if (KeySymbol::isLeft(key) || KeySymbol::isRight(key) || KeySymbol::isHome(key) || KeySymbol::isEnd(key)) {
-    clearCompletions();
-  }
-  return false;
-}
-
-void BrowserPage::layoutCompletions(Renderer& renderer) {
-  if (m_completionDirty) {
-    m_completionDirty = false;
-    std::vector<ContextMenuControlEntry> entries;
-    constexpr std::size_t pageSize = 6;
-    const auto page = m_completionIndex.value_or(0) / pageSize * pageSize;
-    for (auto i = page; i < std::min(page + pageSize, m_completionItems.items.size()); ++i) {
-      entries.push_back({.id = static_cast<int>(i), .label = m_completionItems.items[i].label});
-    }
-    if (m_completionItems.items.size() > pageSize || m_completionItems.truncated) {
-      entries.push_back(
-          {.label = m_completionItems.truncated ? "More matches; type to narrow" : "Arrow keys for more matches",
-           .enabled = false}
-      );
-    }
-    if (!m_completionItems.error.empty() && entries.empty()) {
-      entries.push_back({.label = "Folder suggestions unavailable", .enabled = false});
-    }
-    const bool visible = m_editingLocation && !entries.empty() && !m_menuSurface;
-    m_completionFrame->setVisible(visible);
-    m_completionControl->setMaxVisible(entries.size());
-    m_completionControl->setEntries(std::move(entries));
-    if (m_completionIndex) {
-      m_completionControl->setHighlightedIndex(*m_completionIndex - page);
-    } else {
-      m_completionControl->setHighlightedIndex(m_completionControl->entryCount());
-    }
-  }
-  if (!m_completionFrame->visible()) {
-    return;
-  }
-  const auto anchor = sceneRect(*m_locationArea);
-  const float width = std::min(anchor.width, static_cast<float>(m_surface->width()) - 16.0F);
-  float x = 0, y = 0;
-  // The dropdown extends outside the toolbar's hit bounds.
-  (void)Node::mapFromScene(
-      m_toolbar, std::clamp(anchor.x, 8.0F, std::max(8.0F, static_cast<float>(m_surface->width()) - width - 8.0F)),
-      anchor.y + anchor.height + 4.0F, x, y
-  );
-  m_completionControl->setMenuWidth(width);
-  m_completionFrame->arrange(renderer, {x, y, width, m_completionControl->preferredHeight()});
-}
-
-void BrowserPage::beginLocationEdit() {
-  m_blankLocationClick.reset();
-  m_lastBreadcrumb.reset();
-  m_breadcrumbEditTarget.reset();
-  clearCompletions();
-  m_editingLocation = true;
-  m_locationInvalid = false;
-  m_location->setValue(
-      browser().model().snapshot().location ? files::locationEditText(*browser().model().snapshot().location)
-                                            : std::string{}
-  );
-  m_location->setVisible(true);
-  m_location->setParticipatesInLayout(true);
-  m_breadcrumbScroll->setVisible(false);
-  m_breadcrumbScroll->setParticipatesInLayout(false);
-  m_dispatcher.setFocus(m_location->inputArea());
-  m_location->selectAll();
-  m_browserDirty = true;
-  m_surface->requestUpdate();
-}
-
-void BrowserPage::endLocationEdit(bool focusFiles) {
-  clearCompletions();
-  m_editingLocation = false;
-  m_locationInvalid = false;
-  m_location->setVisible(false);
-  m_location->setParticipatesInLayout(false);
-  m_breadcrumbScroll->setVisible(true);
-  m_breadcrumbScroll->setParticipatesInLayout(true);
-  if (focusFiles) {
-    m_dispatcher.setFocus(m_list->focusArea());
-  }
-  m_browserDirty = true;
-  m_surface->requestUpdate();
-}
-
-void BrowserPage::breadcrumbClick(const files::Location& target, const InputArea::PointerData* pointer) {
-  m_lastBreadcrumb = pointer != nullptr ? std::optional(target) : std::nullopt;
-  if (pointer != nullptr) {
-    m_breadcrumbClickTime = std::chrono::steady_clock::now();
-    m_breadcrumbClickX = pointer->sceneX;
-    m_breadcrumbClickY = pointer->sceneY;
-  }
-  browser().open(target);
-  m_dispatcher.setFocus(m_list->focusArea());
-}
-
-void BrowserPage::openBreadcrumbOverflow() {
-  if (!m_breadcrumbOverflow || !m_breadcrumbOverflow->visible() || m_firstBreadcrumb == 0) {
-    return;
-  }
-  m_lastBreadcrumb.reset();
-  m_blankLocationClick.reset();
-  const auto context = browser().contextSerial();
-  std::vector<files::Location> targets;
-  std::vector<ContextMenuControlEntry> entries;
-  for (std::size_t index = 0; index < m_firstBreadcrumb; ++index) {
-    const auto& part = m_breadcrumbParts[index];
-    targets.push_back(part.location);
-    entries.push_back({.id = static_cast<int>(index), .label = part.button->label()->text()});
-  }
-  m_menuController.showContextMenu(
-      std::move(entries),
-      [this, context, targets = std::move(targets)](int id) {
-        if (context == browser().contextSerial() && id >= 0 && static_cast<std::size_t>(id) < targets.size()) {
-          breadcrumbClick(targets[static_cast<std::size_t>(id)]);
-        }
-      },
-      sceneRect(*m_breadcrumbOverflow)
-  );
-}
-
-void BrowserPage::layoutBreadcrumbs(Renderer& renderer) {
-  if (!m_breadcrumbScroll->visible() || m_breadcrumbParts.empty()) {
-    return;
-  }
-  const float available = m_breadcrumbScroll->contentViewportWidth();
-  if (available == m_breadcrumbLayoutWidth
-      && renderer.renderScale() == m_breadcrumbRenderScale
-      && renderer.textMetricsGeneration() == m_breadcrumbMetricsGeneration) {
-    return;
-  }
-
-  std::vector<float> widths;
-  std::vector<float> separators;
-  widths.reserve(m_breadcrumbParts.size());
-  separators.reserve(m_breadcrumbParts.size());
-  float total = 0;
-  for (const auto& part : m_breadcrumbParts) {
-    part.button->setMaxWidth(160.0F);
-    const float width = part.button->measure(renderer, {}).width;
-    const float separator = part.separator ? part.separator->measure(renderer, {}).width : 0.0F;
-    widths.push_back(width);
-    separators.push_back(separator);
-    total += width + separator;
-  }
-  const bool overflow = total > available && m_breadcrumbParts.size() > 1;
-  std::size_t first = 0;
-  float leafBudget = std::max(1.0F, available);
-  if (overflow) {
-    const float overflowWidth = m_breadcrumbOverflow->measure(renderer, {}).width;
-    first = m_breadcrumbParts.size() - 1;
-    leafBudget = std::max(1.0F, available - overflowWidth - separators.back());
-    float used = overflowWidth + separators.back() + std::min(widths.back(), leafBudget);
-    while (first > 1 && used + widths[first - 1] + separators[first - 1] <= available) {
-      --first;
-      used += widths[first] + separators[first];
-    }
-  }
-  auto* focus = m_dispatcher.focusedArea();
-  m_breadcrumbOverflow->setVisible(overflow);
-  m_breadcrumbOverflow->setParticipatesInLayout(overflow);
-  if (!overflow && focus == m_breadcrumbOverflow->inputArea()) {
-    m_dispatcher.setFocus(m_breadcrumbParts.back().button->inputArea());
-  }
-  m_dropBreadcrumbs.clear();
-  for (std::size_t index = 0; index < m_breadcrumbParts.size(); ++index) {
-    const auto& part = m_breadcrumbParts[index];
-    const bool visible = index >= first;
-    part.button->setVisible(visible);
-    part.button->setParticipatesInLayout(visible);
-    if (part.separator) {
-      const bool separatorVisible = visible && (index > first || overflow);
-      part.separator->setVisible(separatorVisible);
-      part.separator->setParticipatesInLayout(separatorVisible);
-    }
-    if (visible) {
-      m_dropBreadcrumbs.emplace_back(part.location, part.button);
-    } else if (focus == part.button->inputArea()) {
-      m_dispatcher.setFocus(m_breadcrumbOverflow->inputArea());
-    }
-  }
-  m_firstBreadcrumb = first;
-  m_breadcrumbParts.back().button->setMaxWidth(std::min(160.0F, leafBudget));
-  m_breadcrumbScroll->requestScrollToOffset(0);
-  m_breadcrumbScroll->arrange(
-      renderer,
-      {m_breadcrumbScroll->x(), m_breadcrumbScroll->y(), m_breadcrumbScroll->width(), m_breadcrumbScroll->height()}
-  );
-  m_breadcrumbLayoutWidth = available;
-  m_breadcrumbRenderScale = renderer.renderScale();
-  m_breadcrumbMetricsGeneration = renderer.textMetricsGeneration();
-  m_dispatcher.syncPointerHover();
-  m_refreshExternalDrop = true;
-}
-
-void BrowserPage::rebuildBreadcrumbs() {
-  m_dropBreadcrumbs.clear();
-  m_breadcrumbParts.clear();
-  m_breadcrumbOverflow = nullptr;
-  m_breadcrumbLayoutWidth = -1;
-  while (!m_breadcrumbs->children().empty()) {
-    m_breadcrumbs->removeChild(m_breadcrumbs->children().back().get());
-  }
-  const auto& location = browser().model().snapshot().location;
-  if (!location) {
-    return;
-  }
-  const auto crumbs = files::locationBreadcrumbs(*location);
-  m_breadcrumbs->addChild(
-      ui::button(
-          {.out = &m_breadcrumbOverflow,
-           .glyph = "dots",
-           .controlHeight = Style::controlHeightSm,
-           .variant = ButtonVariant::Ghost,
-           .tooltip = "Parent folders",
-           .paddingH = Style::spaceSm,
-           .onClick = [this] { openBreadcrumbOverflow(); }}
-      )
-  );
-  for (std::size_t i = 0; i < crumbs.size(); ++i) {
-    Node* separator = nullptr;
-    if (i != 0) {
-      separator = m_breadcrumbs->addChild(
-          ui::glyph(
-              {.glyph = "chevron-right", .glyphSize = 12.0F, .color = colorSpecFromRole(ColorRole::OnSurfaceVariant)}
-          )
-      );
-    }
-    const auto target = crumbs[i].location;
-    auto* partButton = static_cast<Button*>(m_breadcrumbs->addChild(
-        ui::button(
-            {.text = crumbs[i].label,
-             .fontSize = Style::fontSizeCaption,
-             .controlHeight = Style::controlHeightSm,
-             .contentAlign = ButtonContentAlign::Start,
-             .variant = ButtonVariant::Ghost,
-             .tooltip = crumbs[i].label,
-             .maxWidth = 160.0F,
-             .paddingH = Style::spaceSm,
-             .onClick = [this, target] { breadcrumbClick(target); },
-             .configure =
-                 [this, target](Button& button) {
-                   button.label()->setUseMarkup(false);
-                   button.inputArea()->setAcceptedButtons(
-                       InputArea::buttonMask(BTN_LEFT) | InputArea::buttonMask(BTN_RIGHT)
-                   );
-                   button.inputArea()->setOnClick([this, target](const InputArea::PointerData& pointer) {
-                     if (pointer.button == BTN_LEFT) {
-                       breadcrumbClick(target, &pointer);
-                     } else if (pointer.button == BTN_RIGHT) {
-                       m_menuController.openBreadcrumbMenu(target, {pointer.sceneX, pointer.sceneY, 1, 1});
-                     }
-                   });
-                 }}
-        )
-    ));
-    m_breadcrumbParts.push_back({target, partButton, separator});
-  }
-}
-
-void BrowserPage::openFilter(bool selectAll, bool preserveTextInput) {
-  m_blankLocationClick.reset();
-  clearTypeahead();
-  m_lastBreadcrumb.reset();
-  m_breadcrumbEditTarget.reset();
-  if (m_editingLocation) {
-    endLocationEdit(false);
-  }
-  m_filterOpen = true;
-  if (!m_filterInput->composing() && m_filterInput->value() != browser().searchQuery()) {
-    m_filterInput->setValue(browser().searchQuery());
-  }
-  m_dispatcher.setFocus(m_filterInput->inputArea(), preserveTextInput);
-  if (selectAll) {
-    m_filterInput->selectAll();
-  }
-  m_browserDirty = true;
-  m_surface->requestUpdate();
-}
-
-void BrowserPage::changeNameFilter(const std::string& text) {
-  m_filterOpen = true;
-  browser().setSearchComposing(m_filterInput->composing());
-  if (text == browser().searchQuery()) {
-    return;
-  }
-  m_listAdapter.onPointerCancel();
-  m_gridAdapter.onPointerCancel();
-  m_viewAnchor.reset();
-  m_list->scrollView().requestScrollToOffset(0);
-  browser().editSearchQuery(text);
-}
-
-void BrowserPage::closeFilter() {
-  m_filterOpen = false;
-  changeNameFilter({});
-  m_filterOpen = false;
-  m_filterInput->setValue({});
-  m_dispatcher.setFocus(m_list->focusArea());
-  m_browserDirty = true;
-  m_surface->requestUpdate();
-}
-
-void BrowserPage::setSidebarVisible(bool visible, bool persist) {
-  if (visible == m_showSidebar) {
-    return;
-  }
-  m_dispatcher.cancelPointerCapture();
-  if (m_drag) {
-    cancelDrag();
-  }
-  captureViewAnchor();
-  m_showSidebar = visible;
-  if (!visible) {
-    m_restorePlaceFocus.reset();
-    for (const Node* node = m_dispatcher.focusedArea(); node != nullptr; node = node->parent()) {
-      if (node == m_places || node == m_sidebarResize) {
-        m_dispatcher.setFocus(m_list->focusArea());
-        break;
-      }
-    }
-  }
-  if (persist) {
-    m_preferences.saveShowSidebar(visible);
-  }
-  m_surface->requestLayout();
-}
-
-int BrowserPage::sidebarMaximumWidth() const {
-  return std::clamp(
-      static_cast<int>(m_surface->width()) - 320 - static_cast<int>(kWorkspaceInset * 3), files::kMinSidebarWidth,
-      files::kMaxSidebarWidth
-  );
-}
-
-void BrowserPage::resizeSidebar(int width, bool persist) {
-  const int bounded = std::clamp(width, files::kMinSidebarWidth, sidebarMaximumWidth());
-  if (bounded == m_sidebarWidth) {
-    return;
-  }
-  captureViewAnchor();
-  m_sidebarWidth = bounded;
-  if (persist) {
-    m_preferences.saveSidebarWidth(m_sidebarWidth);
-  }
-  m_surface->requestLayout();
-}
+void BrowserPage::cancelDrag() { m_dragDrop.cancelDrag(); }
 
 void BrowserPage::captureViewAnchor() {
   if (m_list == nullptr) {
@@ -2984,284 +1722,6 @@ void BrowserPage::captureViewAnchor() {
   if (first && *first < rows.size()) {
     m_viewAnchor = rows[*first];
   }
-}
-
-void BrowserPage::setDetailsColumnVisibility(files::DetailsColumnVisibility visibility) {
-  if (visibility == m_columnVisibility) {
-    return;
-  }
-  captureViewAnchor();
-  m_dispatcher.cancelPointerCapture();
-  m_listAdapter.onPointerCancel();
-  m_gridAdapter.onPointerCancel();
-  m_columnVisibility = visibility;
-  m_preferences.saveDetailsColumns(visibility);
-  m_browserDirty = true;
-  m_surface->requestUpdate();
-}
-
-Button* BrowserPage::widthHeader(std::size_t index) const {
-  return index == 0 ? m_nameHeader : columnHeader(static_cast<files::DetailsColumn>(index - 1));
-}
-
-float BrowserPage::headerWidth(std::size_t index) const { return widthHeader(index)->width(); }
-
-void BrowserPage::cancelColumnResize() {
-  if (!m_columnResize) {
-    return;
-  }
-  m_columnWidths = m_columnResize->before;
-  m_detailsOffset = m_columnResize->offset;
-  m_columnResize.reset();
-  m_columnHoverDirty = true;
-  m_surface->requestLayout();
-}
-
-void BrowserPage::setDetailsColumnWidths(files::DetailsColumnWidths widths) {
-  if (m_columnWidths == widths) {
-    return;
-  }
-  captureViewAnchor();
-  m_dispatcher.cancelPointerCapture();
-  m_list->cancelPointerGesture();
-  m_columnWidths = widths;
-  m_preferences.saveColumnWidths(widths);
-  m_surface->requestLayout();
-}
-
-void BrowserPage::scrollDetails(float offset) {
-  if (m_viewMode != files::ViewMode::List || m_columnResize || m_columnDrag) {
-    return;
-  }
-  const float maximum = std::max(0.0F, m_detailsColumns.contentWidth - m_detailsHeaderViewport->width());
-  const float next = std::clamp(offset, 0.0F, maximum);
-  if (next == m_detailsOffset) {
-    return;
-  }
-  m_list->cancelPointerGesture();
-  m_detailsOffset = next;
-  m_columnHoverDirty = true;
-  m_surface->requestLayout();
-}
-
-void BrowserPage::layoutDetails(Renderer& renderer) {
-  if (m_miller.enabled()) {
-    m_detailsScrollHost->setVisible(false);
-    m_detailsScrollHost->setParticipatesInLayout(false);
-    return;
-  }
-  const bool list = m_viewMode == files::ViewMode::List;
-  // The header remains laid out when the file grid is hidden for an empty
-  // folder or an error. Do not derive its width from that stale grid.
-  const float viewport = list ? m_detailsHeaderViewport->width() : m_list->scrollView().contentViewportWidth(true);
-  const auto columns = files::DetailsColumns::forWidth(viewport, m_columnVisibility, m_columnWidths);
-  const bool columnsChanged = columns != m_detailsColumns;
-  m_detailsColumns = columns;
-  const bool overflow = list && columns.contentWidth > viewport + 0.5F;
-  m_detailsScrollHost->setVisible(overflow);
-  m_detailsScrollHost->setParticipatesInLayout(overflow);
-  for (std::size_t index = 0; index < 4; ++index) {
-    auto* header = widthHeader(index);
-    const bool visible =
-        index == 0 || files::detailsColumnVisible(m_columnVisibility, static_cast<files::DetailsColumn>(index - 1));
-    header->setVisible(visible);
-    header->setParticipatesInLayout(visible);
-    const float allocation = index == 0 ? columns.nameWidth : static_cast<float>(m_columnWidths[index]);
-    header->setMinWidth(allocation);
-    header->setMaxWidth(allocation);
-    if (!visible && m_dispatcher.focusedArea() == header->inputArea()) {
-      m_dispatcher.setFocus(m_nameHeader->inputArea());
-    }
-  }
-  m_detailsOffset = std::clamp(m_detailsOffset, 0.0F, std::max(0.0F, columns.contentWidth - viewport));
-  m_listAdapter.setDetailsColumns(columns);
-  m_list->setHorizontalOverflow(list ? columns.contentWidth : 0.0F, list ? m_detailsOffset : 0.0F);
-  if (columnsChanged) {
-    m_list->notifyDataChanged();
-  }
-  m_root->arrange(renderer, {0, 0, static_cast<float>(m_surface->width()), static_cast<float>(m_surface->height())});
-  m_body->arrange(renderer, m_pageBounds);
-  m_detailsHeaderRow->arrange(
-      renderer, {-m_detailsOffset, 0, std::max(viewport, columns.contentWidth), m_detailsHeaderViewport->height()}
-  );
-  // Reveal focused headers without moving the user's horizontal position
-  // on every frame. Pointer resizing retains its own captured offset.
-  auto* focused = m_dispatcher.focusedArea();
-  Button* reveal = std::exchange(m_revealDetailsHeader, nullptr);
-  if (focused != m_lastDetailsFocus && !m_columnResize && !m_columnDrag) {
-    for (std::size_t index = 0; index < 4; ++index) {
-      if (widthHeader(index)->inputArea() == focused) {
-        reveal = widthHeader(index);
-      }
-    }
-  }
-  m_lastDetailsFocus = focused;
-  if (list && reveal && reveal->visible()) {
-    const auto bounds = sceneRect(*reveal);
-    const auto clip = sceneRect(*m_detailsHeaderViewport);
-    const float delta = bounds.width > clip.width
-        ? (Style::rtl() ? bounds.x + bounds.width - clip.x - clip.width : bounds.x - clip.x)
-        : bounds.x < clip.x                             ? bounds.x - clip.x
-        : bounds.x + bounds.width > clip.x + clip.width ? bounds.x + bounds.width - clip.x - clip.width
-                                                        : 0.0F;
-    if (delta != 0.0F) {
-      scrollDetails(m_detailsOffset + delta);
-    }
-  }
-  m_detailsScrollbar->update(viewport, columns.contentWidth, m_detailsOffset);
-  m_detailsScrollbar->arrange(renderer, {0, 0, viewport, Style::scrollbarWidth});
-  for (std::size_t index = 0; index < 4; ++index) {
-    auto* handle = m_columnResizeHandles[index];
-    auto* header = widthHeader(index);
-    handle->setVisible(list && header->visible());
-    const float edge = header->x() + (Style::rtl() ? 0.0F : header->width()) - m_detailsOffset;
-    handle->arrange(renderer, {edge - 4.0F, 0, 8.0F, m_detailsHeaderViewport->height()});
-    auto* line = m_columnResizeLines[index];
-    const bool active = handle->hovered() || (m_columnResize && m_columnResize->index == index);
-    const bool followed = std::ranges::any_of(m_columnOrder, [this, header](const auto column) {
-      const auto* next = columnHeader(column);
-      return next->visible() && (Style::rtl() ? next->x() < header->x() : next->x() > header->x());
-    });
-    line->setVisible(followed || active);
-    line->setColor(colorSpecFromRole(active ? ColorRole::Primary : ColorRole::OnSurfaceVariant));
-    line->arrange(renderer, {3.5F, 4.0F, 1.0F, std::max(0.0F, handle->height() - 8.0F)});
-  }
-}
-
-std::optional<BrowserPage::ColumnDrop> BrowserPage::columnDropAt(float x, float y) const {
-  if (!m_columnDrag || !m_listHeader->visible() || !m_detailsHeaderViewport->containsScenePoint(x, y)) {
-    return std::nullopt;
-  }
-  const auto source = m_columnDrag->source;
-  if (!columnHeader(source)->visible()) {
-    return std::nullopt;
-  }
-  std::vector<std::pair<files::DetailsColumn, LayoutRect>> visible;
-  auto left = static_cast<float>(m_surface->width());
-  float right = 0;
-  for (const auto column : m_columnOrder) {
-    auto* header = columnHeader(column);
-    if (!header->visible()) {
-      continue;
-    }
-    const auto rect = sceneRect(*header);
-    left = std::min(left, rect.x);
-    right = std::max(right, rect.x + rect.width);
-    if (column != source) {
-      visible.emplace_back(column, rect);
-    }
-  }
-  const auto bounds = sceneRect(*columnHeader(source));
-  if (visible.empty() || x < left || x > right || y < bounds.y || y > bounds.y + bounds.height) {
-    return std::nullopt;
-  }
-  std::optional<files::DetailsColumn> before;
-  float marker = Style::rtl() ? visible.back().second.x : visible.back().second.x + visible.back().second.width;
-  for (const auto& [column, rect] : visible) {
-    if (Style::rtl() ? x > rect.x + rect.width * 0.5F : x < rect.x + rect.width * 0.5F) {
-      before = column;
-      marker = Style::rtl() ? rect.x + rect.width : rect.x;
-      break;
-    }
-  }
-  const auto order = files::insertDetailsColumnBefore(m_columnOrder, source, before);
-  if (!order) {
-    return std::nullopt;
-  }
-  return ColumnDrop{*order, {marker - 1.0F, bounds.y, 2.0F, bounds.height}};
-}
-
-void BrowserPage::cancelColumnDrag() {
-  const auto drag = std::exchange(m_columnDrag, std::nullopt);
-  if (!drag) {
-    return;
-  }
-  auto* header = columnHeader(drag->source);
-  header->setCursorShape(drag->cursor);
-  header->setHoverSuppressed(false);
-  header->setOpacity(1.0F);
-  if (m_dispatcher.focusedArea() == header->inputArea()) {
-    m_dispatcher.setFocus(m_list->focusArea());
-  }
-  m_columnHoverDirty = true;
-  m_surface->requestLayout();
-}
-
-void BrowserPage::updateColumnDrag() {
-  if (!m_columnDrag) {
-    return;
-  }
-  if (!m_columnDrag->active
-      && std::hypot(m_pointerX - m_columnDrag->pressX, m_pointerY - m_columnDrag->pressY) < 6.0F) {
-    return;
-  }
-  m_columnDrag->active = true;
-  auto* header = columnHeader(m_columnDrag->source);
-  header->setHoverSuppressed(true);
-  header->setCursorShape(
-      columnDropAt(m_pointerX, m_pointerY) ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_GRABBING
-                                           : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP
-  );
-  m_surface->requestLayout();
-}
-
-void BrowserPage::finishColumnDrag(float x, float y) {
-  const auto drop = columnDropAt(x, y);
-  m_dispatcher.cancelPointerCapture();
-  cancelColumnDrag();
-  if (drop) {
-    setDetailsColumnOrder(drop->order);
-  }
-  m_dispatcher.setFocus(m_list->focusArea());
-  m_dispatcher.syncPointerHover();
-  m_surface->requestLayout();
-}
-
-void BrowserPage::layoutColumnDrag(Renderer& renderer) {
-  const bool active = m_columnDrag && m_columnDrag->active;
-  for (const auto column : m_columnOrder) {
-    columnHeader(column)->setOpacity(active && m_columnDrag->source == column ? 0.65F : 1.0F);
-  }
-  const auto drop = active ? columnDropAt(m_pointerX, m_pointerY) : std::nullopt;
-  const bool changed = drop && drop->order != m_columnOrder;
-  m_columnDropLine->setVisible(changed);
-  if (changed) {
-    m_columnDropLine->arrange(renderer, drop->marker);
-  }
-}
-
-Button* BrowserPage::columnHeader(files::DetailsColumn column) const {
-  switch (column) {
-  case files::DetailsColumn::Type:
-    return m_typeHeader;
-  case files::DetailsColumn::Size:
-    return m_sizeHeader;
-  case files::DetailsColumn::Modified:
-    return m_modifiedHeader;
-  }
-  return nullptr;
-}
-
-std::optional<files::DetailsColumnOrder>
-BrowserPage::movedColumnOrder(files::DetailsColumn column, int direction) const {
-  return files::moveDetailsColumn(
-      m_columnOrder, column, direction,
-      {m_detailsColumns.showType, m_detailsColumns.showSize, m_detailsColumns.showModified}
-  );
-}
-
-void BrowserPage::setDetailsColumnOrder(files::DetailsColumnOrder order) {
-  if (order == m_columnOrder || !files::validDetailsColumnOrder(order)) {
-    return;
-  }
-  captureViewAnchor();
-  m_dispatcher.cancelPointerCapture();
-  m_listAdapter.onPointerCancel();
-  m_gridAdapter.onPointerCancel();
-  m_columnOrder = order;
-  m_preferences.saveColumnOrder(order);
-  m_browserDirty = true;
-  m_surface->requestUpdate();
 }
 
 void BrowserPage::changeSort(files::SortOptions options) {
@@ -3277,21 +1737,6 @@ void BrowserPage::changeSort(files::SortOptions options) {
   }
   m_preferences.saveSort(options);
   m_dispatcher.setFocus(m_list->focusArea());
-}
-
-void BrowserPage::sortBy(files::SortField field) {
-  auto options = browser().model().sort();
-  options.descending = options.field == field && !options.descending;
-  options.field = field;
-  const auto action = field == files::SortField::Name ? Action::SortName
-      : field == files::SortField::Type               ? Action::SortType
-      : field == files::SortField::Size               ? Action::SortSize
-                                                      : Action::SortModified;
-  if (browser().model().sort().field == field) {
-    dispatchAction(options.descending ? Action::Descending : Action::Ascending);
-  } else {
-    dispatchAction(action);
-  }
 }
 
 void BrowserPage::setViewMode(files::ViewMode mode) {
@@ -3416,112 +1861,9 @@ bool BrowserPage::zoomFromScroll(const PointerEvent& event) {
   return true;
 }
 
-bool BrowserPage::listKey(const KeyboardEvent& event) {
-  auto& model = browser().model();
-  if (m_miller.enabled() && event.modifiers == 0 && (event.sym == XKB_KEY_Left || event.sym == XKB_KEY_Right)) {
-    const bool next = (event.sym == XKB_KEY_Right) != Style::rtl();
-    if (next) {
-      if (m_miller.enter()) {
-        focusMiller(m_miller.focused());
-        m_millerFocusPending = true;
-      }
-    } else if (m_miller.focused() > 0) {
-      focusMiller(m_miller.focused() - 1);
-      m_dispatcher.setFocus(m_list->focusArea());
-    }
-    return true;
-  }
-  if (event.sym == XKB_KEY_a && event.modifiers == KeyMod::Ctrl) {
-    dispatchAction(Action::SelectAll);
-    return true;
-  }
-  if (event.modifiers == 0 && KeySymbol::isEscape(event.sym)) {
-    dispatchAction(Action::ClearSelection);
-    return true;
-  }
-  if ((event.sym == XKB_KEY_i || event.sym == XKB_KEY_I) && event.modifiers == (KeyMod::Ctrl | KeyMod::Shift)) {
-    if (!event.repeat) {
-      dispatchAction(Action::InvertSelection);
-    }
-    return true;
-  }
-  if (event.sym == XKB_KEY_s && event.modifiers == KeyMod::Ctrl) {
-    if (!event.repeat) {
-      dispatchAction(Action::SelectPattern);
-    }
-    return true;
-  }
-  if (event.modifiers == 0 && KeySymbol::isEnter(event.sym)) {
-    if (!event.repeat
-        && model.selection().focused
-        && (m_fileKeyboardFocus || model.selection().selected.contains(*model.selection().focused))) {
-      auto request = actionRequest(true);
-      if (request.targets.empty()) {
-        const auto* entry = model.entry(*model.selection().focused);
-        if (entry) {
-          request.targets.push_back({entry->id, entry->location});
-        }
-      }
-      dispatchAction(Action::Open, request);
-    }
-    return true;
-  }
-  if (model.rows().empty() || (event.modifiers & (KeyMod::Alt | KeyMod::Super)) != 0) {
-    return false;
-  }
-  auto index = std::int64_t{0};
-  if (model.selection().focused) {
-    const auto found = std::ranges::find(model.rows(), *model.selection().focused);
-    if (found != model.rows().end()) {
-      index = std::distance(model.rows().begin(), found);
-    }
-  }
-  const bool hasFocus = model.selection().focused.has_value();
-  const auto columns = static_cast<std::int64_t>(std::max<std::size_t>(1, m_list->layoutColumnCount()));
-  if (event.sym == XKB_KEY_Down) {
-    index += hasFocus ? columns : 0;
-  } else if (event.sym == XKB_KEY_Up) {
-    index += hasFocus ? -columns : 0;
-  } else if (m_viewMode == files::ViewMode::Grid && event.sym == XKB_KEY_Right) {
-    index += hasFocus ? (Style::rtl() ? -1 : 1) : 0;
-  } else if (m_viewMode == files::ViewMode::Grid && event.sym == XKB_KEY_Left) {
-    index += hasFocus ? (Style::rtl() ? 1 : -1) : 0;
-  } else if (event.sym == XKB_KEY_Home) {
-    index = 0;
-  } else if (event.sym == XKB_KEY_End) {
-    index = static_cast<std::int64_t>(model.rows().size()) - 1;
-  } else if (event.sym == XKB_KEY_Page_Down) {
-    index += static_cast<std::int64_t>(m_list->pageItemStride());
-  } else if (event.sym == XKB_KEY_Page_Up) {
-    index -= static_cast<std::int64_t>(m_list->pageItemStride());
-  } else {
-    return false;
-  }
-  const auto row =
-      static_cast<std::size_t>(std::clamp(index, std::int64_t{0}, static_cast<std::int64_t>(model.rows().size()) - 1));
-  const auto id = model.rows()[row];
-  const bool ctrl = (event.modifiers & KeyMod::Ctrl) != 0;
-  const bool shift = (event.modifiers & KeyMod::Shift) != 0;
-  if (ctrl && !shift) {
-    (void)model.setFocus(id);
-  } else {
-    if (m_miller.enabled()) {
-      m_miller.interact(m_miller.focused());
-    }
-    (void)model.select(
-        id,
-        shift ? (ctrl ? files::SelectionMode::AddRange : files::SelectionMode::Range) : files::SelectionMode::Replace
-    );
-  }
-  m_keyboardReveal = id;
-  return true;
-}
-
 void BrowserPage::syncBrowser() {
   m_propertiesController.updateApply();
-  if (m_typeaheadContext != browser().contextSerial() || !browser().model().selectionAvailable()) {
-    clearTypeahead();
-  }
+  m_fileKeys.syncContext();
   const auto& model = browser().model();
   const auto& snapshot = model.snapshot();
   if (m_visitSerial != browser().visitSerial()) {
@@ -3531,69 +1873,23 @@ void BrowserPage::syncBrowser() {
     m_gridZoom = static_cast<std::size_t>(
         std::ranges::find(files::kGridIconSizes, viewport.iconSize) - files::kGridIconSizes.begin()
     );
-    m_detailsOffset = 0;
-    m_keyboardReveal.reset();
+    m_detailsHeader.setOffset(0);
+    m_fileKeys.resetReveal();
   }
-  const auto uri = snapshot.location ? snapshot.location->uri() : std::string{};
-  if (uri != m_displayedLocation) {
-    clearCompletions();
+  if (m_locationBar.syncLocation(snapshot.location)) {
     m_siblingCompletion.cancel();
-    if (snapshot.location != m_lastBreadcrumb) {
-      m_lastBreadcrumb.reset();
-    }
-    m_filterOpen = false;
-    if (m_dispatcher.focusedArea() == m_filterInput->inputArea() || m_editingLocation) {
-      m_dispatcher.setFocus(m_list->focusArea());
-    }
-    m_editingLocation = false;
-    m_location->setVisible(false);
-    m_location->setParticipatesInLayout(false);
-    m_breadcrumbScroll->setVisible(true);
-    m_breadcrumbScroll->setParticipatesInLayout(true);
-    m_breadcrumbsDirty = true;
-    m_displayedLocation = uri;
-    m_location->setValue(snapshot.location ? files::locationEditText(*snapshot.location) : std::string{});
-    m_locationInvalid = false;
-    m_listAdapter.onPointerCancel();
-    m_gridAdapter.onPointerCancel();
-    m_viewAnchor.reset();
-    m_list->scrollView().requestScrollToOffset(0);
+    resetFileView();
   }
   if (auto restored = browser().takeRestoredViewport()) {
     m_pendingHistoryViewport = restored;
     m_viewAnchor.reset();
   }
-  m_location->setInvalid(m_locationInvalid);
-  if (!m_filterInput->composing() && m_filterInput->value() != browser().searchQuery()) {
-    m_filterInput->setValue(browser().searchQuery());
-  }
-  const bool searchFocused = m_dispatcher.focusedArea() == m_filterInput->inputArea();
-  m_searchArea->setBorder(
-      colorSpecFromRole(searchFocused ? ColorRole::Primary : ColorRole::OutlineVariant),
-      searchFocused ? Style::focusRingWidth : Style::borderWidth
-  );
-  m_locationArea->setBorder(
-      colorSpecFromRole(m_locationInvalid ? ColorRole::Error : ColorRole::OutlineVariant), Style::borderWidth
-  );
+  m_locationBar.sync();
   m_list->setCellHeight(gridHeight());
   m_list->setMinCellWidth(std::max(88.0F, gridIconSize() + 56.0F));
   m_gridAdapter.setGridIconSize(gridIconSize());
-  m_listAdapter.setDetailsColumns(m_detailsColumns);
-  m_listAdapter.setDetailsColumnOrder(m_columnOrder);
   const auto& sort = model.sort();
-  const char* indicator = sort.descending ? "arrow-down" : "arrow-up";
-  m_nameHeader->setGlyph(indicator);
-  m_sizeHeader->setGlyph(indicator);
-  m_modifiedHeader->setGlyph(indicator);
-  m_typeHeader->setGlyph(indicator);
-  m_nameHeader->glyph()->setVisible(sort.field == files::SortField::Name);
-  m_nameHeader->glyph()->setParticipatesInLayout(sort.field == files::SortField::Name);
-  m_sizeHeader->glyph()->setVisible(sort.field == files::SortField::Size);
-  m_sizeHeader->glyph()->setParticipatesInLayout(sort.field == files::SortField::Size);
-  m_modifiedHeader->glyph()->setVisible(sort.field == files::SortField::Modified);
-  m_modifiedHeader->glyph()->setParticipatesInLayout(sort.field == files::SortField::Modified);
-  m_typeHeader->glyph()->setVisible(sort.field == files::SortField::Type);
-  m_typeHeader->glyph()->setParticipatesInLayout(sort.field == files::SortField::Type);
+  m_detailsHeader.sync(sort);
   const char* field = sort.field == files::SortField::Name ? "Name"
       : sort.field == files::SortField::Size               ? "Size"
       : sort.field == files::SortField::Type               ? "Type"
@@ -3606,8 +1902,6 @@ void BrowserPage::syncBrowser() {
   );
   const bool grid = m_viewMode == files::ViewMode::Grid;
   m_viewSwitch->setSelectedIndex(grid ? 0 : m_viewMode == files::ViewMode::List ? 1 : 2);
-  m_listHeader->setVisible(m_viewMode == files::ViewMode::List);
-  m_listHeader->setParticipatesInLayout(m_viewMode == files::ViewMode::List);
   const auto request = actionRequest(false);
   for (const auto& [button, action] : std::array{
            std::pair{m_back, Action::Back}, std::pair{m_forward, Action::Forward}, std::pair{m_up, Action::Up}
@@ -3623,139 +1917,9 @@ void BrowserPage::syncBrowser() {
         + (state.enabled ? "" : "\n" + std::string(state.reason))
     );
   }
-  m_places->sync(snapshot.location);
-  const bool loading = snapshot.status == files::DirectoryStatus::Loading;
-  std::string status;
-  if (m_creator.busy()) {
-    const char* kind = m_creator.snapshot().kind == files::CreateKind::Folder ? "folder"
-        : m_creator.snapshot().kind == files::CreateKind::Document            ? "document"
-        : m_creator.snapshot().kind == files::CreateKind::SymbolicLink
-            || m_creator.snapshot().kind == files::CreateKind::HardLink
-        ? "link"
-        : "file";
-    status = m_creator.snapshot().status == files::CreateStatus::Creating ? std::format("Creating {}…", kind)
-                                                                          : std::format("Preparing {} creation…", kind);
-  } else if (m_permissions.busy()) {
-    status = m_permissions.snapshot().phase == files::PermissionPhase::Saving ? "Saving permissions…"
-                                                                              : "Reading permissions…";
-  } else if (m_batchRenamer.busy()) {
-    status = m_batchRenamer.applying() ? std::format("Renaming… · {} items", m_batchRenamer.completed())
-                                       : "Checking rename preview…";
-  } else if (m_renamer.busy()) {
-    status = m_renamer.snapshot().status == files::RenameStatus::Renaming ? "Renaming…" : "Preparing rename…";
-  } else if (m_restore.busy()) {
-    status = std::format("Restoring… · {} of {} items", m_restore.completed(), m_restore.total());
-  } else if (m_emptyTrash.busy()) {
-    status = m_emptyTrash.snapshot().status == files::EmptyTrashStatus::Preparing ? "Reading Trash…"
-        : m_emptyTrash.snapshot().status == files::EmptyTrashStatus::Ready
-        ? "Calculating Trash size…"
-        : std::format(
-              "{}… · {} of {} items", m_trashController.selectedDelete() ? "Deleting from Trash" : "Emptying Trash",
-              m_emptyTrash.completed(), m_emptyTrash.snapshot().results.size()
-          );
-  } else if (m_trash.busy()) {
-    status = m_trash.snapshot().status == files::TrashStatus::Preparing
-        ? "Preparing move to Trash…"
-        : std::format("Moving to Trash… · {} of {} items", m_trash.completed(), m_trash.snapshot().results.size());
-  } else if (m_archives.busy()) {
-    const files::GString size(g_format_size_full(m_archives.bytes(), G_FORMAT_SIZE_IEC_UNITS));
-    const char* phase = m_archives.phase() == files::ArchivePhase::Reading ? "Reading archive"
-        : m_archives.phase() == files::ArchivePhase::Compressing           ? "Compressing"
-        : m_archives.phase() == files::ArchivePhase::Cleaning              ? "Cleaning temporary files"
-        : m_archives.phase() == files::ArchivePhase::Transferring          ? "Publishing archive output"
-                                                                           : "Extracting archive";
-    status = std::format("{}… · {} entries · {}", phase, m_archives.items(), size.get());
-  } else if (m_transfers.busy()) {
-    const files::GString size(g_format_size(m_transfers.bytes()));
-    status = std::format(
-        "{} {} of {} items · {}", m_transfers.action() == files::TransferAction::Copy ? "Copying" : "Moving",
-        m_transfers.completed(), m_transfers.total(), size.get()
-    );
-  } else if (!m_actionError.empty()) {
-    status = m_actionError;
-  } else if (!m_pins.error().empty()) {
-    status = std::format("Could not update pins: {}", m_pins.error());
-  } else if (!m_settingsController.error().empty()) {
-    status = m_settingsController.error();
-  } else if (!browser().message().empty()) {
-    status = browser().message();
-  } else if (snapshot.error) {
-    status = snapshot.error->message;
-  } else if (!browser().searchQuery().empty()) {
-    status = std::format(
-        "{}{} results",
-        loading                                                    ? "Searching… · "
-            : snapshot.status == files::DirectoryStatus::Cancelled ? "Search stopped · "
-                                                                   : "",
-        model.rows().size()
-    );
-    if (browser().skippedSearchFolders() != 0) {
-      status += std::format(" · {} folders could not be searched", browser().skippedSearchFolders());
-    }
-  } else if (loading) {
-    status = "Loading folder…";
-  } else if (snapshot.status == files::DirectoryStatus::Cancelled) {
-    status = "Loading stopped.";
-  } else {
-    const auto hidden = model.filter().showHidden
-        ? 0U
-        : static_cast<std::size_t>(std::ranges::count_if(snapshot.entries, [](const auto& entry) {
-            return entry.hidden;
-          }));
-    status = std::format("{} items", model.rows().size());
-    if (hidden > 0) {
-      status += std::format(" · {} hidden", hidden);
-    }
-  }
-  if (snapshot.location && snapshot.location->isTrash() && !snapshot.error && !loading) {
-    status += " · Refresh to update";
-  }
-  if (!model.selection().selected.empty()) {
-    status += std::format(" · {} selected", model.selection().selected.size());
-    const auto summary = model.selectionSummary();
-    if (summary.overflow) {
-      status += " · file size exceeds limit";
-    } else if (summary.files != 0 && summary.unknownSizes == summary.files) {
-      status += " · file size unknown";
-    } else if (summary.files != 0) {
-      const files::GString size(g_format_size_full(summary.bytes, G_FORMAT_SIZE_IEC_UNITS));
-      status += std::format(
-          " · {}{}{}", summary.unknownSizes == 0 ? "" : "at least ", size.get(),
-          summary.folders != 0 || summary.others != 0 ? " in files" : ""
-      );
-    }
-  }
-  if (!m_typeahead.text().empty() || !m_typeaheadPreedit.empty()) {
-    status = "Select: " + m_typeahead.text() + m_typeaheadPreedit + " · " + status;
-  }
-  m_status->setText(status);
-  const auto freeBytes = snapshot.metadata.filesystem.freeBytes;
-  m_freeSpaceAvailable = freeBytes
-      && !snapshot.metadataLoading
-      && !snapshot.filesystemError
-      && !snapshot.error
-      && snapshot.location
-      && !snapshot.location->isTrash();
-  if (m_freeSpaceAvailable) {
-    const files::GString size(g_format_size_full(*freeBytes, G_FORMAT_SIZE_IEC_UNITS));
-    m_freeSpace->setText(std::format("{} free", size.get()));
-  }
-  m_transferController.syncOperationButtons(m_trashController.selectedDelete());
-  m_notice->setText(
-      snapshot.error
-              || loading
-              || snapshot.status == files::DirectoryStatus::Cancelled
-              || !browser().message().empty()
-              || !m_settingsController.error().empty()
-          ? status
-          : !browser().searchQuery().empty() ? "No matching files or folders."
-          : snapshot.entries.empty()
-          ? (snapshot.location == files::Location::trash() ? "Trash is empty." : "This folder is empty.")
-          : "No visible items."
-  );
+  m_sidebar.sync(snapshot.location);
+  m_statusBar.sync(m_miller.enabled());
   const bool empty = model.rows().empty();
-  m_noticeArea->setVisible(empty && !m_miller.enabled());
-  m_noticeArea->setParticipatesInLayout(empty && !m_miller.enabled());
   if (!m_miller.enabled()) {
     m_list->setVisible(!empty);
     m_list->setParticipatesInLayout(!empty);
@@ -3769,14 +1933,19 @@ void BrowserPage::syncBrowser() {
   }
   m_list->setSelectedIndex(focus, false);
   m_list->notifyDataChanged();
-  if (const auto reveal = std::exchange(m_keyboardReveal, std::nullopt);
-      reveal && model.selection().focused == reveal) {
+  if (const auto reveal = m_fileKeys.takeReveal(); reveal && model.selection().focused == reveal) {
     const auto found = std::ranges::find(model.rows(), *reveal);
     if (found != model.rows().end()) {
       m_list->scrollToIndex(static_cast<std::size_t>(found - model.rows().begin()));
     }
   }
   m_batchRename.revealRenamed(*m_list);
+  revealPendingTargets();
+}
+
+void BrowserPage::revealPendingTargets() {
+  const auto& model = browser().model();
+  const auto& snapshot = model.snapshot();
   if (!m_revealTargets.empty() && snapshot.status != files::DirectoryStatus::Loading) {
     const auto targets = std::exchange(m_revealTargets, {});
     const bool properties = std::exchange(m_revealProperties, false);
@@ -3863,10 +2032,10 @@ void BrowserPage::prepareFrame(bool, bool layout) {
     if (m_lastBrowser != &browser()) {
       m_lastBrowser = &browser();
       m_visitSerial = 0;
-      m_keyboardReveal.reset();
+      m_fileKeys.resetReveal();
       m_pendingHistoryViewport.reset();
       m_thumbnailContext = 0;
-      clearTypeahead();
+      m_fileKeys.clearTypeahead();
     }
     m_millerFocusPending = m_millerFocusPending || restoreFocus;
   }
@@ -3886,12 +2055,7 @@ void BrowserPage::prepareFrame(bool, bool layout) {
     m_thumbnails.synchronizeSources(thumbnailSnapshot);
   }
   m_settingsController.onFrame();
-  m_sidebarResizeLine->setFill(colorSpecFromRole(
-      m_resizingSidebar || m_sidebarResize->focused() ? ColorRole::Primary
-          : m_sidebarResize->hovered()                ? ColorRole::OnSurfaceVariant
-                                                      : ColorRole::OutlineVariant
-  ));
-  m_sidebarResizeLine->setVisible(m_resizingSidebar || m_sidebarResize->focused() || m_sidebarResize->hovered());
+  m_sidebar.onFrame();
   m_archiveController.onFrame();
   m_transferController.syncConflict();
   m_trashController.onFrame();
@@ -3905,557 +2069,88 @@ void BrowserPage::prepareFrame(bool, bool layout) {
     syncBrowser();
     layout = true;
   }
-  if (const auto target = std::exchange(m_breadcrumbEditTarget, std::nullopt);
-      target && target == browser().model().snapshot().location) {
-    beginLocationEdit();
+  if (m_locationBar.onFrame()) {
     layout = true;
   }
   if (layout) {
-    UiPhaseScope phase(UiPhase::Layout);
-    const bool showFreeSpace = m_freeSpaceAvailable && m_pageBounds.width >= kMinimumFreeSpacePaneWidth;
-    m_freeSpace->setVisible(showFreeSpace);
-    m_freeSpace->setParticipatesInLayout(showFreeSpace);
-    std::optional<InputDispatcher::TabFocusSnapshot> placesFocus;
-    if (m_placesDirty) {
-      for (const Node* node = m_dispatcher.focusedArea(); node != nullptr; node = node->parent()) {
-        if (node == m_places) {
-          placesFocus = m_dispatcher.captureTabFocus();
-          break;
-        }
-      }
+    layoutFrame(renderer);
+  }
+}
+
+void BrowserPage::layoutFrame(Renderer& renderer) {
+  UiPhaseScope phase(UiPhase::Layout);
+  m_statusBar.layout(m_pageBounds.width);
+  auto placesFocus = m_sidebar.invalidate();
+  m_dragDrop.applyScroll();
+  m_sidebar.layout();
+  m_locationBar.prepareLayout();
+  if (m_appliedViewMode != m_viewMode) {
+    applyViewMode();
+  }
+  if (m_viewAnchor) {
+    const auto& rows = browser().model().rows();
+    const auto found = std::ranges::find(rows, *m_viewAnchor);
+    if (found != rows.end()) {
+      m_list->scrollToIndex(static_cast<std::size_t>(std::distance(rows.begin(), found)), true);
     }
-    if (m_placesDirty) {
-      m_placesDirty = false;
-      m_places->invalidate();
-    }
-    if (m_externalScrollDelta != 0) {
-      const auto delta = std::exchange(m_externalScrollDelta, 0.0F);
-      if (m_externalScrollInPlaces) {
-        m_places->dragScroll(delta);
-      } else {
-        auto& scroll = dragView()->scrollView();
-        scroll.requestScrollToOffset(scroll.scrollOffset() + delta);
-      }
-      m_refreshExternalDrop = true;
-    }
-    if (m_drag && m_dragScrollDelta != 0) {
-      const auto delta = std::exchange(m_dragScrollDelta, 0.0F);
-      if (m_dragScrollInPlaces) {
-        m_places->dragScroll(delta);
-      } else if (m_miller.enabled()) {
-        auto& scroll = dragView()->scrollView();
-        scroll.requestScrollToOffset(scroll.scrollOffset() + delta);
-      } else {
-        m_list->scrollDuringDrag(delta);
-      }
-    }
-    const float searchWidth = std::clamp(static_cast<float>(m_surface->width()) * 0.22F, 148.0F, 220.0F);
-    m_places->setVisible(m_showSidebar);
-    m_places->setParticipatesInLayout(m_showSidebar);
-    m_sidebarResize->setVisible(m_showSidebar);
-    m_sidebarResize->setParticipatesInLayout(m_showSidebar);
-    const float sidebarWidth = static_cast<float>(std::min(m_sidebarWidth, sidebarMaximumWidth()));
-    m_places->setMinWidth(sidebarWidth);
-    m_places->setMaxWidth(sidebarWidth);
-    m_searchArea->setMinWidth(searchWidth);
-    m_searchArea->setMaxWidth(searchWidth);
-    if (m_breadcrumbsDirty) {
-      m_breadcrumbsDirty = false;
-      rebuildBreadcrumbs();
-    }
-    if (m_appliedViewMode != m_viewMode) {
-      applyViewMode();
-    }
-    if (m_viewAnchor) {
-      const auto& rows = browser().model().rows();
-      const auto found = std::ranges::find(rows, *m_viewAnchor);
-      if (found != rows.end()) {
-        m_list->scrollToIndex(static_cast<std::size_t>(std::distance(rows.begin(), found)), true);
-      }
-      m_viewAnchor.reset();
-    }
-    if (m_pendingHistoryViewport) {
-      const auto viewport = *m_pendingHistoryViewport;
-      m_pendingHistoryViewport.reset();
-      m_detailsOffset = viewport.horizontal;
-      const auto& rows = browser().model().rows();
-      const auto found = viewport.first ? std::ranges::find(rows, *viewport.first) : rows.end();
-      if (found != rows.end()) {
-        m_list->scrollToIndex(static_cast<std::size_t>(found - rows.begin()), true, viewport.withinRow);
-      } else {
-        m_list->scrollView().requestScrollToOffset(viewport.vertical);
-      }
-    }
-    const bool clientHeader = false;
-    const bool columnOrderChanged = m_columnOrder != m_appliedColumnOrder;
-    if (columnOrderChanged) {
-      for (const auto column : m_columnOrder) {
-        auto* header = columnHeader(column);
-        m_detailsHeaderRow->addChild(m_detailsHeaderRow->removeChild(header));
-      }
-      m_appliedColumnOrder = m_columnOrder;
-    }
-    m_titlebar->setVisible(clientHeader);
-    m_titlebar->setParticipatesInLayout(clientHeader);
-    const bool details = m_viewMode == files::ViewMode::List;
-    // List headers own their vertical insets so their labels and resize
-    // markers are centered between the pane edge and the header rule.
-    m_paneContentFrame->setPadding(
-        details && !m_paneHeader->visible() ? 0.0F : Style::radiusMd, Style::radiusMd, 0.0F, Style::radiusMd
-    );
-    m_filePane->setPadding(details ? 0.0F : Style::spaceSm, Style::spaceSm, Style::spaceSm, Style::spaceSm);
-    m_root->arrange(
-        renderer, LayoutRect{0, 0, static_cast<float>(m_surface->width()), static_cast<float>(m_surface->height())}
-    );
-    m_body->arrange(renderer, m_pageBounds);
-    m_settingsController.layout(renderer, m_pageBounds, m_surface->width() < 800);
-    m_archiveController.layout(renderer, m_pageBounds);
-    layoutDetails(renderer);
-    const bool columnHoverDirty = std::exchange(m_columnHoverDirty, false);
-    if (columnOrderChanged || columnHoverDirty) {
-      m_dispatcher.syncPointerHover();
-    }
-    layoutColumnDrag(renderer);
-    if (std::exchange(m_refreshExternalDrop, false)) {
-      m_clipboard.refreshDrag();
-    }
-    m_sidebarResizeLine->arrange(renderer, {2.5F, 0, 1.0F, m_sidebarResize->height()});
-    layoutDrag(renderer);
-    layoutCompletions(renderer);
-    m_thumbnails.endFrame();
-    if (placesFocus) {
-      m_dispatcher.restoreTabFocus(std::move(*placesFocus));
-    }
-    if (m_restorePlaceFocus
-        && m_menuSurface == nullptr
-        && !m_settingsController.open()
-        && !m_archiveController.open()) {
-      const auto location = *std::exchange(m_restorePlaceFocus, std::nullopt);
-      if (m_showSidebar) {
-        if (auto* area = m_places->focusArea(location)) {
-          m_dispatcher.setFocus(area);
-        }
-      }
-    }
-    if (m_dispatcher.focusedArea() == m_list->focusArea()) {
-      m_textInput.notifyClientStateChanged(this, TextInputChangeCause::Other);
+    m_viewAnchor.reset();
+  }
+  if (m_pendingHistoryViewport) {
+    const auto viewport = *m_pendingHistoryViewport;
+    m_pendingHistoryViewport.reset();
+    m_detailsHeader.setOffset(viewport.horizontal);
+    const auto& rows = browser().model().rows();
+    const auto found = viewport.first ? std::ranges::find(rows, *viewport.first) : rows.end();
+    if (found != rows.end()) {
+      m_list->scrollToIndex(static_cast<std::size_t>(found - rows.begin()), true, viewport.withinRow);
+    } else {
+      m_list->scrollView().requestScrollToOffset(viewport.vertical);
     }
   }
+  const bool clientHeader = false;
+  const bool columnOrderChanged = m_detailsHeader.applyOrder();
+  m_titlebar->setVisible(clientHeader);
+  m_titlebar->setParticipatesInLayout(clientHeader);
+  const bool details = m_viewMode == files::ViewMode::List;
+  // List headers own their vertical insets so their labels and resize
+  // markers are centered between the pane edge and the header rule.
+  m_paneContentFrame->setPadding(
+      details && !m_paneHeader->visible() ? 0.0F : Style::radiusMd, Style::radiusMd, 0.0F, Style::radiusMd
+  );
+  m_filePane->setPadding(details ? 0.0F : Style::spaceSm, Style::spaceSm, Style::spaceSm, Style::spaceSm);
+  m_root->arrange(
+      renderer, LayoutRect{0, 0, static_cast<float>(m_surface->width()), static_cast<float>(m_surface->height())}
+  );
+  m_body->arrange(renderer, m_pageBounds);
+  m_settingsController.layout(renderer, m_pageBounds, m_surface->width() < 800);
+  m_archiveController.layout(renderer, m_pageBounds);
+  if (m_detailsHeader.layoutColumns(m_miller.enabled())) {
+    m_root->arrange(renderer, {0, 0, static_cast<float>(m_surface->width()), static_cast<float>(m_surface->height())});
+    m_body->arrange(renderer, m_pageBounds);
+    m_detailsHeader.layoutHeader(renderer);
+  }
+  const bool columnHoverDirty = m_detailsHeader.takeHoverDirty();
+  if (columnOrderChanged || columnHoverDirty) {
+    m_dispatcher.syncPointerHover();
+  }
+  m_detailsHeader.layoutDrag(renderer);
+  m_dragDrop.refreshDrop();
+  m_sidebar.layoutResizeLine(renderer);
+  m_dragDrop.layout(renderer);
+  m_locationBar.layoutCompletions(renderer);
+  m_thumbnails.endFrame();
+  m_sidebar.restoreFocus(
+      std::move(placesFocus), m_menuSurface != nullptr || m_settingsController.open() || m_archiveController.open()
+  );
+  m_fileKeys.notifyStateChanged();
 }
 
 void BrowserPage::buildScene() {
   uiAssertNotRendering("Window::buildScene");
-  m_appliedColumnOrder = files::kDefaultDetailsColumnOrder;
   m_titlebar = nullptr;
-  auto title = ui::inputArea(
-      {
-          .acceptedButtons = InputArea::buttonMask(BTN_LEFT) | InputArea::buttonMask(BTN_RIGHT),
-          .flexGrow = 1.0F,
-          .onPress =
-              [this](const InputArea::PointerData& data) {
-                if (data.button == BTN_LEFT) {
-                  m_surface->beginMove(data.serial);
-                } else {
-                  m_surface->showWindowMenu(data.serial, static_cast<int>(data.sceneX), static_cast<int>(data.sceneY));
-                }
-              },
-      },
-      ui::label({.text = "Noctalia Files", .fontSize = Style::fontSizeTitle, .fontWeight = FontWeight::SemiBold})
-  );
-  auto header = ui::row(
-      {.out = &m_titlebar,
-       .align = FlexAlign::Center,
-       .gap = Style::spaceSm,
-       .padding = Style::spaceSm,
-       .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
-       .height = 48.0F},
-      std::move(title),
-      ui::button({.glyph = "minus", .variant = ButtonVariant::Ghost, .onClick = [this] { m_surface->minimize(); }}),
-      ui::button(
-          {.glyph = "square", .variant = ButtonVariant::Ghost, .onClick = [this] { m_surface->toggleMaximized(); }}
-      ),
-      ui::button({.glyph = "x", .variant = ButtonVariant::Ghost, .onClick = [this] { m_surface->close(); }})
-  );
-  auto breadcrumbScroll = ui::scrollView(
-      {.out = &m_breadcrumbScroll,
-       .orientation = ScrollOrientation::Horizontal,
-       .scrollbarVisible = false,
-       .viewportPaddingH = 0.0F,
-       .viewportPaddingV = 0.0F,
-       .fillWidth = true,
-       .fillHeight = true,
-       .flexGrow = 1.0F}
-  );
-  breadcrumbScroll->content()->setDirection(FlexDirection::Horizontal);
-  breadcrumbScroll->content()->addChild(
-      ui::row({.out = &m_breadcrumbs, .align = FlexAlign::Center, .gap = 0.0F, .height = Style::controlHeight})
-  );
-  auto locationArea = ui::column(
-      {.out = &m_locationArea,
-       .align = FlexAlign::Stretch,
-       .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
-       .radius = Style::radiusMd,
-       .border = colorSpecFromRole(ColorRole::OutlineVariant),
-       .minWidth = 80.0F,
-       .height = Style::controlHeight,
-       .flexGrow = 1.0F},
-      std::move(breadcrumbScroll),
-      ui::input(
-          {.out = &m_location,
-           .placeholder = "Location",
-           .fontSize = Style::fontSizeCaption,
-           .frameVisible = false,
-           .minLayoutWidth = 72.0F,
-           .flexGrow = 1.0F,
-           .visible = false,
-           .participatesInLayout = false,
-           .onChange = [this](const std::string& text) { requestCompletions(text); },
-           .onSubmit =
-               [this](const std::string& text) {
-                 m_locationInvalid = !browser().openText(text);
-                 if (!m_locationInvalid) {
-                   endLocationEdit(true);
-                 }
-                 m_browserDirty = true;
-                 m_surface->requestUpdate();
-               },
-           .onFocusLoss =
-               [this] {
-                 if (m_editingLocation) {
-                   endLocationEdit(false);
-                 }
-               }}
-      )
-  );
-  auto searchArea = ui::row(
-      {.out = &m_searchArea,
-       .align = FlexAlign::Center,
-       .gap = Style::spaceXs,
-       .paddingH = Style::spaceSm,
-       .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
-       .radius = Style::radiusMd,
-       .border = colorSpecFromRole(ColorRole::OutlineVariant),
-       .minWidth = 220.0F,
-       .maxWidth = 220.0F,
-       .height = Style::controlHeight,
-       .configure = [](Flex& area) { area.setPadding(0.0F, 0.0F, 0.0F, Style::spaceSm); }},
-      ui::glyph(
-          {.glyph = "search",
-           .glyphSize = Style::baseGlyphSize,
-           .color = colorSpecFromRole(ColorRole::OnSurfaceVariant)}
-      ),
-      ui::input(
-          {.out = &m_filterInput,
-           .placeholder = "Search files…",
-           .fontSize = Style::fontSizeCaption,
-           .controlHeight = Style::controlHeight,
-           .horizontalPadding = 0.0F,
-           .clearButtonEnabled = true,
-           .frameVisible = false,
-           .minLayoutWidth = 72.0F,
-           .flexGrow = 1.0F,
-           .onChange = [this](const std::string& text) { changeNameFilter(text); },
-           .onSubmit =
-               [this](const std::string&) {
-                 if (m_filterInput->composing()) {
-                   return;
-                 }
-                 browser().submitSearchQuery();
-                 if (!browser().model().rows().empty()) {
-                   m_dispatcher.setFocus(m_list->focusArea());
-                 }
-               },
-           .configure =
-               [this](Input& input) {
-                 input.setOnCompositionChange([this](bool composing) { browser().setSearchComposing(composing); });
-                 input.setClearButtonWidth(24.0F);
-                 input.inputArea()->setTooltip("Search names in this folder and all subfolders");
-                 input.setOnFocusGain([this] {
-                   m_filterOpen = true;
-                   m_browserDirty = true;
-                   m_surface->requestUpdate();
-                 });
-                 input.setOnFocusLoss([this] {
-                   m_browserDirty = true;
-                   m_surface->requestUpdate();
-                 });
-               }}
-      )
-  );
-  auto toolbar = ui::row(
-      {.out = &m_toolbar, .align = FlexAlign::Center, .gap = Style::spaceSm, .padding = Style::spaceSm},
-      ui::row(
-          {.align = FlexAlign::Center, .gap = Style::spaceXs},
-          ui::button(
-              {.out = &m_back,
-               .glyph = "arrow-left",
-               .variant = ButtonVariant::Ghost,
-               .tooltip = "Back (Alt+Left)",
-               .onClick = [this] { dispatchAction(Action::Back); }}
-          ),
-          ui::button(
-              {.out = &m_forward,
-               .glyph = "arrow-right",
-               .variant = ButtonVariant::Ghost,
-               .tooltip = "Forward (Alt+Right)",
-               .onClick = [this] { dispatchAction(Action::Forward); }}
-          ),
-          ui::button(
-              {.out = &m_up,
-               .glyph = "arrow-up",
-               .variant = ButtonVariant::Ghost,
-               .tooltip = "Parent folder (Alt+Up)",
-               .onClick = [this] { dispatchAction(Action::Up); }}
-          )
-      ),
-      std::move(locationArea), std::move(searchArea),
-      ui::row(
-          {.align = FlexAlign::Center, .gap = Style::spaceXs},
-          ui::button({.out = &m_sortButton, .glyph = "arrows-sort", .variant = ButtonVariant::Ghost,
-                      .tooltip = "Sort files", .onClick = [this] {
-                        m_menuController.openSortMenu(sceneRect(*m_sortButton));
-                      }}),
-          ui::segmented(
-              {.out = &m_viewSwitch,
-               .options =
-                   std::vector<ui::SegmentedOption>{
-                       {.label = "", .glyph = "layout-grid", .tooltip = "Grid view (Ctrl+1)"},
-                       {.label = "", .glyph = "list", .tooltip = "List view (Ctrl+2)"},
-                       {.label = "", .glyph = "columns-3", .tooltip = "Column view (Ctrl+3)"}
-                   },
-               .selectedIndex = m_viewMode == files::ViewMode::Grid ? 0U : m_viewMode == files::ViewMode::List ? 1U : 2U,
-               .compact = true,
-               .onChange = [this](std::size_t index) { dispatchAction(index == 0 ? Action::Grid : index == 1 ? Action::List : Action::Miller); }}
-          ),
-          ui::button(
-              {.out = &m_menuButton, .glyph = "dots-vertical", .variant = ButtonVariant::Ghost, .onClick = [this] {
-                 m_menuController.openMenu();
-               }}
-          )
-      )
-  );
-
-  auto places = std::make_unique<files::PlacesSidebar>(m_pins);
-  m_places = places.get();
-  configurePlacesCallbacks();
-  auto sidebarResize = ui::inputArea(
-      {.out = &m_sidebarResize,
-       .acceptedButtons = InputArea::buttonMask(BTN_LEFT),
-       .cursorShape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COL_RESIZE,
-       .focusable = true,
-       .tabStop = true,
-       .tooltip = "Resize Places; Left/Right adjusts, Home resets",
-       .width = kSidebarHandleWidth,
-       .onEnter = [this](const auto&) { m_surface->requestUpdate(); },
-       .onLeave = [this] { m_surface->requestUpdate(); },
-       .onMotion =
-           [this](const InputArea::PointerData& pointer) {
-             if (!m_resizingSidebar) {
-               return;
-             }
-             float x = 0, y = 0;
-             Node::absolutePosition(m_sidebarResize, x, y);
-             const float delta = (x + pointer.localX - m_sidebarPressX) * (Style::rtl() ? -1.0F : 1.0F);
-             resizeSidebar(m_sidebarStartVisibleWidth + static_cast<int>(std::lround(delta)), false);
-           },
-       .onPress =
-           [this](const InputArea::PointerData& pointer) {
-             if (pointer.pressed) {
-               m_sidebarStartWidth = m_sidebarWidth;
-               m_sidebarStartVisibleWidth = static_cast<int>(std::lround(m_places->width()));
-               m_sidebarPressX = pointer.sceneX;
-               m_resizingSidebar = true;
-             } else if (std::exchange(m_resizingSidebar, false) && m_sidebarWidth != m_sidebarStartWidth) {
-               m_preferences.saveSidebarWidth(m_sidebarWidth);
-             }
-             m_surface->requestUpdate();
-           },
-       .onKeyDown =
-           [this](const InputArea::KeyData& key) {
-             if (!key.pressed || key.preedit || (key.modifiers != 0 && key.modifiers != KeyMod::Shift)) {
-               return;
-             }
-             const int step = key.modifiers == KeyMod::Shift ? 24 : 8;
-             if (KeySymbol::isLeft(key.sym) || KeySymbol::isRight(key.sym)) {
-               const int direction = KeySymbol::isRight(key.sym) != Style::rtl() ? 1 : -1;
-               resizeSidebar(static_cast<int>(std::lround(m_places->width())) + direction * step, true);
-             } else if (KeySymbol::isHome(key.sym) && key.modifiers == 0) {
-               resizeSidebar(files::kDefaultSidebarWidth, true);
-             }
-           },
-       .onFocusGain = [this] { m_surface->requestUpdate(); },
-       .onFocusLoss = [this] { m_surface->requestUpdate(); },
-       .configure =
-           [this](InputArea& handle) {
-             handle.setTabFocusKey("places-width");
-             handle.setOnCancel([this] {
-               if (std::exchange(m_resizingSidebar, false)) {
-                 m_sidebarWidth = m_sidebarStartWidth;
-                 if (m_dispatcher.focusedArea() == m_sidebarResize) {
-                   m_dispatcher.setFocus(nullptr);
-                 }
-                 m_surface->requestLayout();
-               }
-             });
-             handle.addChild(ui::box({.out = &m_sidebarResizeLine}));
-           }}
-  );
-  auto content = ui::column(
-      {.out = &m_filePane,
-       .align = FlexAlign::Stretch,
-       .gap = Style::spaceXs,
-       .padding = Style::spaceSm,
-       .flexGrow = 1.0F},
-      ui::column(
-          {.out = &m_listHeader, .align = FlexAlign::Stretch},
-          ui::row(
-              {.align = FlexAlign::Center,
-               .paddingV = Style::radiusMd,
-               .height = Style::controlHeightSm + 2.0F * Style::radiusMd},
-              ui::row(
-                  {.out = &m_detailsHeaderViewport,
-                   .align = FlexAlign::Stretch,
-                   .clipChildren = true,
-                   .height = 32.0F,
-                   .flexGrow = 1.0F},
-                  ui::row(
-                      {.out = &m_detailsHeaderRow,
-                       .align = FlexAlign::Center,
-                       .paddingH = Style::spaceMd - Style::spaceXs,
-                       .participatesInLayout = false},
-                      ui::button(
-                          {.out = &m_nameHeader,
-                           .text = "Name",
-                           .fontSize = Style::fontSizeCaption,
-                           .controlHeight = Style::controlHeightSm,
-                           .contentAlign = ButtonContentAlign::Start,
-                           .variant = ButtonVariant::Ghost,
-                           .tooltip = "Sort by name; click again to reverse",
-                           .paddingH = Style::spaceXs,
-                           .onClick = [this] { sortBy(files::SortField::Name); }}
-                      ),
-                      ui::button(
-                          {.out = &m_typeHeader,
-                           .text = "Type",
-                           .fontSize = Style::fontSizeCaption,
-                           .controlHeight = Style::controlHeightSm,
-                           .contentAlign = ButtonContentAlign::Start,
-                           .variant = ButtonVariant::Ghost,
-                           .tooltip = "Sort by type; click again to reverse",
-                           .minWidth = 144.0F + 2 * Style::spaceXs,
-                           .maxWidth = 144.0F + 2 * Style::spaceXs,
-                           .paddingH = Style::spaceXs,
-                           .onClick = [this] { sortBy(files::SortField::Type); }}
-                      ),
-                      ui::button(
-                          {.out = &m_sizeHeader,
-                           .text = "Size",
-                           .fontSize = Style::fontSizeCaption,
-                           .controlHeight = Style::controlHeightSm,
-                           .contentAlign = ButtonContentAlign::Start,
-                           .variant = ButtonVariant::Ghost,
-                           .tooltip = "Sort by size; click again to reverse",
-                           .minWidth = 110.0F + 2 * Style::spaceXs,
-                           .maxWidth = 110.0F + 2 * Style::spaceXs,
-                           .paddingH = Style::spaceXs,
-                           .onClick = [this] { sortBy(files::SortField::Size); }}
-                      ),
-                      ui::button(
-                          {.out = &m_modifiedHeader,
-                           .text = "Modified",
-                           .fontSize = Style::fontSizeCaption,
-                           .controlHeight = Style::controlHeightSm,
-                           .contentAlign = ButtonContentAlign::Start,
-                           .variant = ButtonVariant::Ghost,
-                           .tooltip = "Sort by modification time; click again to reverse",
-                           .minWidth = 148.0F + 2 * Style::spaceXs,
-                           .maxWidth = 148.0F + 2 * Style::spaceXs,
-                           .paddingH = Style::spaceXs,
-                           .onClick = [this] { sortBy(files::SortField::Modified); }}
-                      )
-                  )
-              ),
-              ui::box({.width = Style::scrollbarWidth + Style::scrollbarGap})
-          ),
-          ui::separator({})
-      ),
-      ui::column(
-          {.out = &m_noticeArea, .align = FlexAlign::Stretch, .flexGrow = 1.0F},
-          ui::label({.out = &m_notice, .textAlign = TextAlign::Center})
-      ),
-      ui::virtualGridView(
-          {.out = &m_list,
-           .columns = 1,
-           .cellHeight = 36.0F,
-           .squareCells = false,
-           .columnGap = 0.0F,
-           .rowGap = 2.0F,
-           .adapter = &m_listAdapter,
-           .flexGrow = 1.0F,
-           .configure = [this](VirtualGridView& list) {
-             list.scrollView().setReserveScrollbarGutter(true);
-             list.focusArea()->setRetainsFocusOnPointerRelease(true);
-             list.focusArea()->setTextInputClient(this);
-             list.focusArea()->setOnFocusGain([this] {
-               m_browserDirty = true;
-               m_surface->requestUpdate();
-             });
-             list.focusArea()->setOnFocusLoss([this] {
-               m_browserDirty = true;
-               m_surface->requestUpdate();
-             });
-           }}
-      )
-  );
-  m_regularList = m_list;
-  auto miller = std::make_unique<MillerView>(m_miller, m_icons, m_thumbnails);
-  m_millerView = miller.get();
-  miller->setVisible(false);
-  miller->setParticipatesInLayout(false);
-  miller->modifiers = [this] { return m_connection.keyboardModifiers(); };
-  miller->keyboardFocus = [this] { return m_fileKeyboardFocus && m_list && m_list->focusArea()->focused(); };
-  miller->cut = [this](const files::Location& location) { return m_clipboard.isCut(location); };
-  miller->focus = [this](std::size_t index) { focusMiller(index); };
-  miller->activate = [this](files::EntryId id) {
-    auto request = actionRequest(false);
-    if (const auto* entry = browser().model().entry(id)) {
-      request.targets.push_back({id, entry->location});
-    }
-    dispatchAction(Action::Open, request);
-  };
-  miller->context = [this](std::optional<files::EntryId> entry, float x, float y) {
-    m_menuController.openFileMenu(entry, x, y);
-  };
-  miller->drag = [this](const std::vector<files::EntryId>& ids) { startFileDrag(ids); };
-  miller->cancelDrag = [this] {
-    if (!m_systemDrag) {
-      cancelDrag();
-    }
-  };
-  miller->resized = [this](int width) {
-    m_miller.defaultWidth = static_cast<float>(width);
-    m_preferences.submit({{files::BrowserPreference::MillerColumnWidth, width}});
-  };
-  miller->textInputClient = this;
-  miller->requestUpdate = [this] { m_surface->requestUpdate(); };
-  content->addChild(std::move(miller));
-  auto horizontalBar = std::make_unique<Scrollbar>();
-  horizontalBar->setOrientation(ScrollOrientation::Horizontal);
-  horizontalBar->setParticipatesInLayout(false);
-  horizontalBar->setOnScrollChanged([this](float offset) { scrollDetails(offset); });
-  m_detailsScrollbar = horizontalBar.get();
-  auto horizontalHost = ui::box(
-      {.out = &m_detailsScrollHost,
-       .fill = clearColorSpec(),
-       .height = Style::scrollbarWidth + Style::scrollbarGap,
-       .visible = false,
-       .participatesInLayout = false}
-  );
-  horizontalHost->addChild(std::move(horizontalBar));
-  content->addChild(std::move(horizontalHost));
   m_detachedRoot = ui::column(
-      {.align = FlexAlign::Stretch, .fill = clearColorSpec(), .fillWidth = true, .fillHeight = true}, std::move(header),
-      std::move(toolbar),
+      {.align = FlexAlign::Stretch, .fill = clearColorSpec(), .fillWidth = true, .fillHeight = true}, buildTitlebar(),
+      buildToolbar(),
       ui::column(
           {.out = &m_body,
            .align = FlexAlign::Stretch,
@@ -4500,189 +2195,179 @@ void BrowserPage::buildScene() {
                   )
               ),
               ui::row(
-                  {.align = FlexAlign::Stretch, .clipChildren = true, .flexGrow = 1.0F}, std::move(places),
-                  std::move(sidebarResize), std::move(content)
+                  {.align = FlexAlign::Stretch, .clipChildren = true, .flexGrow = 1.0F}, m_sidebar.buildPlaces(),
+                  m_sidebar.buildResizeHandle(), buildFilePane()
               )
           ),
-          ui::row(
-              {.align = FlexAlign::Center,
-               .gap = Style::spaceMd,
-               .paddingV = Style::spaceSm,
-               .paddingH = Style::spaceSm + Style::spaceXs},
-              ui::label(
-                  {.out = &m_status,
-                   .maxLines = 1,
-                   .flexGrow = 1.0F,
-                   .configure = [](Label& label) { label.setUseMarkup(false); }}
-              ),
-              ui::label(
-                  {.out = &m_freeSpace,
-                   .fontSize = Style::fontSizeCaption,
-                   .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
-                   .maxWidth = 160.0F,
-                   .maxLines = 1,
-                   .textAlign = TextAlign::End}
-              ),
-              m_transferController.buildRetryButton(), m_transferController.buildCancelButton()
-          )
+          m_statusBar.build()
       )
   );
   m_root = m_detachedRoot.get();
-  m_detachedSidebar = ui::row(
-      {.align = FlexAlign::Stretch, .gap = kSidebarGapInset}, m_places->parent()->removeChild(m_places),
-      m_sidebarResize->parent()->removeChild(m_sidebarResize)
+  m_sidebar.detach();
+  m_detailsHeader.attach(*m_root);
+  m_dragDrop.buildOverlay(m_animations);
+  m_locationBar.buildCompletion(*m_toolbar);
+  m_root->setAnimationManager(&m_animations);
+  m_dispatcher.setSceneRoot(m_root);
+}
+
+std::unique_ptr<Flex> BrowserPage::buildTitlebar() {
+  auto title = ui::inputArea(
+      {
+          .acceptedButtons = InputArea::buttonMask(BTN_LEFT) | InputArea::buttonMask(BTN_RIGHT),
+          .flexGrow = 1.0F,
+          .onPress =
+              [this](const InputArea::PointerData& data) {
+                if (data.button == BTN_LEFT) {
+                  m_surface->beginMove(data.serial);
+                } else {
+                  m_surface->showWindowMenu(data.serial, static_cast<int>(data.sceneX), static_cast<int>(data.sceneY));
+                }
+              },
+      },
+      ui::label({.text = "Noctalia Files", .fontSize = Style::fontSizeTitle, .fontWeight = FontWeight::SemiBold})
   );
-  m_sidebarBundle = m_detachedSidebar.get();
-  m_sidebarBundle->setAnimationManager(&m_animations);
-  for (std::size_t index = 0; index < 4; ++index) {
-    auto handle = std::make_unique<InputArea>();
-    handle->setParticipatesInLayout(false);
-    handle->setZIndex(10);
-    handle->setCursorShape(WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COL_RESIZE);
-    handle->setAcceptedButtons(InputArea::buttonMask(BTN_LEFT));
-    handle->setOnPress([this, index](const InputArea::PointerData& data) {
-      if (data.pressed) {
-        captureViewAnchor();
-        m_list->cancelPointerGesture();
-        m_columnResize =
-            ColumnResize{index,          data.sceneX,     headerWidth(index),
-                         m_columnWidths, m_detailsOffset, static_cast<int>(std::lround(m_detailsColumns.nameWidth))};
-      } else if (m_columnResize) {
-        const auto before = m_columnResize->before;
-        m_columnResize.reset();
-        if (m_columnWidths != before) {
-          m_preferences.saveColumnWidths(m_columnWidths);
-        }
-        m_columnHoverDirty = true;
-      }
-      m_surface->requestLayout();
-    });
-    handle->setOnMotion([this](const InputArea::PointerData&) {
-      if (!m_columnResize) {
-        return;
-      }
-      const auto& resize = *m_columnResize;
-      m_columnWidths = resize.before;
-      const int allocation = std::clamp(
-          static_cast<int>(std::lround(resize.width + (m_pointerX - resize.pressX) * (Style::rtl() ? -1 : 1))),
-          files::minimumDetailsColumnWidth(resize.index), files::maximumDetailsColumnWidth(resize.index)
-      );
-      if (allocation != static_cast<int>(std::lround(resize.width))) {
-        m_columnWidths[resize.index] = allocation;
-        if (resize.index != 0 && m_columnWidths[0] == 0) {
-          m_columnWidths[0] = resize.nameWidth;
-        }
-      }
-      m_surface->requestLayout();
-    });
-    handle->setOnCancel([this] { cancelColumnResize(); });
-    handle->setOnEnter([this](const auto&) { m_surface->requestLayout(); });
-    handle->setOnLeave([this] { m_surface->requestLayout(); });
-    handle->addChild(
-        ui::separator(
-            {.out = &m_columnResizeLines[index],
-             .orientation = SeparatorOrientation::VerticalRule,
-             .participatesInLayout = false,
-             .configure = [](Separator& line) { line.setHitTestVisible(false); }}
-        )
-    );
-    m_columnResizeHandles[index] = static_cast<InputArea*>(m_detailsHeaderViewport->addChild(std::move(handle)));
-  }
-  for (const auto column : m_columnOrder) {
-    auto* header = columnHeader(column);
-    header->setOnPress([this, column, header](float, float, bool pressed) {
-      if (pressed) {
-        m_columnDrag = ColumnDrag{column, m_pointerX, m_pointerY, header->inputArea()->cursorShape()};
-      } else {
-        cancelColumnDrag();
-      }
-    });
-    header->setOnMotion([this] { updateColumnDrag(); });
-    header->inputArea()->setOnCancel([this] { cancelColumnDrag(); });
-  }
-  m_root->addChild(
-      ui::box(
-          {.out = &m_columnDropLine,
-           .fill = colorSpecFromRole(ColorRole::Primary),
-           .visible = false,
-           .participatesInLayout = false}
-      )
+  return ui::row(
+      {.out = &m_titlebar,
+       .align = FlexAlign::Center,
+       .gap = Style::spaceSm,
+       .padding = Style::spaceSm,
+       .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
+       .height = 48.0F},
+      std::move(title),
+      ui::button({.glyph = "minus", .variant = ButtonVariant::Ghost, .onClick = [this] { m_surface->minimize(); }}),
+      ui::button(
+          {.glyph = "square", .variant = ButtonVariant::Ghost, .onClick = [this] { m_surface->toggleMaximized(); }}
+      ),
+      ui::button({.glyph = "x", .variant = ButtonVariant::Ghost, .onClick = [this] { m_surface->close(); }})
   );
-  m_columnDropLine->setZIndex(102);
-  m_columnDropLine->setHitTestVisible(false);
-  m_detachedDragOverlay = std::make_unique<Node>();
-  m_dragOverlay = m_detachedDragOverlay.get();
-  m_dragOverlay->setZIndex(80);
-  m_dragOverlay->setParticipatesInLayout(false);
-  m_dragOverlay->setHitTestVisible(false);
-  m_dragOverlay->setAnimationManager(&m_animations);
-  auto dragIcon = std::make_unique<files::FileIcon>(m_icons, 40);
-  m_dragIcon = dragIcon.get();
-  m_dragIcon->setVisible(false);
-  m_dragIcon->setParticipatesInLayout(false);
-  m_dragIcon->setOpacity(0.85F);
-  m_dragIcon->setZIndex(100);
-  m_dragOverlay->addChild(std::move(dragIcon));
-  m_dragOverlay->addChild(
-      ui::column(
-          {.out = &m_dragCount,
-           .align = FlexAlign::Center,
-           .justify = FlexJustify::Center,
-           .fill = colorSpecFromRole(ColorRole::Primary),
-           .radius = Style::radiusSm,
-           .visible = false,
-           .participatesInLayout = false},
-          ui::label(
-              {.out = &m_dragCountLabel,
-               .fontSize = Style::fontSizeCaption,
-               .color = colorSpecFromRole(ColorRole::OnPrimary)}
+}
+
+std::unique_ptr<Flex> BrowserPage::buildToolbar() {
+  return ui::row(
+      {.out = &m_toolbar, .align = FlexAlign::Center, .gap = Style::spaceSm, .padding = Style::spaceSm},
+      ui::row(
+          {.align = FlexAlign::Center, .gap = Style::spaceXs},
+          ui::button(
+              {.out = &m_back,
+               .glyph = "arrow-left",
+               .variant = ButtonVariant::Ghost,
+               .tooltip = "Back (Alt+Left)",
+               .onClick = [this] { dispatchAction(Action::Back); }}
+          ),
+          ui::button(
+              {.out = &m_forward,
+               .glyph = "arrow-right",
+               .variant = ButtonVariant::Ghost,
+               .tooltip = "Forward (Alt+Right)",
+               .onClick = [this] { dispatchAction(Action::Forward); }}
+          ),
+          ui::button(
+              {.out = &m_up,
+               .glyph = "arrow-up",
+               .variant = ButtonVariant::Ghost,
+               .tooltip = "Parent folder (Alt+Up)",
+               .onClick = [this] { dispatchAction(Action::Up); }}
+          )
+      ),
+      m_locationBar.buildLocationArea(), m_locationBar.buildSearchArea(),
+      ui::row(
+          {.align = FlexAlign::Center, .gap = Style::spaceXs},
+          ui::button(
+              {.out = &m_sortButton,
+               .glyph = "arrows-sort",
+               .variant = ButtonVariant::Ghost,
+               .tooltip = "Sort files",
+               .onClick = [this] { m_menuController.openSortMenu(sceneRect(*m_sortButton)); }}
+          ),
+          ui::segmented(
+              {.out = &m_viewSwitch,
+               .options =
+                   std::vector<ui::SegmentedOption>{
+                       {.label = "", .glyph = "layout-grid", .tooltip = "Grid view (Ctrl+1)"},
+                       {.label = "", .glyph = "list", .tooltip = "List view (Ctrl+2)"},
+                       {.label = "", .glyph = "columns-3", .tooltip = "Column view (Ctrl+3)"}
+                   },
+               .selectedIndex = m_viewMode == files::ViewMode::Grid ? 0U
+                   : m_viewMode == files::ViewMode::List            ? 1U
+                                                                    : 2U,
+               .compact = true,
+               .onChange =
+                   [this](std::size_t index) {
+                     dispatchAction(index == 0 ? Action::Grid : index == 1 ? Action::List : Action::Miller);
+                   }}
+          ),
+          ui::button(
+              {.out = &m_menuButton, .glyph = "dots-vertical", .variant = ButtonVariant::Ghost, .onClick = [this] {
+                 m_menuController.openMenu();
+               }}
           )
       )
   );
-  m_dragCount->setHitTestVisible(false);
-  m_dragCount->setZIndex(101);
-  m_dragOverlay->addChild(
-      ui::box(
-          {.out = &m_placeDropLine,
-           .fill = colorSpecFromRole(ColorRole::Primary),
-           .height = 2.0F,
-           .visible = false,
-           .participatesInLayout = false}
+}
+
+std::unique_ptr<Flex> BrowserPage::buildFilePane() {
+  auto content = ui::column(
+      {.out = &m_filePane,
+       .align = FlexAlign::Stretch,
+       .gap = Style::spaceXs,
+       .padding = Style::spaceSm,
+       .flexGrow = 1.0F},
+      m_detailsHeader.buildHeader(), m_statusBar.buildNotice(),
+      ui::virtualGridView(
+          {.out = &m_list,
+           .columns = 1,
+           .cellHeight = 36.0F,
+           .squareCells = false,
+           .columnGap = 0.0F,
+           .rowGap = 2.0F,
+           .adapter = &m_listAdapter,
+           .flexGrow = 1.0F,
+           .configure = [this](VirtualGridView& list) {
+             list.scrollView().setReserveScrollbarGutter(true);
+             list.focusArea()->setRetainsFocusOnPointerRelease(true);
+             list.focusArea()->setTextInputClient(&m_fileKeys);
+             list.focusArea()->setOnFocusGain([this] {
+               m_browserDirty = true;
+               m_surface->requestUpdate();
+             });
+             list.focusArea()->setOnFocusLoss([this] {
+               m_browserDirty = true;
+               m_surface->requestUpdate();
+             });
+           }}
       )
   );
-  m_placeDropLine->setZIndex(98);
-  m_placeDropLine->setHitTestVisible(false);
-  m_dragOverlay->addChild(
-      ui::box(
-          {.out = &m_folderDropHighlight,
-           .fill = colorSpecFromRole(ColorRole::Primary, 0.16F),
-           .border = colorSpecFromRole(ColorRole::Primary),
-           .borderWidth = Style::focusRingWidth,
-           .radius = Style::radiusSm,
-           .visible = false,
-           .participatesInLayout = false}
-      )
-  );
-  m_folderDropHighlight->setZIndex(99);
-  m_folderDropHighlight->setHitTestVisible(false);
-  auto completion = std::make_unique<ContextMenuControl>();
-  m_completionControl = completion.get();
-  completion->setOnActivate([this](const ContextMenuControlEntry& entry) {
-    acceptCompletion(static_cast<std::size_t>(entry.id), false);
-  });
-  auto completionFrame = ui::column(
-      {.out = &m_completionFrame,
-       .fill = colorSpecFromRole(ColorRole::SurfaceContainerHigh),
-       .radius = Style::radiusLg,
-       .border = colorSpecFromRole(ColorRole::OutlineVariant),
-       .visible = false,
-       .participatesInLayout = false},
-      std::move(completion)
-  );
-  completionFrame->setZIndex(110);
-  m_toolbar->addChild(std::move(completionFrame));
-  m_root->setAnimationManager(&m_animations);
-  m_dispatcher.setSceneRoot(m_root);
+  m_regularList = m_list;
+  auto miller = std::make_unique<MillerView>(m_miller, m_icons, m_thumbnails);
+  m_millerView = miller.get();
+  miller->setVisible(false);
+  miller->setParticipatesInLayout(false);
+  miller->modifiers = [this] { return m_connection.keyboardModifiers(); };
+  miller->keyboardFocus = [this] { return m_fileKeys.keyboardFocus() && m_list && m_list->focusArea()->focused(); };
+  miller->cut = [this](const files::Location& location) { return m_clipboard.isCut(location); };
+  miller->focus = [this](std::size_t index) { focusMiller(index); };
+  miller->activate = [this](files::EntryId id) {
+    auto request = actionRequest(false);
+    if (const auto* entry = browser().model().entry(id)) {
+      request.targets.push_back({id, entry->location});
+    }
+    dispatchAction(Action::Open, request);
+  };
+  miller->context = [this](std::optional<files::EntryId> entry, float x, float y) {
+    m_menuController.openFileMenu(entry, x, y);
+  };
+  miller->drag = [this](const std::vector<files::EntryId>& ids) { m_dragDrop.startFileDrag(ids); };
+  miller->cancelDrag = [this] { m_dragDrop.cancelLocalDrag(); };
+  miller->resized = [this](int width) {
+    m_miller.defaultWidth = static_cast<float>(width);
+    m_preferences.submit({{files::BrowserPreference::MillerColumnWidth, width}});
+  };
+  miller->textInputClient = &m_fileKeys;
+  miller->requestUpdate = [this] { m_surface->requestUpdate(); };
+  content->addChild(std::move(miller));
+  content->addChild(m_detailsHeader.buildScrollbar());
+  return content;
 }
 
 void BrowserPage::dismissMenu() {
@@ -4744,9 +2429,9 @@ void BrowserPage::prepareOverlay() {
   m_settingsController.close();
   closeMenu();
   cancelDrag();
-  clearCompletions();
-  if (m_editingLocation) {
-    endLocationEdit(false);
+  m_locationBar.clearCompletions();
+  if (m_locationBar.editing()) {
+    m_locationBar.endLocationEdit(false);
   }
 }
 
@@ -4778,33 +2463,13 @@ void BrowserPage::requestWorkspace(
   m_workspaceRequest(command, std::move(location));
 }
 
-void BrowserPage::openBreadcrumb(const files::Location& target) { breadcrumbClick(target); }
-
 LayoutRect BrowserPage::menuAnchor() const { return sceneRect(*m_menuButton); }
-
-void BrowserPage::cancelColumnGesture() {
-  if (m_columnDrag || m_columnResize) {
-    m_dispatcher.cancelPointerCapture();
-  }
-}
-
-const files::DetailsColumnVisibility& BrowserPage::columnVisibility() const { return m_columnVisibility; }
-
-const files::DetailsColumnOrder& BrowserPage::columnOrder() const { return m_columnOrder; }
-
-const files::DetailsColumnWidths& BrowserPage::columnWidths() const { return m_columnWidths; }
-
-LayoutRect BrowserPage::sceneRect(const Node& node) {
-  float x = 0, y = 0;
-  Node::absolutePosition(&node, x, y);
-  return {x, y, node.width(), node.height()};
-}
 
 void BrowserPage::showPopup(
     std::unique_ptr<Flex> root, ContextMenuControl* menu, LayoutRect anchor, float width, float height, bool alignLeft
 ) {
-  clearTypeahead();
-  clearCompletions();
+  m_fileKeys.clearTypeahead();
+  m_locationBar.clearCompletions();
   closeMenu();
   m_menuController.setMenu(menu);
   m_activeDialog.open(std::move(root));

@@ -1,0 +1,689 @@
+#include "app/page/drag_drop_controller.h"
+
+#include "app/page/location_bar_controller.h"
+#include "app/page/page_context.h"
+#include "app/page/sidebar_controller.h"
+#include "app/page/transfer_controller.h"
+#include "browser/browser_controller.h"
+#include "browser/miller_columns.h"
+#include "browser/places.h"
+#include "cursor-shape-v1-client-protocol.h"
+#include "operations/transfer_service.h"
+#include "platform/desktop_integration.h"
+#include "render/animation/animation_manager.h"
+#include "render/scene/input_dispatcher.h"
+#include "thumbnails/file_icon_cache.h"
+#include "thumbnails/thumbnail_service.h"
+#include "ui/browser/file_icon.h"
+#include "ui/browser/places_sidebar.h"
+#include "ui/builders.h"
+#include "ui/controls/miller_view.h"
+#include "ui/palette.h"
+#include "wayland/toplevel_surface.h"
+#include "wayland/wayland_connection.h"
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <string>
+
+DragDropController::DragDropController(
+    PageContext& page, InputDispatcher& dispatcher, WaylandConnection& connection, files::PinService& pins,
+    files::TransferService& transfers, TransferController& transferController, files::ThumbnailService& thumbnails,
+    files::FileIconCache& icons, files::MillerColumns& miller, SidebarController& sidebar,
+    LocationBarController& locationBar
+)
+    : m_page(page), m_dispatcher(dispatcher), m_connection(connection), m_pins(pins), m_transfers(transfers),
+      m_transferController(transferController), m_thumbnails(thumbnails), m_icons(icons), m_miller(miller),
+      m_sidebar(sidebar), m_locationBar(locationBar) {}
+
+void DragDropController::setForeignDrop(
+    std::function<std::optional<std::pair<files::Location, LayoutRect>>(float, float)> callback
+) {
+  m_foreignDrop = std::move(callback);
+}
+
+void DragDropController::trackButton(const PointerEvent& event) {
+  if (event.type == PointerEvent::Type::Button && event.button == BTN_LEFT) {
+    m_fileDragSerial = event.pressed && !event.touch ? event.serial : 0;
+  }
+}
+
+void DragDropController::cancelFileDrag() {
+  if (m_drag && !m_drag->sourcePin && !m_systemDrag) {
+    cancelDrag();
+  }
+}
+
+void DragDropController::cancelLocalDrag() {
+  if (!m_systemDrag) {
+    cancelDrag();
+  }
+}
+
+void DragDropController::stop() {
+  m_dragScroll.stop();
+  m_externalScroll.stop();
+}
+
+void DragDropController::buildOverlay(AnimationManager& animations) {
+  m_detachedDragOverlay = std::make_unique<Node>();
+  m_dragOverlay = m_detachedDragOverlay.get();
+  m_dragOverlay->setZIndex(80);
+  m_dragOverlay->setParticipatesInLayout(false);
+  m_dragOverlay->setHitTestVisible(false);
+  m_dragOverlay->setAnimationManager(&animations);
+  auto dragIcon = std::make_unique<files::FileIcon>(m_icons, 40);
+  m_dragIcon = dragIcon.get();
+  m_dragIcon->setVisible(false);
+  m_dragIcon->setParticipatesInLayout(false);
+  m_dragIcon->setOpacity(0.85F);
+  m_dragIcon->setZIndex(100);
+  m_dragOverlay->addChild(std::move(dragIcon));
+  m_dragOverlay->addChild(
+      ui::column(
+          {.out = &m_dragCount,
+           .align = FlexAlign::Center,
+           .justify = FlexJustify::Center,
+           .fill = colorSpecFromRole(ColorRole::Primary),
+           .radius = Style::radiusSm,
+           .visible = false,
+           .participatesInLayout = false},
+          ui::label(
+              {.out = &m_dragCountLabel,
+               .fontSize = Style::fontSizeCaption,
+               .color = colorSpecFromRole(ColorRole::OnPrimary)}
+          )
+      )
+  );
+  m_dragCount->setHitTestVisible(false);
+  m_dragCount->setZIndex(101);
+  m_dragOverlay->addChild(m_sidebar.buildDropLine());
+  m_dragOverlay->addChild(
+      ui::box(
+          {.out = &m_folderDropHighlight,
+           .fill = colorSpecFromRole(ColorRole::Primary, 0.16F),
+           .border = colorSpecFromRole(ColorRole::Primary),
+           .borderWidth = Style::focusRingWidth,
+           .radius = Style::radiusSm,
+           .visible = false,
+           .participatesInLayout = false}
+      )
+  );
+  m_folderDropHighlight->setZIndex(99);
+  m_folderDropHighlight->setHitTestVisible(false);
+}
+
+void DragDropController::mount(Node& host) {
+  if (m_detachedDragOverlay) {
+    host.addChild(std::move(m_detachedDragOverlay));
+  }
+}
+
+void DragDropController::unmount() {
+  if (m_dragOverlay && m_dragOverlay->parent()) {
+    m_detachedDragOverlay = m_dragOverlay->parent()->removeChild(m_dragOverlay);
+  }
+}
+
+void DragDropController::applyScroll() {
+  if (m_externalScrollDelta != 0) {
+    const auto delta = std::exchange(m_externalScrollDelta, 0.0F);
+    if (m_externalScrollInPlaces) {
+      m_sidebar.places().dragScroll(delta);
+    } else {
+      auto& scroll = dragView()->scrollView();
+      scroll.requestScrollToOffset(scroll.scrollOffset() + delta);
+    }
+    m_refreshExternalDrop = true;
+  }
+  if (m_drag && m_dragScrollDelta != 0) {
+    const auto delta = std::exchange(m_dragScrollDelta, 0.0F);
+    if (m_dragScrollInPlaces) {
+      m_sidebar.places().dragScroll(delta);
+    } else if (m_miller.enabled()) {
+      auto& scroll = dragView()->scrollView();
+      scroll.requestScrollToOffset(scroll.scrollOffset() + delta);
+    } else {
+      m_page.fileList()->scrollDuringDrag(delta);
+    }
+  }
+}
+
+void DragDropController::refreshDrop() {
+  if (std::exchange(m_refreshExternalDrop, false)) {
+    m_page.clipboard().refreshDrag();
+  }
+}
+
+void DragDropController::clearExternalDrop() {
+  m_externalDraggingHere = false;
+  m_refreshExternalDrop = false;
+  m_externalScroll.stop();
+  m_externalScrollDelta = 0;
+  if (m_externalDropTarget || m_externalPinSlot) {
+    m_externalDropTarget.reset();
+    m_externalPinSlot.reset();
+    m_page.surface().requestLayout();
+  }
+}
+
+const std::vector<files::Bookmark>* DragDropController::draggedFolders() const {
+  return m_systemDrag && m_drag && m_drag->foldersOnly ? &m_drag->bookmarks : nullptr;
+}
+
+files::FileDropTarget DragDropController::externalDrop(float x, float y, const std::vector<files::Bookmark>* pins) {
+  m_externalDraggingHere = true;
+  updateExternalScroll();
+  // External offers are decoded only after a drop. Native worker validation
+  // still checks self/descendant/alias targets before any filesystem change.
+  if (pins && m_sidebar.visible() && m_pins.editable() && !m_sidebar.places().folderAt(x, y)) {
+    if (const auto slot = m_sidebar.places().dropSlot(x, y)) {
+      m_externalPinSlot = slot;
+      updateExternalScroll();
+      m_page.surface().requestLayout();
+      const std::weak_ptr<int> lifetime = m_lifetime;
+      return {
+          .receive =
+              [this, lifetime, bookmarks = *pins,
+               slot = *slot](const files::FilePayload&, files::TransferAction, const files::DropCompletion& finish) {
+                if (lifetime.expired() || !m_page.visible() || !m_pins.editable()) {
+                  finish(false);
+                  return;
+                }
+                finish(m_pins.add(bookmarks, slot));
+              },
+          .preferred = files::TransferAction::Copy
+      };
+    }
+  }
+  m_externalHover = true;
+  const auto target = dropTarget();
+  m_externalHover = false;
+  if (!target) {
+    return {};
+  }
+  return externalDestination(target->location, target->rect);
+}
+
+files::FileDropTarget DragDropController::externalDestination(const files::Location& destination, LayoutRect rect) {
+  if (!m_page.visible()
+      || m_page.overlay()
+      || m_page.menuSurface() != nullptr
+      || m_page.operationsBusy()
+      || !destination.nativePath()) {
+    return {};
+  }
+  m_externalDropTarget = DropTarget{destination, rect};
+  updateExternalScroll();
+  m_page.surface().requestLayout();
+  const auto context = m_page.browser().contextSerial();
+  const std::weak_ptr<int> lifetime = m_lifetime;
+  return {
+      .receive =
+          [this, lifetime, context,
+           destination](files::FilePayload payload, files::TransferAction action, files::DropCompletion finish) {
+            if (lifetime.expired()
+                || context != m_page.browser().contextSerial()
+                || !m_page.visible()
+                || m_page.overlay()
+                || m_page.operationsBusy()) {
+              finish(false);
+              return;
+            }
+            m_transferController.receiveDrop(std::move(payload), destination, action, std::move(finish));
+          },
+      .preferred = (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0 ? files::TransferAction::Copy
+                                                                          : files::TransferAction::Move
+  };
+}
+
+std::optional<std::pair<files::Location, LayoutRect>> DragDropController::foreignTarget(float x, float y) const {
+  if (!m_page.visible() || !m_page.filePane().containsScenePoint(x, y) || m_page.overlay()) {
+    return std::nullopt;
+  }
+  if (const auto index = m_page.fileList()->visible() ? m_page.fileList()->itemAtScene(x, y) : std::nullopt) {
+    const auto& rows = m_page.browser().model().rows();
+    if (*index >= rows.size()) {
+      return std::nullopt;
+    }
+    const auto* entry = m_page.browser().model().entry(rows[*index]);
+    if (!entry || entry->symlink || entry->type != files::FileType::Directory || !entry->location.nativePath()) {
+      return std::nullopt;
+    }
+    if (auto rect = m_page.fileList()->itemRect(*index)) {
+      return std::pair(entry->location, *rect);
+    }
+    return std::nullopt;
+  }
+  const auto& location = m_page.browser().model().snapshot().location;
+  if (location && location->nativePath() && m_page.browser().searchQuery().empty()) {
+    return std::pair(*location, sceneRect(m_page.filePane()));
+  }
+  return std::nullopt;
+}
+
+bool DragDropController::dragCurrent() const {
+  if (!m_drag) {
+    return false;
+  }
+  if (m_drag->sourcePin) {
+    return m_pins.editable() && m_pins.contains(*m_drag->sourcePin);
+  }
+  return m_page.fileJobsIdle() && std::ranges::all_of(m_drag->entries, [this](const auto& target) {
+           const auto* entry = m_page.browser().model().entry(target.id);
+           return entry != nullptr
+               && entry->location == target.location
+               && std::ranges::contains(m_page.browser().model().rows(), target.id);
+         });
+}
+
+bool DragDropController::validDropFolder(const files::Location& destination) const {
+  if (m_externalHover) {
+    if (!destination.nativePath()) {
+      return false;
+    }
+    const auto* payload = m_page.clipboard().dragFiles();
+    if (!payload) {
+      return true;
+    }
+    bool differentParent = false;
+    for (const auto& source : payload->locations) {
+      if (source == destination || destination.isInside(source)) {
+        return false;
+      }
+      differentParent |= source.parent() != destination;
+    }
+    return differentParent || (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0;
+  }
+  if (!m_drag || m_drag->sourcePin || !destination.nativePath()) {
+    return false;
+  }
+  bool anyDifferentParent = false;
+  for (const auto& source : m_drag->entries) {
+    if (!source.location.nativePath() || source.location == destination) {
+      return false;
+    }
+    const auto* entry = m_page.browser().model().entry(source.id);
+    if (entry == nullptr) {
+      return false;
+    }
+    if (entry->type == files::FileType::Directory && destination.isInside(source.location)) {
+      return false;
+    }
+    anyDifferentParent = anyDifferentParent || source.location.parent() != destination;
+  }
+  return anyDifferentParent || (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0;
+}
+
+std::optional<DragDropController::DropTarget> DragDropController::dropTarget() const {
+  if (!m_externalHover && (!m_drag || m_drag->sourcePin)) {
+    return std::nullopt;
+  }
+  if (const auto place =
+          m_sidebar.visible() ? m_sidebar.places().folderAt(m_page.pointerX(), m_page.pointerY()) : std::nullopt) {
+    if (validDropFolder(place->location)) {
+      if (const auto rect = m_sidebar.places().folderRect(place->location)) {
+        return DropTarget{place->location, *rect};
+      }
+    }
+    return std::nullopt;
+  }
+  if (m_locationBar.breadcrumbsContain(m_page.pointerX(), m_page.pointerY())) {
+    for (const auto& [location, button] : m_locationBar.breadcrumbs()) {
+      if (button->containsScenePoint(m_page.pointerX(), m_page.pointerY()) && validDropFolder(location)) {
+        return DropTarget{location, sceneRect(*button)};
+      }
+    }
+  }
+  if (m_page.upButton().containsScenePoint(m_page.pointerX(), m_page.pointerY())
+      && m_page.browser().model().snapshot().location) {
+    if (const auto location = m_page.browser().model().snapshot().location->parent()) {
+      if (validDropFolder(*location)) {
+        return DropTarget{*location, sceneRect(m_page.upButton())};
+      }
+    }
+  }
+  if (!m_externalHover && m_foreignDrop) {
+    if (auto target = m_foreignDrop(m_page.pointerX(), m_page.pointerY()); target && validDropFolder(target->first)) {
+      return DropTarget{target->first, target->second};
+    }
+  }
+  if (!m_page.filePane().containsScenePoint(m_page.pointerX(), m_page.pointerY())) {
+    return std::nullopt;
+  }
+  if (m_miller.enabled()) {
+    if (const auto index = m_page.millerView().columnAt(m_page.pointerX(), m_page.pointerY())) {
+      const auto* grid = m_page.millerView().view(*index);
+      const auto& model = m_miller.columns()[*index]->browser->model();
+      if (const auto row = grid->itemAtScene(m_page.pointerX(), m_page.pointerY())) {
+        if (*row < model.rows().size()) {
+          const auto* entry = model.entry(model.rows()[*row]);
+          if (entry
+              && entry->type == files::FileType::Directory
+              && !entry->symlink
+              && validDropFolder(entry->location)) {
+            return DropTarget{entry->location, *grid->itemRect(*row), entry->id};
+          }
+        }
+        return std::nullopt;
+      }
+      const auto& folder = model.snapshot().location;
+      if (folder && validDropFolder(*folder)) {
+        return DropTarget{*folder, sceneRect(*grid)};
+      }
+    }
+    return std::nullopt;
+  }
+  if (m_page.fileList()->visible()) {
+    if (const auto index = m_page.fileList()->itemAtScene(m_page.pointerX(), m_page.pointerY())) {
+      const auto& rows = m_page.browser().model().rows();
+      if (*index < rows.size()) {
+        const auto* entry = m_page.browser().model().entry(rows[*index]);
+        if (entry != nullptr
+            && entry->type == files::FileType::Directory
+            && !entry->symlink
+            && validDropFolder(entry->location)) {
+          if (const auto rect = m_page.fileList()->itemRect(*index)) {
+            return DropTarget{entry->location, *rect, entry->id};
+          }
+        }
+      }
+      return std::nullopt;
+    }
+  }
+  const auto& location = m_page.browser().model().snapshot().location;
+  if (location && validDropFolder(*location)) {
+    return DropTarget{*location, sceneRect(m_page.filePane())};
+  }
+  return std::nullopt;
+}
+
+std::optional<std::size_t> DragDropController::pinDropSlot() const {
+  if (!m_drag || !m_pins.editable() || !m_sidebar.visible()) {
+    return std::nullopt;
+  }
+  if (!m_drag->sourcePin
+      && (!m_drag->foldersOnly || m_sidebar.places().folderAt(m_page.pointerX(), m_page.pointerY()))) {
+    return std::nullopt;
+  }
+  return m_sidebar.places().dropSlot(m_page.pointerX(), m_page.pointerY());
+}
+
+void DragDropController::startFileDrag(const std::vector<files::EntryId>& ids) {
+  if (ids.empty() || !m_page.fileJobsIdle()) {
+    return;
+  }
+  Drag drag;
+  drag.foldersOnly = true;
+  for (const auto id : ids) {
+    const auto* entry = m_page.browser().model().entry(id);
+    if (entry == nullptr
+        || entry->location.isTrash()
+        || (entry->type != files::FileType::Directory && entry->type != files::FileType::Regular && !entry->symlink)) {
+      return;
+    }
+    drag.foldersOnly = drag.foldersOnly && entry->type == files::FileType::Directory && !entry->symlink;
+    drag.entries.push_back({id, entry->location});
+    drag.bookmarks.push_back({entry->displayName, entry->location});
+  }
+  const auto* entry = m_page.browser().model().entry(ids.front());
+  if (entry) {
+    m_dragArtwork = m_thumbnails.prepared(*entry);
+    if (!m_dragArtwork || !m_dragArtwork->pixels) {
+      m_dragArtwork = m_icons.request(
+          entry->icon,
+          static_cast<int>(std::ceil(
+              (m_page.viewMode() == files::ViewMode::Grid ? m_page.gridIconSize() : 24)
+              * m_page.surface().effectiveBufferScale()
+          ))
+      );
+    }
+  }
+  m_drag = std::move(drag);
+  files::FilePayload payload;
+  for (const auto& target : m_drag->entries) {
+    payload.locations.push_back(target.location);
+  }
+  const std::weak_ptr<int> lifetime = m_lifetime;
+  const auto cursorSerial = m_connection.extension<files::DesktopIntegration>().pointerEnterSerial();
+  m_systemDrag = m_page.clipboard().startDrag(
+      std::move(payload), m_page.surface().wlSurface(), m_fileDragSerial,
+      m_dragArtwork && m_dragArtwork->pixels ? &*m_dragArtwork->pixels : nullptr,
+      [this, lifetime] {
+        if (!lifetime.expired()) {
+          m_systemDrag = false;
+          cancelDrag();
+        }
+      },
+      (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0        ? std::optional(files::TransferAction::Copy)
+          : (m_connection.keyboardModifiers() & KeyMod::Shift) != 0 ? std::optional(files::TransferAction::Move)
+                                                                    : std::nullopt,
+      [this, lifetime, cursorSerial](std::optional<files::TransferAction> action) {
+        if (!lifetime.expired()) {
+          const auto shape = action == files::TransferAction::Copy ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY
+              : action == files::TransferAction::Move              ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE
+                                                                   : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP;
+          m_connection.extension<files::DesktopIntegration>().setCursorShape(cursorSerial, shape);
+        }
+      }
+  );
+  if (m_systemDrag) {
+    m_dispatcher.cancelPointerCapture();
+    m_connection.extension<files::DesktopIntegration>().setCursorShape(
+        cursorSerial, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP
+    );
+    m_page.surface().requestLayout();
+  } else {
+    updateDrag();
+  }
+}
+
+void DragDropController::startPlaceDrag(const files::Bookmark& bookmark) {
+  if (!m_pins.editable()) {
+    return;
+  }
+  m_drag = Drag{.entries = {}, .bookmarks = {bookmark}, .sourcePin = bookmark.location, .foldersOnly = true};
+  updateDrag();
+}
+
+void DragDropController::cancelDrag() {
+  if (m_systemDrag) {
+    m_systemDrag = false;
+    m_page.clipboard().cancelDrag();
+  }
+  if (!m_drag) {
+    return;
+  }
+  m_drag.reset();
+  m_dragArtwork.reset();
+  m_lastDropTarget.reset();
+  m_dragScroll.stop();
+  m_dragScrollDelta = 0;
+  m_sidebar.places().cancelDragCandidate();
+  m_dispatcher.cancelPointerCapture();
+  if (m_dragIcon != nullptr) {
+    m_dragIcon->setVisible(false);
+    m_dragCount->setVisible(false);
+    m_sidebar.hideDropLine();
+    m_folderDropHighlight->setVisible(false);
+  }
+  m_connection.extension<files::DesktopIntegration>().setCursorShape(
+      m_connection.lastInputSerial(), WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT
+  );
+  m_page.surface().requestLayout();
+}
+
+VirtualGridView* DragDropController::dragView() const {
+  if (m_miller.enabled()) {
+    if (const auto index = m_page.millerView().columnAt(m_page.pointerX(), m_page.pointerY())) {
+      return m_page.millerView().view(*index);
+    }
+  }
+  return m_page.fileList();
+}
+
+float DragDropController::dragScrollSpeed(bool& places) const {
+  places = m_sidebar.visible() && m_sidebar.places().containsScenePoint(m_page.pointerX(), m_page.pointerY());
+  if (places) {
+    return m_sidebar.places().dragScrollSpeed(m_page.pointerX(), m_page.pointerY());
+  }
+  if ((!m_drag && !m_externalDraggingHere) || (m_drag && m_drag->sourcePin) || !m_page.fileList()->visible()) {
+    return 0;
+  }
+  auto& scroll = dragView()->scrollView();
+  if (!scroll.containsScenePoint(m_page.pointerX(), m_page.pointerY())) {
+    return 0;
+  }
+  float x = 0, y = 0;
+  Node::absolutePosition(&scroll, x, y);
+  if (m_page.pointerY() < y + 32 && scroll.scrollOffset() > 0) {
+    return -6;
+  }
+  if (m_page.pointerY() > y + scroll.height() - 32 && scroll.scrollOffset() < scroll.maxScrollOffset()) {
+    return 6;
+  }
+  return 0;
+}
+
+void DragDropController::updateExternalScroll() {
+  bool places = false;
+  if (!m_externalDraggingHere || dragScrollSpeed(places) == 0 || m_externalScroll.active()) {
+    return;
+  }
+  m_externalScroll.startRepeating(std::chrono::milliseconds(16), [this] {
+    if (!m_externalDraggingHere) {
+      m_externalScroll.stop();
+      return;
+    }
+    bool places = false;
+    const float speed = dragScrollSpeed(places);
+    if (speed == 0) {
+      m_externalScroll.stop();
+      return;
+    }
+    m_externalScrollInPlaces = places;
+    m_externalScrollDelta = std::clamp(m_externalScrollDelta + speed, -18.0F, 18.0F);
+    m_page.surface().requestLayout();
+  });
+}
+
+void DragDropController::updateDrag() {
+  if (m_systemDrag) {
+    return;
+  }
+  if (!dragCurrent()) {
+    cancelDrag();
+    return;
+  }
+  m_lastDropTarget = dropTarget();
+  bool places = false;
+  const auto speed = dragScrollSpeed(places);
+  if (places != m_dragScrollInPlaces) {
+    m_dragScrollDelta = 0;
+    m_dragScrollInPlaces = places;
+  }
+  if (speed == 0) {
+    m_dragScroll.stop();
+    m_dragScrollDelta = 0;
+  } else if (!m_dragScroll.active()) {
+    m_dragScroll.startRepeating(std::chrono::milliseconds(16), [this] {
+      if (!dragCurrent()) {
+        cancelDrag();
+        return;
+      }
+      bool places = false;
+      const auto speed = dragScrollSpeed(places);
+      if (places != m_dragScrollInPlaces) {
+        m_dragScrollDelta = 0;
+        m_dragScrollInPlaces = places;
+      }
+      if (speed == 0) {
+        m_dragScroll.stop();
+        return;
+      }
+      m_dragScrollDelta = std::clamp(m_dragScrollDelta + speed, -18.0F, 18.0F);
+      m_page.surface().requestLayout();
+    });
+  }
+  m_page.surface().requestLayout();
+}
+
+void DragDropController::layout(Renderer& renderer) {
+  m_dragOverlay->setFrameSize(
+      static_cast<float>(m_page.surface().width()), static_cast<float>(m_page.surface().height())
+  );
+  if (m_drag && !m_systemDrag && !dragCurrent()) {
+    cancelDrag();
+  }
+  const bool active = m_drag.has_value() && !m_systemDrag;
+  m_dragIcon->setVisible(active);
+  m_dragCount->setVisible(active && m_drag->bookmarks.size() > 1);
+  m_sidebar.hideDropLine();
+  m_folderDropHighlight->setVisible(false);
+  if (!active) {
+    if (m_externalPinSlot) {
+      m_sidebar.showDropLine(renderer, *m_externalPinSlot);
+    }
+    if (m_externalDropTarget) {
+      m_folderDropHighlight->setVisible(true);
+      m_folderDropHighlight->arrange(renderer, m_externalDropTarget->rect);
+    }
+    return;
+  }
+  files::FileIconSource icon{.names = {"folder"}, .filePath = {}, .desktopFile = {}};
+  if (m_drag->sourcePin == files::Location::trash()) {
+    icon.names = {"user-trash"};
+  }
+  if (!m_drag->entries.empty()) {
+    if (const auto* entry = m_page.browser().model().entry(m_drag->entries.front().id)) {
+      icon = entry->icon;
+    }
+  }
+  m_dragIcon->bind(icon, colorSpecFromRole(ColorRole::OnSurface));
+  const float x = std::clamp(m_page.pointerX() + 12, 0.0F, static_cast<float>(m_page.surface().width()) - 48.0F);
+  const float y = std::clamp(m_page.pointerY() + 12, 0.0F, static_cast<float>(m_page.surface().height()) - 48.0F);
+  m_dragIcon->arrange(renderer, {x, y, 40, 40});
+  m_dragCountLabel->setText(std::to_string(m_drag->bookmarks.size()));
+  m_dragCount->arrange(renderer, {x + 24, y + 28, 30, 20});
+  m_lastDropTarget = dropTarget();
+  const auto slot = pinDropSlot();
+  if (m_lastDropTarget) {
+    m_folderDropHighlight->setVisible(true);
+    m_folderDropHighlight->arrange(renderer, m_lastDropTarget->rect);
+  } else if (slot) {
+    m_sidebar.showDropLine(renderer, *slot);
+  }
+  const bool copy = (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0;
+  const auto shape = slot
+      ? (m_drag->sourcePin ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY)
+      : m_lastDropTarget ? (copy ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE)
+                         : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP;
+  m_connection.extension<files::DesktopIntegration>().setCursorShape(m_connection.lastInputSerial(), shape);
+}
+
+void DragDropController::finishDrag() {
+  const bool current = dragCurrent();
+  const auto target = dropTarget();
+  const auto previous = m_lastDropTarget;
+  const auto slot = pinDropSlot();
+  const auto drag = *m_drag;
+  const bool copy = (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0;
+  cancelDrag();
+  if (!current) {
+    return;
+  }
+  if (target && previous && target->location == previous->location && target->entry == previous->entry) {
+    std::vector<files::Location> sources;
+    sources.reserve(drag.entries.size());
+    for (const auto& entry : drag.entries) {
+      sources.push_back(entry.location);
+    }
+    m_page.setActionMessage({});
+    (void)m_transfers.start(
+        {std::move(sources), target->location, copy ? files::TransferAction::Copy : files::TransferAction::Move}
+    );
+  } else if (slot) {
+    m_sidebar.pinFolders(drag.bookmarks, *slot);
+  }
+}

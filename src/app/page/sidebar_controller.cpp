@@ -1,0 +1,303 @@
+#include "app/page/sidebar_controller.h"
+
+#include "app/page/drag_drop_controller.h"
+#include "app/page/menu_controller.h"
+#include "app/page/page_context.h"
+#include "app/page/rename_controller.h"
+#include "app/page/sidebar_controller.h"
+#include "browser/browser_controller.h"
+#include "browser/places.h"
+#include "config/settings.h"
+#include "config/view_preference_writer.h"
+#include "core/input/key_symbols.h"
+#include "cursor-shape-v1-client-protocol.h"
+#include "platform/desktop_integration.h"
+#include "render/animation/animation_manager.h"
+#include "ui/browser/places_sidebar.h"
+#include "ui/builders.h"
+#include "ui/palette.h"
+#include "wayland/toplevel_surface.h"
+
+#include <algorithm>
+#include <cmath>
+#include <string>
+
+SidebarController::SidebarController(
+    PageContext& page, InputDispatcher& dispatcher, files::PinService& pins, files::ViewPreferenceWriter& preferences,
+    AnimationManager& animations, MenuController& menus, RenameController& renamer, DragDropController& drags
+)
+    : m_page(page), m_dispatcher(dispatcher), m_pins(pins), m_preferences(preferences), m_animations(animations),
+      m_menus(menus), m_renamer(renamer), m_drags(drags) {}
+
+void SidebarController::load(const files::BrowserSettings& settings) {
+  m_sidebarWidth = settings.sidebarWidth;
+  m_showSidebar = settings.showSidebar;
+}
+
+void SidebarController::applySettings(
+    const files::BrowserSettings& before, const files::BrowserSettings& settings, bool force
+) {
+  if (force || before.showSidebar != settings.showSidebar) {
+    setVisible(settings.showSidebar, false);
+  }
+  if (force || before.sidebarWidth != settings.sidebarWidth) {
+    m_sidebarWidth = settings.sidebarWidth;
+  }
+}
+
+void SidebarController::setVisible(bool visible, bool persist) {
+  if (visible == m_showSidebar) {
+    return;
+  }
+  m_dispatcher.cancelPointerCapture();
+  if (m_drags.dragging()) {
+    m_drags.cancelDrag();
+  }
+  m_page.captureViewAnchor();
+  m_showSidebar = visible;
+  if (!visible) {
+    m_restorePlaceFocus.reset();
+    for (const Node* node = m_dispatcher.focusedArea(); node != nullptr; node = node->parent()) {
+      if (node == m_places || node == m_sidebarResize) {
+        m_dispatcher.setFocus(m_page.fileList()->focusArea());
+        break;
+      }
+    }
+  }
+  if (persist) {
+    m_preferences.saveShowSidebar(visible);
+  }
+  m_page.surface().requestLayout();
+}
+
+float SidebarController::width() const {
+  return m_showSidebar ? static_cast<float>(std::min(m_sidebarWidth, maximumWidth())) + kWorkspaceInset : 0.0F;
+}
+
+float SidebarController::controlWidth() const { return m_showSidebar ? width() - kGapInset : 0.0F; }
+
+int SidebarController::maximumWidth() const {
+  return std::clamp(
+      static_cast<int>(m_page.surface().width()) - 320 - static_cast<int>(kWorkspaceInset * 3), files::kMinSidebarWidth,
+      files::kMaxSidebarWidth
+  );
+}
+
+void SidebarController::resize(int width, bool persist) {
+  const int bounded = std::clamp(width, files::kMinSidebarWidth, maximumWidth());
+  if (bounded == m_sidebarWidth) {
+    return;
+  }
+  m_page.captureViewAnchor();
+  m_sidebarWidth = bounded;
+  if (persist) {
+    m_preferences.saveSidebarWidth(m_sidebarWidth);
+  }
+  m_page.surface().requestLayout();
+}
+
+void SidebarController::take(Node& host) {
+  if (m_detachedSidebar) {
+    host.addChild(std::move(m_detachedSidebar));
+  }
+}
+
+void SidebarController::giveBack() {
+  if (m_sidebarBundle && m_sidebarBundle->parent()) {
+    m_detachedSidebar = m_sidebarBundle->parent()->removeChild(m_sidebarBundle);
+  }
+}
+
+void SidebarController::reuseFrom(SidebarController& previous) {
+  if (&previous == this || !m_sidebarBundle || !previous.m_sidebarBundle) {
+    return;
+  }
+  auto ready = previous.m_sidebarBundle->removeChild(previous.m_places);
+  auto placeholder = m_sidebarBundle->removeChild(m_places);
+  std::swap(m_places, previous.m_places);
+  m_sidebarBundle->insertChildAt(0, std::move(ready));
+  previous.m_sidebarBundle->insertChildAt(0, std::move(placeholder));
+  m_placesDirty = previous.m_placesDirty;
+  previous.m_placesDirty = true;
+  configureCallbacks();
+  previous.configureCallbacks();
+}
+
+void SidebarController::configureCallbacks() {
+  m_places->setOpenCallback([this](const files::Location& location) {
+    m_page.setActionMessage({});
+    m_page.browser().open(location);
+    m_dispatcher.setFocus(m_page.fileList()->focusArea());
+  });
+  m_places->setContextCallback([this](const files::Bookmark& bookmark, float x, float y) {
+    m_menus.openPlaceMenu(bookmark, x, y);
+  });
+  m_places->setDragCallback([this](const files::Bookmark& bookmark) { m_drags.startPlaceDrag(bookmark); });
+  m_places->setRenameCallback([this](const files::Bookmark& bookmark) { m_renamer.openPlaceRename(bookmark); });
+}
+
+void SidebarController::pinFolders(std::vector<files::Bookmark> bookmarks, std::size_t before) {
+  if (!m_pins.add(std::move(bookmarks), before)) {
+    m_page.actionError(
+        m_pins.busy() ? "Pins are being saved. Try again shortly." : "Reload valid pins before editing them."
+    );
+  }
+}
+
+std::unique_ptr<Node> SidebarController::buildPlaces() {
+  auto places = std::make_unique<files::PlacesSidebar>(m_pins);
+  m_places = places.get();
+  configureCallbacks();
+  return places;
+}
+
+std::unique_ptr<Node> SidebarController::buildResizeHandle() {
+  auto sidebarResize = ui::inputArea(
+      {.out = &m_sidebarResize,
+       .acceptedButtons = InputArea::buttonMask(BTN_LEFT),
+       .cursorShape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COL_RESIZE,
+       .focusable = true,
+       .tabStop = true,
+       .tooltip = "Resize Places; Left/Right adjusts, Home resets",
+       .width = kHandleWidth,
+       .onEnter = [this](const auto&) { m_page.surface().requestUpdate(); },
+       .onLeave = [this] { m_page.surface().requestUpdate(); },
+       .onMotion =
+           [this](const InputArea::PointerData& pointer) {
+             if (!m_resizingSidebar) {
+               return;
+             }
+             float x = 0, y = 0;
+             Node::absolutePosition(m_sidebarResize, x, y);
+             const float delta = (x + pointer.localX - m_sidebarPressX) * (Style::rtl() ? -1.0F : 1.0F);
+             resize(m_sidebarStartVisibleWidth + static_cast<int>(std::lround(delta)), false);
+           },
+       .onPress =
+           [this](const InputArea::PointerData& pointer) {
+             if (pointer.pressed) {
+               m_sidebarStartWidth = m_sidebarWidth;
+               m_sidebarStartVisibleWidth = static_cast<int>(std::lround(m_places->width()));
+               m_sidebarPressX = pointer.sceneX;
+               m_resizingSidebar = true;
+             } else if (std::exchange(m_resizingSidebar, false) && m_sidebarWidth != m_sidebarStartWidth) {
+               m_preferences.saveSidebarWidth(m_sidebarWidth);
+             }
+             m_page.surface().requestUpdate();
+           },
+       .onKeyDown =
+           [this](const InputArea::KeyData& key) {
+             if (!key.pressed || key.preedit || (key.modifiers != 0 && key.modifiers != KeyMod::Shift)) {
+               return;
+             }
+             const int step = key.modifiers == KeyMod::Shift ? 24 : 8;
+             if (KeySymbol::isLeft(key.sym) || KeySymbol::isRight(key.sym)) {
+               const int direction = KeySymbol::isRight(key.sym) != Style::rtl() ? 1 : -1;
+               resize(static_cast<int>(std::lround(m_places->width())) + direction * step, true);
+             } else if (KeySymbol::isHome(key.sym) && key.modifiers == 0) {
+               resize(files::kDefaultSidebarWidth, true);
+             }
+           },
+       .onFocusGain = [this] { m_page.surface().requestUpdate(); },
+       .onFocusLoss = [this] { m_page.surface().requestUpdate(); },
+       .configure =
+           [this](InputArea& handle) {
+             handle.setTabFocusKey("places-width");
+             handle.setOnCancel([this] {
+               if (std::exchange(m_resizingSidebar, false)) {
+                 m_sidebarWidth = m_sidebarStartWidth;
+                 if (m_dispatcher.focusedArea() == m_sidebarResize) {
+                   m_dispatcher.setFocus(nullptr);
+                 }
+                 m_page.surface().requestLayout();
+               }
+             });
+             handle.addChild(ui::box({.out = &m_sidebarResizeLine}));
+           }}
+  );
+  return sidebarResize;
+}
+
+void SidebarController::detach() {
+  m_detachedSidebar = ui::row(
+      {.align = FlexAlign::Stretch, .gap = kGapInset}, m_places->parent()->removeChild(m_places),
+      m_sidebarResize->parent()->removeChild(m_sidebarResize)
+  );
+  m_sidebarBundle = m_detachedSidebar.get();
+  m_sidebarBundle->setAnimationManager(&m_animations);
+}
+
+std::unique_ptr<Box> SidebarController::buildDropLine() {
+  auto line = ui::box(
+      {.out = &m_placeDropLine,
+       .fill = colorSpecFromRole(ColorRole::Primary),
+       .height = 2.0F,
+       .visible = false,
+       .participatesInLayout = false}
+  );
+  m_placeDropLine->setZIndex(98);
+  m_placeDropLine->setHitTestVisible(false);
+  return line;
+}
+
+void SidebarController::hideDropLine() { m_placeDropLine->setVisible(false); }
+
+void SidebarController::showDropLine(Renderer& renderer, std::size_t slot) {
+  m_placeDropLine->setVisible(true);
+  m_placeDropLine->arrange(renderer, m_places->dropLine(slot));
+}
+
+void SidebarController::sync(const std::optional<files::Location>& location) { m_places->sync(location); }
+
+void SidebarController::onFrame() {
+  m_sidebarResizeLine->setFill(colorSpecFromRole(
+      m_resizingSidebar || m_sidebarResize->focused() ? ColorRole::Primary
+          : m_sidebarResize->hovered()                ? ColorRole::OnSurfaceVariant
+                                                      : ColorRole::OutlineVariant
+  ));
+  m_sidebarResizeLine->setVisible(m_resizingSidebar || m_sidebarResize->focused() || m_sidebarResize->hovered());
+}
+
+std::optional<InputDispatcher::TabFocusSnapshot> SidebarController::invalidate() {
+  std::optional<InputDispatcher::TabFocusSnapshot> placesFocus;
+  if (m_placesDirty) {
+    for (const Node* node = m_dispatcher.focusedArea(); node != nullptr; node = node->parent()) {
+      if (node == m_places) {
+        placesFocus = m_dispatcher.captureTabFocus();
+        break;
+      }
+    }
+  }
+  if (m_placesDirty) {
+    m_placesDirty = false;
+    m_places->invalidate();
+  }
+  return placesFocus;
+}
+
+void SidebarController::layout() {
+  m_places->setVisible(m_showSidebar);
+  m_places->setParticipatesInLayout(m_showSidebar);
+  m_sidebarResize->setVisible(m_showSidebar);
+  m_sidebarResize->setParticipatesInLayout(m_showSidebar);
+  const float sidebarWidth = static_cast<float>(std::min(m_sidebarWidth, maximumWidth()));
+  m_places->setMinWidth(sidebarWidth);
+  m_places->setMaxWidth(sidebarWidth);
+}
+
+void SidebarController::layoutResizeLine(Renderer& renderer) {
+  m_sidebarResizeLine->arrange(renderer, {2.5F, 0, 1.0F, m_sidebarResize->height()});
+}
+
+void SidebarController::restoreFocus(std::optional<InputDispatcher::TabFocusSnapshot> focus, bool covered) {
+  if (focus) {
+    m_dispatcher.restoreTabFocus(std::move(*focus));
+  }
+  if (m_restorePlaceFocus && !covered) {
+    const auto location = *std::exchange(m_restorePlaceFocus, std::nullopt);
+    if (m_showSidebar) {
+      if (auto* area = m_places->focusArea(location)) {
+        m_dispatcher.setFocus(area);
+      }
+    }
+  }
+}

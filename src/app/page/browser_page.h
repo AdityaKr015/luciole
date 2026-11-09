@@ -6,12 +6,18 @@
 #include "app/page/archive_controller.h"
 #include "app/page/batch_rename_controller.h"
 #include "app/page/create_controller.h"
+#include "app/page/details_header_controller.h"
+#include "app/page/drag_drop_controller.h"
+#include "app/page/file_keyboard_controller.h"
+#include "app/page/location_bar_controller.h"
 #include "app/page/menu_controller.h"
 #include "app/page/page_context.h"
 #include "app/page/preview_controller.h"
 #include "app/page/properties_controller.h"
 #include "app/page/rename_controller.h"
 #include "app/page/settings_controller.h"
+#include "app/page/sidebar_controller.h"
+#include "app/page/status_bar_controller.h"
 #include "app/page/transfer_controller.h"
 #include "app/page/trash_controller.h"
 #include "app/workspace_command.h"
@@ -66,7 +72,7 @@
 #include <string>
 #include <utility>
 
-class BrowserPage final : public TextInputClient, public PageContext {
+class BrowserPage final : public PageContext {
 public:
   using Action = files::BrowserAction;
 
@@ -81,7 +87,7 @@ public:
   const files::BrowserController& browser() const;
   void focusMiller(std::size_t index, bool reveal = true);
 
-  ~BrowserPage() override;
+  ~BrowserPage();
 
   void iconThemeChanged();
 
@@ -105,7 +111,6 @@ public:
   files::FileDropTarget externalDrop(float x, float y, const std::vector<files::Bookmark>* pins);
   files::FileDropTarget externalDestination(const files::Location& destination, LayoutRect rect);
   void iconsReady();
-  void configurePlacesCallbacks();
   void reusePlacesFrom(BrowserPage& previous);
   void workspaceError(const std::string& message);
   void setWorkspaceId(files::TabId id);
@@ -168,28 +173,20 @@ public:
   void keyboard(const KeyboardEvent& event);
 
 private:
-  struct EntryTarget {
-    files::EntryId id;
-    files::Location location;
-  };
-  struct Drag {
-    std::vector<EntryTarget> entries;
-    std::vector<files::Bookmark> bookmarks;
-    std::optional<files::Location> sourcePin;
-    bool foldersOnly = false;
-  };
-  struct DropTarget {
-    files::Location location;
-    LayoutRect rect;
-    std::optional<files::EntryId> entry = std::nullopt;
-  };
-
   files::ActionContext actionContext() const;
   files::ActionRequest actionRequest(bool withTargets) const override;
   files::ActionRequest requestFor(const std::vector<files::DirectoryEntry>& entries) const override;
   files::ActionState actionState(Action action, const files::ActionRequest& request) const override;
   void dispatchAction(Action action) override;
   void dispatchAction(Action action, const files::ActionRequest& request) override;
+  void runAction(Action action, const files::ActionRequest& request, const std::vector<files::DirectoryEntry>& targets);
+  void copyFiles(Action action, const std::vector<files::DirectoryEntry>& targets);
+  void copyPaths(Action action, const files::ActionRequest& request, const std::vector<files::DirectoryEntry>& targets);
+  void openTerminal(const files::Location& target);
+  void sortAction(Action action);
+  void openTargets(const std::vector<files::DirectoryEntry>& targets);
+  void pinTargets(const std::vector<files::DirectoryEntry>& targets);
+  void unpinTargets(const std::vector<files::DirectoryEntry>& targets);
   void openPatternSelection(const files::ActionRequest& request);
 
   void actionError(std::string message) override;
@@ -200,6 +197,7 @@ private:
   bool targetsCurrent(const std::vector<files::DirectoryEntry>& targets) override;
   bool requestCurrent(const files::ActionRequest& request, files::ActionScope scope) const override;
   bool operationsBusy() const override;
+  bool fileJobsIdle() const override;
   bool visible() const override;
   bool active() const override;
   bool thumbnailsPaused() const override;
@@ -211,16 +209,18 @@ private:
   void requestWorkspace(
       WorkspaceCommand command, std::optional<files::Location> location, std::optional<files::ActionRequest> pending
   ) override;
-  void openBreadcrumb(const files::Location& target) override;
   LayoutRect menuAnchor() const override;
-  void cancelColumnGesture() override;
-  const files::DetailsColumnVisibility& columnVisibility() const override;
-  const files::DetailsColumnOrder& columnOrder() const override;
-  const files::DetailsColumnWidths& columnWidths() const override;
-
-  void pinFolders(std::vector<files::Bookmark> bookmarks, std::size_t before);
-
-  bool canEmptyTrash() const override;
+  Node& upButton() override;
+  void requestSync() override;
+  float pointerX() const override;
+  float pointerY() const override;
+  VirtualGridView* fileList() override;
+  Flex& filePane() override;
+  MillerView& millerView() override;
+  files::ViewMode viewMode() const override;
+  float gridIconSize() const override;
+  void captureViewAnchor() override;
+  void resetFileView() override;
 
   void operationProgressTick();
 
@@ -230,145 +230,43 @@ private:
 
   void showCenteredDialog(std::unique_ptr<Flex> root, float preferredWidth) override;
 
-  bool dragCurrent() const;
-
-  bool validDropFolder(const files::Location& destination) const;
-
-  std::optional<DropTarget> dropTarget() const;
-
-  std::optional<std::size_t> pinDropSlot() const;
-
-  void startFileDrag(const std::vector<files::EntryId>& ids);
-  void startPlaceDrag(const files::Bookmark& bookmark);
   void cancelDrag() override;
-  VirtualGridView* dragView() const;
-  float dragScrollSpeed(bool& places) const;
-  void updateExternalScroll();
-  void updateDrag();
-  void layoutDrag(Renderer& renderer);
-  void finishDrag(float x, float y);
-  void clearTypeahead();
-  void typeaheadChanged(std::optional<files::EntryId> match, TextInputChangeCause cause = TextInputChangeCause::Other);
-  void applyTypeahead(
-      const std::string& text, TextInputChangeCause cause = TextInputChangeCause::Other, bool composing = false
-  );
-  TextInputState textInputState() const override;
-  void textInputApplyEdit(const TextInputEdit& edit) override;
-  void textInputResetPreedit() override;
-  void textInputActivated(TextInputService&) override;
-  void textInputDeactivated(TextInputService&) override;
-
-  void clearCompletions();
-  void requestCompletions(const std::string& text);
-  void acceptCompletion(std::size_t index, bool navigate);
-  bool completionKey(std::uint32_t key, std::uint32_t modifiers);
-  void layoutCompletions(Renderer& renderer);
-  void beginLocationEdit();
-  void endLocationEdit(bool focusFiles);
-  void breadcrumbClick(const files::Location& target, const InputArea::PointerData* pointer = nullptr);
-  void openBreadcrumbOverflow();
-  void layoutBreadcrumbs(Renderer& renderer);
-  void rebuildBreadcrumbs();
-
-  void openFilter(bool selectAll = true, bool preserveTextInput = false);
-
-  void changeNameFilter(const std::string& text);
-
-  void closeFilter();
-
-  static constexpr float kSidebarHandleWidth = 6.0F;
-  static constexpr float kSidebarGapInset = (kWorkspaceInset - kSidebarHandleWidth) * 0.5F;
-
-  void setSidebarVisible(bool visible, bool persist = true);
-
-  int sidebarMaximumWidth() const;
-
-  void resizeSidebar(int width, bool persist);
-
-  void captureViewAnchor();
-
-  void setDetailsColumnVisibility(files::DetailsColumnVisibility visibility) override;
-
-  struct ColumnResize {
-    std::size_t index;
-    float pressX;
-    float width;
-    files::DetailsColumnWidths before;
-    float offset;
-    int nameWidth;
-  };
-
-  Button* widthHeader(std::size_t index) const;
-
-  float headerWidth(std::size_t index) const;
-
-  void cancelColumnResize();
-
-  void setDetailsColumnWidths(files::DetailsColumnWidths widths) override;
-
-  void scrollDetails(float offset);
-
-  void layoutDetails(Renderer& renderer);
-
-  struct ColumnDrag {
-    files::DetailsColumn source;
-    float pressX;
-    float pressY;
-    std::uint32_t cursor;
-    bool active = false;
-  };
-  struct ColumnDrop {
-    files::DetailsColumnOrder order;
-    LayoutRect marker;
-  };
-
-  std::optional<ColumnDrop> columnDropAt(float x, float y) const;
-
-  void cancelColumnDrag();
-
-  void updateColumnDrag();
-
-  void finishColumnDrag(float x, float y);
-
-  void layoutColumnDrag(Renderer& renderer);
-
-  Button* columnHeader(files::DetailsColumn column) const;
-
-  std::optional<files::DetailsColumnOrder> movedColumnOrder(files::DetailsColumn column, int direction) const override;
-
-  void setDetailsColumnOrder(files::DetailsColumnOrder order) override;
-
-  void changeSort(files::SortOptions options);
-
-  void sortBy(files::SortField field);
 
   void setViewMode(files::ViewMode mode);
-
   void applyViewMode();
-
   float gridHeight() const;
-
-  float gridIconSize() const;
-
+  void changeSort(files::SortOptions options);
   void changeGridZoom(int requested);
-
   bool zoomFromKey(const KeyboardEvent& event);
-
   bool zoomFromScroll(const PointerEvent& event);
+  void toggleHidden();
 
-  bool listKey(const KeyboardEvent& event);
-
-  void syncBrowser();
-
+  // Input: pointer() and keyboard() run these hooks and the controllers' hooks in a fixed order.
+  bool openInNewTab(float x, float y);
+  void pointerOverlay(InputDispatcher& dispatcher, const PointerEvent& event, float x, float y);
+  bool millerPointer(const PointerEvent& event, float x, float y);
+  void dispatchPointer(InputDispatcher& dispatcher, const PointerEvent& event, float x, float y);
   std::uint32_t resizeEdges(float x, float y) const;
+  bool escapeGesture(const KeyboardEvent& event);
+  bool shortcutKey(const KeyboardEvent& event);
+  bool windowKey(const KeyboardEvent& event);
+  bool navigationKey(const KeyboardEvent& event, bool editing);
+  bool millerKey(const KeyboardEvent& event);
 
+  // Frame: prepareFrame() syncs the page and its controllers, then layoutFrame() lays them out.
+  void syncBrowser();
+  void revealPendingTargets();
   void prepareFrame(bool, bool layout);
+  void layoutFrame(Renderer& renderer);
 
+  // Scene.
   void buildScene();
+  std::unique_ptr<Flex> buildTitlebar();
+  std::unique_ptr<Flex> buildToolbar();
+  std::unique_ptr<Flex> buildFilePane();
 
   void dismissMenu() override;
   void closeMenu() override;
-  static LayoutRect sceneRect(const Node& node);
 
   void showPopup(
       std::unique_ptr<Flex> root, ContextMenuControl* menu, LayoutRect anchor, float width, float height,
@@ -384,8 +282,6 @@ private:
   files::WindowSurface& surface() override;
   void focusFileList() override;
 
-  void toggleHidden();
-
   WaylandConnection& m_connection;
   RenderContext& m_renderer;
   TextInputService& m_textInput;
@@ -399,11 +295,6 @@ private:
   bool m_restartMiller = false;
   const files::BrowserController* m_lastBrowser = nullptr;
   files::ActivationMode m_activationMode = files::ActivationMode::DoubleClick;
-  files::TypingMode m_typingMode = files::TypingMode::Search;
-  files::TypeaheadSelection m_typeahead;
-  std::string m_typeaheadPreedit;
-  Timer m_typeaheadTimer;
-  std::uint64_t m_typeaheadContext = 0;
   NameEditor* m_patternEditor = nullptr;
   std::string m_selectionPattern = "*";
   files::FileIconCache& m_icons;
@@ -423,36 +314,12 @@ private:
   bool m_dialogResizePending = false;
   files::PinService& m_pins;
   files::FileLauncher m_launcher;
-  files::PlacesSidebar* m_places = nullptr;
-  bool m_placesDirty = true;
-  std::string m_actionError;
   std::vector<files::Location> m_revealTargets;
   bool m_revealProperties = false;
-  std::optional<Drag> m_drag;
-  std::shared_ptr<const files::FileIconImage> m_dragArtwork;
-  std::uint32_t m_fileDragSerial = 0;
-  bool m_externalHover = false;
-  bool m_externalDraggingHere = false;
-  bool m_refreshExternalDrop = false;
-  bool m_systemDrag = false;
-  Timer m_externalScroll;
-  float m_externalScrollDelta = 0;
-  bool m_externalScrollInPlaces = false;
-  std::optional<std::size_t> m_externalPinSlot;
-  std::optional<DropTarget> m_externalDropTarget;
-  Timer m_dragScroll;
-  float m_dragScrollDelta = 0;
   float m_pointerX = 0;
   float m_pointerY = 0;
   std::uint32_t m_popupSerial = 0;
-  files::FileIcon* m_dragIcon = nullptr;
-  Flex* m_dragCount = nullptr;
-  Label* m_dragCountLabel = nullptr;
-  Box* m_folderDropHighlight = nullptr;
   Flex* m_filePane = nullptr;
-  std::vector<std::pair<files::Location, Button*>> m_dropBreadcrumbs;
-  std::optional<DropTarget> m_lastDropTarget;
-  bool m_dragScrollInPlaces = false;
   files::ArchiveService m_archives;
   files::TransferService m_transfers;
   files::TrashService m_trash;
@@ -480,7 +347,9 @@ private:
       m_siblingCompletion,
       m_createController,
       m_renameController,
-      m_propertiesController
+      m_propertiesController,
+      m_detailsHeader,
+      m_locationBar
   };
   SettingsController m_settingsController{
       *this, m_preferences, m_thumbnails, m_dispatcher, m_archiveController, m_menuController, [this] {
@@ -492,49 +361,53 @@ private:
   AboutController m_aboutController{*this, m_launcher};
   ApplicationChooserController m_applicationChooser{*this, m_launcher, m_icons};
   PreviewController m_previewController{*this, m_preview, m_thumbnails, m_icons, m_renderer, m_applicationChooser};
-  Box* m_placeDropLine = nullptr;
+  DetailsHeaderController m_detailsHeader{*this,         m_dispatcher,  m_preferences,
+                                          m_listAdapter, m_gridAdapter, m_menuController};
+  LocationBarController m_locationBar{*this, m_dispatcher, m_connection, m_fileKeys, m_menuController};
+  SidebarController m_sidebar{
+      *this, m_dispatcher, m_pins, m_preferences, m_animations, m_menuController, m_renameController, m_dragDrop
+  };
+  DragDropController m_dragDrop{*this,        m_dispatcher, m_connection, m_pins,    m_transfers,  m_transferController,
+                                m_thumbnails, m_icons,      m_miller,     m_sidebar, m_locationBar};
+  FileKeyboardController m_fileKeys{*this,         m_dispatcher, m_textInput, m_miller, m_menuController,
+                                    m_locationBar, m_statusBar};
+  StatusBarController m_statusBar{
+      *this,
+      m_creator,
+      m_permissions,
+      m_batchRenamer,
+      m_renamer,
+      m_restore,
+      m_emptyTrash,
+      m_trash,
+      m_archives,
+      m_transfers,
+      m_pins,
+      m_trashController,
+      m_transferController,
+      m_settingsController,
+      m_fileKeys
+  };
   std::size_t m_gridZoom = 1;
   double m_zoomScroll = 0;
   files::ViewMode m_viewMode;
   files::WaylandTextClipboard& m_clipboard;
   files::TerminalLauncher m_terminal;
-  files::PathCompletion m_pathCompletion;
   files::PathCompletion m_siblingCompletion;
-  files::PathSuggestions m_completionItems;
-  std::string m_completionText;
-  std::uint64_t m_completionContext = 0;
-  std::optional<std::size_t> m_completionIndex;
-  bool m_completionDirty = false;
-  ContextMenuControl* m_completionControl = nullptr;
-  Flex* m_completionFrame = nullptr;
-  int m_sidebarWidth = files::kDefaultSidebarWidth;
-  bool m_showSidebar = true;
-  int m_sidebarStartWidth = files::kDefaultSidebarWidth;
-  int m_sidebarStartVisibleWidth = files::kDefaultSidebarWidth;
-  float m_sidebarPressX = 0;
-  bool m_resizingSidebar = false;
-  InputArea* m_sidebarResize = nullptr;
-  Box* m_sidebarResizeLine = nullptr;
   std::optional<files::ViewMode> m_appliedViewMode;
   std::optional<files::EntryId> m_viewAnchor;
   std::uint64_t m_visitSerial = 0;
   std::optional<files::BrowseViewport> m_pendingHistoryViewport;
-  std::optional<files::EntryId> m_keyboardReveal;
   Node* m_root = nullptr;
   std::unique_ptr<Node> m_detachedRoot;
-  Node* m_dragOverlay = nullptr;
-  std::unique_ptr<Node> m_detachedDragOverlay;
   Flex* m_body = nullptr;
   Flex* m_paneHeader = nullptr;
   Label* m_paneTitle = nullptr;
   Flex* m_toolbar = nullptr;
-  Node* m_sidebarBundle = nullptr;
-  std::unique_ptr<Node> m_detachedSidebar;
   LayoutRect m_pageBounds{};
   std::optional<InputDispatcher::TabFocusSnapshot> m_stashedFocus;
   std::optional<files::BrowseViewport> m_inactiveViewport;
   std::function<void(WorkspaceCommand, std::optional<files::Location>)> m_workspaceRequest;
-  std::function<std::optional<std::pair<files::Location, LayoutRect>>(float, float)> m_foreignDrop;
   bool m_visible = false, m_active = false;
   files::TabId m_workspaceId = 0;
   std::uint64_t m_nextFocusKey = 0;
@@ -546,80 +419,16 @@ private:
   InputDispatcher m_dispatcher;
   Flex* m_titlebar = nullptr;
   Flex* m_paneContentFrame = nullptr;
-  Input* m_location = nullptr;
-  Input* m_filterInput = nullptr;
-  Flex* m_searchArea = nullptr;
-  Flex* m_locationArea = nullptr;
-  ScrollView* m_breadcrumbScroll = nullptr;
-  Flex* m_breadcrumbs = nullptr;
-  struct BreadcrumbPart {
-    files::Location location;
-    Button* button;
-    Node* separator;
-  };
-  std::vector<BreadcrumbPart> m_breadcrumbParts;
-  Button* m_breadcrumbOverflow = nullptr;
-  std::size_t m_firstBreadcrumb = 0;
-  float m_breadcrumbLayoutWidth = -1;
-  float m_breadcrumbRenderScale = 0;
-  std::uint64_t m_breadcrumbMetricsGeneration = 0;
-  struct LocationBlankClick {
-    files::Location location;
-    std::uint64_t context;
-    std::chrono::steady_clock::time_point time;
-    float x, y;
-  };
-  std::optional<LocationBlankClick> m_blankLocationClick;
-  std::optional<files::Location> m_lastBreadcrumb;
-  std::optional<files::Location> m_breadcrumbEditTarget;
-  std::chrono::steady_clock::time_point m_breadcrumbClickTime;
-  float m_breadcrumbClickX = 0;
-  float m_breadcrumbClickY = 0;
-  bool m_breadcrumbsDirty = true;
-  bool m_editingLocation = false;
-  bool m_filterOpen = false;
-  Label* m_status = nullptr;
-  Label* m_freeSpace = nullptr;
-  bool m_freeSpaceAvailable = false;
-  Label* m_notice = nullptr;
-  Flex* m_noticeArea = nullptr;
   VirtualGridView* m_list = nullptr;
-  Flex* m_listHeader = nullptr;
   Segmented* m_viewSwitch = nullptr;
-  Button* m_nameHeader = nullptr;
-  Button* m_sizeHeader = nullptr;
-  Button* m_modifiedHeader = nullptr;
-  Button* m_typeHeader = nullptr;
-  files::DetailsColumns m_detailsColumns;
-  files::DetailsColumnWidths m_columnWidths = files::kDefaultDetailsColumnWidths;
-  std::optional<ColumnResize> m_columnResize;
-  std::array<InputArea*, 4> m_columnResizeHandles{};
-  std::array<Separator*, 4> m_columnResizeLines{};
-  Flex* m_detailsHeaderViewport = nullptr;
-  Box* m_detailsScrollHost = nullptr;
-  Scrollbar* m_detailsScrollbar = nullptr;
-  float m_detailsOffset = 0.0F;
-  Button* m_revealDetailsHeader = nullptr;
-  InputArea* m_lastDetailsFocus = nullptr;
-  files::DetailsColumnVisibility m_columnVisibility;
-  files::DetailsColumnOrder m_columnOrder = files::kDefaultDetailsColumnOrder;
-  files::DetailsColumnOrder m_appliedColumnOrder = files::kDefaultDetailsColumnOrder;
-  std::optional<ColumnDrag> m_columnDrag;
-  bool m_columnHoverDirty = false;
-  Box* m_columnDropLine = nullptr;
-  Flex* m_detailsHeaderRow = nullptr;
   Button* m_menuButton = nullptr;
   Button* m_back = nullptr;
   Button* m_forward = nullptr;
   Button* m_up = nullptr;
   Button* m_sortButton = nullptr;
-  std::string m_displayedLocation;
   bool m_browserDirty = true;
-  bool m_fileKeyboardFocus = false;
-  bool m_locationInvalid = false;
   std::unique_ptr<PopupSurface> m_menuSurface;
   ActiveDialog m_activeDialog;
-  std::optional<files::Location> m_restorePlaceFocus;
   InputDispatcher m_menuDispatcher;
   std::shared_ptr<int> m_lifetime = std::make_shared<int>(0);
 };

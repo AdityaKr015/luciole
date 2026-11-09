@@ -2,6 +2,8 @@
 
 #include "app/page/active_dialog.h"
 #include "app/page/create_controller.h"
+#include "app/page/details_header_controller.h"
+#include "app/page/location_bar_controller.h"
 #include "app/page/page_context.h"
 #include "app/page/properties_controller.h"
 #include "app/page/rename_controller.h"
@@ -34,10 +36,11 @@ using Action = files::BrowserAction;
 MenuController::MenuController(
     PageContext& page, files::PinService& pins, files::TransferService& transfers, files::TerminalLauncher& terminal,
     files::PathCompletion& siblingCompletion, CreateController& creator, RenameController& renamer,
-    PropertiesController& properties
+    PropertiesController& properties, DetailsHeaderController& columns, LocationBarController& locationBar
 )
     : m_page(page), m_pins(pins), m_transfers(transfers), m_terminal(terminal), m_siblingCompletion(siblingCompletion),
-      m_creator(creator), m_renamer(renamer), m_properties(properties) {}
+      m_creator(creator), m_renamer(renamer), m_properties(properties), m_columns(columns), m_locationBar(locationBar) {
+}
 
 ContextMenuControlEntry
 MenuController::actionEntry(Action action, const files::ActionRequest& request, bool radio) const {
@@ -297,7 +300,7 @@ void MenuController::openBreadcrumbMenu(const files::Location& target, LayoutRec
     }
     if (id >= 0) {
       if (static_cast<std::size_t>(id) < targets->size()) {
-        m_page.openBreadcrumb((*targets)[static_cast<std::size_t>(id)]);
+        m_locationBar.openBreadcrumb((*targets)[static_cast<std::size_t>(id)]);
       }
       return;
     }
@@ -408,7 +411,7 @@ void MenuController::showContextMenu(
     std::vector<ContextMenuControlEntry> entries, std::function<void(int)> action, LayoutRect anchor, bool alignLeft,
     float preferredWidth
 ) {
-  m_page.cancelColumnGesture();
+  m_columns.cancelGesture();
   m_page.cancelDrag();
   auto menu = std::make_unique<ContextMenuControl>();
   auto* control = menu.get();
@@ -457,7 +460,7 @@ void MenuController::openColumnsMenu(const LayoutRect& anchor, std::optional<fil
   std::vector<ContextMenuControlEntry> entries{
       {.label = "Name", .enabled = false, .checkmark = true, .toggleState = 1},
   };
-  for (const auto candidate : m_page.columnOrder()) {
+  for (const auto candidate : m_columns.columnOrder()) {
     const char* label = candidate == files::DetailsColumn::Type ? "Type"
         : candidate == files::DetailsColumn::Size               ? "Size"
                                                                 : "Modified";
@@ -465,57 +468,63 @@ void MenuController::openColumnsMenu(const LayoutRect& anchor, std::optional<fil
         {.id = static_cast<int>(candidate) + 1,
          .label = label,
          .checkmark = true,
-         .toggleState = files::detailsColumnVisible(m_page.columnVisibility(), candidate) ? 1 : 0}
+         .toggleState = files::detailsColumnVisible(m_columns.columnVisibility(), candidate) ? 1 : 0}
     );
   }
   entries.push_back({.label = "", .separator = true});
   entries.push_back(
-      {.id = 4, .label = "Show all columns", .enabled = m_page.columnVisibility() != files::DetailsColumnVisibility{}}
+      {.id = 4,
+       .label = "Show all columns",
+       .enabled = m_columns.columnVisibility() != files::DetailsColumnVisibility{}}
   );
   const int left = Style::rtl() ? 1 : -1;
   if (column) {
     entries.push_back({.label = "", .separator = true});
-    entries.push_back({.id = 5, .label = "Move left", .enabled = m_page.movedColumnOrder(*column, left).has_value()});
-    entries.push_back({.id = 6, .label = "Move right", .enabled = m_page.movedColumnOrder(*column, -left).has_value()});
+    entries.push_back(
+        {.id = 5, .label = "Move left", .enabled = m_columns.movedColumnOrder(*column, left).has_value()}
+    );
+    entries.push_back(
+        {.id = 6, .label = "Move right", .enabled = m_columns.movedColumnOrder(*column, -left).has_value()}
+    );
   }
   entries.push_back({.label = "", .separator = true});
   entries.push_back(
-      {.id = 7, .label = "Reset column order", .enabled = m_page.columnOrder() != files::kDefaultDetailsColumnOrder}
+      {.id = 7, .label = "Reset column order", .enabled = m_columns.columnOrder() != files::kDefaultDetailsColumnOrder}
   );
   const std::size_t widthIndex = column ? static_cast<std::size_t>(*column) + 1 : 0;
   entries.push_back(
       {.id = 8,
        .label = "Reset column width",
-       .enabled = m_page.columnWidths()[widthIndex] != files::kDefaultDetailsColumnWidths[widthIndex]}
+       .enabled = m_columns.columnWidths()[widthIndex] != files::kDefaultDetailsColumnWidths[widthIndex]}
   );
   entries.push_back(
       {.id = 9,
        .label = "Reset all column widths",
-       .enabled = m_page.columnWidths() != files::kDefaultDetailsColumnWidths}
+       .enabled = m_columns.columnWidths() != files::kDefaultDetailsColumnWidths}
   );
   showContextMenu(
       std::move(entries),
       [this, column, left, widthIndex](int id) {
         if (id == 8 || id == 9) {
-          auto widths = id == 9 ? files::kDefaultDetailsColumnWidths : m_page.columnWidths();
+          auto widths = id == 9 ? files::kDefaultDetailsColumnWidths : m_columns.columnWidths();
           widths[widthIndex] = files::kDefaultDetailsColumnWidths[widthIndex];
-          m_page.setDetailsColumnWidths(widths);
+          m_columns.setDetailsColumnWidths(widths);
           m_page.focusFileList();
           return;
         }
         if ((id == 5 || id == 6) && column) {
-          if (const auto order = m_page.movedColumnOrder(*column, id == 5 ? left : -left)) {
-            m_page.setDetailsColumnOrder(*order);
+          if (const auto order = m_columns.movedColumnOrder(*column, id == 5 ? left : -left)) {
+            m_columns.setDetailsColumnOrder(*order);
           }
           m_page.focusFileList();
           return;
         }
         if (id == 7) {
-          m_page.setDetailsColumnOrder(files::kDefaultDetailsColumnOrder);
+          m_columns.setDetailsColumnOrder(files::kDefaultDetailsColumnOrder);
           m_page.focusFileList();
           return;
         }
-        auto visibility = m_page.columnVisibility();
+        auto visibility = m_columns.columnVisibility();
         if (id == 1) {
           visibility.type = !visibility.type;
         } else if (id == 2) {
@@ -525,7 +534,7 @@ void MenuController::openColumnsMenu(const LayoutRect& anchor, std::optional<fil
         } else if (id == 4) {
           visibility = {};
         }
-        m_page.setDetailsColumnVisibility(visibility);
+        m_columns.setDetailsColumnVisibility(visibility);
         m_page.focusFileList();
       },
       anchor

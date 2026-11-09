@@ -24,7 +24,9 @@ class ActiveDialog;
 class ContextMenuControl;
 class Flex;
 class InputDispatcher;
+class MillerView;
 class PopupSurface;
+class VirtualGridView;
 
 // The part of BrowserPage that feature controllers use. BrowserPage implements it.
 //
@@ -62,8 +64,8 @@ public:
   virtual void setActionMessage(std::string message) = 0;
   // Selects `targets` once the current folder reloads.
   virtual void revealOnReload(std::vector<files::Location> targets) = 0;
-  // True while no running or pending file operation conflicts with deleting from Trash.
-  virtual bool canEmptyTrash() const = 0;
+  // True while no file job runs or waits to start; a pending paste does not count.
+  virtual bool fileJobsIdle() const = 0;
   // Cancels a file or place drag in progress.
   virtual void cancelDrag() = 0;
   virtual files::WaylandTextClipboard& clipboard() = 0;
@@ -99,23 +101,28 @@ public:
   virtual void requestWorkspace(
       WorkspaceCommand command, std::optional<files::Location> location, std::optional<files::ActionRequest> pending
   ) = 0;
-  // Opens `target` from a breadcrumb and focuses the file list.
-  virtual void openBreadcrumb(const files::Location& target) = 0;
   // Scene rectangle of the view options button.
   virtual LayoutRect menuAnchor() const = 0;
-  // Releases the pointer capture of a column drag or resize in progress.
-  virtual void cancelColumnGesture() = 0;
+  // The toolbar's parent folder button.
+  virtual Node& upButton() = 0;
+  // Syncs the page to its browser on the next frame.
+  virtual void requestSync() = 0;
+  // Last pointer position on the page surface.
+  virtual float pointerX() const = 0;
+  virtual float pointerY() const = 0;
 
-  // Details view columns.
-  virtual const files::DetailsColumnVisibility& columnVisibility() const = 0;
-  virtual const files::DetailsColumnOrder& columnOrder() const = 0;
-  virtual const files::DetailsColumnWidths& columnWidths() const = 0;
-  // The column order with `column` moved one place in `direction`; empty when it cannot move.
-  virtual std::optional<files::DetailsColumnOrder>
-  movedColumnOrder(files::DetailsColumn column, int direction) const = 0;
-  virtual void setDetailsColumnVisibility(files::DetailsColumnVisibility visibility) = 0;
-  virtual void setDetailsColumnOrder(files::DetailsColumnOrder order) = 0;
-  virtual void setDetailsColumnWidths(files::DetailsColumnWidths widths) = 0;
+  // File view.
+  // The focused file grid; null before the scene is built.
+  virtual VirtualGridView* fileList() = 0;
+  // The pane that holds the file grid or the Miller columns.
+  virtual Flex& filePane() = 0;
+  virtual MillerView& millerView() = 0;
+  virtual files::ViewMode viewMode() const = 0;
+  virtual float gridIconSize() const = 0;
+  // Keeps the first visible item in view across the next layout change.
+  virtual void captureViewAnchor() = 0;
+  // Cancels file pointer gestures, drops the view anchor and scrolls the file list to the top.
+  virtual void resetFileView() = 0;
 
   // Replaces the active dialog with `root` on a new popup surface anchored at `anchor`.
   virtual void showPopup(
@@ -146,3 +153,10 @@ protected:
   PageContext& operator=(const PageContext&) = delete;
   ~PageContext() = default;
 };
+
+// Scene rectangle of `node`.
+inline LayoutRect sceneRect(const Node& node) {
+  float x = 0, y = 0;
+  Node::absolutePosition(&node, x, y);
+  return {x, y, node.width(), node.height()};
+}
