@@ -13,11 +13,13 @@ class FileKeyboardController;
 class Flex;
 class Label;
 class PageContext;
+class Renderer;
 class SettingsController;
 class TransferController;
 
-// The status bar and the empty-folder notice: progress of the newest running job the page owns, the last action
-// message, folder and selection counts, free space, and the notice shown in place of an empty file list.
+// The floating status pill and the empty-folder notice: progress of the newest running job the page owns, the last
+// action message, search and selection summaries, free space, and the notice shown in place of an empty file list.
+// The pill shows only when there is something to report; the idle folder count is not shown.
 class StatusBarController {
 public:
   StatusBarController(
@@ -29,7 +31,7 @@ public:
   void setMessage(std::string message) { m_actionError = std::move(message); }
   void clearMessage() { m_actionError.clear(); }
 
-  // Scene: the status row at the bottom of the page and the notice inside the file pane.
+  // Scene: the status pill (an overlay child of the page body) and the notice inside the file pane.
   std::unique_ptr<Flex> build();
   std::unique_ptr<Flex> buildNotice();
 
@@ -37,6 +39,8 @@ public:
   void sync(bool miller);
   // Layout hook in BrowserPage::prepareFrame(): free space shows only in a pane at least that wide.
   void layout(float paneWidth);
+  // Places the pill at the bottom-right of the page body (`width` x `height`, body coordinates).
+  void arrange(Renderer& renderer, float width, float height);
   // True while the notice replaces the file list.
   bool noticeShown() const;
   // Scene rectangle of the status text, where the input method places its candidates.
@@ -51,9 +55,11 @@ private:
   SettingsController& m_settings;
   FileKeyboardController& m_keys;
   std::string m_actionError;
+  Flex* m_pill = nullptr;
   Label* m_status = nullptr;
   Label* m_freeSpace = nullptr;
   bool m_freeSpaceAvailable = false;
+  bool m_needed = false;
   Label* m_notice = nullptr;
   Flex* m_noticeArea = nullptr;
 };

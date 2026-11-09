@@ -437,7 +437,7 @@ std::unique_ptr<Button> TransferController::buildCancelButton() {
   );
 }
 
-void TransferController::syncOperationButtons() {
+bool TransferController::syncOperationButtons() {
   const auto* cancel = cancelTarget();
   const auto* latest = latestTransfer();
   const bool retryable =
@@ -447,7 +447,7 @@ void TransferController::syncOperationButtons() {
   m_cancelOperation->setVisible(cancel != nullptr);
   m_cancelOperation->setParticipatesInLayout(cancel != nullptr);
   if (!cancel) {
-    return;
+    return retryable;
   }
   const auto kind = cancel->kind();
   m_cancelOperation->setTooltip(
@@ -459,6 +459,7 @@ void TransferController::syncOperationButtons() {
           : kind == JobKind::Trash ? "Cancel move to Trash"
                                    : "Cancel transfer"
   );
+  return true;
 }
 
 void TransferController::stopProgress() { m_operationProgress.stop(); }

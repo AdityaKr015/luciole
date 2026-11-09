@@ -54,10 +54,11 @@ public:
   // Report of the newest finished transfer the page owns; empty while it runs.
   std::string_view report() const;
 
-  // Status bar controls, built in BrowserPage::buildScene() and synced in BrowserPage::syncBrowser().
+  // Status pill controls, built in BrowserPage::buildScene() and synced in BrowserPage::syncBrowser().
   std::unique_ptr<Button> buildRetryButton();
   std::unique_ptr<Button> buildCancelButton();
-  void syncOperationButtons();
+  // True while either button is shown.
+  bool syncOperationButtons();
 
   // Page teardown: stop the tick.
   void stopProgress();

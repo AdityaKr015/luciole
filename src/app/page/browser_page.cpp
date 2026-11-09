@@ -2047,6 +2047,7 @@ void BrowserPage::layoutFrame(Renderer& renderer) {
     m_body->arrange(renderer, m_pageBounds);
     m_detailsHeader.layoutHeader(renderer);
   }
+  m_statusBar.arrange(renderer, m_pageBounds.width, m_pageBounds.height);
   const bool columnHoverDirty = m_detailsHeader.takeHoverDirty();
   if (columnOrderChanged || columnHoverDirty) {
     m_dispatcher.syncPointerHover();

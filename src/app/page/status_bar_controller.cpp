@@ -23,17 +23,19 @@ StatusBarController::StatusBarController(
     : m_page(page), m_pins(pins), m_transferController(transferController), m_settings(settings), m_keys(keys) {}
 
 std::unique_ptr<Flex> StatusBarController::build() {
-  return ui::row(
-      {.align = FlexAlign::Center,
+  auto pill = ui::row(
+      {.out = &m_pill,
+       .align = FlexAlign::Center,
        .gap = Style::spaceMd,
-       .paddingV = Style::spaceSm,
-       .paddingH = Style::spaceSm + Style::spaceXs},
-      ui::label(
-          {.out = &m_status,
-           .maxLines = 1,
-           .flexGrow = 1.0F,
-           .configure = [](Label& label) { label.setUseMarkup(false); }}
-      ),
+       .paddingV = Style::spaceXs,
+       .paddingH = Style::spaceMd,
+       .fill = colorSpecFromRole(ColorRole::SurfaceContainerHigh),
+       .radius = Style::radiusXl,
+       .border = colorSpecFromRole(ColorRole::OutlineVariant),
+       .minHeight = Style::controlHeightSm,
+       .visible = false,
+       .participatesInLayout = false},
+      ui::label({.out = &m_status, .maxLines = 1, .configure = [](Label& label) { label.setUseMarkup(false); }}),
       ui::label(
           {.out = &m_freeSpace,
            .fontSize = Style::fontSizeCaption,
@@ -44,6 +46,8 @@ std::unique_ptr<Flex> StatusBarController::build() {
       ),
       m_transferController.buildRetryButton(), m_transferController.buildCancelButton()
   );
+  pill->setZIndex(5);
+  return pill;
 }
 
 std::unique_ptr<Flex> StatusBarController::buildNotice() {
@@ -129,6 +133,8 @@ void StatusBarController::sync(bool miller) {
   const auto& snapshot = model.snapshot();
   const bool loading = snapshot.status == files::DirectoryStatus::Loading;
   std::string status = operationStatus();
+  // The idle folder count stays hidden; the pill appears only for something worth reading.
+  bool needed = true;
   if (status.empty()) {
     if (!m_actionError.empty()) {
       status = m_actionError;
@@ -156,6 +162,7 @@ void StatusBarController::sync(bool miller) {
     } else if (snapshot.status == files::DirectoryStatus::Cancelled) {
       status = "Loading stopped.";
     } else {
+      needed = false;
       const auto hidden = model.filter().showHidden
           ? 0U
           : static_cast<std::size_t>(std::ranges::count_if(snapshot.entries, [](const auto& entry) {
@@ -171,6 +178,7 @@ void StatusBarController::sync(bool miller) {
     status += " · Refresh to update";
   }
   if (!model.selection().selected.empty()) {
+    needed = true;
     status += std::format(" · {} selected", model.selection().selected.size());
     const auto summary = model.selectionSummary();
     if (summary.overflow) {
@@ -186,9 +194,11 @@ void StatusBarController::sync(bool miller) {
     }
   }
   if (const auto typed = m_keys.typeaheadText(); !typed.empty()) {
+    needed = true;
     status = "Select: " + typed + " · " + status;
   }
   m_status->setText(status);
+  m_needed = needed;
   const auto freeBytes = snapshot.metadata.filesystem.freeBytes;
   m_freeSpaceAvailable = freeBytes
       && !snapshot.metadataLoading
@@ -200,7 +210,8 @@ void StatusBarController::sync(bool miller) {
     const files::GString size(g_format_size_full(*freeBytes, G_FORMAT_SIZE_IEC_UNITS));
     m_freeSpace->setText(std::format("{} free", size.get()));
   }
-  m_transferController.syncOperationButtons();
+  m_needed = m_transferController.syncOperationButtons() || m_needed;
+  m_pill->setVisible(m_needed);
   m_notice->setText(
       snapshot.error
               || loading
@@ -222,6 +233,24 @@ void StatusBarController::layout(float paneWidth) {
   const bool showFreeSpace = m_freeSpaceAvailable && paneWidth >= kMinimumFreeSpacePaneWidth;
   m_freeSpace->setVisible(showFreeSpace);
   m_freeSpace->setParticipatesInLayout(showFreeSpace);
+}
+
+void StatusBarController::arrange(Renderer& renderer, float width, float height) {
+  if (!m_pill->visible()) {
+    return;
+  }
+  // Floats over the bottom-right corner of the file card, clear of the vertical scrollbar.
+  const float inset = Style::spaceSm;
+  const float trailing = inset + Style::scrollbarWidth + Style::scrollbarGap;
+  const float maximum = std::max(1.0F, width - inset - trailing);
+  LayoutConstraints constraints;
+  constraints.setMaxWidth(maximum);
+  const auto size = m_pill->measure(renderer, constraints);
+  const float pillWidth = std::min(size.width, maximum);
+  m_pill->arrange(
+      renderer,
+      {Style::rtl() ? trailing : width - trailing - pillWidth, height - inset - size.height, pillWidth, size.height}
+  );
 }
 
 bool StatusBarController::noticeShown() const { return m_notice != nullptr && m_noticeArea->visible(); }
