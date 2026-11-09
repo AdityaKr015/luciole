@@ -101,7 +101,10 @@ void FilePreviewView::sync(
     m_location = location;
     m_scroll->requestScrollToOffset(0);
   }
+  // The file name is the card's title; the empty-state hint reads as plain secondary text.
   m_name->setText(entry ? entry->displayName : "Select an item to preview");
+  m_name->setFontWeight(entry ? FontWeight::SemiBold : FontWeight::Normal);
+  m_name->setColor(colorSpecFromRole(entry ? ColorRole::OnSurface : ColorRole::OnSurfaceVariant));
   files::MetadataFields metadata;
   files::MetadataFields fileFacts;
   if (entry) {
