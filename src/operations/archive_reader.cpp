@@ -8,6 +8,7 @@
 #include <array>
 #include <cerrno>
 #include <fcntl.h>
+#include <limits>
 #include <map>
 #include <set>
 #include <unistd.h>
@@ -22,7 +23,7 @@ namespace {
     std::string filename, original;
     std::unique_ptr<struct archive, decltype(&archive_read_free)> value{archive_read_new(), &archive_read_free};
     std::array<char, 65536> buffer{};
-    Reader(const Location& source, Work& request, const Passwords* passwords = nullptr)
+    Reader(const Location& source, Work& request, const Passwords* passwords = nullptr, bool raw = false)
         : work(request), input(source, request), filename(native(source)), original(input.fingerprint()) {
       if (work.progress.sourceStamp.empty()) {
         work.progress.sourceStamp = original;
@@ -32,19 +33,31 @@ namespace {
       if (!value) {
         throwFileError(FileErrorKind::Other, "Could not initialize the archive reader.");
       }
-      // Split input needs the final central directory; never recover a partial
-      // set with the streaming ZIP reader after a missing or corrupt last part.
-      requireArchive(
-          input.split() ? archive_read_support_format_zip_seekable(value.get())
-                        : archive_read_support_format_zip(value.get()),
-          value.get(), work
-      );
-      if (!input.split()) {
-        requireArchive(archive_read_support_format_tar(value.get()), value.get(), work);
+      if (raw) {
+        requireArchive(archive_read_support_format_raw(value.get()), value.get(), work);
+      } else {
+        // Split input needs the final central directory; never recover a partial
+        // set with the streaming ZIP reader after a missing or corrupt last part.
+        requireArchive(
+            input.split() ? archive_read_support_format_zip_seekable(value.get())
+                          : archive_read_support_format_zip(value.get()),
+            value.get(), work
+        );
+        if (!input.split()) {
+          requireArchive(archive_read_support_format_tar(value.get()), value.get(), work);
+        }
       }
       requireArchive(archive_read_support_filter_none(value.get()), value.get(), work);
-      if (!input.split() && archive_zlib_version()) {
-        requireArchive(archive_read_support_filter_gzip(value.get()), value.get(), work);
+      if (!input.split()) {
+        if (archiveCompressionAvailable(ArchiveCompression::Gzip)) {
+          requireArchive(archive_read_support_filter_gzip(value.get()), value.get(), work);
+        }
+        if (archiveCompressionAvailable(ArchiveCompression::Bzip2)) {
+          requireArchive(archive_read_support_filter_bzip2(value.get()), value.get(), work);
+        }
+        if (archiveCompressionAvailable(ArchiveCompression::Zstd)) {
+          requireArchive(archive_read_support_filter_zstd(value.get()), value.get(), work);
+        }
       }
       if (passwords) {
         for (const auto& password : passwords->values) {
@@ -111,6 +124,54 @@ namespace {
     }
     void skip() { requireArchive(archive_read_data_skip(value.get()), value.get(), work); }
   };
+  void validateCompression(Reader& archive) {
+    bool needsValidation = false;
+    for (int i = 0; i < archive_filter_count(archive.value.get()); ++i) {
+      const auto code = archive_filter_code(archive.value.get(), i);
+      needsValidation = needsValidation || code == ARCHIVE_FILTER_BZIP2 || code == ARCHIVE_FILTER_ZSTD;
+    }
+    if (!needsValidation) {
+      return;
+    }
+    auto& work = archive.work;
+    // TAR may stop at its end markers before a filter checks its trailer. A raw
+    // pass drains the framing with cancellation and a decoded-container budget.
+    // The allowance covers member headers, alignment, PAX metadata and padding.
+    std::uint64_t budget = work.limits.maxExpandedBytes;
+    const auto add = [&](std::uint64_t value) {
+      budget += std::min(value, std::numeric_limits<std::uint64_t>::max() - budget);
+    };
+    add(work.limits.maxMetadataBytes);
+    add(work.limits.maxMetadataBytes);
+    for (unsigned i = 0; i < 3; ++i) {
+      const auto entries =
+          std::min<std::uint64_t>(work.limits.maxEntries, std::numeric_limits<std::uint64_t>::max() / 512);
+      add(entries * 512);
+    }
+    add(1024U * 1024U);
+    Reader raw(Location::fromPath(archive.filename), work, nullptr, true);
+    struct archive_entry* header = nullptr;
+    if (!raw.next(header)) {
+      throwFileError(FileErrorKind::InvalidArgument, "Compressed archive has no decoded container.");
+    }
+    std::uint64_t total = 0;
+    for (;;) {
+      work.check();
+      const void* bytes = nullptr;
+      std::size_t size = 0;
+      la_int64_t offset = 0;
+      const auto status = archive_read_data_block(raw.value.get(), &bytes, &size, &offset);
+      if (status == ARCHIVE_EOF) {
+        break;
+      }
+      requireArchive(status, raw.value.get(), work);
+      if (offset < 0 || static_cast<std::uint64_t>(offset) != total || size > budget - total) {
+        throwFileError(FileErrorKind::Unsupported, "Compressed archive exceeds its decoded-container limit.");
+      }
+      total += size;
+    }
+    raw.unchanged();
+  }
   std::shared_ptr<ArchiveCatalog> catalog(Reader& reader) {
     auto result = std::make_shared<ArchiveCatalog>(
         ArchiveCatalog{Location::fromPath(reader.filename), reader.original, {}, {}, 0}
@@ -221,6 +282,7 @@ namespace {
     validateLinks(links, reader.work);
     result->expandedBytes = reader.work.expanded;
     result->format = archive_format_name(reader.value.get()) ? archive_format_name(reader.value.get()) : "Archive";
+    validateCompression(reader);
     reader.unchanged();
     return result;
   }

@@ -72,11 +72,13 @@ namespace {
     mode_t kind = AE_IFREG;
     mode_t mode = 0644;
   };
-  void tar(const fs::path& path, const std::vector<Entry>& entries) {
+  void tar(const fs::path& path, const std::vector<Entry>& entries, int filter = ARCHIVE_FILTER_NONE) {
     const std::unique_ptr<struct archive, decltype(&archive_write_free)> writer(
         archive_write_new(), &archive_write_free
     );
     TEST_CHECK(archive_write_set_format_pax_restricted(writer.get()) == ARCHIVE_OK);
+    TEST_CHECK(archive_write_add_filter(writer.get(), filter) == ARCHIVE_OK);
+    TEST_CHECK(archive_write_set_bytes_per_block(writer.get(), 0) == ARCHIVE_OK);
     TEST_CHECK(archive_write_open_filename(writer.get(), path.c_str()) == ARCHIVE_OK);
     for (const auto& item : entries) {
       const std::unique_ptr<struct archive_entry, decltype(&archive_entry_free)> entry(
@@ -633,6 +635,175 @@ namespace {
     wait(extended, pump);
     TEST_CHECK(extended.error() && !fs::exists(fixture.root / "split-extended"));
   }
+  struct CompressedTarCase {
+    files::ArchiveFormat format;
+    files::ArchiveCompression compression;
+    int filter;
+    std::string_view suffix, shortSuffix, mime;
+  };
+  constexpr std::array compressedTars{
+      CompressedTarCase{
+          files::ArchiveFormat::TarBzip2, files::ArchiveCompression::Bzip2, ARCHIVE_FILTER_BZIP2, ".tar.bz2", ".tbz2",
+          "application/x-bzip2-compressed-tar"
+      },
+      CompressedTarCase{
+          files::ArchiveFormat::TarZstd, files::ArchiveCompression::Zstd, ARCHIVE_FILTER_ZSTD, ".tar.zst", ".tzst",
+          "application/x-zstd-compressed-tar"
+      }
+  };
+  void testCompressedTarProviders(const Fixture& fixture, Pump& pump) {
+    const auto source = fixture.root / "compressed-payload.txt";
+    write(source, "compressed TAR payload");
+    for (const auto& item : compressedTars) {
+      const bool available = files::archiveCompressionAvailable(item.compression);
+      TEST_CHECK(
+          available
+          == (item.filter == ARCHIVE_FILTER_BZIP2 ? archive_bzlib_version() != nullptr
+                                                  : archive_libzstd_version() != nullptr)
+      );
+      const auto formats = files::archiveFormats();
+      const auto format = std::ranges::find(formats, item.format, &files::ArchiveFormatInfo::format);
+      TEST_CHECK(available == (format != formats.end()));
+      const auto path = fixture.root / ("native" + std::string(item.suffix));
+      TEST_CHECK(files::isSupportedArchive(location(path), {}) == available);
+      if (!available) {
+        continue;
+      }
+      TEST_CHECK(format->compression == item.compression && format->suffix == item.suffix);
+      files::ArchiveService service;
+      TEST_CHECK(!service.compress({location(source)}, location(path), item.format, "not supported"));
+      TEST_CHECK(service.compress({location(source)}, location(path), item.format));
+      wait(service, pump);
+      TEST_CHECK(!service.error());
+      const auto original = read(path);
+      const std::unique_ptr<struct archive, decltype(&archive_read_free)> reader(
+          archive_read_new(), &archive_read_free
+      );
+      TEST_CHECK(archive_read_support_filter_by_code(reader.get(), item.filter) == ARCHIVE_OK);
+      TEST_CHECK(archive_read_support_format_tar(reader.get()) == ARCHIVE_OK);
+      TEST_CHECK(archive_read_open_filename(reader.get(), path.c_str(), 65536) == ARCHIVE_OK);
+      struct archive_entry* header = nullptr;
+      TEST_CHECK(archive_read_next_header(reader.get(), &header) == ARCHIVE_OK);
+      TEST_CHECK(archive_filter_code(reader.get(), 0) == item.filter);
+      std::array<char, 64> bytes{};
+      const auto count = archive_read_data(reader.get(), bytes.data(), bytes.size());
+      TEST_CHECK(count == 22 && std::string_view(bytes.data(), static_cast<std::size_t>(count)) == read(source));
+      const auto renamed = fixture.root / ("aliased" + std::string(item.shortSuffix));
+      fs::copy_file(path, renamed);
+      TEST_CHECK(files::archiveFolderName(location(renamed)) == "aliased");
+      TEST_CHECK(service.inspect(location(renamed)));
+      wait(service, pump);
+      TEST_CHECK(!service.error() && service.catalog());
+      const auto known = service.catalog();
+      write(renamed, original);
+      const auto destination = fixture.root / ("stale" + std::string(item.shortSuffix));
+      TEST_CHECK(service.extract(location(renamed), location(destination), {}, known));
+      wait(service, pump);
+      TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Changed && !fs::exists(destination));
+      TEST_CHECK(service.compress({location(source)}, location(path), item.format));
+      pump.until([&] { return service.conflict().has_value() || !service.busy(); });
+      TEST_CHECK(service.conflict() && service.resolve(service.conflict()->id, files::TransferConflictChoice::Skip));
+      wait(service, pump);
+      TEST_CHECK(read(path) == original && fs::is_empty(fixture.root / "tmp"));
+      const auto cancelled = fixture.root / ("cancelled" + std::string(item.suffix));
+      TEST_CHECK(service.compress({location(source)}, location(cancelled), item.format));
+      service.cancel();
+      wait(service, pump);
+      TEST_CHECK(service.error() && !fs::exists(cancelled) && fs::is_empty(fixture.root / "tmp"));
+    }
+  }
+  void testCompressedTarFailures(const Fixture& fixture, Pump& pump) {
+    for (const auto& item : compressedTars) {
+      if (!files::archiveCompressionAvailable(item.compression)) {
+        continue;
+      }
+      for (unsigned failure = 0; failure < 5; ++failure) {
+        const auto name = std::to_string(item.filter) + "-" + std::to_string(failure);
+        const auto source = fixture.root / (name + std::string(item.suffix));
+        const auto destination = fixture.root / ("rejected-compressed-" + name);
+        const auto entry = failure == 0 ? Entry{"../escaped", "bad", {}}
+            : failure == 1              ? Entry{"link", {}, "../escaped", AE_IFLNK}
+                                        : Entry{"payload", std::string(129536, 'x'), {}};
+        tar(source, {entry}, item.filter);
+        files::ArchiveLimits limits;
+        if (failure == 2) {
+          limits.maxExpandedBytes = 1024;
+        } else if (failure == 3) {
+          fs::resize_file(source, fs::file_size(source) / 2);
+        } else if (failure == 4) {
+          // Incomplete framing after TAR end markers must not publish a prefix.
+          fs::resize_file(source, fs::file_size(source) - 1);
+        }
+        files::ArchiveService service(limits);
+        TEST_CHECK(service.extract(location(source), location(destination)));
+        wait(service, pump);
+        if (!service.error()) {
+          std::println(stderr, "Compressed TAR failure fixture accepted: filter={}, failure={}", item.filter, failure);
+        }
+        TEST_CHECK(service.error() && !fs::exists(destination) && fs::is_empty(fixture.root / "tmp"));
+      }
+    }
+    TEST_CHECK(!fs::exists(fixture.root / "escaped"));
+  }
+  void testCompressedPaddingLimit(const Fixture& fixture, Pump& pump) {
+    const auto plain = fixture.root / "padded-container.tar";
+    tar(plain, {{"file", "abc", {}}});
+    const auto data = read(plain) + std::string(4U * 1024U * 1024U, '\0');
+    for (const auto& item : compressedTars) {
+      if (!files::archiveCompressionAvailable(item.compression)) {
+        continue;
+      }
+      const auto source = fixture.root / ("padded" + std::string(item.suffix));
+      const std::unique_ptr<struct archive, decltype(&archive_write_free)> writer(
+          archive_write_new(), &archive_write_free
+      );
+      TEST_CHECK(archive_write_set_format_raw(writer.get()) == ARCHIVE_OK);
+      TEST_CHECK(archive_write_add_filter(writer.get(), item.filter) == ARCHIVE_OK);
+      TEST_CHECK(archive_write_set_bytes_per_block(writer.get(), 0) == ARCHIVE_OK);
+      TEST_CHECK(archive_write_open_filename(writer.get(), source.c_str()) == ARCHIVE_OK);
+      const std::unique_ptr<struct archive_entry, decltype(&archive_entry_free)> entry(
+          archive_entry_new(), &archive_entry_free
+      );
+      archive_entry_set_pathname(entry.get(), "data");
+      archive_entry_set_filetype(entry.get(), AE_IFREG);
+      archive_entry_set_size(entry.get(), static_cast<la_int64_t>(data.size()));
+      TEST_CHECK(archive_write_header(writer.get(), entry.get()) == ARCHIVE_OK);
+      TEST_CHECK(archive_write_data(writer.get(), data.data(), data.size()) == static_cast<la_ssize_t>(data.size()));
+      TEST_CHECK(archive_write_close(writer.get()) == ARCHIVE_OK);
+      files::ArchiveLimits limits;
+      limits.maxExpandedBytes = 128;
+      limits.maxMetadataBytes = 256;
+      limits.maxEntries = 4;
+      files::ArchiveService service(limits);
+      const auto output = fixture.root / ("padding-rejected" + std::to_string(item.filter));
+      TEST_CHECK(service.extract(location(source), location(output)));
+      wait(service, pump);
+      TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Unsupported);
+      TEST_CHECK(service.error()->message.contains("decoded-container") && !fs::exists(output));
+      TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
+    }
+  }
+  int compressedWithoutTools() {
+    Fixture fixture;
+    Pump pump;
+    const auto source = fixture.root / "payload";
+    write(source, "no helper program");
+    for (const auto& item : compressedTars) {
+      if (!files::archiveCompressionAvailable(item.compression)) {
+        continue;
+      }
+      const auto archive = fixture.root / ("no-tools" + std::string(item.suffix));
+      const auto destination = fixture.root / ("no-tools" + std::to_string(item.filter));
+      files::ArchiveService service;
+      TEST_CHECK(service.compress({location(source)}, location(archive), item.format));
+      wait(service, pump);
+      TEST_CHECK(!service.error());
+      TEST_CHECK(service.extract(location(archive), location(destination)));
+      wait(service, pump);
+      TEST_CHECK(!service.error() && read(destination / "payload") == "no helper program");
+    }
+    return 0;
+  }
   int boundedWriteFailure() {
     Fixture fixture;
     const auto source = fixture.root / "large.txt";
@@ -649,16 +820,16 @@ namespace {
     const rlimit limit{1024, 1024};
     TEST_CHECK(::setrlimit(RLIMIT_FSIZE, &limit) == 0);
     const files::CancelToken cancel;
-    for (const auto format : {files::ArchiveFormat::Tar, files::ArchiveFormat::Zip}) {
+    for (const auto& format : files::archiveFormats()) {
       files::archive_work::Progress progress;
       files::archive_work::Passwords passwords;
-      if (format == files::ArchiveFormat::Zip) {
+      if (format.format == files::ArchiveFormat::Zip) {
         passwords.values.emplace_back("test password");
       }
       bool failed = false;
       try {
         auto prepared = files::archive_work::compress(
-            {location(source)}, location(fixture.root / "failed-output"), format, {}, cancel, progress, passwords
+            {location(source)}, location(fixture.root / "failed-output"), format.format, {}, cancel, progress, passwords
         );
         (void)files::archive_work::cleanup({prepared.stage});
       } catch (const std::exception&) {
@@ -690,8 +861,14 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::string_view(argv[1]) == "--bounded-write-failure") {
       return boundedWriteFailure();
     }
+    if (argc == 2 && std::string_view(argv[1]) == "--compressed-without-tools") {
+      return compressedWithoutTools();
+    }
     Fixture fixture;
     Pump pump;
+    testCompressedTarProviders(fixture, pump);
+    testCompressedTarFailures(fixture, pump);
+    testCompressedPaddingLimit(fixture, pump);
     testRoundTrips(fixture, pump);
     testConflicts(fixture, pump);
     testHostile(fixture, pump);
@@ -712,6 +889,12 @@ int main(int argc, char** argv) {
         g_subprocess_new(G_SUBPROCESS_FLAGS_NONE, nullptr, "/proc/self/exe", "--bounded-write-failure", nullptr)
     );
     TEST_CHECK(child && g_subprocess_wait_check(child.get(), nullptr, nullptr));
+    const files::GioPtr<GSubprocessLauncher> launcher(g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_NONE));
+    g_subprocess_launcher_setenv(launcher.get(), "PATH", "/noctalia-files-no-helper-tools", TRUE);
+    files::GioPtr<GSubprocess> native(
+        g_subprocess_launcher_spawn(launcher.get(), nullptr, "/proc/self/exe", "--compressed-without-tools", nullptr)
+    );
+    TEST_CHECK(native && g_subprocess_wait_check(native.get(), nullptr, nullptr));
     TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
     std::println("archive checks passed");
     return 0;

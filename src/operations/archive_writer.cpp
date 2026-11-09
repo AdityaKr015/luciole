@@ -16,6 +16,19 @@ namespace {
   using namespace files;
   using namespace files::archive_work;
   namespace fs = std::filesystem;
+  int addFilter(struct archive* writer, ArchiveCompression compression) {
+    switch (compression) {
+    case ArchiveCompression::None:
+      return archive_write_add_filter_none(writer);
+    case ArchiveCompression::Gzip:
+      return archive_write_add_filter_gzip(writer);
+    case ArchiveCompression::Bzip2:
+      return archive_write_add_filter_bzip2(writer);
+    case ArchiveCompression::Zstd:
+      return archive_write_add_filter_zstd(writer);
+    }
+    return ARCHIVE_FATAL;
+  }
   void forEachChild(int fd, Work& work, const std::function<void(const std::string&)>& visit) {
     const int duplicate = ::fcntl(fd, F_DUPFD_CLOEXEC, 0);
     if (duplicate < 0) {
@@ -48,10 +61,10 @@ namespace {
     std::size_t metadataBytes = 0;
     std::map<std::string, std::string> links;
     std::unique_ptr<struct archive, decltype(&archive_write_free)> value{archive_write_new(), &archive_write_free};
-    Writer(const std::string& filename, ArchiveFormat format, Work& request, const Passwords& passwords)
+    Writer(const std::string& filename, const ArchiveFormatInfo& format, Work& request, const Passwords& passwords)
         : work(request),
           output(opened(::open(filename.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600))) {
-      if (format == ArchiveFormat::Zip) {
+      if (format.format == ArchiveFormat::Zip) {
         requireArchive(archive_write_set_format_zip(value.get()), value.get(), work);
         if (!passwords.values.empty()) {
           requireArchive(archive_write_set_options(value.get(), "zip:encryption=aes256"), value.get(), work);
@@ -60,11 +73,7 @@ namespace {
       } else {
         requireArchive(archive_write_set_format_pax_restricted(value.get()), value.get(), work);
       }
-      requireArchive(
-          format == ArchiveFormat::TarGzip ? archive_write_add_filter_gzip(value.get())
-                                           : archive_write_add_filter_none(value.get()),
-          value.get(), work
-      );
+      requireArchive(addFilter(value.get(), format.compression), value.get(), work);
       requireArchive(archive_write_set_bytes_per_block(value.get(), 0), value.get(), work);
       requireArchive(
           archive_write_open(
@@ -228,15 +237,19 @@ std::span<const files::ArchiveFormatInfo> files::archiveFormats() {
     std::vector<ArchiveFormatInfo> result;
     for (const auto& item : std::array{
              ArchiveFormatInfo{ArchiveFormat::Zip, "ZIP", ".zip"}, ArchiveFormatInfo{ArchiveFormat::Tar, "TAR", ".tar"},
-             ArchiveFormatInfo{ArchiveFormat::TarGzip, "TAR gzip", ".tar.gz"}
+             ArchiveFormatInfo{ArchiveFormat::TarGzip, "TAR gzip", ".tar.gz", ArchiveCompression::Gzip},
+             ArchiveFormatInfo{ArchiveFormat::TarBzip2, "TAR bzip2", ".tar.bz2", ArchiveCompression::Bzip2},
+             ArchiveFormatInfo{ArchiveFormat::TarZstd, "TAR zstd", ".tar.zst", ArchiveCompression::Zstd}
          }) {
+      if (!archiveCompressionAvailable(item.compression)) {
+        continue;
+      }
       const std::unique_ptr<struct archive, decltype(&archive_write_free)> writer(
           archive_write_new(), &archive_write_free
       );
       const auto format = item.format == ArchiveFormat::Zip ? archive_write_set_format_zip(writer.get())
                                                             : archive_write_set_format_pax_restricted(writer.get());
-      const auto filter = item.format == ArchiveFormat::TarGzip ? archive_write_add_filter_gzip(writer.get())
-                                                                : archive_write_add_filter_none(writer.get());
+      const auto filter = addFilter(writer.get(), item.compression);
       if (format == ARCHIVE_OK && filter == ARCHIVE_OK) {
         result.push_back(item);
       }
@@ -254,14 +267,16 @@ files::archive_work::Prepared files::archive_work::compress(
   if (!passwords.values.empty() && (format != ArchiveFormat::Zip || !archiveEncryptionAvailable())) {
     throwFileError(FileErrorKind::Unsupported, "AES-256 ZIP encryption is unavailable for this format.");
   }
-  if (std::ranges::find(archiveFormats(), format, &ArchiveFormatInfo::format) == archiveFormats().end()) {
+  const auto formats = archiveFormats();
+  const auto descriptor = std::ranges::find(formats, format, &ArchiveFormatInfo::format);
+  if (descriptor == formats.end()) {
     throwFileError(FileErrorKind::Unsupported, "Archive write format is unavailable.");
   }
   const auto [parent, name] = destinationParts(destination);
   (void)parent;
   Stage stage;
   const auto output = fs::path(stage.path) / name;
-  Writer writer(output.native(), format, work, passwords);
+  Writer writer(output.native(), *descriptor, work, passwords);
   std::set<std::string> names;
   for (const auto& source : sources) {
     if (source == destination) {

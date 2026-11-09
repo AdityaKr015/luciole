@@ -249,6 +249,38 @@ namespace {
     TEST_CHECK(!files::splitZipPart(files::Location::fromPath("/tmp/test.zip.01")));
     TEST_CHECK(!files::splitZipPart(files::Location::fromPath("/tmp/test.zip.001.bak")));
   }
+  void testCompressedArchiveActions() {
+    for (const auto compression : {files::ArchiveCompression::Bzip2, files::ArchiveCompression::Zstd}) {
+      const bool bzip = compression == files::ArchiveCompression::Bzip2;
+      const char* const name = bzip ? "package.TAR.BZ2" : "package.TAR.ZST";
+      files::DirectoryModel model;
+      auto data = snapshot();
+      data.entries.push_back(entry(7, name));
+      model.applySnapshot(data);
+      model.select(7);
+      files::ActionContext context{.model = model, .context = 1, .query = {}, .pinned = {}};
+      const auto request = R::capture(context);
+      for (const auto action : {A::BrowseArchive, A::ExtractHere, A::ExtractTo}) {
+        TEST_CHECK(R::state(action, context, request).enabled == files::archiveCompressionAvailable(compression));
+      }
+      TEST_CHECK(files::archiveFolderName(data.entries.back().location) == "package");
+      const auto opaque = files::Location::fromPath("/tmp/opaque-container");
+      TEST_CHECK(
+          files::isSupportedArchive(
+              opaque, bzip ? "application/x-bzip2-compressed-tar" : "application/x-zstd-compressed-tar"
+          )
+          == files::archiveCompressionAvailable(compression)
+      );
+    }
+    for (const char* const name : {"a.tbz2", "a.tbz", "a.tzst"}) {
+      TEST_CHECK(files::archiveFolderName(files::Location::fromPath(std::string("/tmp/") + name)) == "a");
+    }
+    TEST_CHECK(!files::isSupportedArchive(files::Location::fromPath("/tmp/plain.bz2"), "application/x-bzip2"));
+    TEST_CHECK(!files::isSupportedArchive(files::Location::fromPath("/tmp/plain.zst"), "application/zstd"));
+    TEST_CHECK(
+        !files::isSupportedArchive(files::Location::fromPath("/tmp/untested.tar.xz"), "application/x-xz-compressed-tar")
+    );
+  }
   void testCapabilitiesAndTargets() {
     files::DirectoryModel model;
     auto data = snapshot();
@@ -458,6 +490,7 @@ int main() {
     testShortcuts();
     testArchiveActions();
     testSplitArchiveActions();
+    testCompressedArchiveActions();
     testTrashActions();
     testLinkActions();
     testFileClipboardActions();

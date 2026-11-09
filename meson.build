@@ -105,6 +105,7 @@ event_loop_dep = declare_dependency(link_with: event_loop_lib, include_directori
   dependencies: [gio, noctalia_ui_dep],
 )
 
+libarchive = dependency('libarchive')
 fs_lib = static_library('files-fs',
   files(
     'src/fs/archive_type.cpp',
@@ -128,9 +129,9 @@ fs_lib = static_library('files-fs',
     'src/fs/xdg_dirs.cpp',
   ),
   include_directories: src_inc,
-  dependencies: gio,
+  dependencies: [gio, libarchive],
 )
-fs_dep = declare_dependency(link_with: fs_lib, include_directories: src_inc, dependencies: gio)
+fs_dep = declare_dependency(link_with: fs_lib, include_directories: src_inc, dependencies: [gio, libarchive])
 
 config_lib = static_library('files-config',
   files(
@@ -171,7 +172,6 @@ browser_dep = declare_dependency(link_with: browser_lib, include_directories: sr
 )
 
 libacl = dependency('libacl')
-libarchive = dependency('libarchive')
 operations_lib = static_library('files-operations',
   files(
     'src/operations/archive_icons.cpp',

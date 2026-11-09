@@ -11,13 +11,14 @@
 #include <string_view>
 
 namespace files {
-  enum class ArchiveFormat { Zip, Tar, TarGzip };
+  enum class ArchiveFormat { Zip, Tar, TarGzip, TarBzip2, TarZstd };
   enum class ArchiveEntryKind { File, Directory, Symlink, Hardlink };
   enum class ArchivePhase { Idle, Reading, Compressing, Extracting, Transferring, Cleaning, WaitingPassword };
   struct ArchiveFormatInfo {
     ArchiveFormat format;
     std::string_view label;
     std::string_view suffix;
+    ArchiveCompression compression = ArchiveCompression::None;
   };
   struct ArchiveEntry {
     std::string path, parent, name, displayName;
