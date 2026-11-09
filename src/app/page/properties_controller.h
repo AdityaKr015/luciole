@@ -19,6 +19,7 @@ class Button;
 class Flex;
 class Label;
 class FileMetadataView;
+class FolderTotalsView;
 class OperationJob;
 class PageContext;
 class PermissionEditor;
@@ -49,6 +50,7 @@ public:
 private:
   struct Body;
 
+  Body buildGeneral(const std::vector<files::DirectoryEntry>& targets, float width, bool editable);
   Body buildBody(
       const std::vector<files::DirectoryEntry>& targets, float width, bool editable, bool multiple, bool folders,
       bool withResults
@@ -80,6 +82,7 @@ private:
   files::SelectionDetailsService m_selectionMetadata;
   bool m_multiple = false;
   FileMetadataView* m_metadataView = nullptr;
+  FolderTotalsView* m_folderTotals = nullptr;
   float m_metadataWidth = 0;
   bool m_metadataDirty = false;
   bool m_dirty = false;

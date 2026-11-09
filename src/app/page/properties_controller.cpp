@@ -17,6 +17,7 @@
 #include "ui/controls/acl_editor.h"
 #include "ui/controls/bulk_acl_editor.h"
 #include "ui/controls/file_metadata_view.h"
+#include "ui/controls/folder_totals_view.h"
 #include "ui/controls/permission_editor.h"
 #include "ui/controls/permission_results_view.h"
 #include "ui/controls/scroll_view.h"
@@ -120,6 +121,10 @@ void PropertiesController::syncMetadata() {
         );
       }
     }
+  }
+  if (m_folderTotals) {
+    std::erase_if(fields, [](const auto& field) { return field.label == "Folder contents"; });
+    m_folderTotals->sync(m_metadataWidth);
   }
   m_metadataView->sync(fields, m_metadataWidth);
   m_page.menuSurface()->requestLayout();
@@ -257,6 +262,7 @@ struct PropertiesController::Body {
   ScrollView* scroll = nullptr;
   Flex* general = nullptr;
   FileMetadataView* metadata = nullptr;
+  FolderTotalsView* folderTotals = nullptr;
   Flex* permissions = nullptr;
   Flex* basic = nullptr;
   Flex* advanced = nullptr;
@@ -268,17 +274,8 @@ struct PropertiesController::Body {
   PermissionResultsView* results = nullptr;
 };
 
-PropertiesController::Body PropertiesController::buildBody(
-    const std::vector<files::DirectoryEntry>& targets, float width, bool editable, bool multiple, bool folders,
-    bool withResults
-) {
-  ScrollView* scroll = nullptr;
-  auto body = ui::scrollView(
-      {.out = &scroll, .viewportPaddingH = 0.0F, .viewportPaddingV = 0.0F, .fillWidth = true, .flexGrow = 1.0F}
-  );
-  body->setReserveScrollbarGutter(true);
-  body->content()->setAlign(FlexAlign::Stretch);
-  body->content()->setGap(Style::spaceMd);
+PropertiesController::Body
+PropertiesController::buildGeneral(const std::vector<files::DirectoryEntry>& targets, float width, bool editable) {
   auto general = ui::column({.align = FlexAlign::Stretch, .gap = Style::spaceMd});
   auto* generalGroup = general.get();
   const auto literal = [](Label& label) { label.setUseMarkup(false); };
@@ -348,21 +345,47 @@ PropertiesController::Body PropertiesController::buildBody(
         field("Modified", text.get());
       }
     }
-    auto metadata = std::make_unique<FileMetadataView>();
-    metadataView = metadata.get();
-    general->addChild(std::move(metadata));
   } else {
     field("Selection", std::format("{} items", targets.size()));
     if (!editable) {
       field("Permissions", "Select at most 4096 items for permission editing.");
     }
   }
-  if (multiple) {
-    auto metadata = std::make_unique<FileMetadataView>();
-    metadataView = metadata.get();
-    general->addChild(std::move(metadata));
+  FolderTotalsView* totals = nullptr;
+  if (std::ranges::any_of(targets, [](const auto& entry) {
+        return entry.type == files::FileType::Directory && !entry.symlink;
+      })) {
+    auto view = std::make_unique<FolderTotalsView>(targets, [this] {
+      m_metadataDirty = true;
+      m_page.requestSync();
+    });
+    totals = view.get();
+    general->addChild(std::move(view));
   }
-  body->content()->addChild(std::move(general));
+  auto metadata = std::make_unique<FileMetadataView>();
+  metadataView = metadata.get();
+  general->addChild(std::move(metadata));
+  Body result;
+  result.general = generalGroup;
+  result.metadata = metadataView;
+  result.folderTotals = totals;
+  result.node = std::move(general);
+  return result;
+}
+
+PropertiesController::Body PropertiesController::buildBody(
+    const std::vector<files::DirectoryEntry>& targets, float width, bool editable, bool multiple, bool folders,
+    bool withResults
+) {
+  ScrollView* scroll = nullptr;
+  auto body = ui::scrollView(
+      {.out = &scroll, .viewportPaddingH = 0.0F, .viewportPaddingV = 0.0F, .fillWidth = true, .flexGrow = 1.0F}
+  );
+  body->setReserveScrollbarGutter(true);
+  body->content()->setAlign(FlexAlign::Stretch);
+  body->content()->setGap(Style::spaceMd);
+  auto general = buildGeneral(targets, width, editable);
+  body->content()->addChild(std::move(general.node));
   PermissionEditor* editor = nullptr;
   AclEditor* acl = nullptr;
   BulkAclEditor* bulkAcl = nullptr;
@@ -451,8 +474,9 @@ PropertiesController::Body PropertiesController::buildBody(
   return {
       .node = std::move(propertiesBody),
       .scroll = scroll,
-      .general = generalGroup,
-      .metadata = metadataView,
+      .general = general.general,
+      .metadata = general.metadata,
+      .folderTotals = general.folderTotals,
       .permissions = permissionsGroup,
       .basic = basicGroup,
       .advanced = advancedGroup,
@@ -466,6 +490,9 @@ PropertiesController::Body PropertiesController::buildBody(
 }
 
 void PropertiesController::show(const std::vector<files::DirectoryEntry>& targets, bool captureCurrentLocation) {
+  if (targets.empty()) {
+    return;
+  }
   if (m_page.jobs().newest([](const OperationJob& job) {
         return job.kind() == JobKind::Permission && job.running();
       })) {
@@ -626,6 +653,7 @@ void PropertiesController::show(const std::vector<files::DirectoryEntry>& target
   if (m_page.menuSurface()) {
     m_page.activeDialog().bind(ActiveDialog::Kind::Properties, [this] { close(); });
     m_metadataView = body.metadata;
+    m_folderTotals = body.folderTotals;
     m_metadataWidth = std::max(1.0F, width - Style::spaceMd * 2 - Style::scrollbarWidth - Style::scrollbarGap);
     m_multiple = multiple;
     if (m_metadataView) {
@@ -679,6 +707,7 @@ void PropertiesController::close() {
   m_selectionMetadata.clear();
   m_multiple = false;
   m_metadataView = nullptr;
+  m_folderTotals = nullptr;
   m_metadataDirty = false;
   // Saving goes on for the page that takes the job over once this page left its window.
   if (const auto job = std::exchange(m_job, nullptr); job && (m_page.jobs().attached() || !job->running())) {
