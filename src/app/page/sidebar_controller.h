@@ -12,6 +12,7 @@
 #include <vector>
 
 namespace files {
+  class DriveMonitor;
   class PinService;
   class PlacesSidebar;
   class ViewPreferenceWriter;
@@ -35,8 +36,9 @@ public:
   static constexpr float kHandleWidth = 6.0F;
 
   SidebarController(
-      PageContext& page, InputDispatcher& dispatcher, files::PinService& pins, files::ViewPreferenceWriter& preferences,
-      AnimationManager& animations, MenuController& menus, RenameController& renamer, DragDropController& drags
+      PageContext& page, InputDispatcher& dispatcher, files::PinService& pins, files::DriveMonitor& drives,
+      files::ViewPreferenceWriter& preferences, AnimationManager& animations, MenuController& menus,
+      RenameController& renamer, DragDropController& drags
   );
 
   // Takes the sidebar settings of a new page.
@@ -95,10 +97,14 @@ private:
 
   int maximumWidth() const;
   void resize(int width, bool persist);
+  void openDrive(const std::string& key);
+  void removeDrive(const std::string& key);
+  void openDriveMenu(const std::string& key, float x, float y);
 
   PageContext& m_page;
   InputDispatcher& m_dispatcher;
   files::PinService& m_pins;
+  files::DriveMonitor& m_drives;
   files::ViewPreferenceWriter& m_preferences;
   AnimationManager& m_animations;
   MenuController& m_menus;
@@ -109,8 +115,11 @@ private:
   int m_sidebarWidth = files::kDefaultSidebarWidth;
   bool m_showSidebar = true;
   bool m_sidebarTree = false;
+  bool m_showDrives = true;
   int m_sidebarStartWidth = files::kDefaultSidebarWidth;
   int m_sidebarStartVisibleWidth = files::kDefaultSidebarWidth;
+  // Expires with this controller so drive callbacks that finish later do nothing.
+  std::shared_ptr<int> m_lifetime = std::make_shared<int>(0);
   float m_sidebarPressX = 0;
   bool m_resizingSidebar = false;
   InputArea* m_sidebarResize = nullptr;

@@ -102,6 +102,7 @@ private:
   AnimationManager m_animations;
   files::ViewPreferenceWriter m_preferences;
   files::PinService m_pins;
+  files::DriveMonitor m_drives;
   files::FileIconCache m_icons;
   // One thumbnail pipeline for every page.
   files::ThumbnailService m_thumbnails;

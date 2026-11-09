@@ -124,6 +124,12 @@ WorkspaceApplication::WorkspaceApplication(
       page->placesChanged();
     }
   });
+  m_drives.setChangedCallback([this] {
+    for (auto& [id, page] : m_pages) {
+      (void)id;
+      page->placesChanged();
+    }
+  });
   m_icons.setChangedCallback([this] {
     for (auto& [id, page] : m_pages) {
       (void)id;
@@ -148,6 +154,7 @@ WorkspaceApplication::~WorkspaceApplication() {
   m_clipboard.setDropCallbacks({}, {});
   m_preferences.setChangedCallback({});
   m_pins.setChangedCallback({});
+  m_drives.setChangedCallback({});
   m_icons.setChangedCallback({});
   m_thumbnails.setChangedCallback({});
   for (auto& [id, host] : m_hosts) {
@@ -787,7 +794,7 @@ files::TabId WorkspaceApplication::createPage(
       : previous && m_pages.contains(previous) ? m_pages.at(previous)->options()
                                                : m_defaults;
   auto page = std::make_unique<BrowserPage>(
-      m_connection, m_renderer, m_input, settings, m_clipboard, host.surface, m_animations, m_pins, m_icons,
+      m_connection, m_renderer, m_input, settings, m_clipboard, host.surface, m_animations, m_pins, m_drives, m_icons,
       m_thumbnails, m_preferences, m_hub, id
   );
   page->setHasOther([this, id] {

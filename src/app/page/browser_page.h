@@ -75,7 +75,7 @@ public:
   BrowserPage(
       WaylandConnection& connection, RenderContext& renderer, TextInputService& textInput,
       const files::BrowserSettings& settings, files::WaylandTextClipboard& clipboard, files::WindowSurface& surface,
-      AnimationManager& animations, files::PinService& pins, files::FileIconCache& icons,
+      AnimationManager& animations, files::PinService& pins, files::DriveMonitor& drives, files::FileIconCache& icons,
       files::ThumbnailService& thumbnails, files::ViewPreferenceWriter& preferences, OperationHub& hub, files::TabId id
   );
 
@@ -311,6 +311,7 @@ private:
   std::optional<std::pair<int, int>> m_dialogPosition;
   bool m_dialogResizePending = false;
   files::PinService& m_pins;
+  files::DriveMonitor& m_drives;
   files::FileLauncher m_launcher;
   std::vector<files::Location> m_revealTargets;
   bool m_revealProperties = false;
@@ -349,9 +350,9 @@ private:
   DetailsHeaderController m_detailsHeader{*this,         m_dispatcher,  m_preferences,
                                           m_listAdapter, m_gridAdapter, m_menuController};
   LocationBarController m_locationBar{*this, m_dispatcher, m_connection, m_fileKeys, m_menuController};
-  SidebarController m_sidebar{
-      *this, m_dispatcher, m_pins, m_preferences, m_animations, m_menuController, m_renameController, m_dragDrop
-  };
+  SidebarController m_sidebar{*this,         m_dispatcher, m_pins,           m_drives,
+                              m_preferences, m_animations, m_menuController, m_renameController,
+                              m_dragDrop};
   DragDropController m_dragDrop{*this,        m_dispatcher, m_connection, m_pins,    m_transferController,
                                 m_thumbnails, m_icons,      m_miller,     m_sidebar, m_locationBar};
   FileKeyboardController m_fileKeys{*this,         m_dispatcher, m_textInput, m_miller, m_menuController,

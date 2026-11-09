@@ -11,7 +11,7 @@
 #include <algorithm>
 #include <cmath>
 
-files::PlacesSidebar::PlacesSidebar(PinService& pins) : m_pins(pins) {
+files::PlacesSidebar::PlacesSidebar(PinService& pins, DriveMonitor& drives) : m_pins(pins), m_drives(drives) {
   setDirection(FlexDirection::Vertical);
   setAlign(FlexAlign::Stretch);
   setMinWidth(static_cast<float>(kDefaultSidebarWidth));
@@ -42,12 +42,33 @@ void files::PlacesSidebar::setDragCallback(std::function<void(const Bookmark&)> 
 void files::PlacesSidebar::setRenameCallback(std::function<void(const Bookmark&)> callback) {
   m_rename = std::move(callback);
 }
+void files::PlacesSidebar::setDriveOpenCallback(std::function<void(const std::string&)> callback) {
+  m_driveOpen = std::move(callback);
+}
+void files::PlacesSidebar::setDriveRemoveCallback(std::function<void(const std::string&)> callback) {
+  m_driveRemove = std::move(callback);
+}
+void files::PlacesSidebar::setDriveContextCallback(std::function<void(const std::string&, float, float)> callback) {
+  m_driveContext = std::move(callback);
+}
+const files::Drive* files::PlacesSidebar::driveAt(const Location& root) const {
+  if (!m_showDrives || m_pins.contains(root)) {
+    return nullptr;
+  }
+  const auto& drives = m_drives.drives();
+  const auto found = std::ranges::find(drives, std::optional(root), &Drive::root);
+  return found == drives.end() ? nullptr : &*found;
+}
 InputArea* files::PlacesSidebar::focusArea(const Location& location) const {
   if (m_tree) {
     return m_tree->focusArea(location);
   }
   const auto found = std::ranges::find_if(m_rows, [&](const auto& row) { return row.bookmark.location == location; });
-  return found == m_rows.end() ? nullptr : found->button->inputArea();
+  if (found != m_rows.end()) {
+    return found->button->inputArea();
+  }
+  const auto drive = std::ranges::find(m_driveRows, std::optional(location), &DriveRow::root);
+  return drive == m_driveRows.end() ? nullptr : drive->button->inputArea();
 }
 void files::PlacesSidebar::invalidate() {
   m_dirty = true;
@@ -60,14 +81,22 @@ std::optional<files::Bookmark> files::PlacesSidebar::folderAt(float x, float y) 
   if (!containsScenePoint(x, y)) {
     return std::nullopt;
   }
-  for (const auto& row : m_rows) {
+  const auto hit = [&](const Button* button) {
     float localX = 0, localY = 0;
-    if (Node::mapFromScene(row.button, x, y, localX, localY)
+    return Node::mapFromScene(button, x, y, localX, localY)
         && localX >= 0
-        && localX < row.button->width()
+        && localX < button->width()
         && localY >= 8
-        && localY < row.button->height() - 8) {
+        && localY < button->height() - 8;
+  };
+  for (const auto& row : m_rows) {
+    if (hit(row.button)) {
       return row.bookmark;
+    }
+  }
+  for (const auto& row : m_driveRows) {
+    if (row.root && hit(row.button)) {
+      return Bookmark{row.label, *row.root};
     }
   }
   return std::nullopt;
@@ -76,15 +105,23 @@ std::optional<LayoutRect> files::PlacesSidebar::folderRect(const Location& locat
   if (m_tree) {
     return m_tree->folderRect(location);
   }
+  const auto rect = [this](const Button* button) {
+    float x = 0, y = 0;
+    Node::absolutePosition(button, x, y);
+    float left = 0, top = 0;
+    Node::absolutePosition(this, left, top);
+    const float bottom = std::min(y + button->height(), top + height());
+    const float clippedTop = std::max(y, top);
+    return LayoutRect{x, clippedTop, button->width(), std::max(0.0F, bottom - clippedTop)};
+  };
   for (const auto& row : m_rows) {
     if (row.bookmark.location == location) {
-      float x = 0, y = 0;
-      Node::absolutePosition(row.button, x, y);
-      float left = 0, top = 0;
-      Node::absolutePosition(this, left, top);
-      const float bottom = std::min(y + row.button->height(), top + height());
-      const float clippedTop = std::max(y, top);
-      return LayoutRect{x, clippedTop, row.button->width(), std::max(0.0F, bottom - clippedTop)};
+      return rect(row.button);
+    }
+  }
+  for (const auto& row : m_driveRows) {
+    if (row.root == location) {
+      return rect(row.button);
     }
   }
   return std::nullopt;
@@ -109,7 +146,79 @@ void files::PlacesSidebar::sync(std::optional<Location> current) {
     row.button->setSelected(selected);
     highlighted = highlighted || selected;
   }
+  for (auto& row : m_driveRows) {
+    const bool selected = !highlighted && row.root && m_current == row.root;
+    row.button->setSelected(selected);
+    highlighted = highlighted || selected;
+  }
   markLayoutDirty();
+}
+void files::PlacesSidebar::addDriveRow(const Drive& drive) {
+  auto button = ui::button(
+      {.text = drive.label,
+       .glyph = drive.glyph,
+       .contentAlign = ButtonContentAlign::Start,
+       .variant = ButtonVariant::Ghost,
+       .paddingH = files::kSideListRowPaddingH,
+       .gap = files::kSideListRowGap,
+       .flexGrow = 1.0F,
+       .onClick = [this, key = drive.key] {
+         if (m_driveOpen) {
+           m_driveOpen(key);
+         }
+       }}
+  );
+  auto* raw = button.get();
+  raw->setDirection(FlexDirection::Horizontal);
+  raw->label()->setUseMarkup(false);
+  raw->setTooltip(drive.root ? locationEditText(*drive.root) : drive.label + " (not mounted)");
+  raw->inputArea()->setTabFocusKey("drive:" + drive.key);
+  raw->inputArea()->setOnKeyDown([this, key = drive.key, raw](const InputArea::KeyData& event) {
+    if (!event.pressed) {
+      return;
+    }
+    if (event.modifiers == 0 && KeySymbol::isEnterOrSpace(event.sym)) {
+      if (m_driveOpen) {
+        m_driveOpen(key);
+      }
+    } else if (event.sym == XKB_KEY_Menu || (event.sym == XKB_KEY_F10 && event.modifiers == KeyMod::Shift)) {
+      float x = 0, y = 0;
+      Node::absolutePosition(raw, x, y);
+      if (m_driveContext) {
+        m_driveContext(key, x + raw->width() * 0.5F, y + raw->height() * 0.5F);
+      }
+    }
+  });
+  raw->setOnRightClickWithPointer([this, key = drive.key](float x, float y, std::uint32_t, std::uint32_t) {
+    if (m_driveContext) {
+      m_driveContext(key, x, y);
+    }
+  });
+  raw->inputArea()->setOnFocusGain([this, raw] {
+    raw->setKeyboardFocusHint(true);
+    m_scroll->requestScrollIntoView(raw);
+  });
+  raw->inputArea()->setOnFocusLoss([raw] { raw->setKeyboardFocusHint(false); });
+  auto row = ui::row({.align = FlexAlign::Center, .gap = Style::spaceXs}, std::move(button));
+  if (drive.removable) {
+    row->addChild(
+        ui::button(
+            {.glyph = "player-eject",
+             .controlHeight = Style::controlHeightSm,
+             .variant = ButtonVariant::Ghost,
+             .tooltip = drive.ejectable ? "Eject" : "Unmount",
+             .minWidth = Style::controlHeightSm,
+             .maxWidth = Style::controlHeightSm,
+             .onClick = [this, key = drive.key] {
+               if (m_driveRemove) {
+                 m_driveRemove(key);
+               }
+             }}
+        )
+    );
+  }
+  m_driveRows.push_back({drive.key, drive.root, drive.label, raw});
+  m_scroll->content()->addChild(std::move(row));
 }
 void files::PlacesSidebar::addRow(const Bookmark& bookmark, const std::string& glyph, std::size_t index) {
   auto button = ui::button(
@@ -204,6 +313,11 @@ void files::PlacesSidebar::setShowHidden(bool showHidden) {
     m_tree->sync(m_current, showHidden);
   }
 }
+void files::PlacesSidebar::setShowDrives(bool showDrives) {
+  if (std::exchange(m_showDrives, showDrives) != showDrives) {
+    invalidate();
+  }
+}
 void files::PlacesSidebar::rebuild() {
   if (m_treeEnabled) {
     m_scroll->setVisible(false);
@@ -217,7 +331,11 @@ void files::PlacesSidebar::rebuild() {
         }
       };
       tree->context = [this](const Bookmark& bookmark, float x, float y) {
-        if (m_context) {
+        if (const auto* drive = driveAt(bookmark.location)) {
+          if (m_driveContext) {
+            m_driveContext(drive->key, x, y);
+          }
+        } else if (m_context) {
           m_context(bookmark, x, y);
         }
       };
@@ -238,7 +356,14 @@ void files::PlacesSidebar::rebuild() {
       };
       addChild(std::move(tree));
     }
-    m_tree->setRoots(m_pins);
+    // The tree can only expand mounted drives; unmounted ones appear once mounted.
+    std::vector<Drive> drives;
+    if (m_showDrives) {
+      std::ranges::copy_if(m_drives.drives(), std::back_inserter(drives), [this](const Drive& drive) {
+        return drive.root && !m_pins.contains(*drive.root);
+      });
+    }
+    m_tree->setRoots(m_pins, drives);
     m_tree->sync(m_current, m_showHidden);
     return;
   }
@@ -250,6 +375,7 @@ void files::PlacesSidebar::rebuild() {
   m_scroll->setParticipatesInLayout(true);
   cancelDragCandidate();
   m_rows.clear();
+  m_driveRows.clear();
   auto* content = m_scroll->content();
   while (!content->children().empty()) {
     content->removeChild(content->children().back().get());
@@ -273,6 +399,13 @@ void files::PlacesSidebar::rebuild() {
       return place.bookmark.location == pins[i].location;
     });
     addRow(pins[i], known == m_pins.userPlaces().end() ? "folder" : known->glyphName, i);
+  }
+  if (m_showDrives && !m_drives.drives().empty()) {
+    content->addChild(ui::box({.fill = clearColorSpec(), .height = Style::spaceSm}));
+    heading("Drives");
+    for (const auto& drive : m_drives.drives()) {
+      addDriveRow(drive);
+    }
   }
   sync(m_current);
 }

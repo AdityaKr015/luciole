@@ -11,6 +11,7 @@
 #include "config/view_preference_writer.h"
 #include "core/input/key_symbols.h"
 #include "cursor-shape-v1-client-protocol.h"
+#include "fs/drive_monitor.h"
 #include "platform/desktop_integration.h"
 #include "render/animation/animation_manager.h"
 #include "ui/browser/places_sidebar.h"
@@ -23,16 +24,18 @@
 #include <string>
 
 SidebarController::SidebarController(
-    PageContext& page, InputDispatcher& dispatcher, files::PinService& pins, files::ViewPreferenceWriter& preferences,
-    AnimationManager& animations, MenuController& menus, RenameController& renamer, DragDropController& drags
+    PageContext& page, InputDispatcher& dispatcher, files::PinService& pins, files::DriveMonitor& drives,
+    files::ViewPreferenceWriter& preferences, AnimationManager& animations, MenuController& menus,
+    RenameController& renamer, DragDropController& drags
 )
-    : m_page(page), m_dispatcher(dispatcher), m_pins(pins), m_preferences(preferences), m_animations(animations),
-      m_menus(menus), m_renamer(renamer), m_drags(drags) {}
+    : m_page(page), m_dispatcher(dispatcher), m_pins(pins), m_drives(drives), m_preferences(preferences),
+      m_animations(animations), m_menus(menus), m_renamer(renamer), m_drags(drags) {}
 
 void SidebarController::load(const files::BrowserSettings& settings) {
   m_sidebarWidth = settings.sidebarWidth;
   m_showSidebar = settings.showSidebar;
   m_sidebarTree = settings.sidebarTree;
+  m_showDrives = settings.showDrives;
 }
 
 void SidebarController::applySettings(
@@ -45,6 +48,12 @@ void SidebarController::applySettings(
     m_sidebarTree = settings.sidebarTree;
     if (m_places) {
       m_places->setTreeEnabled(m_sidebarTree);
+    }
+  }
+  if (force || before.showDrives != settings.showDrives) {
+    m_showDrives = settings.showDrives;
+    if (m_places) {
+      m_places->setShowDrives(m_showDrives);
     }
   }
   if (force || before.sidebarWidth != settings.sidebarWidth) {
@@ -133,6 +142,7 @@ void SidebarController::reuseFrom(SidebarController& previous) {
 void SidebarController::configureCallbacks() {
   m_places->setChangedCallback([this] { m_page.requestSync(); });
   m_places->setTreeEnabled(m_sidebarTree);
+  m_places->setShowDrives(m_showDrives);
   m_places->setOpenCallback([this](const files::Location& location) {
     m_page.setActionMessage({});
     m_page.browser().open(location);
@@ -143,6 +153,70 @@ void SidebarController::configureCallbacks() {
   });
   m_places->setDragCallback([this](const files::Bookmark& bookmark) { m_drags.startPlaceDrag(bookmark); });
   m_places->setRenameCallback([this](const files::Bookmark& bookmark) { m_renamer.openPlaceRename(bookmark); });
+  m_places->setDriveOpenCallback([this](const std::string& key) { openDrive(key); });
+  m_places->setDriveRemoveCallback([this](const std::string& key) { removeDrive(key); });
+  m_places->setDriveContextCallback([this](const std::string& key, float x, float y) { openDriveMenu(key, x, y); });
+}
+
+void SidebarController::openDrive(const std::string& key) {
+  m_page.setActionMessage({});
+  m_drives.mount(
+      key, [this, lifetime = std::weak_ptr(m_lifetime)](std::optional<files::Location> root, std::string error) {
+        if (lifetime.expired()) {
+          return;
+        }
+        if (!root) {
+          m_page.actionError(
+              error.empty() ? "Could not mount the drive." : std::format("Could not mount the drive: {}", error)
+          );
+          return;
+        }
+        m_page.browser().open(*root);
+        m_dispatcher.setFocus(m_page.fileList()->focusArea());
+      }
+  );
+}
+
+void SidebarController::removeDrive(const std::string& key) {
+  const auto* drive = m_drives.find(key);
+  if (drive == nullptr || !drive->root) {
+    return;
+  }
+  // Leave the drive first so this page does not keep it busy.
+  const auto& current = m_page.browser().model().snapshot().location;
+  if (current && (*current == *drive->root || current->uri().starts_with(drive->root->uri() + "/"))) {
+    if (const char* home = g_get_home_dir(); home != nullptr && g_path_is_absolute(home)) {
+      m_page.browser().open(files::Location::fromPath(home));
+    }
+  }
+  const bool eject = drive->ejectable;
+  m_drives.remove(key, [this, eject, lifetime = std::weak_ptr(m_lifetime)](std::string error) {
+    if (!lifetime.expired() && !error.empty()) {
+      m_page.actionError(std::format("Could not {} the drive: {}", eject ? "eject" : "unmount", error));
+    }
+  });
+}
+
+void SidebarController::openDriveMenu(const std::string& key, float x, float y) {
+  const auto* drive = m_drives.find(key);
+  if (drive == nullptr) {
+    return;
+  }
+  std::vector<ContextMenuControlEntry> entries{{.id = 1, .label = drive->root ? "Open" : "Mount and open"}};
+  if (drive->removable) {
+    entries.push_back({.id = 2, .label = drive->ejectable ? "Eject" : "Unmount"});
+  }
+  m_menus.showContextMenu(
+      std::move(entries),
+      [this, key](int action) {
+        if (action == 1) {
+          openDrive(key);
+        } else if (action == 2) {
+          removeDrive(key);
+        }
+      },
+      {x, y, 1, 1}
+  );
 }
 
 void SidebarController::pinFolders(std::vector<files::Bookmark> bookmarks, std::size_t before) {
@@ -154,7 +228,7 @@ void SidebarController::pinFolders(std::vector<files::Bookmark> bookmarks, std::
 }
 
 std::unique_ptr<Node> SidebarController::buildPlaces() {
-  auto places = std::make_unique<files::PlacesSidebar>(m_pins);
+  auto places = std::make_unique<files::PlacesSidebar>(m_pins, m_drives);
   m_places = places.get();
   configureCallbacks();
   return places;

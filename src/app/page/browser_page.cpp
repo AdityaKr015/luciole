@@ -68,7 +68,7 @@
 BrowserPage::BrowserPage(
     WaylandConnection& connection, RenderContext& renderer, TextInputService& textInput,
     const files::BrowserSettings& settings, files::WaylandTextClipboard& clipboard, files::WindowSurface& surface,
-    AnimationManager& animations, files::PinService& pins, files::FileIconCache& icons,
+    AnimationManager& animations, files::PinService& pins, files::DriveMonitor& drives, files::FileIconCache& icons,
     files::ThumbnailService& thumbnails, files::ViewPreferenceWriter& preferences, OperationHub& hub, files::TabId id
 )
     : m_connection(connection), m_renderer(renderer), m_textInput(textInput), m_animations(animations),
@@ -82,8 +82,8 @@ BrowserPage::BrowserPage(
           m_browser, m_icons, m_thumbnails, files::ViewMode::Grid, [this] { return m_connection.keyboardModifiers(); },
           [this] { return m_fileKeys.keyboardFocus() && m_list != nullptr && m_list->focusArea()->focused(); }
       ),
-      m_preferences(preferences), m_savedSettings(settings), m_pins(pins), m_hub(hub), m_jobs(hub, id),
-      m_viewMode(settings.viewMode), m_clipboard(clipboard), m_workspaceId(id) {
+      m_preferences(preferences), m_savedSettings(settings), m_pins(pins), m_drives(drives), m_hub(hub),
+      m_jobs(hub, id), m_viewMode(settings.viewMode), m_clipboard(clipboard), m_workspaceId(id) {
   if (m_preferences.settings()) {
     m_savedSettings = m_preferences.settings()->browser;
   }
@@ -1678,6 +1678,8 @@ void BrowserPage::applyViewMode() {
   const bool grid = m_viewMode == files::ViewMode::Grid;
   m_list->setAdapter(grid ? &m_gridAdapter : &m_listAdapter);
   m_list->setColumns(grid ? 0 : 1);
+  // Details rows reserve the lane so the column header stays aligned; grid cells only yield it while scrolling.
+  m_list->scrollView().setReserveScrollbarGutter(!grid);
   m_list->setMinCellWidth(files::gridMetrics(gridIconSize(), m_savedSettings.presentation, false).minWidth);
   m_list->setCellHeight(gridHeight());
   m_list->setColumnGap(grid ? files::gridMetrics(gridIconSize(), m_savedSettings.presentation, false).gap : 0.0F);

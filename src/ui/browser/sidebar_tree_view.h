@@ -2,6 +2,7 @@
 
 #include "browser/directory_tree.h"
 #include "browser/places.h"
+#include "fs/drive_monitor.h"
 #include "ui/controls/flex.h"
 
 class VirtualGridView;
@@ -12,7 +13,8 @@ namespace files {
   public:
     SidebarTreeView();
     ~SidebarTreeView() override;
-    void setRoots(const PinService& pins);
+    // Pins first, then mounted drives; only pins take part in reordering.
+    void setRoots(const PinService& pins, const std::vector<Drive>& drives);
     void sync(std::optional<Location> current, bool showHidden);
     void prepare();
     InputArea* focusArea(const Location& location);

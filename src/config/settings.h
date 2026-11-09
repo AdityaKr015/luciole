@@ -27,6 +27,7 @@ namespace files {
     int sidebarWidth = kDefaultSidebarWidth;
     bool showSidebar = true;
     bool sidebarTree = false;
+    bool showDrives = true;
     bool expandableFolders = false;
     bool showPreview = true;
     int previewWidth = 320;
@@ -70,6 +71,7 @@ namespace files {
     SidebarWidth,
     ShowSidebar,
     SidebarTree,
+    ShowDrives,
     ExpandableFolders,
     ShowPreview,
     PreviewWidth,
@@ -137,6 +139,7 @@ namespace files {
     static constexpr PreferenceKey<int> SidebarWidth{Id::SidebarWidth};
     static constexpr PreferenceKey<bool> ShowSidebar{Id::ShowSidebar};
     static constexpr PreferenceKey<bool> SidebarTree{Id::SidebarTree};
+    static constexpr PreferenceKey<bool> ShowDrives{Id::ShowDrives};
     static constexpr PreferenceKey<bool> ExpandableFolders{Id::ExpandableFolders};
     static constexpr PreferenceKey<bool> ShowPreview{Id::ShowPreview};
     static constexpr PreferenceKey<int> PreviewWidth{Id::PreviewWidth};

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "browser/places.h"
+#include "fs/drive_monitor.h"
 #include "ui/controls/button.h"
 #include "ui/controls/scroll_view.h"
 
@@ -8,9 +9,10 @@ namespace files {
   class SidebarTreeView;
   class PlacesSidebar final : public Flex {
   public:
-    explicit PlacesSidebar(PinService& pins);
+    PlacesSidebar(PinService& pins, DriveMonitor& drives);
     void setTreeEnabled(bool enabled);
     void setShowHidden(bool showHidden);
+    void setShowDrives(bool showDrives);
     void setChangedCallback(std::function<void()> callback) { m_changed = std::move(callback); }
     void invalidate();
     void sync(std::optional<Location> current);
@@ -23,6 +25,10 @@ namespace files {
     void setContextCallback(std::function<void(const Bookmark&, float, float)> callback);
     void setDragCallback(std::function<void(const Bookmark&)> callback);
     void setRenameCallback(std::function<void(const Bookmark&)> callback);
+    // Drive rows: open mounts the drive first when needed; remove unmounts or ejects it.
+    void setDriveOpenCallback(std::function<void(const std::string&)> callback);
+    void setDriveRemoveCallback(std::function<void(const std::string&)> callback);
+    void setDriveContextCallback(std::function<void(const std::string&, float, float)> callback);
     InputArea* focusArea(const Location& location) const;
     std::optional<Bookmark> folderAt(float x, float y) const;
     std::optional<LayoutRect> folderRect(const Location& location) const;
@@ -37,15 +43,25 @@ namespace files {
       std::size_t pinIndex = 0;
       Button* button = nullptr;
     };
+    struct DriveRow {
+      std::string key;
+      std::optional<Location> root;
+      std::string label;
+      Button* button = nullptr;
+    };
     void rebuild();
     void addRow(const Bookmark& bookmark, const std::string& glyph, std::size_t index);
+    void addDriveRow(const Drive& drive);
+    const Drive* driveAt(const Location& root) const;
     PinService& m_pins;
+    DriveMonitor& m_drives;
     SidebarTreeView* m_tree = nullptr;
-    bool m_treeEnabled = false, m_showHidden = false;
+    bool m_treeEnabled = false, m_showHidden = false, m_showDrives = true;
     std::function<void()> m_changed;
     ScrollView* m_scroll = nullptr;
     Label* m_heading = nullptr;
     std::vector<Row> m_rows;
+    std::vector<DriveRow> m_driveRows;
     std::optional<Location> m_current;
     std::optional<Bookmark> m_dragCandidate;
     float m_pressX = 0;
@@ -56,5 +72,8 @@ namespace files {
     std::function<void(const Bookmark&, float, float)> m_context;
     std::function<void(const Bookmark&)> m_drag;
     std::function<void(const Bookmark&)> m_rename;
+    std::function<void(const std::string&)> m_driveOpen;
+    std::function<void(const std::string&)> m_driveRemove;
+    std::function<void(const std::string&, float, float)> m_driveContext;
   };
 } // namespace files

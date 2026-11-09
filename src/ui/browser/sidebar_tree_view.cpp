@@ -193,7 +193,7 @@ files::SidebarTreeView::~SidebarTreeView() {
   m_model.setChangedCallback({});
   m_tree.setChangedCallback({});
 }
-void files::SidebarTreeView::setRoots(const PinService& pins) {
+void files::SidebarTreeView::setRoots(const PinService& pins, const std::vector<Drive>& drives) {
   DirectorySnapshot snapshot;
   snapshot.status = DirectoryStatus::Ready;
   std::map<std::string, EntryId> roots;
@@ -215,6 +215,27 @@ void files::SidebarTreeView::setRoots(const PinService& pins) {
          .location = pin.location,
          .name = {},
          .displayName = pin.label,
+         .type = FileType::Directory,
+         .size = {},
+         .modifiedSeconds = {},
+         .etag = {},
+         .parentDisplayName = {}}
+    );
+  }
+  for (const auto& drive : drives) {
+    const auto& uri = drive.root->uri();
+    if (roots.contains(uri)) {
+      continue;
+    }
+    const auto prior = m_rootIds.find(uri);
+    const auto id = prior == m_rootIds.end() ? m_nextRoot++ : prior->second;
+    roots.emplace(uri, id);
+    m_glyphs.emplace(id, drive.glyph);
+    snapshot.entries.push_back(
+        {.id = id,
+         .location = *drive.root,
+         .name = {},
+         .displayName = drive.label,
          .type = FileType::Directory,
          .size = {},
          .modifiedSeconds = {},

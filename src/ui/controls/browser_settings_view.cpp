@@ -98,6 +98,7 @@ BrowserSettingsView::BrowserSettingsView(
   section("Sidebar");
   addBool(P::ShowSidebar, "Show sidebar");
   addBool(P::SidebarTree, "Show folder tree");
+  addBool(P::ShowDrives, "Show drives");
   addNumber(P::SidebarWidth, "Sidebar width", widths(files::kMinSidebarWidth, files::kMaxSidebarWidth));
   section("Preview");
   addBool(P::ShowPreview, "Show preview");
