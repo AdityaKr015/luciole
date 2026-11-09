@@ -1,5 +1,6 @@
 #include "fs/filename.h"
 #include "operations/archive_rar_input.h"
+#include "operations/archive_sevenzip_provider.h"
 #include "operations/archive_support.h"
 #include "operations/archive_xz_input.h"
 
@@ -146,10 +147,8 @@ namespace {
       const auto status = archive_read_next_header(value.get(), &entry);
       const auto format = archive_format(value.get()) & ARCHIVE_FORMAT_BASE_MASK;
       if (archive_read_has_encrypted_entries(value.get()) > 0) {
-        if (format == ARCHIVE_FORMAT_7ZIP) {
-          throwFileError(
-              FileErrorKind::Unsupported, "Encrypted 7z archives are not supported by the archive provider."
-          );
+        if (format == ARCHIVE_FORMAT_7ZIP && status != ARCHIVE_OK && status != ARCHIVE_EOF) {
+          throwFileError(FileErrorKind::Unsupported, "Encrypted 7z headers or link metadata are not supported yet.");
         }
         if (format == ARCHIVE_FORMAT_RAR || format == ARCHIVE_FORMAT_RAR_V5) {
           throwFileError(
@@ -251,7 +250,13 @@ namespace {
           .size = std::nullopt,
           .link = {}
       };
+      entry.encrypted = archive_entry_is_data_encrypted(header) > 0;
       const auto type = archive_entry_filetype(header);
+      if (entry.encrypted
+          && (archive_format(reader.value.get()) & ARCHIVE_FORMAT_BASE_MASK) == ARCHIVE_FORMAT_7ZIP
+          && (type != AE_IFREG || archive_entry_hardlink(header))) {
+        throwFileError(FileErrorKind::Unsupported, "Encrypted 7z link metadata is not supported yet.");
+      }
       if (const char* target = archive_entry_hardlink(header)) {
         entry.kind = ArchiveEntryKind::Hardlink;
         entry.link = safePath(bounded(target), reader.work);
@@ -502,7 +507,12 @@ files::archive_work::Prepared files::archive_work::extract(
               O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600
           )
       );
-      extractData(reader, output.get(), total, entry.size);
+      if (entry.encrypted && (archive_format(reader.value.get()) & ARCHIVE_FORMAT_BASE_MASK) == ARCHIVE_FORMAT_7ZIP) {
+        extractEncryptedSevenZip(reader.input, output.get(), entry, work, passwords, total);
+        reader.skip();
+      } else {
+        extractData(reader, output.get(), total, entry.size);
+      }
       bodySizes.emplace(path, static_cast<std::uint64_t>(statFd(output.get()).st_size));
       const auto mode = open ? 0600U : 0600U | (entry.mode & 0155U);
       if (::fchmod(output.get(), static_cast<mode_t>(mode)) != 0) {

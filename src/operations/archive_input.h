@@ -13,6 +13,7 @@ namespace files::archive_work {
     std::size_t read(std::span<char> buffer);
     std::int64_t seek(std::int64_t offset, int whence);
     void unchanged() const;
+    Fd duplicateSingle() const;
     const std::string& fingerprint() const { return m_fingerprint; }
     bool split() const { return !m_prefix.empty(); }
 

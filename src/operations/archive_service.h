@@ -27,6 +27,7 @@ namespace files {
     std::string link;
     unsigned mode = 0644;
     FileIconSource icon{};
+    bool encrypted = false;
   };
   struct ArchiveCatalog {
     Location source;
@@ -45,11 +46,13 @@ namespace files {
   };
   std::span<const ArchiveFormatInfo> archiveFormats();
   bool archiveEncryptionAvailable();
-  std::optional<std::string> archivePasswordProblem(std::string_view password);
+  std::optional<std::string>
+  archivePasswordProblem(std::string_view password, ArchiveFormat format = ArchiveFormat::Zip);
   struct ArchivePasswordRequest {
     std::uint64_t id;
     Location source;
     bool retry;
+    ArchiveFormat format = ArchiveFormat::Zip;
   };
 
   // One archive job, including staged publication through the existing transfer service.

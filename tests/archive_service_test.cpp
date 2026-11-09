@@ -4,6 +4,7 @@
 #include "fs/gio_ptr.h"
 #include "operations/archive_input.h"
 #include "operations/archive_service.h"
+#include "operations/archive_sevenzip_provider.h"
 #include "operations/archive_work.h"
 #include "operations/archive_xz_input.h"
 #include "test_check.h"
@@ -23,6 +24,7 @@
 #include <stdexcept>
 #include <sys/resource.h>
 #include <sys/stat.h>
+#include <thread>
 #include <unistd.h>
 
 namespace {
@@ -1008,6 +1010,241 @@ namespace {
       TEST_CHECK(service.error()->message.contains("Encrypted RAR") && !service.passwordRequest());
     }
   }
+  void testEncryptedSevenZip(
+      const fs::path& source, const fs::path& destination, files::ArchiveService& service, Pump& pump
+  ) {
+    const auto known = service.catalog();
+    TEST_CHECK(!service.error() && known && known->encrypted && known->entries.size() == 3);
+    TEST_CHECK(std::ranges::count(known->entries, true, &files::ArchiveEntry::encrypted) == 2);
+    TEST_CHECK(service.extract(location(source), location(destination), {}, known));
+    const auto first = passwordRequest(service, pump);
+    TEST_CHECK(first.format == files::ArchiveFormat::SevenZip && !first.retry && !fs::exists(destination));
+    for (const auto& invalid : {std::string("line\nbreak"), std::string("line\rbreak"), std::string("\xff")}) {
+      TEST_CHECK(files::archivePasswordProblem(invalid, first.format));
+      TEST_CHECK(!service.providePassword(first.id, invalid));
+      TEST_CHECK(service.passwordRequest()->id == first.id);
+    }
+    TEST_CHECK(service.providePassword(first.id, "wrong password"));
+    const auto retry = passwordRequest(service, pump);
+    TEST_CHECK(retry.retry && !fs::exists(destination));
+    TEST_CHECK(service.providePassword(retry.id, "fixture-pass"));
+    wait(service, pump);
+    if (service.error()) {
+      throw std::runtime_error(service.error()->message);
+    }
+    TEST_CHECK(read(destination / "folder/first.txt") == sevenZipPayload("first payload\n"));
+    TEST_CHECK(read(destination / "second.txt") == sevenZipPayload("second payload\n"));
+    const auto selected = fs::path(destination.string() + "-selected");
+    TEST_CHECK(service.extract(location(source), location(selected), {"second.txt"}, known));
+    auto request = passwordRequest(service, pump);
+    TEST_CHECK(service.providePassword(request.id, "fixture-pass"));
+    wait(service, pump);
+    TEST_CHECK(!service.error() && !fs::exists(selected / "folder"));
+    TEST_CHECK(read(selected / "second.txt") == sevenZipPayload("second payload\n"));
+    TEST_CHECK(service.openMember("second.txt"));
+    request = passwordRequest(service, pump);
+    TEST_CHECK(service.providePassword(request.id, "fixture-pass"));
+    wait(service, pump);
+    const auto opened = service.takeOpenedFile();
+    TEST_CHECK(!service.error() && opened && read(*opened->nativePath()) == sevenZipPayload("second payload\n"));
+    TEST_CHECK((fs::status(*opened->nativePath()).permissions() & fs::perms::owner_exec) == fs::perms::none);
+    const auto cancelled = fs::path(destination.string() + "-cancelled");
+    TEST_CHECK(service.extract(location(source), location(cancelled), {}, known));
+    request = passwordRequest(service, pump);
+    service.cancel();
+    wait(service, pump);
+    TEST_CHECK(service.error() && !service.passwordRequest() && !fs::exists(cancelled));
+    TEST_CHECK(!service.providePassword(request.id, "fixture-pass"));
+    TEST_CHECK(service.extract(location(source), location(cancelled), {}, known));
+    request = passwordRequest(service, pump);
+    const auto replacement = fs::path(source.string() + "-replacement");
+    write(replacement, read(source));
+    fs::rename(replacement, source);
+    TEST_CHECK(service.providePassword(request.id, "fixture-pass"));
+    wait(service, pump);
+    TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Changed);
+    TEST_CHECK(!service.passwordRequest() && !fs::exists(cancelled));
+    service.shutdown();
+    wait(service, pump);
+    TEST_CHECK(!fs::exists(*opened->nativePath()));
+  }
+  void testSevenZipLiteralNames(const Fixture& fixture, Pump& pump) {
+    const auto source = fixture.root / "literal.7z", output = fixture.root / "literal-output";
+    write(source, fixtureBytes(sevenzip_fixtures::literal));
+    files::ArchiveService service;
+    TEST_CHECK(service.inspect(location(source)));
+    wait(service, pump);
+    TEST_CHECK(!service.error() && service.catalog()->encrypted);
+    TEST_CHECK(service.extract(location(source), location(output)));
+    const auto request = passwordRequest(service, pump);
+    TEST_CHECK(service.providePassword(request.id, " café secret "));
+    wait(service, pump);
+    if (service.error()) {
+      throw std::runtime_error(service.error()->message);
+    }
+    for (const auto& [name, contents] : std::array<std::pair<const char*, const char*>, 8>{
+             {{"same.txt", "root payload"},
+              {"nested/same.txt", "nested payload"},
+              {"@list", "literal at"},
+              {"wild*card", "literal wildcard"},
+              {"line\nbreak", "literal newline"},
+              {"-poption", "literal dash"},
+              {"café", "literal unicode"},
+              {"empty", ""}}
+         }) {
+      TEST_CHECK(fs::is_regular_file(output / name) && read(output / name) == contents);
+    }
+    TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
+  }
+  void testEncryptedSevenZipBoundaries(const Fixture& fixture, Pump& pump) {
+    const auto source = fixture.root / "encrypted-boundary.7z", output = fixture.root / "encrypted-boundary-output";
+    const auto bytes = fixtureBytes(sevenzip_fixtures::literal);
+    write(source, bytes);
+    files::ArchiveLimits limits;
+    limits.maxExpandedBytes = 1;
+    files::ArchiveService limited(limits);
+    TEST_CHECK(limited.extract(location(source), location(output)));
+    wait(limited, pump);
+    TEST_CHECK(limited.error() && !limited.passwordRequest() && !fs::exists(output));
+    files::ArchiveService service;
+    TEST_CHECK(service.extract(location(source), location(output)));
+    auto request = passwordRequest(service, pump);
+    TEST_CHECK(service.providePassword(request.id, " café secret "));
+    service.cancel();
+    wait(service, pump);
+    TEST_CHECK(service.error() && !service.passwordRequest() && !fs::exists(output));
+    {
+      files::ArchiveService closing;
+      TEST_CHECK(closing.extract(location(source), location(output)));
+      (void)passwordRequest(closing, pump);
+      closing.shutdown();
+      wait(closing, pump);
+      TEST_CHECK(!closing.passwordRequest() && !fs::exists(output));
+    }
+    auto corrupt = bytes;
+    corrupt[32] ^= 0x20;
+    write(source, corrupt);
+    TEST_CHECK(service.extract(location(source), location(output)));
+    request = passwordRequest(service, pump);
+    TEST_CHECK(service.providePassword(request.id, " café secret "));
+    const auto retry = passwordRequest(service, pump);
+    TEST_CHECK(retry.retry && !fs::exists(output));
+    service.cancel();
+    wait(service, pump);
+    TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
+  }
+  int boundedEncryptedWriteFailure() {
+    Fixture fixture;
+    const auto source = fixture.root / "source.7z", output = fixture.root / "output";
+    write(source, fixtureBytes(sevenzip_fixtures::literal));
+    files::archive_work::Progress progress;
+    files::archive_work::Passwords passwords;
+    passwords.values.emplace_back(" café secret ");
+    const files::CancelToken cancel;
+    rlimit previous{};
+    TEST_CHECK(::getrlimit(RLIMIT_FSIZE, &previous) == 0);
+    const rlimit limit{0, previous.rlim_max};
+    std::signal(SIGXFSZ, SIG_IGN);
+    TEST_CHECK(::setrlimit(RLIMIT_FSIZE, &limit) == 0);
+    bool failed = false;
+    try {
+      auto prepared = files::archive_work::extract(
+          location(source), location(output), {}, {}, false, {}, cancel, progress, passwords
+      );
+      (void)files::archive_work::cleanup({prepared.stage});
+    } catch (const files::FileErrorException& error) {
+      failed = error.error().kind != files::FileErrorKind::Denied;
+    }
+    TEST_CHECK(failed && !progress.passwordNeeded.load() && !fs::exists(output));
+    TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
+    return 0;
+  }
+  int sevenZipProviderFailures() {
+    Fixture fixture;
+    const auto tools = fixture.root / "tools", source = fixture.root / "source.7z", marker = fixture.root / "marker";
+    fs::create_directory(tools);
+    write(source, fixtureBytes(sevenzip_fixtures::literal));
+    // This fake provider has no subprocesses of its own. Secrets are public test data.
+    write(tools / "7zz", R"sh(#!/bin/sh
+for argument do
+  case "$argument" in *fixture-pass*) exit 7;; esac
+done
+[ -r /proc/self/fd/3 ] || exit 7
+case "$NF_SEVENZIP_TEST_MODE" in
+  early) exit 8;;
+esac
+IFS= read -r secret
+[ "$secret" = fixture-pass ] || exit 7
+case "$NF_SEVENZIP_TEST_MODE" in
+  short) printf x;;
+  oversize) printf 'this is more than twelve bytes';;
+  corrupt) exit 2;;
+  memory) exit 8;;
+  hang) printf '%s' "$$" > "$NF_SEVENZIP_TEST_MARKER"; while :; do :; done;;
+  *) exit 7;;
+esac
+)sh");
+    fs::permissions(tools / "7zz", fs::perms::owner_all);
+    TEST_CHECK(::setenv("PATH", tools.c_str(), 1) == 0);
+    TEST_CHECK(::setenv("NF_SEVENZIP_TEST_MARKER", marker.c_str(), 1) == 0);
+    const files::ArchiveEntry entry{
+        .path = "same.txt", .parent = {}, .name = "same.txt", .displayName = {}, .size = 12, .link = {}
+    };
+    for (const std::string mode : {"short", "oversize", "corrupt", "memory", "early", "hang", "cancel", "changed"}) {
+      const auto output = fixture.root / (mode + "-output");
+      const files::Fd destination(::open(output.c_str(), O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600));
+      TEST_CHECK(destination.get() >= 0);
+      const bool waiting = mode == "hang" || mode == "cancel" || mode == "changed";
+      TEST_CHECK(::setenv("NF_SEVENZIP_TEST_MODE", waiting ? "hang" : mode.c_str(), 1) == 0);
+      fs::remove(marker);
+      files::archive_work::Progress progress;
+      files::CancelToken cancel;
+      files::archive_work::Passwords passwords;
+      passwords.values.emplace_back("fixture-pass");
+      files::archive_work::Work work{{}, cancel, progress, files::archive_work::Clock::now() + 2s, {}};
+      if (mode == "hang") {
+        work.deadline = files::archive_work::Clock::now() + 150ms;
+      }
+      files::archive_work::Input input(location(source), work);
+      std::thread interrupt;
+      if (mode == "cancel" || mode == "changed") {
+        interrupt = std::thread([&] {
+          const auto timeout = std::chrono::steady_clock::now() + 1s;
+          while (!fs::exists(marker) && std::chrono::steady_clock::now() < timeout) {
+            std::this_thread::sleep_for(1ms);
+          }
+          if (mode == "changed") {
+            const auto replacement = fixture.root / "replacement";
+            write(replacement, read(source));
+            fs::rename(replacement, source);
+            // Finish the helper; source identity must be checked before interpreting its result.
+            if (fs::exists(marker)) {
+              ::kill(std::stoi(read(marker)), SIGTERM);
+            }
+          } else {
+            cancel.cancel();
+          }
+        });
+      }
+      std::uint64_t total = 0;
+      bool failed = false;
+      try {
+        files::archive_work::extractEncryptedSevenZip(input, destination.get(), entry, work, passwords, total);
+      } catch (const std::exception&) {
+        failed = true;
+      }
+      if (interrupt.joinable()) {
+        interrupt.join();
+      }
+      TEST_CHECK(failed && total == 0 && fs::is_empty(fixture.root / "tmp"));
+      TEST_CHECK(progress.passwordNeeded.load() == (mode == "corrupt"));
+      if (waiting && fs::exists(marker)) {
+        errno = 0;
+        TEST_CHECK(::kill(std::stoi(read(marker)), 0) == -1 && errno == ESRCH);
+      }
+    }
+    return 0;
+  }
   void testSevenZipProviders(const Fixture& fixture, Pump& pump) {
     for (const auto& reference : sevenzip_fixtures::archives) {
       if ((reference.name == "bzip2" && !archive_bzlib_version())
@@ -1023,6 +1260,10 @@ namespace {
       files::ArchiveService service;
       TEST_CHECK(service.inspect(location(source)));
       wait(service, pump);
+      if (reference.name == "encrypted-data") {
+        testEncryptedSevenZip(source, destination, service, pump);
+        continue;
+      }
       if (reference.encrypted) {
         TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Unsupported);
         TEST_CHECK(
@@ -1400,6 +1641,24 @@ namespace {
     }
     return 0;
   }
+  int encryptedWithoutTools() {
+    Fixture fixture;
+    Pump pump;
+    const auto source = fixture.root / "source.7z", destination = fixture.root / "output";
+    const auto* reference =
+        std::ranges::find(sevenzip_fixtures::archives, "encrypted-data", &sevenzip_fixtures::Fixture::name);
+    TEST_CHECK(reference != sevenzip_fixtures::archives.end());
+    write(source, fixtureBytes(*reference));
+    files::ArchiveService service;
+    TEST_CHECK(service.inspect(location(source)));
+    wait(service, pump);
+    TEST_CHECK(!service.error() && service.catalog()->encrypted);
+    TEST_CHECK(service.extract(location(source), location(destination)));
+    wait(service, pump);
+    TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Unavailable);
+    TEST_CHECK(!service.passwordRequest() && !fs::exists(destination) && fs::is_empty(fixture.root / "tmp"));
+    return 0;
+  }
   int boundedWriteFailure() {
     Fixture fixture;
     const auto source = fixture.root / "large.txt";
@@ -1460,6 +1719,15 @@ int main(int argc, char** argv) {
     if (argc == 2 && std::string_view(argv[1]) == "--compressed-without-tools") {
       return compressedWithoutTools();
     }
+    if (argc == 2 && std::string_view(argv[1]) == "--encrypted-without-tools") {
+      return encryptedWithoutTools();
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--bounded-encrypted-write-failure") {
+      return boundedEncryptedWriteFailure();
+    }
+    if (argc == 2 && std::string_view(argv[1]) == "--sevenzip-provider-failures") {
+      return sevenZipProviderFailures();
+    }
     Fixture fixture;
     Pump pump;
     testRarProviders(fixture, pump);
@@ -1467,6 +1735,8 @@ int main(int argc, char** argv) {
     testRarFailures(fixture, pump);
     testRarMainHeaders(fixture, pump);
     testSevenZipProviders(fixture, pump);
+    testSevenZipLiteralNames(fixture, pump);
+    testEncryptedSevenZipBoundaries(fixture, pump);
     testSevenZipFailures(fixture, pump);
     testSevenZipBoundaries(fixture, pump);
     testXzTar(fixture, pump);
@@ -1502,6 +1772,18 @@ int main(int argc, char** argv) {
         g_subprocess_launcher_spawn(launcher.get(), nullptr, "/proc/self/exe", "--compressed-without-tools", nullptr)
     );
     TEST_CHECK(native && g_subprocess_wait_check(native.get(), nullptr, nullptr));
+    files::GioPtr<GSubprocess> missing(
+        g_subprocess_launcher_spawn(launcher.get(), nullptr, "/proc/self/exe", "--encrypted-without-tools", nullptr)
+    );
+    TEST_CHECK(missing && g_subprocess_wait_check(missing.get(), nullptr, nullptr));
+    files::GioPtr<GSubprocess> failures(
+        g_subprocess_launcher_spawn(launcher.get(), nullptr, "/proc/self/exe", "--sevenzip-provider-failures", nullptr)
+    );
+    TEST_CHECK(failures && g_subprocess_wait_check(failures.get(), nullptr, nullptr));
+    files::GioPtr<GSubprocess> writeFailure(g_subprocess_new(
+        G_SUBPROCESS_FLAGS_NONE, nullptr, "/proc/self/exe", "--bounded-encrypted-write-failure", nullptr
+    ));
+    TEST_CHECK(writeFailure && g_subprocess_wait_check(writeFailure.get(), nullptr, nullptr));
     TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
     std::println("archive checks passed");
     return 0;

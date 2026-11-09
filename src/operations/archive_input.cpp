@@ -196,3 +196,10 @@ void files::archive_work::Input::unchanged() const {
     }
   }
 }
+
+files::Fd files::archive_work::Input::duplicateSingle() const {
+  if (split() || m_parts.size() != 1) {
+    throwFileError(FileErrorKind::Unsupported, "This provider requires one ordinary archive file.");
+  }
+  return opened(::fcntl(m_parts.front().fd.get(), F_DUPFD_CLOEXEC, 4));
+}

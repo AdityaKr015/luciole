@@ -211,6 +211,7 @@ struct files::ArchiveService::State : std::enable_shared_from_this<State> {
     progress.bytes.store(0);
     progress.items.store(0);
     progress.passwordNeeded.store(false);
+    progress.passwordFormat = ArchiveFormat::Zip;
     phase = operation == Operation::Inspect ? ArchivePhase::Reading
         : operation == Operation::Compress  ? ArchivePhase::Compressing
                                             : ArchivePhase::Extracting;
@@ -238,7 +239,8 @@ struct files::ArchiveService::State : std::enable_shared_from_this<State> {
           owner->error = outcome ? std::nullopt : std::optional(outcome.error());
           if (!owner->closing && !token.cancelled() && !outcome && owner->progress.passwordNeeded.load()) {
             owner->password = ArchivePasswordRequest{
-                ++owner->nextPassword, owner->request->sources.front(), !owner->request->passwords->values.empty()
+                ++owner->nextPassword, owner->request->sources.front(), !owner->request->passwords->values.empty(),
+                owner->progress.passwordFormat
             };
             owner->error.reset();
             owner->phase = ArchivePhase::WaitingPassword;
@@ -367,7 +369,7 @@ bool files::ArchiveService::providePassword(std::uint64_t id, std::string passwo
       || m_state->password->id != id
       || m_state->phase != ArchivePhase::WaitingPassword
       || value.empty()
-      || archivePasswordProblem(value)) {
+      || archivePasswordProblem(value, m_state->password->format)) {
     return false;
   }
   auto& passwords = m_state->request->passwords->values;

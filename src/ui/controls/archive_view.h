@@ -34,7 +34,8 @@ private:
 class ArchivePasswordDialog final : public Flex {
 public:
   ArchivePasswordDialog(
-      std::string name, bool retry, std::function<bool(std::string)> submit, std::function<void()> cancel
+      std::string name, bool retry, std::function<bool(std::string)> submit, std::function<void()> cancel,
+      files::ArchiveFormat format = files::ArchiveFormat::Zip
   );
   InputArea* focusArea() const;
 
@@ -43,6 +44,7 @@ private:
   Input* m_password = nullptr;
   Label* m_error = nullptr;
   std::function<bool(std::string)> m_submit;
+  files::ArchiveFormat m_format = files::ArchiveFormat::Zip;
 };
 class ArchiveView final : public Flex {
 public:

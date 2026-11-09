@@ -8,6 +8,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <functional>
+#include <glib.h>
 #include <map>
 #include <set>
 #include <unistd.h>
@@ -256,9 +257,14 @@ bool files::archiveEncryptionAvailable() {
   return available;
 }
 
-std::optional<std::string> files::archivePasswordProblem(std::string_view password) {
+std::optional<std::string> files::archivePasswordProblem(std::string_view password, ArchiveFormat format) {
   if (password.size() > 1024 || password.contains('\0')) {
     return "Use a password of at most 1024 bytes without NUL characters.";
+  }
+  if (format == ArchiveFormat::SevenZip
+      && (password.find_first_of("\r\n") != std::string_view::npos
+          || !g_utf8_validate(password.data(), static_cast<gssize>(password.size()), nullptr))) {
+    return "7z passwords must be UTF-8 text without line breaks.";
   }
   return std::nullopt;
 }

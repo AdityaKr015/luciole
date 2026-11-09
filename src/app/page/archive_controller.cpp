@@ -228,7 +228,7 @@ void ArchiveController::syncPassword() {
         }
         return false;
       },
-      [this] { m_page.dismissMenu(); }
+      [this] { m_page.dismissMenu(); }, request->format
   );
   auto* dialog = root.get();
   m_page.showCenteredDialog(std::move(root), 464.0F);

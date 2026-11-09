@@ -524,9 +524,10 @@ InputArea* ArchiveDialog::focusArea() const { return (m_name ? m_name : m_destin
 void ArchiveDialog::reveal(const Node* node) { m_scroll->requestScrollIntoView(node); }
 
 ArchivePasswordDialog::ArchivePasswordDialog(
-    std::string name, bool retry, std::function<bool(std::string)> submit, std::function<void()> cancel
+    std::string name, bool retry, std::function<bool(std::string)> submit, std::function<void()> cancel,
+    files::ArchiveFormat format
 )
-    : m_submit(std::move(submit)) {
+    : m_submit(std::move(submit)), m_format(format) {
   setDirection(FlexDirection::Vertical);
   setAlign(FlexAlign::Stretch);
   setGap(Style::spaceSm);
@@ -540,7 +541,9 @@ ArchivePasswordDialog::ArchivePasswordDialog(
                       }}));
   addChild(
       ui::label(
-          {.text = retry ? "That password did not unlock all selected files. Try another password."
+          {.text = retry ? (format == files::ArchiveFormat::SevenZip
+                                ? "Could not unlock the data. Check the password or archive integrity."
+                                : "That password did not unlock all selected files. Try another password.")
                          : "Enter the password to unlock the selected files.",
            .fontSize = Style::fontSizeCaption,
            .color = colorSpecFromRole(retry ? ColorRole::Error : ColorRole::OnSurfaceVariant),
@@ -563,7 +566,7 @@ void ArchivePasswordDialog::submit() {
   const auto& password = m_password->value();
   if (password.empty()) {
     m_error->setText("Enter a password.");
-  } else if (const auto problem = files::archivePasswordProblem(password)) {
+  } else if (const auto problem = files::archivePasswordProblem(password, m_format)) {
     m_error->setText(*problem);
   } else if (m_submit(password)) {
     m_password->setValue("");

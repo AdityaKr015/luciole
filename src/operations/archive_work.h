@@ -14,6 +14,7 @@ namespace files::archive_work {
     std::atomic<bool> passwordNeeded{false};
     // Accessed by a worker, then its completion callback, never concurrently.
     std::string sourceStamp;
+    ArchiveFormat passwordFormat = ArchiveFormat::Zip;
   };
   struct Passwords {
     std::vector<std::string> values;

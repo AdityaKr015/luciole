@@ -95,4 +95,14 @@ namespace sevenzip_fixtures {
           true
       },
   };
+  // Literal names and the public test-only password " café secret ".
+  inline constexpr Fixture literal{
+      "literal",
+      "N3q8ryccAAS+w6yyKQEAAAAAAAAiAAAAAAAAAOZuv+jhBHz7UlGZJ3dcGWqG+cj29nf6TRTWANKrqJ46PlrrpMoUTiJdLPHOFbPl"
+      "SmLUtVJnlaOaJLbuu3LLoiaL/s1EpnEfxPSLIUQc8ZxNM9kQMAAAgTMHrg/SwW/9QLuUZDs5pHrnaiJtKa/oGNAT7Q4VJwWbL/vV"
+      "BAJM5yz/H5fF+NoMZju0SO11o9bYS2AqZkal/JU3uJZElVDyZHMPD0gJ3opW/SFnDOxJTg0fWZEH7hboIGZqEPxEpPCiYiZaDa9Z"
+      "084cAo9AuaDQ1L97hjB4nhX+BPRujne9SiffDuisiHeipi1jjuC5mmEQGoHSguI7SPzSUad5h1SX529q2/HapKqGwWcgj9uUjVD6"
+      "/2Qoh1Ba79YKzDpQ2GTbudoHObgfBkXU+AAAAAAXBlABCYDZAAcLAQABIwMBAQVdABAAAAyBOgoBlCmeCgAA",
+      true
+  };
 } // namespace sevenzip_fixtures

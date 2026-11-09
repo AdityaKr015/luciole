@@ -178,6 +178,7 @@ operations_lib = static_library('files-operations',
     'src/operations/archive_icons.cpp',
     'src/operations/archive_input.cpp',
     'src/operations/archive_rar_input.cpp',
+    'src/operations/archive_sevenzip_provider.cpp',
     'src/operations/archive_xz_input.cpp',
     'src/operations/archive_service.cpp',
     'src/operations/archive_reader.cpp',
@@ -202,10 +203,10 @@ operations_lib = static_library('files-operations',
     'src/operations/trash_service.cpp',
   ),
   include_directories: src_inc,
-  dependencies: [fs_dep, libacl, libarchive, liblzma],
+  dependencies: [fs_dep, libacl, libarchive, liblzma, dependency('threads')],
 )
 operations_dep = declare_dependency(link_with: operations_lib, include_directories: src_inc,
-  dependencies: [fs_dep, libacl, libarchive, liblzma],
+  dependencies: [fs_dep, libacl, libarchive, liblzma, dependency('threads')],
 )
 
 libpng = dependency('libpng')

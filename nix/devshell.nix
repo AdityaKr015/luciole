@@ -19,6 +19,7 @@ pkgs.mkShell {
     xdg-terminal-exec
     ffmpeg
     poppler-utils
+    _7zz
   ];
 
   shellHook = ''

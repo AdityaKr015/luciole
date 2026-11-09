@@ -30,6 +30,7 @@
   stb,
   ffmpeg,
   poppler-utils,
+  _7zz,
   nlohmann_json,
   tomlplusplus,
   autoAddDriverRunpath,
@@ -161,6 +162,7 @@ stdenv.mkDerivation (finalAttrs: {
           xdg-terminal-exec
           ffmpeg
           poppler-utils
+          _7zz
         ]
       }" \
       --suffix GIO_EXTRA_MODULES : "${gvfs}/lib/gio/modules" \
