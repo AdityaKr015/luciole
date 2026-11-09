@@ -1,8 +1,10 @@
 #pragma once
 
 #include "browser/action_registry.h"
+#include "fs/location.h"
 #include "render/scene/node.h"
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -46,10 +48,20 @@ public:
   virtual bool targetsCurrent(const std::vector<files::DirectoryEntry>& targets) = 0;
   // Shows `message` in the status bar.
   virtual void actionError(std::string message) = 0;
+  // Replaces the status bar message without scheduling a page sync, for code that runs before one anyway.
+  virtual void setActionMessage(std::string message) = 0;
+  // Selects `targets` once the current folder reloads.
+  virtual void revealOnReload(std::vector<files::Location> targets) = 0;
+  // True while no running or pending file operation conflicts with deleting from Trash.
+  virtual bool canEmptyTrash() const = 0;
+  // Cancels a file or place drag in progress.
+  virtual void cancelDrag() = 0;
   virtual files::WaylandTextClipboard& clipboard() = 0;
   virtual files::WindowSurface& surface() = 0;
   // Gives keyboard focus back to the file list, if there is one.
   virtual void focusFileList() = 0;
+  // Focuses the sidebar entry for `location` once no popup or overlay is open.
+  virtual void restorePlaceFocus(files::Location location) = 0;
 
   // Replaces the active dialog with `root` on a new popup surface anchored at `anchor`.
   virtual void showPopup(
@@ -63,6 +75,10 @@ public:
   virtual PopupSurface* menuSurface() = 0;
   virtual InputDispatcher& menuDispatcher() = 0;
   virtual ActiveDialog& activeDialog() = 0;
+  // The context menu on the popup; null while the popup shows a dialog or nothing.
+  virtual ContextMenuControl* contextMenu() = 0;
+  // Serial for a new popup grab: the last press, else the last input.
+  virtual std::uint32_t popupSerial() = 0;
 
 protected:
   PageContext() = default;

@@ -49,7 +49,6 @@
 #include "ui/controls/file_error_text.h"
 #include "ui/controls/file_preview_view.h"
 #include "ui/controls/input.h"
-#include "ui/controls/link_dialog.h"
 #include "ui/controls/miller_view.h"
 #include "ui/controls/name_editor.h"
 #include "ui/controls/permission_editor.h"
@@ -69,21 +68,11 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
-#include <exception>
 #include <format>
 #include <memory>
 #include <string>
 #include <unordered_set>
 #include <utility>
-
-namespace {
-  std::string createErrorText(const std::optional<files::FileError>& error) {
-    return error ? files::nameErrorText(*error, "The destination folder is no longer available.") : std::string{};
-  }
-  std::string renameErrorText(const std::optional<files::FileError>& error) {
-    return error ? files::nameErrorText(*error) : std::string{};
-  }
-} // namespace
 
 BrowserPage::BrowserPage(
     WaylandConnection& connection, RenderContext& renderer, TextInputService& textInput,
@@ -236,49 +225,29 @@ BrowserPage::BrowserPage(
   });
   m_emptyTrash.setChangedCallback([this] {
     updateOperationProgress();
-    m_emptyTrashDirty = true;
+    m_trashController.markEmptyTrashDirty();
     m_browserDirty = true;
     m_surface->requestUpdate();
   });
   m_restore.setChangedCallback([this] {
     updateOperationProgress();
-    if (!m_restore.busy()) {
-      const auto& results = m_restore.results();
-      const auto count = [&](files::RestoreOutcome outcome) {
-        return std::ranges::count(results, outcome, &files::RestoreResult::outcome);
-      };
-      const auto restored = count(files::RestoreOutcome::Restored);
-      m_actionError = std::format("{} item{} restored", restored, restored == 1 ? "" : "s");
-      for (const auto& [outcome, label] :
-           {std::pair{files::RestoreOutcome::Skipped, "skipped"}, std::pair{files::RestoreOutcome::Failed, "failed"},
-            std::pair{files::RestoreOutcome::Cancelled, "cancelled"},
-            std::pair{files::RestoreOutcome::Unconfirmed, "could not be confirmed"}}) {
-        if (const auto amount = count(outcome); amount != 0) {
-          m_actionError += std::format(" · {} {}", amount, label);
-        }
-      }
-      const auto error = std::ranges::find_if(results, [](const auto& item) { return item.error.has_value(); });
-      if (error != results.end()) {
-        m_actionError += std::format(" · {}: {}", error->displayName, files::fileErrorText(error->error));
-      }
-      browser().refresh();
-    }
+    m_trashController.restoreChanged();
     m_browserDirty = true;
     m_surface->requestUpdate();
   });
   m_trash.setChangedCallback([this] {
     updateOperationProgress();
-    m_trashDirty = true;
+    m_trashController.markTrashDirty();
     m_browserDirty = true;
     m_surface->requestUpdate();
   });
   m_creator.setChangedCallback([this] {
-    m_creationDirty = true;
+    m_createController.markDirty();
     m_browserDirty = true;
     m_surface->requestUpdate();
   });
   m_renamer.setChangedCallback([this] {
-    m_renameDirty = true;
+    m_renameController.markDirty();
     m_browserDirty = true;
     m_surface->requestUpdate();
   });
@@ -582,7 +551,9 @@ void BrowserPage::configurePlacesCallbacks() {
     openPlaceMenu(bookmark, x, y);
   });
   m_places->setDragCallback([this](const files::Bookmark& bookmark) { startPlaceDrag(bookmark); });
-  m_places->setRenameCallback([this](const files::Bookmark& bookmark) { openPlaceRename(bookmark); });
+  m_places->setRenameCallback([this](const files::Bookmark& bookmark) {
+    m_renameController.openPlaceRename(bookmark);
+  });
 }
 
 void BrowserPage::reusePlacesFrom(BrowserPage& previous) {
@@ -691,8 +662,7 @@ void BrowserPage::setForeignDrop(
 }
 
 bool BrowserPage::popupOwns(wl_surface* surface) const {
-  return (m_menuSurface && m_menuSurface->wlSurface() == surface)
-      || (m_documentSurface && m_documentSurface->wlSurface() == surface);
+  return (m_menuSurface && m_menuSurface->wlSurface() == surface) || m_createController.documentOwns(surface);
 }
 
 bool BrowserPage::popup() const { return m_menuSurface != nullptr; }
@@ -907,14 +877,7 @@ float BrowserPage::sidebarControlWidth() const { return m_showSidebar ? sidebarW
 void BrowserPage::pumpJobs() {
   if (m_root) {
     syncTransferConflict();
-    if (m_trashDirty) {
-      m_trashDirty = false;
-      syncTrash();
-    }
-    if (m_emptyTrashDirty) {
-      m_emptyTrashDirty = false;
-      syncEmptyTrash();
-    }
+    m_trashController.onFrame();
   }
 }
 
@@ -972,14 +935,12 @@ void BrowserPage::outputChanged(wl_output* output) {
   if (m_menuSurface != nullptr && m_connection.outputForSurface(m_menuSurface->wlSurface()) == output) {
     m_menuSurface->onSurfaceOutputEnter(m_menuSurface->wlSurface(), output);
   }
-  if (m_documentSurface && m_connection.outputForSurface(m_documentSurface->wlSurface()) == output) {
-    m_documentSurface->onSurfaceOutputEnter(m_documentSurface->wlSurface(), output);
-  }
+  m_createController.outputChanged(output);
 }
 
 void BrowserPage::pointer(const PointerEvent& event) {
   if (m_menuSurface != nullptr && event.type == PointerEvent::Type::Button && event.pressed) {
-    const bool inPopup = (m_documentSurface && event.surface == m_documentSurface->wlSurface())
+    const bool inPopup = m_createController.documentOwns(event.surface)
         || (event.surface == m_menuSurface->wlSurface()
             && event.sx >= 0
             && event.sy >= 0
@@ -993,8 +954,8 @@ void BrowserPage::pointer(const PointerEvent& event) {
   }
   auto* dispatcher = event.surface == m_surface->wlSurface()                    ? &m_dispatcher
       : m_menuSurface != nullptr && event.surface == m_menuSurface->wlSurface() ? &m_menuDispatcher
-      : m_documentSurface && event.surface == m_documentSurface->wlSurface()    ? &m_documentDispatcher
-                                                                                : nullptr;
+      : m_createController.documentOwns(event.surface) ? &m_createController.documentDispatcher()
+                                                       : nullptr;
   if (dispatcher == nullptr) {
     return;
   }
@@ -1244,8 +1205,8 @@ void BrowserPage::pointer(const PointerEvent& event) {
     dispatcher->pointerButton(x, y, event.button, event.pressed, event.serial, event.time, event.touch);
     break;
   case PointerEvent::Type::Axis:
-    if (dispatcher == &m_menuDispatcher && m_documentSurface) {
-      dismissDocumentMenu();
+    if (dispatcher == &m_menuDispatcher) {
+      m_createController.menuScrolled();
     }
     if (dispatcher == &m_dispatcher
         && m_viewMode == files::ViewMode::List
@@ -1271,17 +1232,12 @@ void BrowserPage::pointer(const PointerEvent& event) {
     );
     break;
   }
-  if (dispatcher == &m_documentDispatcher && event.type != PointerEvent::Type::Leave) {
-    m_closeDocumentPending = false;
+  if (dispatcher == &m_createController.documentDispatcher() && event.type != PointerEvent::Type::Leave) {
+    m_createController.documentPointer();
   }
   if (dispatcher == &m_menuDispatcher
       && (event.type == PointerEvent::Type::Enter || event.type == PointerEvent::Type::Motion)) {
-    if (m_documentRow && m_menu && m_menu->highlightedIndex() == *m_documentRow) {
-      m_documentKeyboard = false;
-      (void)m_menu->activateHighlighted();
-    } else if (m_documentSurface) {
-      dismissDocumentMenu();
-    }
+    m_createController.menuHover();
   }
 }
 
@@ -1359,29 +1315,7 @@ void BrowserPage::keyboard(const KeyboardEvent& event) {
       }
       return;
     }
-    if (m_documentSurface) {
-      if (!event.pressed) {
-        return;
-      }
-      if (KeySymbol::isEscape(event.sym) || KeySymbol::isLeft(event.sym)) {
-        dismissDocumentMenu();
-      } else if (KeySymbol::isEnter(event.sym)) {
-        if (m_documentMenu->highlightedIndex() >= m_documentMenu->entryCount()) {
-          (void)m_documentMenu->moveHighlight(1);
-        }
-        (void)m_documentMenu->activateHighlighted();
-      } else if (KeySymbol::isUp(event.sym) || KeySymbol::isDown(event.sym)) {
-        (void)m_documentMenu->moveHighlight(KeySymbol::isUp(event.sym) ? -1 : 1);
-        const auto index = m_documentMenu->highlightedIndex();
-        const float top = m_documentMenu->rowTop(index), bottom = m_documentMenu->rowBottom(index);
-        const float offset = m_documentScroll->scrollOffset();
-        if (top < offset) {
-          m_documentScroll->requestScrollToOffset(top);
-        } else if (bottom > offset + m_documentScroll->height()) {
-          m_documentScroll->requestScrollToOffset(bottom - m_documentScroll->height());
-        }
-        m_documentSurface->requestLayout();
-      }
+    if (m_createController.documentKey(event)) {
       return;
     }
     if (!event.pressed) {
@@ -1401,9 +1335,9 @@ void BrowserPage::keyboard(const KeyboardEvent& event) {
       }
     } else if (
         KeySymbol::isEnter(event.sym)
-        || (KeySymbol::isRight(event.sym) && m_documentRow && m_menu->highlightedIndex() == *m_documentRow)
+        || (KeySymbol::isRight(event.sym) && m_createController.isDocumentRow(m_menu->highlightedIndex()))
     ) {
-      m_documentKeyboard = true;
+      m_createController.openedFromKeyboard();
       (void)m_menu->activateHighlighted();
     }
     return;
@@ -2028,42 +1962,38 @@ void BrowserPage::dispatchAction(Action action, const files::ActionRequest& requ
     m_pins.reload();
     break;
   case Action::EmptyTrash:
-    openEmptyTrash();
+    m_trashController.openEmptyTrash();
     break;
   case Action::Rename:
     if (targets.size() == 1) {
-      openFileRename(targets.front());
+      m_renameController.openFileRename(targets.front());
     } else {
       m_batchRename.open(targets);
     }
     break;
   case Action::CreateLink:
-    openLinkDialog(targets.front());
+    m_createController.openLinkDialog(targets.front());
     break;
   case Action::Trash:
-    trashItems(targets);
+    m_trashController.trashItems(targets);
     break;
   case Action::Restore:
-    cancelDrag();
-    m_actionError.clear();
-    if (!m_restore.start(targets)) {
-      actionError("Could not start restoring the selection.");
-    }
+    m_trashController.restore(targets);
     break;
   case Action::DeletePermanently:
-    openEmptyTrash(targets);
+    m_trashController.openEmptyTrash(targets);
     break;
   case Action::Properties:
     showProperties(targets);
     break;
   case Action::CreateFolder:
   case Action::CreateFile:
-    openCreateItem(
+    m_createController.openCreateItem(
         *request.folder, action == Action::CreateFolder ? files::CreateKind::Folder : files::CreateKind::EmptyFile
     );
     break;
   case Action::NewDocument:
-    openDocumentMenu(request);
+    m_createController.openDocumentMenu(request);
     break;
   case Action::SelectAll:
     browser().model().selectAll();
@@ -2146,6 +2076,12 @@ void BrowserPage::actionError(std::string message) {
   m_browserDirty = true;
   m_surface->requestUpdate();
 }
+
+void BrowserPage::setActionMessage(std::string message) { m_actionError = std::move(message); }
+
+void BrowserPage::revealOnReload(std::vector<files::Location> targets) { m_revealTargets = std::move(targets); }
+
+void BrowserPage::restorePlaceFocus(files::Location location) { m_restorePlaceFocus = std::move(location); }
 
 bool BrowserPage::targetsCurrent(const std::vector<files::DirectoryEntry>& targets) {
   const bool current = std::ranges::all_of(targets, [this](const auto& target) {
@@ -2318,8 +2254,7 @@ void BrowserPage::openFileMenu(std::optional<files::EntryId> id, float x, float 
       {x, y, 1, 1}
   );
   if (m_menu && documentRow) {
-    m_documentRow = documentRow;
-    m_menu->setOnSubmenuOpen([this, request](const ContextMenuControlEntry&, float) { openDocumentMenu(request); });
+    m_createController.attachDocumentMenu(*documentRow, request);
   }
 }
 
@@ -2362,7 +2297,7 @@ void BrowserPage::openPlaceMenu(const files::Bookmark& bookmark, float x, float 
         } else if (action == 7 && bookmark.location == files::Location::trash()) {
           dispatchAction(Action::EmptyTrash);
         } else if (action == 6) {
-          openPlaceRename(bookmark);
+          m_renameController.openPlaceRename(bookmark);
         } else if (action == 3 || action == 4) {
           const auto& pins = m_pins.bookmarks();
           const auto found = std::ranges::find(pins, bookmark.location, &files::Bookmark::location);
@@ -2399,155 +2334,6 @@ bool BrowserPage::canEmptyTrash() const {
       && !m_creator.busy();
 }
 
-void BrowserPage::openEmptyTrash(std::optional<std::vector<files::DirectoryEntry>> selection) {
-  if (!canEmptyTrash()) {
-    actionError("Another file operation is still finishing.");
-    return;
-  }
-  cancelDrag();
-  const float width = std::min(420.0F, static_cast<float>(m_surface->width()) - 32.0F);
-  Button* cancel = nullptr;
-  Label* message = nullptr;
-  Label* size = nullptr;
-  Button* confirm = nullptr;
-  auto root = ui::column(
-      {.align = FlexAlign::Stretch,
-       .gap = Style::spaceMd,
-       .padding = Style::spaceMd,
-       .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
-       .radius = Style::radiusLg,
-       .border = colorSpecFromRole(ColorRole::OutlineVariant)},
-      ui::label(
-          {.text = selection ? "Delete selected items permanently?" : "Empty Trash?",
-           .fontWeight = FontWeight::SemiBold}
-      ),
-      ui::label(
-          {.out = &message,
-           .text = "Reading Trash…",
-           .maxWidth = width - 24.0F,
-           .maxLines = 4,
-           .configure = [](Label& label) { label.setUseMarkup(false); }}
-      ),
-      ui::label(
-          {.out = &size,
-           .text = "Size: calculating…",
-           .fontSize = Style::fontSizeCaption,
-           .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
-           .maxWidth = width - 24.0F,
-           .maxLines = 2}
-      ),
-      ui::row(
-          {.align = FlexAlign::Center, .justify = FlexJustify::End, .gap = Style::spaceSm},
-          ui::button(
-              {.out = &cancel,
-               .text = "Cancel",
-               .variant = ButtonVariant::Default,
-               .onClick = [this] { dismissMenu(); }}
-          ),
-          ui::button(
-              {.out = &confirm,
-               .text = selection ? "Delete permanently" : "Empty Trash",
-               .enabled = false,
-               .variant = ButtonVariant::Destructive,
-               .onClick = [this] { confirmEmptyTrash(); }}
-          )
-      )
-  );
-  UiPhaseScope phase(UiPhase::Layout);
-  LayoutConstraints constraints;
-  constraints.setExactWidth(width);
-  const float height = root->measure(m_surface->renderTarget().renderer(), constraints).height;
-  showPopup(
-      std::move(root), nullptr, {(m_surface->width() - width) * 0.5F, (m_surface->height() - height) * 0.5F, 1, 1},
-      width, height
-  );
-  if (m_menuSurface != nullptr) {
-    m_activeDialog.bind(ActiveDialog::Kind::EmptyTrash, [this] {
-      if (std::exchange(m_emptyTrashDialog, false)) {
-        m_emptyTrash.cancel();
-      }
-      m_emptyTrashMessage = nullptr;
-      m_emptyTrashSize = nullptr;
-      m_emptyTrashConfirm = nullptr;
-    });
-    m_emptyTrashDialog = true;
-    m_selectedTrashDelete = selection.has_value();
-    m_emptyTrashMessage = message;
-    m_emptyTrashSize = size;
-    m_emptyTrashConfirm = confirm;
-    m_menuDispatcher.setFocus(cancel->inputArea());
-    if (!(selection ? m_emptyTrash.prepareSelection(std::move(*selection)) : m_emptyTrash.prepare())) {
-      message->setText("Another Trash deletion is still finishing.");
-    }
-  }
-}
-
-void BrowserPage::confirmEmptyTrash() {
-  if (!m_emptyTrashDialog || !m_emptyTrash.empty()) {
-    return;
-  }
-  m_emptyTrashConfirm->setEnabled(false);
-  m_emptyTrashDialog = false;
-  dismissMenu();
-}
-
-void BrowserPage::syncEmptyTrash() {
-  const auto& snapshot = m_emptyTrash.snapshot();
-  if (m_emptyTrashDialog && m_emptyTrashMessage != nullptr) {
-    if (snapshot.status == files::EmptyTrashStatus::Ready) {
-      const auto count = snapshot.results.size();
-      m_emptyTrashMessage->setText(
-          count == 0 ? "Trash is already empty."
-                     : std::format(
-                           "Permanently delete {} item{} and their contents? This cannot be undone.", count,
-                           count == 1 ? "" : "s"
-                       )
-      );
-      m_emptyTrashConfirm->setEnabled(m_emptyTrash.canEmpty());
-    } else if (snapshot.status == files::EmptyTrashStatus::Error) {
-      m_emptyTrashMessage->setText("Could not read Trash: " + files::fileErrorText(snapshot.error));
-      m_emptyTrashConfirm->setEnabled(false);
-    }
-    std::string sizeText = "Size: calculating…";
-    if (snapshot.size) {
-      const files::GString value(g_format_size_full(*snapshot.size, G_FORMAT_SIZE_IEC_UNITS));
-      sizeText = std::format("Size: {}{}", snapshot.sizeIncomplete ? "at least " : "", value.get());
-    } else if (!m_emptyTrash.busy()) {
-      sizeText = "Size unavailable";
-    }
-    m_emptyTrashSize->setText(sizeText);
-    m_menuSurface->requestLayout();
-  } else if (snapshot.status == files::EmptyTrashStatus::Finished) {
-    const auto count = [&](files::EmptyTrashOutcome outcome) {
-      return std::ranges::count(snapshot.results, outcome, &files::EmptyTrashResult::outcome);
-    };
-    const auto done = count(files::EmptyTrashOutcome::Deleted);
-    std::string message = std::format("{} item{} permanently deleted", done, done == 1 ? "" : "s");
-    for (const auto& [outcome, label] :
-         {std::pair{files::EmptyTrashOutcome::Skipped, "skipped"},
-          std::pair{files::EmptyTrashOutcome::Failed, "failed"},
-          std::pair{files::EmptyTrashOutcome::Cancelled, "cancelled"},
-          std::pair{files::EmptyTrashOutcome::Unconfirmed, "could not be confirmed"}}) {
-      if (const auto amount = count(outcome); amount != 0) {
-        message += std::format(" · {} {}", amount, label);
-      }
-    }
-    const auto error = std::ranges::find_if(snapshot.results, [](const auto& item) { return item.error.has_value(); });
-    if (error != snapshot.results.end()) {
-      message += std::format(" · {}: {}", error->displayName, files::fileErrorText(error->error));
-    }
-    actionError(std::move(message));
-    if (const auto& location = browser().model().snapshot().location; location && location->isTrash()) {
-      browser().open(files::Location::trash());
-    }
-  } else if (snapshot.status == files::EmptyTrashStatus::Error) {
-    actionError(
-        std::string(m_selectedTrashDelete ? "Could not delete selected items: " : "Could not empty Trash: ")
-        + files::fileErrorText(snapshot.error)
-    );
-  }
-}
-
 void BrowserPage::updateOperationProgress() {
   if (m_permissions.busy()
       || m_batchRenamer.applying()
@@ -2565,593 +2351,6 @@ void BrowserPage::updateOperationProgress() {
   } else {
     m_operationProgress.stop();
   }
-}
-
-bool BrowserPage::canTrashItems(const std::vector<files::DirectoryEntry>& targets) const {
-  return actionState(Action::Trash, requestFor(targets)).enabled;
-}
-
-void BrowserPage::trashItems(const std::vector<files::DirectoryEntry>& targets) {
-  if (!canTrashItems(targets) || !targetsCurrent(targets)) {
-    actionError("This selection cannot be moved to Trash right now.");
-    return;
-  }
-  cancelDrag();
-  std::vector<files::Location> sources;
-  sources.reserve(targets.size());
-  for (const auto& target : targets) {
-    sources.push_back(target.location);
-  }
-  if (!m_trash.prepare(*browser().model().snapshot().location, std::move(sources))) {
-    actionError("Another Trash operation is still finishing.");
-  }
-}
-
-void BrowserPage::syncTrash() {
-  const auto& snapshot = m_trash.snapshot();
-  if (snapshot.status == files::TrashStatus::Ready) {
-    (void)m_trash.trash();
-  } else if (snapshot.status == files::TrashStatus::Error) {
-    actionError("Could not move to Trash: " + files::fileErrorText(snapshot.error));
-  } else if (snapshot.status == files::TrashStatus::Cancelled) {
-    actionError("Move to Trash cancelled.");
-  } else if (snapshot.status == files::TrashStatus::Finished) {
-    const auto done = std::ranges::count(snapshot.results, files::TrashOutcome::Trashed, &files::TrashResult::outcome);
-    const auto failed = std::ranges::count(snapshot.results, files::TrashOutcome::Failed, &files::TrashResult::outcome);
-    const auto cancelled =
-        std::ranges::count(snapshot.results, files::TrashOutcome::Cancelled, &files::TrashResult::outcome);
-    std::string message = std::format("{} item{} moved to Trash", done, done == 1 ? "" : "s");
-    if (failed != 0) {
-      message += std::format(" · {} failed", failed);
-    }
-    if (cancelled != 0) {
-      message += std::format(" · {} cancelled", cancelled);
-    }
-    const auto error =
-        std::ranges::find_if(snapshot.results, [](const auto& result) { return result.error.has_value(); });
-    if (error != snapshot.results.end()) {
-      message +=
-          std::format(" · {}: {}", error->source.displayName().value_or("Item"), files::fileErrorText(*error->error));
-    }
-    actionError(std::move(message));
-    browser().refresh();
-  }
-}
-
-bool BrowserPage::canCreateItem() const { return actionState(Action::CreateFolder, actionRequest(false)).enabled; }
-
-void BrowserPage::closeDocumentMenu() {
-  if (m_menu) {
-    m_menu->setSubmenuDirection(ContextSubmenuDirection::Right);
-  }
-  ++m_documentGeneration;
-  m_closeDocumentPending = false;
-  m_templates.cancel();
-  m_documentDispatcher.setSceneRoot(nullptr);
-  if (m_documentSurface) {
-    m_documentSurface->setSceneRoot(nullptr);
-  }
-  m_documentRoot.reset();
-  m_documentMenu = nullptr;
-  m_documentScroll = nullptr;
-  m_documentSurface.reset();
-}
-
-void BrowserPage::dismissDocumentMenu() {
-  m_closeDocumentPending = true;
-  const auto generation = m_documentGeneration;
-  const std::weak_ptr<int> lifetime = m_lifetime;
-  DeferredCall::callLater([this, lifetime, generation] {
-    if (!lifetime.expired() && generation == m_documentGeneration && m_closeDocumentPending) {
-      closeDocumentMenu();
-    }
-  });
-}
-
-void BrowserPage::fillDocumentMenu(const files::ActionRequest& request, files::TemplateListing listing, bool loading) {
-  if (!m_documentSurface || !actionState(Action::NewDocument, request).enabled) {
-    return;
-  }
-  auto items = std::make_shared<std::vector<files::DocumentTemplate>>(std::move(listing.items));
-  std::vector<ContextMenuControlEntry> entries{{.id = -1, .label = "Empty File…"}, {.label = "", .separator = true}};
-  for (std::size_t index = 0; index < items->size(); ++index) {
-    entries.push_back({.id = static_cast<int>(index), .label = (*items)[index].label});
-  }
-  if (loading || items->empty() || listing.error) {
-    entries.push_back(
-        {.label = loading    ? "Loading templates…"
-             : listing.error ? files::fileErrorText(*listing.error)
-                             : "No document templates",
-         .enabled = false}
-    );
-  }
-  if (listing.truncated) {
-    entries.push_back({.label = "Template list limit reached", .enabled = false});
-  }
-  const float contentHeight = ContextMenuControl::preferredHeight(entries, entries.size());
-  const float height = std::min(contentHeight, static_cast<float>(m_surface->height()) - 32.0F);
-  const float width = 300.0F;
-  const bool overflowing = contentHeight > height;
-  m_documentMenu->setMaxVisible(entries.size());
-  m_documentMenu->setEntries(std::move(entries));
-  m_documentMenu->setMenuWidth(width - (overflowing ? Style::scrollbarWidth + Style::scrollbarGap : 0.0F));
-  m_documentMenu->setHighlightedIndex(m_documentKeyboard ? 0 : m_documentMenu->entryCount());
-  m_documentMenu->setOnActivate([this, request, items](const ContextMenuControlEntry& entry) {
-    const auto id = entry.id;
-    const std::weak_ptr<int> lifetime = m_lifetime;
-    dismissMenu();
-    DeferredCall::callLater([this, lifetime, request, items, id] {
-      if (lifetime.expired() || !actionState(Action::NewDocument, request).enabled) {
-        return;
-      }
-      if (id == -1) {
-        openCreateItem(*request.folder, files::CreateKind::EmptyFile);
-      } else if (id >= 0 && static_cast<std::size_t>(id) < items->size()) {
-        openCreateItem(*request.folder, files::CreateKind::Document, (*items)[static_cast<std::size_t>(id)]);
-      }
-    });
-  });
-  m_documentScroll->setReserveScrollbarGutter(overflowing);
-  m_documentScroll->setSize(width, height);
-  (void)m_documentSurface->resize(
-      static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(std::ceil(height)), false
-  );
-  m_documentSurface->requestLayout();
-}
-
-void BrowserPage::openDocumentMenu(const files::ActionRequest& request) {
-  m_closeDocumentPending = false;
-  if (m_documentSurface
-      || !m_menuSurface
-      || !m_menu
-      || !m_documentRow
-      || !actionState(Action::NewDocument, request).enabled) {
-    return;
-  }
-  const float top = m_menu->rowTop(*m_documentRow);
-  const float bottom = m_menu->rowBottom(*m_documentRow);
-  const auto menuRect = sceneRect(*m_menu);
-  m_documentSurface = std::make_unique<PopupSurface>(m_connection);
-  m_documentSurface->setRenderContext(&m_renderer);
-  m_documentSurface->setAnimationManager(&m_animations);
-  m_documentSurface->setDismissedCallback([this] { dismissDocumentMenu(); });
-  auto menu = std::make_unique<ContextMenuControl>();
-  m_documentMenu = menu.get();
-  auto scroll =
-      ui::scrollView({.out = &m_documentScroll, .viewportPaddingH = 0.0F, .viewportPaddingV = 0.0F, .flexGrow = 1.0F});
-  scroll->content()->addChild(std::move(menu));
-  m_documentRoot = ui::column(
-      {.fill = colorSpecFromRole(ColorRole::SurfaceContainerHigh), .radius = Style::radiusLg}, std::move(scroll)
-  );
-  m_documentRoot->setAnimationManager(&m_animations);
-  m_documentSurface->setSceneRoot(m_documentRoot.get());
-  m_documentDispatcher.setSceneRoot(m_documentRoot.get());
-  m_documentDispatcher.setCursorShapeCallback([this](std::uint32_t serial, std::uint32_t shape) {
-    m_connection.extension<files::DesktopIntegration>().setCursorShape(serial, shape);
-  });
-  m_documentSurface->setConfigureCallback([this](std::uint32_t, std::uint32_t) {
-    if (m_menu) {
-      m_menu->setSubmenuDirection(
-          m_documentSurface->configuredX() < 0 ? ContextSubmenuDirection::Left : ContextSubmenuDirection::Right
-      );
-      m_menuSurface->requestLayout();
-    }
-    m_documentSurface->requestLayout();
-  });
-  m_documentSurface->setPrepareFrameCallback([this](bool, bool) {
-    if (m_documentSurface && m_renderer.makeCurrent(m_documentSurface->renderTarget())) {
-      UiPhaseScope phase(UiPhase::Layout);
-      m_documentRoot->arrange(
-          m_documentSurface->renderTarget().renderer(),
-          {0, 0, static_cast<float>(m_documentSurface->width()), static_cast<float>(m_documentSurface->height())}
-      );
-    }
-  });
-  const PopupSurfaceConfig config{
-      .anchorX = 0,
-      .anchorY = static_cast<int>(std::floor(menuRect.y + top)),
-      .anchorWidth = static_cast<int>(m_menuSurface->width()),
-      .anchorHeight = std::max(1, static_cast<int>(bottom - top)),
-      .width = 300,
-      .height = 84,
-      .anchor = XDG_POSITIONER_ANCHOR_TOP_RIGHT,
-      .gravity = XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT,
-      .constraintAdjustment = XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_FLIP_X
-          | XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X
-          | XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y,
-      .serial = m_popupSerial != 0 ? m_popupSerial : m_connection.lastInputSerial()
-  };
-  if (!m_documentSurface->initializeAsChild(
-          m_menuSurface->xdgSurface(), m_connection.outputForSurface(m_surface->wlSurface()), config
-      )) {
-    closeDocumentMenu();
-    return;
-  }
-  fillDocumentMenu(request, {}, true);
-  const auto generation = ++m_documentGeneration;
-  m_templates.load([this, request, generation](files::TemplateListing listing) {
-    if (generation == m_documentGeneration && m_documentSurface) {
-      fillDocumentMenu(request, std::move(listing));
-    }
-  });
-}
-
-void BrowserPage::openCreateItem(
-    files::Location parent, files::CreateKind kind, std::optional<files::DocumentTemplate> source
-) {
-  if (!canCreateItem() || browser().model().snapshot().location != parent) {
-    actionError("Open an available writable folder to create a file or folder.");
-    return;
-  }
-  const float width = std::min(420.0F, static_cast<float>(m_surface->width()) - 32.0F);
-  const bool document = kind == files::CreateKind::Document;
-  const auto display = source ? files::filenameDisplayText(source->name) : std::string{};
-  auto editor = std::make_unique<NameEditor>(
-      width,
-      kind == files::CreateKind::Folder ? "New folder"
-          : document                    ? "New document"
-                                        : "New file",
-      source                                  ? display
-          : kind == files::CreateKind::Folder ? "New Folder"
-                                              : "New File",
-      source ? "From " + source->label : "", files::filenameProblem,
-      [this](std::string name) { submitCreateItem(std::move(name)); }, [this] { dismissMenu(); }, "Create", "Creating…"
-  );
-  auto* control = editor.get();
-  UiPhaseScope phase(UiPhase::Layout);
-  LayoutConstraints constraints;
-  constraints.setExactWidth(width);
-  const float height = editor->measure(m_surface->renderTarget().renderer(), constraints).height;
-  showPopup(
-      std::move(editor), nullptr, {(m_surface->width() - width) * 0.5F, (m_surface->height() - height) * 0.5F, 1, 1},
-      width, height
-  );
-  if (m_menuSurface != nullptr) {
-    m_activeDialog.bind(ActiveDialog::Kind::CreateItem, [this] { closeCreation(); });
-    m_createEditor = control;
-    m_createParent = std::move(parent);
-    m_creationPreparing = true;
-    control->setSaving(true);
-    if (!(source ? m_creator.prepareTemplate(*m_createParent, std::move(*source))
-                 : m_creator.prepare(*m_createParent, kind))) {
-      control->showError("Another creation is still finishing.");
-    }
-  }
-}
-
-void BrowserPage::submitCreateItem(std::string name) {
-  if (m_createEditor == nullptr || !m_createParent) {
-    return;
-  }
-  if (browser().model().snapshot().location != m_createParent || !browser().searchQuery().empty()) {
-    m_createEditor->showError("The destination changed. Close this dialog and try again.");
-    return;
-  }
-  if (m_creator.create(std::move(name))) {
-    m_createEditor->setSaving(true);
-  } else {
-    m_createEditor->showError(
-        m_creator.snapshot().error ? createErrorText(m_creator.snapshot().error)
-                                   : "The destination is unavailable. Close this dialog and try again."
-    );
-  }
-}
-
-void BrowserPage::openLinkDialog(const files::DirectoryEntry& target) {
-  if (!actionState(Action::CreateLink, requestFor({target})).enabled || !targetsCurrent({target})) {
-    actionError("This item cannot be linked right now.");
-    return;
-  }
-  const auto parent = target.location.parent();
-  if (!parent) {
-    actionError("The source has no containing folder.");
-    return;
-  }
-  const auto& base = *parent;
-  const float width = std::min(480.0F, static_cast<float>(m_surface->width()) - 32.0F);
-  auto root = std::make_unique<LinkDialog>(
-      width, files::locationEditText(target.location), "Link to " + target.displayName, files::locationEditText(base),
-      target.type == files::FileType::Regular && !target.symlink,
-      [this, base](std::string name, const std::string& path, files::CreateKind kind) {
-        if (!m_linkDialog) {
-          return;
-        }
-        try {
-          const auto parent = files::resolveLocationText(path, base);
-          if (m_creator.createLink(parent, std::move(name), kind)) {
-            m_linkDialog->setSaving(true);
-          } else {
-            m_linkDialog->showError(
-                m_creator.snapshot().error ? createErrorText(m_creator.snapshot().error)
-                                           : "The source is unavailable. Close this dialog and try again."
-            );
-          }
-        } catch (const std::exception& error) {
-          m_linkDialog->showError(error.what());
-        }
-        m_menuSurface->requestLayout();
-      },
-      [this] { dismissMenu(); }
-  );
-  auto* dialog = root.get();
-  UiPhaseScope phase(UiPhase::Layout);
-  LayoutConstraints constraints;
-  constraints.setExactWidth(width);
-  const float height = std::min(
-      root->measure(m_surface->renderTarget().renderer(), constraints).height,
-      static_cast<float>(m_surface->height()) - 64.0F
-  );
-  showPopup(
-      std::move(root), nullptr, {(m_surface->width() - width) * 0.5F, (m_surface->height() - height) * 0.5F, 1, 1},
-      width, height
-  );
-  if (m_menuSurface) {
-    m_activeDialog.bind(ActiveDialog::Kind::Link, [this] { closeCreation(); });
-    m_linkDialog = dialog;
-    m_linkPreparing = true;
-    m_dialogHeight = height;
-    m_dialogWidth = width;
-    m_menuDispatcher.setFocusChangeCallback([this](InputArea*, InputArea* focused) {
-      if (m_linkDialog) {
-        m_linkDialog->reveal(focused);
-        m_menuSurface->requestLayout();
-      }
-    });
-    dialog->setSaving(true);
-    if (!m_creator.prepareLink(target)) {
-      dialog->setSaving(false);
-      dialog->showError("Another creation is still finishing.");
-    }
-  }
-}
-
-void BrowserPage::syncCreation() {
-  if (m_creator.busy()) {
-    return;
-  }
-  const auto& snapshot = m_creator.snapshot();
-  if (snapshot.status == files::CreateStatus::Succeeded || snapshot.status == files::CreateStatus::Partial) {
-    m_actionError = createErrorText(snapshot.error);
-    if (m_linkDialog && !snapshot.error && snapshot.parent) {
-      m_actionError = "Link created in " + files::locationEditText(*snapshot.parent);
-    }
-    if (browser().model().snapshot().location == snapshot.parent) {
-      m_revealTargets.clear();
-      if (snapshot.destination) {
-        m_revealTargets.push_back(*snapshot.destination);
-      }
-      browser().refresh();
-    }
-    if (m_createEditor != nullptr || m_linkDialog != nullptr) {
-      m_createEditor = nullptr;
-      dismissMenu();
-    }
-  } else if (m_linkDialog) {
-    m_linkDialog->setSaving(false);
-    m_linkDialog->showError(createErrorText(snapshot.error));
-    if (std::exchange(m_linkPreparing, false)) {
-      m_menuDispatcher.setFocus(m_linkDialog->nameInput()->inputArea());
-      m_linkDialog->nameInput()->selectAll();
-    }
-    m_menuSurface->requestLayout();
-  } else if (m_createEditor == nullptr) {
-    if (snapshot.status == files::CreateStatus::Error) {
-      actionError("Could not create: " + createErrorText(snapshot.error));
-    }
-  } else if (snapshot.status == files::CreateStatus::Ready || snapshot.status == files::CreateStatus::Error) {
-    m_createEditor->setSaving(false);
-    m_createEditor->showError(createErrorText(snapshot.error));
-    if (std::exchange(m_creationPreparing, false)) {
-      m_menuDispatcher.setFocus(m_createEditor->input()->inputArea());
-      if (snapshot.kind == files::CreateKind::Document) {
-        const auto& value = m_createEditor->input()->value();
-        m_createEditor->input()->selectRange(0, files::filenameStemLength(value, false));
-      } else {
-        m_createEditor->input()->selectAll();
-      }
-    }
-    m_menuSurface->requestLayout();
-  }
-}
-
-void BrowserPage::closeCreation() {
-  if (m_createParent || m_linkDialog) {
-    m_creator.cancel();
-    if (m_list != nullptr) {
-      m_dispatcher.setFocus(m_list->focusArea());
-    }
-  }
-  m_createEditor = nullptr;
-  m_linkDialog = nullptr;
-  m_linkPreparing = false;
-  m_createParent.reset();
-  m_creationPreparing = false;
-}
-
-bool BrowserPage::canFileRename(const files::DirectoryEntry& entry) const {
-  return actionState(Action::Rename, requestFor({entry})).enabled;
-}
-
-void BrowserPage::openFileRename(files::DirectoryEntry target) {
-  if (!canFileRename(target) || !targetsCurrent({target})) {
-    actionError("This item cannot be renamed right now.");
-    return;
-  }
-  const float width = std::min(420.0F, static_cast<float>(m_surface->width()) - 32.0F);
-  const bool validText = g_utf8_validate(target.name.data(), static_cast<gssize>(target.name.size()), nullptr);
-  auto editor = std::make_unique<NameEditor>(
-      width, target.type == files::FileType::Directory && !target.symlink ? "Rename folder" : "Rename file",
-      validText ? target.name : "", validText ? "" : "Enter a new UTF-8 name for this item.", files::filenameProblem,
-      [this](std::string name) { submitFileRename(std::move(name)); }, [this] { dismissMenu(); }
-  );
-  auto* control = editor.get();
-  UiPhaseScope phase(UiPhase::Layout);
-  LayoutConstraints constraints;
-  constraints.setExactWidth(width);
-  const float height = editor->measure(m_surface->renderTarget().renderer(), constraints).height;
-  const LayoutRect anchor{(m_surface->width() - width) * 0.5F, (m_surface->height() - height) * 0.5F, 1, 1};
-  showPopup(std::move(editor), nullptr, anchor, width, height);
-  if (m_menuSurface != nullptr) {
-    m_activeDialog.bind(ActiveDialog::Kind::FileRename, [this] {
-      if (m_fileRenameTarget) {
-        m_renamer.cancel();
-        if (m_list != nullptr) {
-          m_dispatcher.setFocus(m_list->focusArea());
-        }
-      }
-      m_fileRenameEditor = nullptr;
-      m_fileRenameTarget.reset();
-      m_fileRenamePreparing = false;
-    });
-    m_fileRenameEditor = control;
-    m_fileRenameTarget = std::move(target);
-    m_fileRenamePreparing = true;
-    control->setSaving(true);
-    if (!m_renamer.prepare(m_fileRenameTarget->location)) {
-      control->showError("Another rename is still finishing.");
-    }
-  }
-}
-
-void BrowserPage::submitFileRename(std::string name) {
-  if (m_fileRenameEditor == nullptr || !m_fileRenameTarget) {
-    return;
-  }
-  if (!targetsCurrent({*m_fileRenameTarget})) {
-    m_fileRenameEditor->showError("The item changed. Close this editor and try again.");
-    return;
-  }
-  if (!m_renamer.rename(std::move(name))) {
-    m_fileRenameEditor->showError(
-        m_renamer.snapshot().error ? files::nameErrorText(*m_renamer.snapshot().error)
-                                   : "The item is unavailable. Reopen Rename."
-    );
-  } else {
-    m_fileRenameEditor->setSaving(true);
-  }
-}
-
-void BrowserPage::syncFileRename() {
-  const auto& snapshot = m_renamer.snapshot();
-  if (m_renamer.busy()) {
-    return;
-  }
-  if (snapshot.status == files::RenameStatus::Succeeded) {
-    m_actionError.clear();
-    const auto& current = browser().model().snapshot().location;
-    if (current && snapshot.source && snapshot.source->isInside(*current)) {
-      m_revealTargets.clear();
-      if (snapshot.destination) {
-        m_revealTargets.push_back(*snapshot.destination);
-      }
-      browser().refresh();
-    }
-    if (m_fileRenameEditor != nullptr) {
-      m_fileRenameEditor = nullptr;
-      dismissMenu();
-    }
-  } else if (m_fileRenameEditor == nullptr) {
-    if (snapshot.status == files::RenameStatus::Error) {
-      actionError("Could not rename: " + renameErrorText(snapshot.error));
-    }
-  } else if (snapshot.status == files::RenameStatus::Ready || snapshot.status == files::RenameStatus::Error) {
-    m_fileRenameEditor->setSaving(false);
-    m_fileRenameEditor->showError(renameErrorText(snapshot.error));
-    if (std::exchange(m_fileRenamePreparing, false)) {
-      m_menuDispatcher.setFocus(m_fileRenameEditor->input()->inputArea());
-      const auto& value = m_fileRenameEditor->input()->value();
-      const bool directory = m_fileRenameTarget->type == files::FileType::Directory && !m_fileRenameTarget->symlink;
-      m_fileRenameEditor->input()->selectRange(0, files::filenameStemLength(value, directory));
-    }
-    m_menuSurface->requestLayout();
-  }
-}
-
-void BrowserPage::openPlaceRename(const files::Bookmark& bookmark) {
-  if (bookmark.location.isTrash()) {
-    return;
-  }
-  const auto found = std::ranges::find(m_pins.bookmarks(), bookmark.location, &files::Bookmark::location);
-  if (!m_pins.editable() || found == m_pins.bookmarks().end()) {
-    actionError("This place is unavailable for editing. Reload Places and try again.");
-    return;
-  }
-  const auto current = *found; // NOLINT(performance-unnecessary-copy-initialization): own the editing snapshot.
-  const float width = std::min(440.0F, static_cast<float>(m_surface->width()) - 32.0F);
-  auto editor = std::make_unique<NameEditor>(
-      width, "Rename place", current.label, "Changes the sidebar label only.",
-      [](const std::string& label) -> std::optional<std::string> {
-        if (const auto error = files::bookmarkLabelProblem(label)) {
-          return error;
-        }
-        if (label.find_first_not_of(' ') == std::string::npos) {
-          return "Enter a label.";
-        }
-        return std::nullopt;
-      },
-      [this](std::string label) { submitPlaceRename(std::move(label)); }, [this] { dismissMenu(); }
-  );
-  auto* control = editor.get();
-  UiPhaseScope phase(UiPhase::Layout);
-  LayoutConstraints constraints;
-  constraints.setExactWidth(width);
-  const float height = std::min(
-      editor->measure(m_surface->renderTarget().renderer(), constraints).height,
-      static_cast<float>(m_surface->height()) - 64.0F
-  );
-  showPopup(
-      std::move(editor), nullptr, {(m_surface->width() - width) * 0.5F, (m_surface->height() - height) * 0.5F, 1, 1},
-      width, height
-  );
-  if (m_menuSurface != nullptr) {
-    m_activeDialog.bind(ActiveDialog::Kind::PlaceRename, [this] {
-      if (m_placeRenameTarget) {
-        m_restorePlaceFocus = m_placeRenameTarget->location;
-      }
-      m_placeEditor = nullptr;
-      m_placeRenameTarget.reset();
-      m_pendingPlaceLabel.reset();
-    });
-    m_placeEditor = control;
-    m_placeRenameTarget = current;
-    m_menuDispatcher.setFocus(control->input()->inputArea());
-    control->input()->selectAll();
-  }
-}
-
-void BrowserPage::submitPlaceRename(std::string label) {
-  if (m_placeEditor == nullptr || !m_placeRenameTarget) {
-    return;
-  }
-  m_pendingPlaceLabel = label;
-  m_placeEditor->setSaving(true);
-  if (!m_pins.rename(*m_placeRenameTarget, std::move(label))) {
-    m_pendingPlaceLabel.reset();
-    m_placeEditor->setSaving(false);
-    m_placeEditor->showError(
-        m_pins.busy() ? "Places are being saved. Try again shortly."
-                      : "This place changed. Close this dialog and try again."
-    );
-    return;
-  }
-  syncPlaceRename();
-}
-
-void BrowserPage::syncPlaceRename() {
-  if (m_placeEditor == nullptr || !m_pendingPlaceLabel || m_pins.busy()) {
-    return;
-  }
-  const auto found = std::ranges::find(m_pins.bookmarks(), m_placeRenameTarget->location, &files::Bookmark::location);
-  if (found != m_pins.bookmarks().end() && found->label == *m_pendingPlaceLabel) {
-    dismissMenu();
-  } else {
-    m_placeEditor->setSaving(false);
-    m_placeEditor->showError(
-        m_pins.error().empty() ? "This place changed. Close this dialog and try again."
-                               : "Could not save the label. Close this dialog and try again."
-    );
-  }
-  m_pendingPlaceLabel.reset();
 }
 
 void BrowserPage::showContaining(const files::Location& location) {
@@ -6187,7 +5386,7 @@ void BrowserPage::syncBrowser() {
         : m_emptyTrash.snapshot().status == files::EmptyTrashStatus::Ready
         ? "Calculating Trash size…"
         : std::format(
-              "{}… · {} of {} items", m_selectedTrashDelete ? "Deleting from Trash" : "Emptying Trash",
+              "{}… · {} of {} items", m_trashController.selectedDelete() ? "Deleting from Trash" : "Emptying Trash",
               m_emptyTrash.completed(), m_emptyTrash.snapshot().results.size()
           );
   } else if (m_trash.busy()) {
@@ -6291,7 +5490,7 @@ void BrowserPage::syncBrowser() {
   m_cancelOperation->setTooltip(
       m_batchRenamer.applying() ? "Cancel batch rename"
           : m_restore.busy()    ? "Cancel restoration"
-          : m_emptyTrash.busy() ? (m_selectedTrashDelete ? "Cancel deletion" : "Cancel emptying Trash")
+          : m_emptyTrash.busy() ? (m_trashController.selectedDelete() ? "Cancel deletion" : "Cancel emptying Trash")
           : m_trash.busy()      ? "Cancel move to Trash"
                                 : "Cancel transfer"
   );
@@ -6463,25 +5662,16 @@ void BrowserPage::prepareFrame(bool, bool layout) {
     syncArchive();
   }
   syncTransferConflict();
-  if (std::exchange(m_trashDirty, false)) {
-    syncTrash();
-  }
-  if (std::exchange(m_emptyTrashDirty, false)) {
-    syncEmptyTrash();
-  }
-  if (std::exchange(m_creationDirty, false)) {
-    syncCreation();
-  }
+  m_trashController.onFrame();
+  m_createController.onFrame();
   if (std::exchange(m_permissionDirty, false)) {
     syncPermissions();
   }
   m_batchRename.onFrame();
-  if (std::exchange(m_renameDirty, false)) {
-    syncFileRename();
-  }
+  m_renameController.onFrame();
   if (m_browserDirty) {
     m_browserDirty = false;
-    syncPlaceRename();
+    m_renameController.syncPlaceRename();
     syncBrowser();
     layout = true;
   }
@@ -7314,8 +6504,7 @@ void BrowserPage::dismissMenu() {
 }
 
 void BrowserPage::closeMenu() {
-  closeDocumentMenu();
-  m_documentRow.reset();
+  m_createController.menuClosed();
   m_launcher.cancelApplications();
   if (!m_previewBounds || !previewVisible()) {
     m_preview.clear();
@@ -7349,6 +6538,10 @@ PopupSurface* BrowserPage::menuSurface() { return m_menuSurface.get(); }
 InputDispatcher& BrowserPage::menuDispatcher() { return m_menuDispatcher; }
 
 ActiveDialog& BrowserPage::activeDialog() { return m_activeDialog; }
+
+ContextMenuControl* BrowserPage::contextMenu() { return m_menu; }
+
+std::uint32_t BrowserPage::popupSerial() { return m_popupSerial != 0 ? m_popupSerial : m_connection.lastInputSerial(); }
 
 files::WaylandTextClipboard& BrowserPage::clipboard() { return m_clipboard; }
 
@@ -7426,31 +6619,7 @@ void BrowserPage::showPopup(
         );
       }
     }
-    if (m_emptyTrashDialog) {
-      LayoutConstraints constraints;
-      constraints.setExactWidth(static_cast<float>(m_menuSurface->width()));
-      const auto height = static_cast<std::uint32_t>(std::ceil(
-          std::clamp(
-              m_activeDialog.root()->measure(m_menuSurface->renderTarget().renderer(), constraints).height, 1.0F,
-              static_cast<float>(m_surface->height()) - 64.0F
-          )
-      ));
-      if (height != m_menuSurface->height()) {
-        const auto width = m_menuSurface->width();
-        (void)m_menuSurface->resize(width, height, false);
-        (void)m_menuSurface->repositionAnchor(
-            {.anchorX = static_cast<int>((m_surface->width() - width) / 2),
-             .anchorY = static_cast<int>((m_surface->height() - height) / 2),
-             .anchorWidth = 1,
-             .anchorHeight = 1,
-             .anchor = XDG_POSITIONER_ANCHOR_BOTTOM_RIGHT,
-             .gravity = XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT,
-             .constraintAdjustment =
-                 XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X | XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y},
-            false
-        );
-      }
-    }
+    m_trashController.layoutDialog();
     m_activeDialog.root()->arrange(
         m_menuSurface->renderTarget().renderer(),
         {0, 0, static_cast<float>(m_menuSurface->width()), static_cast<float>(m_menuSurface->height())}

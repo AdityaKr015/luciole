@@ -2,7 +2,10 @@
 
 #include "app/page/active_dialog.h"
 #include "app/page/batch_rename_controller.h"
+#include "app/page/create_controller.h"
 #include "app/page/page_context.h"
+#include "app/page/rename_controller.h"
+#include "app/page/trash_controller.h"
 #include "app/workspace_command.h"
 #include "app/workspace_layout.h"
 #include "browser/action_registry.h"
@@ -42,7 +45,6 @@
 #include "ui/controls/context_menu.h"
 #include "ui/controls/file_preview_view.h"
 #include "ui/controls/input.h"
-#include "ui/controls/link_dialog.h"
 #include "ui/controls/miller_view.h"
 #include "ui/controls/name_editor.h"
 #include "ui/controls/permission_editor.h"
@@ -192,6 +194,9 @@ private:
   void openPatternSelection(const files::ActionRequest& request);
 
   void actionError(std::string message) override;
+  void setActionMessage(std::string message) override;
+  void revealOnReload(std::vector<files::Location> targets) override;
+  void restorePlaceFocus(files::Location location) override;
 
   bool targetsCurrent(const std::vector<files::DirectoryEntry>& targets) override;
 
@@ -201,39 +206,9 @@ private:
 
   void openPlaceMenu(const files::Bookmark& bookmark, float x, float y);
 
-  bool canEmptyTrash() const;
-  void openEmptyTrash(std::optional<std::vector<files::DirectoryEntry>> selection = std::nullopt);
-  void confirmEmptyTrash();
-  void syncEmptyTrash();
+  bool canEmptyTrash() const override;
 
   void updateOperationProgress();
-  bool canTrashItems(const std::vector<files::DirectoryEntry>& targets) const;
-  void trashItems(const std::vector<files::DirectoryEntry>& targets);
-  void syncTrash();
-
-  bool canCreateItem() const;
-  void closeDocumentMenu();
-  void dismissDocumentMenu();
-  void fillDocumentMenu(const files::ActionRequest& request, files::TemplateListing listing, bool loading = false);
-  void openDocumentMenu(const files::ActionRequest& request);
-  void openCreateItem(
-      files::Location parent, files::CreateKind kind, std::optional<files::DocumentTemplate> source = std::nullopt
-  );
-  void submitCreateItem(std::string name);
-  void openLinkDialog(const files::DirectoryEntry& target);
-  void syncCreation();
-  void closeCreation();
-
-  bool canFileRename(const files::DirectoryEntry& entry) const;
-  void openFileRename(files::DirectoryEntry target);
-  void submitFileRename(std::string name);
-  void syncFileRename();
-
-  void openPlaceRename(const files::Bookmark& bookmark);
-
-  void submitPlaceRename(std::string label);
-
-  void syncPlaceRename();
 
   void showContaining(const files::Location& location);
 
@@ -283,7 +258,7 @@ private:
 
   void startFileDrag(const std::vector<files::EntryId>& ids);
   void startPlaceDrag(const files::Bookmark& bookmark);
-  void cancelDrag();
+  void cancelDrag() override;
   VirtualGridView* dragView() const;
   float dragScrollSpeed(bool& places) const;
   void updateExternalScroll();
@@ -423,6 +398,8 @@ private:
   PopupSurface* menuSurface() override;
   InputDispatcher& menuDispatcher() override;
   ActiveDialog& activeDialog() override;
+  ContextMenuControl* contextMenu() override;
+  std::uint32_t popupSerial() override;
   files::WaylandTextClipboard& clipboard() override;
   files::WindowSurface& surface() override;
   void focusFileList() override;
@@ -534,14 +511,9 @@ private:
   files::RestoreService m_restore;
   bool m_transferConflictRestore = false;
   files::EmptyTrashService m_emptyTrash;
-  bool m_emptyTrashDirty = false;
-  bool m_emptyTrashDialog = false;
-  bool m_selectedTrashDelete = false;
-  Label* m_emptyTrashMessage = nullptr;
-  Label* m_emptyTrashSize = nullptr;
-  Button* m_emptyTrashConfirm = nullptr;
-  bool m_trashDirty = false;
+  TrashController m_trashController{*this, m_trash, m_emptyTrash, m_restore};
   files::RenameService m_renamer;
+  RenameController m_renameController{*this, m_renamer, m_pins};
   files::BatchRenameService m_batchRenamer;
   files::PermissionService m_permissions;
   PermissionEditor* m_permissionEditor = nullptr;
@@ -561,6 +533,7 @@ private:
   BatchRenameController m_batchRename{*this, m_batchRenamer};
   files::CreateService m_creator;
   files::TemplateCatalog m_templates;
+  CreateController m_createController{*this, m_creator, m_templates, m_connection, m_renderer, m_animations};
   Timer m_operationProgress;
   Button* m_cancelOperation = nullptr;
   Button* m_retryTransfer = nullptr;
@@ -693,29 +666,7 @@ private:
   std::unique_ptr<PopupSurface> m_menuSurface;
   ActiveDialog m_activeDialog;
   ContextMenuControl* m_menu = nullptr;
-  std::unique_ptr<PopupSurface> m_documentSurface;
-  std::unique_ptr<Flex> m_documentRoot;
-  ContextMenuControl* m_documentMenu = nullptr;
-  ScrollView* m_documentScroll = nullptr;
-  InputDispatcher m_documentDispatcher;
-  std::optional<std::size_t> m_documentRow;
-  std::uint64_t m_documentGeneration = 0;
-  bool m_closeDocumentPending = false;
-  bool m_documentKeyboard = false;
   ScrollView* m_menuScroll = nullptr;
-  NameEditor* m_placeEditor = nullptr;
-  NameEditor* m_fileRenameEditor = nullptr;
-  NameEditor* m_createEditor = nullptr;
-  LinkDialog* m_linkDialog = nullptr;
-  bool m_linkPreparing = false;
-  std::optional<files::Location> m_createParent;
-  bool m_creationPreparing = false;
-  bool m_creationDirty = false;
-  std::optional<files::DirectoryEntry> m_fileRenameTarget;
-  bool m_fileRenamePreparing = false;
-  bool m_renameDirty = false;
-  std::optional<files::Bookmark> m_placeRenameTarget;
-  std::optional<std::string> m_pendingPlaceLabel;
   std::optional<files::Location> m_restorePlaceFocus;
   InputDispatcher m_menuDispatcher;
   std::optional<std::uint64_t> m_activeTransferConflict;
