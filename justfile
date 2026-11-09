@@ -1,52 +1,65 @@
 set positional-arguments
+set quiet
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 mode := "debug"
 prefix := "/usr/local"
-cpp-std := "c++23"
+# An empty string would be stored as ".", so pass an empty array instead.
+pkg-config-path := if env("PKG_CONFIG_PATH", "") == "" { "[]" } else { env("PKG_CONFIG_PATH") }
 
 default:
-    @just --list
+    just --list
 
-_check-mode m:
-    case "$1" in debug|release|asan) ;; *) echo "error: expected debug, release, or asan" >&2; exit 1 ;; esac
-
-configure m=mode install_prefix=prefix: (_check-mode m)
+# Configure build-<m> for debug, release, or asan.
+[arg("m", pattern="debug|release|asan")]
+configure m=mode install_prefix=prefix:
     #!/usr/bin/env bash
     set -euo pipefail
-    args=(--buildtype=debug -Dcpp_std={{cpp-std}} -Dtests=auto)
-    [[ "$1" == release ]] && args=(--buildtype=release -Dcpp_std={{cpp-std}} -Dtests=auto -Db_lto=true)
-    [[ "$1" == asan ]] && args+=(-Db_sanitize=address,undefined)
-    args+=(-Dpkg_config_path="${PKG_CONFIG_PATH-}")
+    case "$1" in
+        debug) args=(--buildtype=debug) ;;
+        release) args=(--buildtype=release -Db_lto=true) ;;
+        asan) args=(--buildtype=debug -Db_sanitize=address,undefined) ;;
+    esac
+    args+=(--prefix "$2" -Dpkg_config_path={{ quote(pkg-config-path) }})
     if [[ -f "build-$1/meson-private/coredata.dat" ]]; then
-        meson setup "build-$1" "${args[@]}" --prefix "$2" --reconfigure
-    else
-        meson setup "build-$1" "${args[@]}" --prefix "$2"
+        args+=(--reconfigure)
     fi
+    meson setup "build-$1" "${args[@]}"
+    ln -sfn "build-$1/compile_commands.json" compile_commands.json
 
-_ensure-configured m=mode: (_check-mode m)
+[arg("m", pattern="debug|release|asan")]
+_ensure-configured m=mode:
     #!/usr/bin/env bash
     set -euo pipefail
     if [[ ! -f "build-$1/build.ninja" ]]; then
         just configure "$1"
-    else
-        configured_pkg_path="$(meson introspect "build-$1" --buildoptions | python3 -c 'import json,sys; print(":".join(next(option["value"] for option in json.load(sys.stdin) if option["name"] == "pkg_config_path")))')"
-        if [[ "$configured_pkg_path" != "${PKG_CONFIG_PATH-}" ]]; then
-            meson configure "build-$1" -Dpkg_config_path="${PKG_CONFIG_PATH-}"
-        fi
+        exit
     fi
+    configured_pkg_path="$(just _option "$1" pkg_config_path)"
+    if [[ "$configured_pkg_path" != "${PKG_CONFIG_PATH-}" ]]; then
+        meson configure "build-$1" -Dpkg_config_path={{ quote(pkg-config-path) }}
+    fi
+    ln -sfn "build-$1/compile_commands.json" compile_commands.json
 
+# Print a configured Meson option; list values are joined with ':'.
+_option m name:
+    meson introspect "build-$1" --buildoptions | python3 -c 'import json, sys; value = next(o["value"] for o in json.load(sys.stdin) if o["name"] == sys.argv[1]); print(":".join(value) if isinstance(value, list) else value)' "$2"
+
+[arg("m", pattern="debug|release|asan")]
 build m=mode: (_ensure-configured m)
     meson compile -C "build-$1" noctalia-files
 
+[arg("m", pattern="debug|release|asan")]
 run m=mode: (build m)
     NOCTALIA_FILES_ASSETS_DIR="$PWD/lib/assets" ./build-$1/noctalia-files
 
+[arg("m", pattern="debug|release|asan")]
 test m=mode *args: (_ensure-configured m)
-    meson configure "build-$1" -Dtests=enabled
+    if [[ "$(just _option "$1" tests)" != enabled ]]; then meson configure "build-$1" -Dtests=enabled; fi
     meson test -C "build-$1" --print-errorlogs "${@:2}"
 
-install m: (_check-mode m)
+[arg("m", pattern="debug|release|asan")]
+install m:
     #!/usr/bin/env bash
     set -euo pipefail
     if [[ ! -x "build-$1/noctalia-files" ]]; then
@@ -55,7 +68,8 @@ install m: (_check-mode m)
     fi
     meson install --no-rebuild -C "build-$1"
 
-uninstall m: (_check-mode m)
+[arg("m", pattern="debug|release|asan")]
+uninstall m:
     #!/usr/bin/env bash
     set -euo pipefail
     if [[ ! -f "build-$1/build.ninja" ]]; then
@@ -145,10 +159,12 @@ format-nix:
 format-nix-check:
     just _files nix | xargs -0 -r nixfmt --check
 
+[arg("m", pattern="debug|release|asan")]
 _clang_tidy m=mode: (_ensure-configured m)
     meson compile -C "build-$1" noctalia-files
     run-clang-tidy -quiet -p "build-$1" -j "$(nproc)" -warnings-as-errors='*' -header-filter="$(realpath .)/(src|lib)/.*|^\.\./(src|lib)/.*" "$(realpath .)/(src|lib)/.*"
 
+[arg("m", pattern="debug|release|asan")]
 lint m=mode: (_clang_tidy m) lint-python lint-prose
 
 lint-nix:
@@ -186,12 +202,15 @@ lint-prose:
 lint-python:
     just _files python | xargs -0 -r python3 -m py_compile
 
+[arg("m", pattern="debug|release|asan")]
 fix m=mode: (_ensure-configured m)
     meson compile -C "build-$1" noctalia-files
     run-clang-tidy -quiet -p "build-$1" -j "$(nproc)" -fix -header-filter='(\.\./)?src/.*' "$(realpath src)/.*"
     just format-code
 
-clean m=mode: (_check-mode m)
+[arg("m", pattern="debug|release|asan")]
+clean m=mode:
     rm -rf -- "build-$1"
 
+[arg("m", pattern="debug|release|asan")]
 rebuild m=mode: (clean m) (build m)

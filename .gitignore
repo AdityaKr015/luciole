@@ -10,3 +10,4 @@ __pycache__/
 *~
 result
 result-*
+/compile_commands.json
