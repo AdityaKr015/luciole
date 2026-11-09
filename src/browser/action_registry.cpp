@@ -359,8 +359,8 @@ files::ActionState files::ActionRegistry::state(BrowserAction action, const Acti
     if (!c.pinsEditable) {
       return unavailable("Reload valid pins before editing them, or wait for the save to finish.");
     }
-    return c.pinned && c.pinned(*r.folder) == (action == A::Unpin) ? ActionState{}
-                                                                   : unavailable("The pin state changed.");
+    return c.pinned && c.pinned(*r.folder) == (action == A::UnpinCurrent) ? ActionState{}
+                                                                          : unavailable("The pin state changed.");
   case A::ReloadPins:
     return c.pinsBusy ? unavailable("Pins are being saved.") : ActionState{};
   case A::EmptyTrash:

@@ -295,8 +295,10 @@ namespace {
     model.select(6);
     const auto folder = R::capture(c);
     TEST_CHECK(R::state(A::Pin, c, folder).enabled && !R::state(A::Unpin, c, folder).enabled);
+    TEST_CHECK(R::state(A::PinCurrent, c, folder).enabled && !R::state(A::UnpinCurrent, c, folder).enabled);
     c.pinned = [](const files::Location&) { return true; };
     TEST_CHECK(!R::state(A::Pin, c, folder).enabled && R::state(A::Unpin, c, folder).enabled);
+    TEST_CHECK(!R::state(A::PinCurrent, c, folder).enabled && R::state(A::UnpinCurrent, c, folder).enabled);
     for (auto& item : data.entries) {
       item.identity = files::FileIdentity{"native", std::to_string(item.id)};
     }
