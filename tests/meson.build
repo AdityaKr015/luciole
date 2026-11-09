@@ -1,0 +1,58 @@
+# Each test builds tests/<name>_test.cpp (dashes become underscores) with the
+# shared library identity setup and links only the modules it exercises.
+gio_env = ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local']
+python = import('python').find_installation('python3')
+
+test_table = [
+  {'name': 'input-lifetime', 'deps': [noctalia_ui_dep]},
+  {'name': 'tab-workspace', 'deps': [browser_dep]},
+  {'name': 'archive-service', 'deps': [operations_dep, event_loop_dep], 'timeout': 90, 'env': gio_env},
+  {'name': 'thumbnail', 'deps': [thumbnails_dep, platform_dep, event_loop_dep, dependency('libwebp')],
+    'timeout': 90, 'env': gio_env},
+  {'name': 'preview-service', 'deps': [thumbnails_dep], 'env': gio_env},
+  {'name': 'clipboard', 'deps': [platform_dep, dependency('wayland-server')], 'env': gio_env},
+  {'name': 'file-payload', 'deps': [platform_dep], 'env': gio_env},
+  {'name': 'browser-actions', 'deps': [browser_dep], 'env': gio_env},
+  {'name': 'empty-trash-service', 'deps': [operations_dep, event_loop_dep], 'env': gio_env},
+  {'name': 'restore-service', 'deps': [operations_dep, event_loop_dep], 'env': gio_env},
+  {'name': 'trash-browse', 'deps': [browser_dep, event_loop_dep], 'env': gio_env},
+  {'name': 'trash-service', 'deps': [operations_dep, browser_dep, event_loop_dep], 'env': gio_env},
+  {'name': 'create-service', 'deps': [operations_dep, browser_dep, event_loop_dep], 'env': gio_env},
+  {'name': 'rename-service', 'deps': [operations_dep, browser_dep, event_loop_dep], 'env': gio_env},
+  {'name': 'batch-rename-service', 'deps': [operations_dep, event_loop_dep], 'env': gio_env},
+  {'name': 'permission-service', 'deps': [operations_dep, event_loop_dep], 'env': gio_env},
+  {'name': 'transfer-service', 'deps': [operations_dep, event_loop_dep], 'timeout': 90, 'env': gio_env},
+  {'name': 'places', 'deps': [browser_dep, event_loop_dep], 'env': gio_env},
+  {'name': 'file-icon', 'deps': [thumbnails_dep, platform_dep, system_dep, event_loop_dep], 'env': gio_env},
+  {'name': 'view-preference-writer', 'deps': [config_dep, event_loop_dep], 'env': ['G_DEBUG=fatal-warnings']},
+  {'name': 'directory-session', 'deps': [fs_dep, event_loop_dep], 'env': gio_env},
+  {'name': 'directory-model', 'deps': [browser_dep, event_loop_dep], 'env': gio_env},
+  {'name': 'file-launcher', 'deps': [platform_dep, event_loop_dep], 'wrapper': files('file_launcher_test.py')},
+  {'name': 'browser-controller', 'deps': [browser_dep, event_loop_dep], 'env': gio_env},
+  {'name': 'miller-columns', 'deps': [browser_dep, event_loop_dep], 'env': gio_env},
+  {'name': 'navigation-services', 'deps': [browser_dep, platform_dep, event_loop_dep], 'env': gio_env},
+  {'name': 'settings', 'deps': [config_dep, browser_dep], 'env': ['G_DEBUG=fatal-warnings']},
+  {'name': 'atomic-file', 'deps': [config_dep]},
+  {'name': 'state-store', 'deps': [config_dep], 'env': gio_env},
+]
+
+foreach entry : test_table
+  name = entry['name']
+  exe = executable(name + '-test',
+    'library_test_setup.cpp',
+    name.replace('-', '_') + '_test.cpp',
+    dependencies: entry['deps'] + [noctalia_ui_dep],
+    override_options: ['b_ndebug=false'],
+  )
+  if 'wrapper' in entry
+    test(name, python, args: [entry['wrapper'], exe], timeout: entry.get('timeout', 30), env: entry.get('env', []))
+  else
+    test(name, exe, timeout: entry.get('timeout', 30), env: entry.get('env', []))
+  endif
+endforeach
+
+test('headless-cli', python,
+  args: [files('cli_test.py'), app, meson.project_version()],
+  timeout: 30,
+  env: ['NOCTALIA_FILES_ASSETS_DIR=' + (meson.project_source_root() / 'lib/assets')],
+)

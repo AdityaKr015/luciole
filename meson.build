@@ -42,11 +42,7 @@ glycin = dependency('glycin-2', version: '>=2.0.1')
 if not cpp.has_header('stb/stb_image_resize2.h')
   error('system stb/stb_image_resize2.h is required')
 endif
-webp = dependency('libwebp')
 tomlplusplus = dependency('tomlplusplus', version: '>=3.4')
-ui_dependencies = [gio, gdk_pixbuf, glycin, webp,
-  dependency('wayland-cursor'), dependency('libpng'), dependency('librsvg-2.0'), dependency('threads'),
-]
 
 if cpp.get_define('_LIBCPP_VERSION', prefix: '#include <version>') != ''
   add_project_arguments('-fexperimental-library', language: 'cpp')
@@ -65,8 +61,6 @@ else
 endif
 
 subdir('lib')
-ui_dependencies += noctalia_ui_dep
-protocol_headers += noctalia_ui_protocol_headers
 
 build_config = configuration_data()
 build_config.set_quoted('NOCTALIA_FILES_VERSION', meson.project_version())
@@ -89,137 +83,188 @@ completions = configure_file(
   output: 'noctalia_files_completions.h',
   configuration: completion_config,
 )
-app_sources = files(
-  'src/app/application.cpp',
-  'src/app/file_manager_service.cpp',
-  'src/app/library_setup.cpp',
-  'src/platform/artwork_loader.cpp',
-  'src/platform/pixbuf_image_decoder.cpp',
-  'src/platform/desktop_integration.cpp',
-  'src/browser/png_decoder.cpp',
-  'src/app/cli.cpp',
-  'src/app/main_loop.cpp',
-  'src/browser/file_view.cpp',
-  'src/system/icon_resolver.cpp',
-  'src/system/freedesktop_key_file.cpp',
-  'src/system/icon_theme_poll_source.cpp',
-  'src/browser/file_icon_cache.cpp',
-  'src/browser/file_icon.cpp',
-  'src/browser/thumbnail_codec.cpp',
-  'src/browser/thumbnail_store.cpp',
-  'src/browser/thumbnail_provider.cpp',
-  'src/browser/thumbnail_worker.cpp',
-  'src/browser/thumbnail_service.cpp',
-  'src/browser/preview_service.cpp',
-  'src/ui/controls/file_preview_view.cpp',
-  'src/ui/controls/link_dialog.cpp',
-  'src/ui/controls/permission_editor.cpp',
-  'src/ui/controls/acl_editor.cpp',
-  'src/ui/controls/bulk_acl_editor.cpp',
-  'src/ui/controls/recursive_permission_editor.cpp',
-  'src/ui/controls/permission_results_view.cpp',
-  'src/ui/controls/batch_rename_dialog.cpp',
-  'src/config/view_preference_writer.cpp',
-  'src/platform/file_launcher.cpp',
-  'src/platform/text_clipboard.cpp',
-  'src/platform/file_payload.cpp',
-  'src/platform/terminal_launcher.cpp',
-  'src/browser/places_sidebar.cpp',
-  'src/ui/controls/name_editor.cpp',
-  'src/ui/controls/browser_settings_view.cpp',
-  'src/ui/controls/archive_view.cpp',
-  'src/ui/controls/miller_view.cpp',
-  'src/ui/controls/tooltip_presenter.cpp',
-  'src/main.cpp',
-  'src/ui/controls/selection_surface.cpp',
-)
+src_inc = include_directories('src')
 
-filesystem_service = declare_dependency(
-  sources: files(
-    'src/fs/location.cpp',
-    'src/fs/filename.cpp',
-    'src/fs/archive_type.cpp',
-    'src/fs/file_metadata.cpp',
-    'src/fs/trash_info.cpp',
-    'src/fs/file_icon_source.cpp',
-    'src/fs/directory_session.cpp',
-    'src/fs/recursive_search.cpp',
-    'src/app/glib_poll_source.cpp',
-  ),
-  include_directories: include_directories('src'),
+# One static library per module. Each library's dependencies list only the
+# modules its sources include, so the build graph documents the layering.
+event_loop_lib = static_library('files-event-loop',
+  files('src/app/glib_poll_source.cpp'),
+  include_directories: src_inc,
+  dependencies: [gio, noctalia_ui_dep],
+)
+event_loop_dep = declare_dependency(link_with: event_loop_lib, include_directories: src_inc,
   dependencies: [gio, noctalia_ui_dep],
 )
 
-browser_model = declare_dependency(
-  sources: files('src/browser/directory_model.cpp', 'src/browser/browser_controller.cpp',
-    'src/browser/miller_columns.cpp', 'src/browser/tab_workspace.cpp', 'src/browser/location_presentation.cpp', 'src/browser/path_completion.cpp', 'src/browser/action_registry.cpp', 'src/browser/selection_tools.cpp'),
-  dependencies: filesystem_service,
+fs_lib = static_library('files-fs',
+  files(
+    'src/fs/archive_type.cpp',
+    'src/fs/directory_session.cpp',
+    'src/fs/file_icon_source.cpp',
+    'src/fs/file_metadata.cpp',
+    'src/fs/filename.cpp',
+    'src/fs/location.cpp',
+    'src/fs/recursive_search.cpp',
+    'src/fs/trash_info.cpp',
+  ),
+  include_directories: src_inc,
+  dependencies: gio,
+)
+fs_dep = declare_dependency(link_with: fs_lib, include_directories: src_inc, dependencies: gio)
+
+config_lib = static_library('files-config',
+  files(
+    'src/config/atomic_file.cpp',
+    'src/config/diagnostic.cpp',
+    'src/config/settings.cpp',
+    'src/config/state_store.cpp',
+    'src/config/view_preference_writer.cpp',
+  ),
+  include_directories: src_inc,
+  dependencies: [fs_dep, tomlplusplus],
+)
+config_dep = declare_dependency(link_with: config_lib, include_directories: src_inc, dependencies: fs_dep)
+
+browser_lib = static_library('files-browser',
+  files(
+    'src/browser/action_registry.cpp',
+    'src/browser/browser_controller.cpp',
+    'src/browser/directory_model.cpp',
+    'src/browser/location_presentation.cpp',
+    'src/browser/miller_columns.cpp',
+    'src/browser/path_completion.cpp',
+    'src/browser/places.cpp',
+    'src/browser/selection_tools.cpp',
+    'src/browser/tab_workspace.cpp',
+  ),
+  include_directories: src_inc,
+  dependencies: [fs_dep, config_dep],
+)
+browser_dep = declare_dependency(link_with: browser_lib, include_directories: src_inc,
+  dependencies: [fs_dep, config_dep],
 )
 
-persistence_core = declare_dependency(
-  sources: files('src/config/atomic_file.cpp', 'src/config/diagnostic.cpp'),
-  include_directories: include_directories('src'),
+libacl = dependency('libacl')
+libarchive = dependency('libarchive')
+operations_lib = static_library('files-operations',
+  files(
+    'src/operations/archive_service.cpp',
+    'src/operations/archive_work.cpp',
+    'src/operations/batch_rename_service.cpp',
+    'src/operations/create_service.cpp',
+    'src/operations/empty_trash_service.cpp',
+    'src/operations/permission_service.cpp',
+    'src/operations/posix_acl.cpp',
+    'src/operations/rename_service.cpp',
+    'src/operations/restore_service.cpp',
+    'src/operations/template_catalog.cpp',
+    'src/operations/transfer_service.cpp',
+    'src/operations/trash_item.cpp',
+    'src/operations/trash_service.cpp',
+  ),
+  include_directories: src_inc,
+  dependencies: [fs_dep, libacl, libarchive],
+)
+operations_dep = declare_dependency(link_with: operations_lib, include_directories: src_inc,
+  dependencies: [fs_dep, libacl, libarchive],
 )
 
-settings_service = declare_dependency(
-  sources: files('src/config/settings.cpp'),
-  dependencies: [persistence_core, tomlplusplus],
+system_lib = static_library('files-system',
+  files(
+    'src/system/freedesktop_key_file.cpp',
+    'src/system/icon_resolver.cpp',
+    'src/system/icon_theme_poll_source.cpp',
+  ),
+  include_directories: src_inc,
+  dependencies: [gio, noctalia_ui_dep],
+)
+system_dep = declare_dependency(link_with: system_lib, include_directories: src_inc,
+  dependencies: [gio, noctalia_ui_dep],
 )
 
-state_service = declare_dependency(
-  sources: files('src/config/state_store.cpp'),
-  dependencies: [persistence_core, filesystem_service, tomlplusplus],
+libpng = dependency('libpng')
+thumbnails_lib = static_library('files-thumbnails',
+  files(
+    'src/browser/file_icon_cache.cpp',
+    'src/browser/png_decoder.cpp',
+    'src/browser/preview_service.cpp',
+    'src/browser/thumbnail_codec.cpp',
+    'src/browser/thumbnail_provider.cpp',
+    'src/browser/thumbnail_service.cpp',
+    'src/browser/thumbnail_store.cpp',
+    'src/browser/thumbnail_worker.cpp',
+  ),
+  include_directories: src_inc,
+  dependencies: [fs_dep, config_dep, system_dep, noctalia_ui_dep, gdk_pixbuf, glycin, libpng,
+    dependency('nlohmann_json')],
+)
+thumbnails_dep = declare_dependency(link_with: thumbnails_lib, include_directories: src_inc,
+  dependencies: [fs_dep, config_dep, system_dep, noctalia_ui_dep, gdk_pixbuf, libpng],
 )
 
-places_service = declare_dependency(
-  sources: files('src/browser/places.cpp'),
-  dependencies: state_service,
+wayland_client = dependency('wayland-client')
+platform_lib = static_library('files-platform',
+  files(
+    'src/platform/artwork_loader.cpp',
+    'src/platform/desktop_integration.cpp',
+    'src/platform/file_launcher.cpp',
+    'src/platform/file_payload.cpp',
+    'src/platform/pixbuf_image_decoder.cpp',
+    'src/platform/terminal_launcher.cpp',
+    'src/platform/text_clipboard.cpp',
+  ),
+  protocol_sources,
+  protocol_headers,
+  include_directories: src_inc,
+  dependencies: [fs_dep, operations_dep, thumbnails_dep, noctalia_ui_dep, wayland_client,
+    dependency('wayland-cursor'), dependency('librsvg-2.0')],
+)
+platform_dep = declare_dependency(link_with: platform_lib, include_directories: src_inc,
+  dependencies: [fs_dep, operations_dep, thumbnails_dep, noctalia_ui_dep, wayland_client],
+  sources: protocol_headers,
 )
 
-create_service = declare_dependency(
-  sources: files('src/operations/create_service.cpp', 'src/operations/template_catalog.cpp'),
-  dependencies: filesystem_service,
+ui_lib = static_library('files-ui',
+  files(
+    'src/browser/file_icon.cpp',
+    'src/browser/file_view.cpp',
+    'src/browser/places_sidebar.cpp',
+    'src/ui/controls/acl_editor.cpp',
+    'src/ui/controls/archive_view.cpp',
+    'src/ui/controls/batch_rename_dialog.cpp',
+    'src/ui/controls/browser_settings_view.cpp',
+    'src/ui/controls/bulk_acl_editor.cpp',
+    'src/ui/controls/file_preview_view.cpp',
+    'src/ui/controls/link_dialog.cpp',
+    'src/ui/controls/miller_view.cpp',
+    'src/ui/controls/name_editor.cpp',
+    'src/ui/controls/permission_editor.cpp',
+    'src/ui/controls/permission_results_view.cpp',
+    'src/ui/controls/recursive_permission_editor.cpp',
+    'src/ui/controls/selection_surface.cpp',
+    'src/ui/controls/tooltip_presenter.cpp',
+  ),
+  include_directories: src_inc,
+  dependencies: [browser_dep, config_dep, operations_dep, thumbnails_dep, noctalia_ui_dep],
 )
-
-rename_service = declare_dependency(
-  sources: files('src/operations/rename_service.cpp'),
-  dependencies: filesystem_service,
-)
-
-permission_service = declare_dependency(
-  sources: files('src/operations/permission_service.cpp', 'src/operations/posix_acl.cpp'),
-  dependencies: [filesystem_service, dependency('libacl')],
-)
-
-batch_rename_service = declare_dependency(
-  sources: files('src/operations/batch_rename_service.cpp'),
-  dependencies: filesystem_service,
-)
-
-trash_service = declare_dependency(
-  sources: files('src/operations/trash_service.cpp', 'src/operations/empty_trash_service.cpp',
-    'src/operations/trash_item.cpp', 'src/operations/restore_service.cpp'),
-  dependencies: filesystem_service,
-)
-
-transfer_service = declare_dependency(
-  sources: files('src/operations/transfer_service.cpp'),
-  dependencies: filesystem_service,
-)
-
-archive_service = declare_dependency(
-  sources: files('src/operations/archive_service.cpp', 'src/operations/archive_work.cpp'),
-  dependencies: [transfer_service, dependency('libarchive')],
+ui_dep = declare_dependency(link_with: ui_lib, include_directories: src_inc,
+  dependencies: [browser_dep, config_dep, operations_dep, thumbnails_dep, noctalia_ui_dep],
 )
 
 app = executable('noctalia-files',
-  app_sources,
-  protocol_sources,
-  protocol_headers,
+  files(
+    'src/app/application.cpp',
+    'src/app/cli.cpp',
+    'src/app/file_manager_service.cpp',
+    'src/app/library_setup.cpp',
+    'src/app/main_loop.cpp',
+    'src/main.cpp',
+  ),
   build_info,
   completions,
   include_directories: include_directories('src', '.'),
-  dependencies: ui_dependencies + [browser_model, settings_service, state_service, places_service, transfer_service, rename_service, batch_rename_service, permission_service, create_service, trash_service, archive_service],
+  dependencies: [ui_dep, platform_dep, system_dep, event_loop_dep, browser_dep, config_dep, operations_dep,
+    thumbnails_dep, noctalia_ui_dep, wayland_client, dependency('threads')],
   install: true,
 )
 
@@ -235,146 +280,7 @@ build_tests = tests_opt.enabled() or (
   tests_opt.auto() and get_option('buildtype') == 'debug' and get_option('b_sanitize') == 'none'
 )
 if build_tests
-  input_test = executable('input-lifetime-test', 'tests/library_test_setup.cpp', 'tests/input_lifetime_test.cpp',
-    protocol_headers,
-    include_directories: include_directories('src', '.'), dependencies: ui_dependencies, override_options: ['b_ndebug=false'])
-  test('input-lifetime', input_test)
-  tab_test = executable('tab-workspace-test', 'tests/library_test_setup.cpp', 'tests/tab_workspace_test.cpp', 'src/browser/tab_workspace.cpp', dependencies: noctalia_ui_dep, include_directories: include_directories('src'), override_options: ['b_ndebug=false'])
-  test('tab-workspace', tab_test)
-  archive_test = executable('archive-service-test', 'tests/library_test_setup.cpp', 'tests/archive_service_test.cpp', dependencies: archive_service, override_options: ['b_ndebug=false'])
-  test('archive-service', archive_test, timeout: 90, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  thumbnail_test = executable('thumbnail-test', 'tests/library_test_setup.cpp',
-    'src/platform/pixbuf_image_decoder.cpp', 'src/platform/artwork_loader.cpp',
-    'tests/thumbnail_test.cpp',
-    'src/browser/png_decoder.cpp',
-    'src/browser/thumbnail_codec.cpp',
-    'src/browser/thumbnail_store.cpp',
-    'src/browser/thumbnail_provider.cpp',
-    'src/browser/thumbnail_worker.cpp',
-    'src/browser/thumbnail_service.cpp',
-    dependencies: ui_dependencies + [filesystem_service, settings_service], override_options: ['b_ndebug=false']
-  )
-  test('thumbnail', thumbnail_test, timeout: 90, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  preview_test = executable('preview-service-test', 'tests/library_test_setup.cpp', 'tests/preview_service_test.cpp',
-    'src/browser/preview_service.cpp',
-    objects: thumbnail_test.extract_objects(files(
-      'src/browser/png_decoder.cpp', 'src/browser/thumbnail_codec.cpp', 'src/browser/thumbnail_store.cpp',
-      'src/browser/thumbnail_provider.cpp', 'src/browser/thumbnail_worker.cpp',
-      'src/browser/thumbnail_service.cpp',)),
-    dependencies: ui_dependencies + [filesystem_service, settings_service], override_options: ['b_ndebug=false'])
-  test('preview-service', preview_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  python = import('python').find_installation('python3')
-  clipboard_test = executable('clipboard-test', 'tests/library_test_setup.cpp', 'tests/clipboard_test.cpp', 'src/platform/text_clipboard.cpp', 'src/platform/file_payload.cpp', dependencies: [noctalia_ui_dep, filesystem_service, dependency('wayland-client'), dependency('wayland-server')], override_options: ['b_ndebug=false'])
-  test('clipboard', clipboard_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  payload_test = executable('file-payload-test', 'tests/library_test_setup.cpp', 'tests/file_payload_test.cpp', 'src/platform/file_payload.cpp', dependencies: filesystem_service, override_options: ['b_ndebug=false'])
-  test('file-payload', payload_test, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  actions_test = executable('browser-actions-test', 'tests/library_test_setup.cpp', 'tests/browser_actions_test.cpp', dependencies: browser_model, override_options: ['b_ndebug=false'])
-  test('browser-actions', actions_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  empty_trash_test = executable('empty-trash-service-test', 'tests/library_test_setup.cpp', 'tests/empty_trash_service_test.cpp', dependencies: trash_service, override_options: ['b_ndebug=false'])
-  test('empty-trash-service', empty_trash_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  restore_test = executable('restore-service-test', 'tests/library_test_setup.cpp', 'tests/restore_service_test.cpp', dependencies: trash_service, override_options: ['b_ndebug=false'])
-  test('restore-service', restore_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  trash_browse_test = executable('trash-browse-test', 'tests/library_test_setup.cpp', 'tests/trash_browse_test.cpp', dependencies: browser_model, override_options: ['b_ndebug=false'])
-  test('trash-browse', trash_browse_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  trash_test = executable('trash-service-test', 'tests/library_test_setup.cpp', 'tests/trash_service_test.cpp', dependencies: [trash_service, browser_model], override_options: ['b_ndebug=false'])
-  test('trash-service', trash_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  create_test = executable('create-service-test', 'tests/library_test_setup.cpp', 'tests/create_service_test.cpp', dependencies: [create_service, browser_model], override_options: ['b_ndebug=false'])
-  test('create-service', create_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  rename_test = executable('rename-service-test', 'tests/library_test_setup.cpp', 'tests/rename_service_test.cpp', dependencies: [rename_service, browser_model], override_options: ['b_ndebug=false'])
-  test('rename-service', rename_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  batch_rename_test = executable('batch-rename-service-test', 'tests/library_test_setup.cpp', 'tests/batch_rename_service_test.cpp', dependencies: batch_rename_service, override_options: ['b_ndebug=false'])
-  test('batch-rename-service', batch_rename_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  permission_test = executable('permission-service-test', 'tests/library_test_setup.cpp', 'tests/permission_service_test.cpp', dependencies: permission_service, override_options: ['b_ndebug=false'])
-  test('permission-service', permission_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  transfer_test = executable('transfer-service-test', 'tests/library_test_setup.cpp', 'tests/transfer_service_test.cpp', dependencies: transfer_service, override_options: ['b_ndebug=false'])
-  test('transfer-service', transfer_test, timeout: 90, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  places_test = executable('places-test', 'tests/library_test_setup.cpp', 'tests/places_test.cpp', dependencies: places_service, override_options: ['b_ndebug=false'])
-  test('places', places_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  icon_test = executable('file-icon-test', 'tests/library_test_setup.cpp',
-    'tests/file_icon_test.cpp',
-    'src/platform/artwork_loader.cpp',
-    'src/platform/pixbuf_image_decoder.cpp',
-    'src/browser/png_decoder.cpp',
-    'src/browser/thumbnail_codec.cpp',
-    'src/browser/file_icon_cache.cpp',
-    'src/system/icon_resolver.cpp',
-    'src/system/freedesktop_key_file.cpp',
-    dependencies: ui_dependencies + [filesystem_service], override_options: ['b_ndebug=false']
-  )
-  test('file-icon', icon_test, timeout: 30, env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'])
-  view_writer_test = executable('view-preference-writer-test', 'tests/library_test_setup.cpp',
-    'tests/view_preference_writer_test.cpp',
-    'src/config/view_preference_writer.cpp',
-    dependencies: [settings_service, filesystem_service], override_options: ['b_ndebug=false']
-  )
-  test('view-preference-writer', view_writer_test, timeout: 30, env: ['G_DEBUG=fatal-warnings'])
-  directory_test = executable('directory-session-test', 'tests/library_test_setup.cpp',
-    'tests/directory_session_test.cpp',
-    include_directories: include_directories('src'),
-    dependencies: filesystem_service, override_options: ['b_ndebug=false']
-  )
-  test('directory-session', directory_test, timeout: 30,
-    env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],
-  )
-  browser_test = executable('directory-model-test', 'tests/library_test_setup.cpp',
-    'tests/directory_model_test.cpp',
-    dependencies: browser_model, override_options: ['b_ndebug=false']
-  )
-  test('directory-model', browser_test, timeout: 30,
-    env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],
-  )
-  file_launcher_test = executable('file-launcher-test', 'tests/library_test_setup.cpp',
-    'tests/file_launcher_test.cpp', 'src/platform/file_launcher.cpp',
-    dependencies: filesystem_service, override_options: ['b_ndebug=false']
-  )
-  test('file-launcher', python,
-    args: [files('tests/file_launcher_test.py'), file_launcher_test], timeout: 30,
-  )
-  controller_test = executable('browser-controller-test', 'tests/library_test_setup.cpp',
-    'tests/browser_controller_test.cpp',
-    dependencies: browser_model, override_options: ['b_ndebug=false']
-  )
-  miller_test = executable('miller-columns-test', 'tests/library_test_setup.cpp',
-    'tests/miller_columns_test.cpp',
-    dependencies: browser_model, override_options: ['b_ndebug=false']
-  )
-  test('miller-columns', miller_test, timeout: 30,
-    env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],
-  )
-  test('browser-controller', controller_test, timeout: 30,
-    env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],
-  )
-  navigation_test = executable('navigation-services-test', 'tests/library_test_setup.cpp',
-    'tests/navigation_services_test.cpp', 'src/platform/terminal_launcher.cpp',
-    dependencies: browser_model, override_options: ['b_ndebug=false']
-  )
-  test('navigation-services', navigation_test, timeout: 30,
-    env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],
-  )
-  settings_test = executable('settings-test', 'tests/library_test_setup.cpp',
-    'tests/settings_test.cpp',
-    dependencies: [settings_service, browser_model], override_options: ['b_ndebug=false']
-  )
-  test('settings', settings_test, timeout: 30,
-    env: ['G_DEBUG=fatal-warnings'],
-  )
-  atomic_test = executable('atomic-file-test',
-    'tests/atomic_file_test.cpp',
-    dependencies: settings_service, override_options: ['b_ndebug=false']
-  )
-  test('atomic-file', atomic_test, timeout: 30)
-  state_test = executable('state-store-test', 'tests/library_test_setup.cpp',
-    'tests/state_store_test.cpp',
-    dependencies: state_service, override_options: ['b_ndebug=false']
-  )
-  test('state-store', state_test, timeout: 30,
-    env: ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local'],
-  )
-  test('headless-cli', python,
-    args: [files('tests/cli_test.py'), app, meson.project_version()],
-    timeout: 30,
-    env: ['NOCTALIA_FILES_ASSETS_DIR=' + (meson.project_source_root() / 'lib/assets')],
-  )
+  subdir('tests')
 endif
 
 install_data('LICENSE', install_dir: get_option('datadir') / 'licenses/noctalia-files')

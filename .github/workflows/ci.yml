@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+# Cancel in-progress runs for the same branch/PR when new commits land.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  format:
+    name: format
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      # Arch's rolling `clang` package is the pinned major; the guard fails loudly when Arch moves on.
+      - name: Install tools
+        run: |
+          pacman -Syu --noconfirm --needed git just clang python
+          clang-format --version | grep -q 'version 23\.' || { clang-format --version; echo "error: expected clang-format 23" >&2; exit 1; }
+
+      - uses: actions/checkout@v6
+
+      - name: Check formatting and prose
+        run: just format-check
+
+  build:
+    name: Build and test (debug)
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - &arch-deps
+        name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel git meson ninja pkgconf ccache zstd \
+            wayland wayland-protocols \
+            libglvnd freetype2 fontconfig noto-fonts \
+            cairo pango harfbuzz \
+            libxkbcommon glib2 shared-mime-info \
+            gdk-pixbuf2 glycin libwebp librsvg libpng \
+            tomlplusplus acl libarchive \
+            nlohmann-json stb \
+            python ffmpeg \
+            just clang
+
+      - uses: actions/checkout@v6
+
+      # Meson picks up ccache automatically. Only pushes to main save the cache, so
+      # PR runs reuse it without evicting each other from the repository quota.
+      - &ccache-env
+        name: Configure ccache
+        run: |
+          echo "CCACHE_DIR=$GITHUB_WORKSPACE/.ccache" >> "$GITHUB_ENV"
+          echo "CCACHE_MAXSIZE=1G" >> "$GITHUB_ENV"
+
+      - name: Restore ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: ccache-arch-${{ github.sha }}
+          restore-keys: ccache-arch-
+
+      - name: Build
+        run: just build
+
+      - name: Test
+        run: just test debug
+
+      - name: Save ccache
+        if: github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ccache-arch-${{ github.sha }}
+
+  lint:
+    name: clang-tidy
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - *arch-deps
+
+      - uses: actions/checkout@v6
+
+      - name: Check clang-tidy version
+        run: |
+          clang-tidy --version | grep -q 'version 23\.' || { clang-tidy --version; echo "error: expected clang-tidy 23" >&2; exit 1; }
+
+      - name: Lint
+        run: just lint
