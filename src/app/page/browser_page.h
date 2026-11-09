@@ -1,10 +1,13 @@
 #pragma once
 
 #include "app/page/active_dialog.h"
+#include "app/page/archive_controller.h"
 #include "app/page/batch_rename_controller.h"
 #include "app/page/create_controller.h"
 #include "app/page/page_context.h"
+#include "app/page/properties_controller.h"
 #include "app/page/rename_controller.h"
+#include "app/page/transfer_controller.h"
 #include "app/page/trash_controller.h"
 #include "app/workspace_command.h"
 #include "app/workspace_layout.h"
@@ -38,17 +41,12 @@
 #include "ui/browser/file_icon.h"
 #include "ui/browser/file_view.h"
 #include "ui/browser/places_sidebar.h"
-#include "ui/controls/acl_editor.h"
-#include "ui/controls/archive_view.h"
 #include "ui/controls/browser_settings_view.h"
-#include "ui/controls/bulk_acl_editor.h"
 #include "ui/controls/context_menu.h"
 #include "ui/controls/file_preview_view.h"
 #include "ui/controls/input.h"
 #include "ui/controls/miller_view.h"
 #include "ui/controls/name_editor.h"
-#include "ui/controls/permission_editor.h"
-#include "ui/controls/permission_results_view.h"
 #include "ui/controls/scroll_view.h"
 #include "ui/controls/select_popup_context.h"
 #include "ui/controls/separator.h"
@@ -199,6 +197,12 @@ private:
   void restorePlaceFocus(files::Location location) override;
 
   bool targetsCurrent(const std::vector<files::DirectoryEntry>& targets) override;
+  bool requestCurrent(const files::ActionRequest& request, files::ActionScope scope) const override;
+  bool operationsBusy() const override;
+  bool visible() const override;
+  bool popupAvailable() override;
+  void prepareOverlay() override;
+  Node& sceneRoot() override;
 
   void pinFolders(std::vector<files::Bookmark> bookmarks, std::size_t before);
 
@@ -208,19 +212,13 @@ private:
 
   bool canEmptyTrash() const override;
 
-  void updateOperationProgress();
+  void operationProgressTick();
 
   void showContaining(const files::Location& location);
 
   void applySettings(const files::BrowserSettings& settings, bool force);
 
   void showCenteredDialog(std::unique_ptr<Flex> root, float preferredWidth = 588.0F);
-
-  static files::Location archiveDestination(const files::Location& source);
-  void openArchiveDialog(std::vector<files::Location> sources, std::vector<std::string> selected, bool compress);
-  void deferCloseArchive();
-  void closeArchive();
-  void syncArchive();
 
   void deferCloseSettings();
   void closeSettings();
@@ -236,18 +234,6 @@ private:
   std::unique_ptr<FilePreviewView> makePreviewView(bool quick);
   void showQuickPreview();
   void showApplications(const files::DirectoryEntry& entry);
-  void showAdvancedPermissions(bool advanced, bool focus = false);
-  bool propertiesCanApply() const;
-  void syncPermissions();
-  void showProperties(const std::vector<files::DirectoryEntry>& targets, bool captureCurrentLocation = false);
-
-  void syncTransferConflict();
-
-  void retryTransfer();
-
-  bool
-  startPayloadTransfer(files::FilePayload payload, const files::Location& destination, files::TransferAction action);
-
   bool dragCurrent() const;
 
   bool validDropFolder(const files::Location& destination) const;
@@ -387,7 +373,7 @@ private:
 
   void revealMenuHighlight();
   void dismissMenu() override;
-  void closeMenu();
+  void closeMenu() override;
   static LayoutRect sceneRect(const Node& node);
 
   void showPopup(
@@ -477,7 +463,6 @@ private:
   std::optional<Drag> m_drag;
   std::shared_ptr<const files::FileIconImage> m_dragArtwork;
   std::uint32_t m_fileDragSerial = 0;
-  bool m_pendingFilePaste = false;
   bool m_externalHover = false;
   bool m_externalDraggingHere = false;
   bool m_refreshExternalDrop = false;
@@ -487,8 +472,6 @@ private:
   bool m_externalScrollInPlaces = false;
   std::optional<std::size_t> m_externalPinSlot;
   std::optional<DropTarget> m_externalDropTarget;
-  std::optional<files::ClipboardFiles> m_clipboardTransfer;
-  files::DropCompletion m_dropCompletion;
   Timer m_dragScroll;
   float m_dragScrollDelta = 0;
   float m_pointerX = 0;
@@ -503,40 +486,24 @@ private:
   std::optional<DropTarget> m_lastDropTarget;
   bool m_dragScrollInPlaces = false;
   files::ArchiveService m_archives;
-  ArchiveView* m_archiveView = nullptr;
-  std::optional<files::Location> m_archiveSource;
-  bool m_archiveWanted = false, m_archiveDirty = false, m_transferConflictArchive = false;
   files::TransferService m_transfers;
   files::TrashService m_trash;
   files::RestoreService m_restore;
-  bool m_transferConflictRestore = false;
   files::EmptyTrashService m_emptyTrash;
   TrashController m_trashController{*this, m_trash, m_emptyTrash, m_restore};
   files::RenameService m_renamer;
   RenameController m_renameController{*this, m_renamer, m_pins};
   files::BatchRenameService m_batchRenamer;
   files::PermissionService m_permissions;
-  PermissionEditor* m_permissionEditor = nullptr;
-  AclEditor* m_aclEditor = nullptr;
-  BulkAclEditor* m_bulkAclEditor = nullptr;
-  Flex *m_permissionBasic = nullptr, *m_permissionAdvanced = nullptr;
-  Button *m_permissionAdvancedOpen = nullptr, *m_permissionAdvancedBack = nullptr;
-  bool m_aclActive = false;
-  std::size_t m_permissionResultTab = 2;
-  PermissionResultsView* m_permissionResults = nullptr;
-  Button *m_permissionReport = nullptr, *m_permissionCancel = nullptr;
-  Label* m_permissionStatus = nullptr;
-  Segmented* m_permissionTabs = nullptr;
-  ScrollView* m_permissionScroll = nullptr;
-  Button* m_permissionSave = nullptr;
-  bool m_permissionDirty = false;
+  PropertiesController m_propertiesController{*this, m_permissions, m_icons};
   BatchRenameController m_batchRename{*this, m_batchRenamer};
   files::CreateService m_creator;
   files::TemplateCatalog m_templates;
   CreateController m_createController{*this, m_creator, m_templates, m_connection, m_renderer, m_animations};
-  Timer m_operationProgress;
-  Button* m_cancelOperation = nullptr;
-  Button* m_retryTransfer = nullptr;
+  ArchiveController m_archiveController{*this, m_archives, m_launcher, m_icons, m_connection, m_dispatcher};
+  TransferController m_transferController{*this,          m_transfers,   m_archives,
+                                          m_restore,      m_trash,       m_emptyTrash,
+                                          m_batchRenamer, m_permissions, [this] { operationProgressTick(); }};
   Box* m_placeDropLine = nullptr;
   std::string m_preferenceError;
   std::size_t m_gridZoom = 1;
@@ -669,6 +636,5 @@ private:
   ScrollView* m_menuScroll = nullptr;
   std::optional<files::Location> m_restorePlaceFocus;
   InputDispatcher m_menuDispatcher;
-  std::optional<std::uint64_t> m_activeTransferConflict;
   std::shared_ptr<int> m_lifetime = std::make_shared<int>(0);
 };

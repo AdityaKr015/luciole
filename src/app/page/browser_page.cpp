@@ -15,7 +15,6 @@
 #include "core/timer_manager.h"
 #include "core/ui_phase.h"
 #include "cursor-shape-v1-client-protocol.h"
-#include "fs/filename.h"
 #include "fs/gio_ptr.h"
 #include "model/details_columns.h"
 #include "noctalia_files_build_info.h"
@@ -41,18 +40,12 @@
 #include "ui/browser/places_sidebar.h"
 #include "ui/browser/preview_layout.h"
 #include "ui/builders.h"
-#include "ui/controls/acl_editor.h"
-#include "ui/controls/archive_view.h"
 #include "ui/controls/browser_settings_view.h"
-#include "ui/controls/bulk_acl_editor.h"
 #include "ui/controls/context_menu.h"
-#include "ui/controls/file_error_text.h"
 #include "ui/controls/file_preview_view.h"
 #include "ui/controls/input.h"
 #include "ui/controls/miller_view.h"
 #include "ui/controls/name_editor.h"
-#include "ui/controls/permission_editor.h"
-#include "ui/controls/permission_results_view.h"
 #include "ui/controls/scroll_view.h"
 #include "ui/controls/select_popup_context.h"
 #include "ui/controls/tooltip_presenter.h"
@@ -177,66 +170,31 @@ BrowserPage::BrowserPage(
     m_surface->requestUpdate();
   });
   m_archives.setChangedCallback([this] {
-    updateOperationProgress();
-    m_archiveDirty = true;
-    if (auto file = m_archives.takeOpenedFile()) {
-      m_launcher.open(*file);
-    }
-    if (!m_archives.busy()) {
-      m_actionError = files::fileErrorText(m_archives.error());
-      if (!m_archives.results().empty()) {
-        if (m_actionError.empty()) {
-          m_actionError = "Archive operation complete.";
-        }
-        browser().refresh();
-      }
-    }
+    m_transferController.updateOperationProgress();
+    m_archiveController.changed();
     m_browserDirty = true;
     m_surface->requestUpdate();
   });
   m_transfers.setChangedCallback([this] {
-    updateOperationProgress();
-    if (!m_archives.busy() && !m_transfers.busy()) {
-      const auto& results = m_transfers.results();
-      const auto done = std::ranges::count_if(results, [](const auto& item) {
-        return item.outcome == files::TransferOutcome::Moved || item.outcome == files::TransferOutcome::Copied;
-      });
-      m_actionError = std::format(
-          "{} item{} {}", done, done == 1 ? "" : "s",
-          m_transfers.action() == files::TransferAction::Copy ? "copied" : "moved"
-      );
-      if (const auto error = std::ranges::find_if(results, [](const auto& item) { return item.error.has_value(); });
-          error != results.end()) {
-        m_actionError +=
-            std::format(" · {}: {}", error->source.displayName().value_or("Item"), files::fileErrorText(*error->error));
-      }
-      if (const auto selection = std::exchange(m_clipboardTransfer, std::nullopt)) {
-        m_clipboard.finishMove(*selection, results);
-      }
-      if (auto finish = std::exchange(m_dropCompletion, {})) {
-        finish(!results.empty() && std::ranges::all_of(results, [](const auto& item) {
-          return item.outcome == files::TransferOutcome::Moved || item.outcome == files::TransferOutcome::Copied;
-        }));
-      }
-      browser().refresh();
-    }
+    m_transferController.updateOperationProgress();
+    m_transferController.changed();
     m_browserDirty = true;
     m_surface->requestUpdate();
   });
   m_emptyTrash.setChangedCallback([this] {
-    updateOperationProgress();
+    m_transferController.updateOperationProgress();
     m_trashController.markEmptyTrashDirty();
     m_browserDirty = true;
     m_surface->requestUpdate();
   });
   m_restore.setChangedCallback([this] {
-    updateOperationProgress();
+    m_transferController.updateOperationProgress();
     m_trashController.restoreChanged();
     m_browserDirty = true;
     m_surface->requestUpdate();
   });
   m_trash.setChangedCallback([this] {
-    updateOperationProgress();
+    m_transferController.updateOperationProgress();
     m_trashController.markTrashDirty();
     m_browserDirty = true;
     m_surface->requestUpdate();
@@ -252,13 +210,13 @@ BrowserPage::BrowserPage(
     m_surface->requestUpdate();
   });
   m_permissions.setChangedCallback([this] {
-    updateOperationProgress();
-    m_permissionDirty = true;
+    m_transferController.updateOperationProgress();
+    m_propertiesController.markDirty();
     m_browserDirty = true;
     m_surface->requestUpdate();
   });
   m_batchRenamer.setChangedCallback([this] {
-    updateOperationProgress();
+    m_transferController.updateOperationProgress();
     m_batchRename.markDirty();
     m_browserDirty = true;
     m_surface->requestUpdate();
@@ -318,15 +276,10 @@ void BrowserPage::focusMiller(std::size_t index, bool reveal) {
 BrowserPage::~BrowserPage() {
   m_dragScroll.stop();
   m_externalScroll.stop();
-  m_operationProgress.stop();
+  m_transferController.stopProgress();
   m_archives.setChangedCallback({});
   m_transfers.setChangedCallback({});
-  if (m_clipboardTransfer) {
-    m_clipboard.finishMove(*m_clipboardTransfer, m_transfers.results());
-  }
-  if (m_dropCompletion) {
-    m_dropCompletion(false);
-  }
+  m_transferController.settle();
   m_trash.setChangedCallback({});
   m_emptyTrash.setChangedCallback({});
   m_restore.setChangedCallback({});
@@ -344,7 +297,7 @@ BrowserPage::~BrowserPage() {
   m_preview.clear();
   closeMenu();
   closeSettings();
-  closeArchive();
+  m_archiveController.close();
   m_dispatcher.setSceneRoot(nullptr);
   unmount();
   m_root = nullptr;
@@ -388,12 +341,12 @@ bool BrowserPage::busy() const {
       || m_emptyTrash.busy()
       || renameBusy()
       || m_creator.busy()
-      || m_pendingFilePaste;
+      || m_transferController.pastePending();
 }
 
 void BrowserPage::shutdown() {
   m_preview.clear();
-  m_pendingFilePaste = false;
+  m_transferController.cancelPaste();
   m_launcher.cancelApplications();
   m_archives.shutdown();
   m_transfers.cancel();
@@ -524,10 +477,7 @@ files::FileDropTarget BrowserPage::externalDestination(const files::Location& de
               finish(false);
               return;
             }
-            m_dropCompletion = std::move(finish);
-            if (!startPayloadTransfer(std::move(payload), destination, action)) {
-              std::exchange(m_dropCompletion, {})(false);
-            }
+            m_transferController.receiveDrop(std::move(payload), destination, action, std::move(finish));
           },
       .preferred = (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0 ? files::TransferAction::Copy
                                                                           : files::TransferAction::Move
@@ -667,7 +617,7 @@ bool BrowserPage::popupOwns(wl_surface* surface) const {
 
 bool BrowserPage::popup() const { return m_menuSurface != nullptr; }
 
-bool BrowserPage::overlay() const { return m_settingsView || m_archiveView; }
+bool BrowserPage::overlay() const { return m_settingsView || m_archiveController.open(); }
 
 bool BrowserPage::previewVisible() const { return m_savedSettings.showPreview && !overlay(); }
 
@@ -787,7 +737,7 @@ void BrowserPage::deactivate() {
     }
     m_dispatcher.setFocus(nullptr);
   }
-  m_activeTransferConflict.reset();
+  m_transferController.keepConflict();
   closeMenu();
   clearTypeahead();
   cancelDrag();
@@ -876,7 +826,7 @@ float BrowserPage::sidebarControlWidth() const { return m_showSidebar ? sidebarW
 
 void BrowserPage::pumpJobs() {
   if (m_root) {
-    syncTransferConflict();
+    m_transferController.syncConflict();
     m_trashController.onFrame();
   }
 }
@@ -888,19 +838,8 @@ void BrowserPage::workspaceMenu(
 }
 
 void BrowserPage::transferTo(const files::Location& destination, bool copy) {
-  const auto request = std::exchange(m_pendingWorkspaceRequest, std::nullopt);
-  if (!request || !files::ActionRegistry::current(actionContext(), *request, files::ActionScope::Targets)) {
-    return;
-  }
-  std::vector<files::Location> sources;
-  sources.reserve(request->targets.size());
-  for (const auto& target : request->targets) {
-    sources.push_back(target.location);
-  }
-  if (!sources.empty() && !m_transfers.busy()) {
-    (void)m_transfers.start(
-        {std::move(sources), destination, copy ? files::TransferAction::Copy : files::TransferAction::Move}
-    );
+  if (const auto request = std::exchange(m_pendingWorkspaceRequest, std::nullopt)) {
+    m_transferController.transferTo(*request, destination, copy);
   }
 }
 
@@ -991,7 +930,7 @@ void BrowserPage::pointer(const PointerEvent& event) {
     }
   }
 
-  if ((m_settingsView || m_archiveView) && dispatcher == &m_dispatcher) {
+  if ((m_settingsView || m_archiveController.open()) && dispatcher == &m_dispatcher) {
     m_pointerX = x;
     m_pointerY = y;
     if (event.type == PointerEvent::Type::Button && event.pressed) {
@@ -1275,11 +1214,7 @@ void BrowserPage::keyboard(const KeyboardEvent& event) {
     return;
   }
   if (m_menuSurface != nullptr) {
-    if (m_permissionResults
-        && m_permissionResults->visible()
-        && event.pressed
-        && m_permissionResults->navigate(event.sym, event.modifiers, event.preedit)) {
-      m_menuSurface->requestLayout();
+    if (m_propertiesController.resultsKey(event)) {
       return;
     }
     if (m_quickPreview && event.pressed && !event.preedit && event.modifiers == 0) {
@@ -1342,22 +1277,7 @@ void BrowserPage::keyboard(const KeyboardEvent& event) {
     }
     return;
   }
-  if (m_archiveView) {
-    if (event.pressed && KeySymbol::isEscape(event.sym)) {
-      deferCloseArchive();
-    } else if (event.pressed && event.sym == XKB_KEY_q && event.modifiers == KeyMod::Ctrl) {
-      m_surface->close();
-    } else if (event.pressed && KeySymbol::isTab(event.sym)) {
-      (void)m_dispatcher.cycleTabFocusInSubtree(m_archiveView, (event.modifiers & KeyMod::Shift) != 0);
-    } else if (
-        !event.pressed
-        || event.preedit
-        || m_dispatcher.focusedArea() != m_archiveView->focusArea()
-        || !m_archiveView->key(event.sym, event.modifiers)
-    ) {
-      m_dispatcher.keyEvent(event.sym, event.utf32, event.modifiers, event.pressed, event.preedit);
-    }
-    m_surface->requestLayout();
+  if (m_archiveController.key(event)) {
     return;
   }
   if (m_settingsView) {
@@ -1643,7 +1563,7 @@ files::ActionContext BrowserPage::actionContext() const {
           || m_trash.busy()
           || m_trash.canTrash()
           || m_emptyTrash.pending()
-          || m_pendingFilePaste,
+          || m_transferController.pastePending(),
       .pinsEditable = m_pins.editable(),
       .pinsBusy = m_pins.busy(),
       .canEmptyTrash = canEmptyTrash(),
@@ -1732,43 +1652,9 @@ void BrowserPage::dispatchAction(Action action, const files::ActionRequest& requ
     }
     break;
   }
-  case Action::PasteFiles: {
-    m_pendingFilePaste = true;
-    const std::weak_ptr<int> lifetime = m_lifetime;
-    m_clipboard.requestFiles([this, lifetime, request](std::optional<files::ClipboardFiles> selection) {
-      if (lifetime.expired()) {
-        return;
-      }
-      const bool pending = std::exchange(m_pendingFilePaste, false);
-      if (!pending
-          || !m_visible
-          || !files::ActionRegistry::current(actionContext(), request, files::ActionScope::Location)) {
-        return;
-      }
-      if (!selection) {
-        actionError("The clipboard changed or its file data could not be read.");
-        return;
-      }
-      if (actionContext().operationsBusy) {
-        return;
-      }
-      if (selection->payload.cut) {
-        if (!m_clipboard.claimMove(selection->revision)) {
-          return;
-        }
-        m_clipboardTransfer = *selection;
-      }
-      if (!startPayloadTransfer(
-              selection->payload, *request.folder,
-              selection->payload.cut ? files::TransferAction::Move : files::TransferAction::Copy
-          )) {
-        if (const auto claimed = std::exchange(m_clipboardTransfer, std::nullopt)) {
-          m_clipboard.finishMove(*claimed, {});
-        }
-      }
-    });
+  case Action::PasteFiles:
+    m_transferController.paste(request);
     break;
-  }
   case Action::ShowPreview:
     m_savedSettings.showPreview = !m_savedSettings.showPreview;
     m_preferences.submit({{files::BrowserPreference::ShowPreview, m_savedSettings.showPreview}});
@@ -1780,31 +1666,17 @@ void BrowserPage::dispatchAction(Action action, const files::ActionRequest& requ
   case Action::OpenWith:
     showApplications(targets.front());
     break;
-  case Action::Compress: {
-    std::vector<files::Location> sources;
-    sources.reserve(targets.size());
-    for (const auto& target : targets) {
-      sources.push_back(target.location);
-    }
-    openArchiveDialog(std::move(sources), {}, true);
+  case Action::Compress:
+    m_archiveController.compress(targets);
     break;
-  }
   case Action::ExtractTo:
-    openArchiveDialog({targets.front().location}, {}, false);
+    m_archiveController.extractTo(targets.front().location);
     break;
   case Action::ExtractHere:
-    if (!m_archives.extract(targets.front().location, archiveDestination(targets.front().location))) {
-      actionError("Could not start extraction.");
-    }
+    m_archiveController.extractHere(targets.front().location);
     break;
   case Action::BrowseArchive:
-    if (m_archives.inspect(targets.front().location)) {
-      m_archiveSource = targets.front().location;
-      m_archiveWanted = true;
-      m_archiveDirty = true;
-    } else {
-      actionError("Could not read this archive.");
-    }
+    m_archiveController.browse(targets.front().location);
     break;
   case Action::CopyPath:
   case Action::CopyUri:
@@ -1984,7 +1856,7 @@ void BrowserPage::dispatchAction(Action action, const files::ActionRequest& requ
     m_trashController.openEmptyTrash(targets);
     break;
   case Action::Properties:
-    showProperties(targets);
+    m_propertiesController.show(targets);
     break;
   case Action::CreateFolder:
   case Action::CreateFile:
@@ -2095,6 +1967,14 @@ bool BrowserPage::targetsCurrent(const std::vector<files::DirectoryEntry>& targe
   }
   return current;
 }
+
+bool BrowserPage::requestCurrent(const files::ActionRequest& request, files::ActionScope scope) const {
+  return files::ActionRegistry::current(actionContext(), request, scope);
+}
+
+bool BrowserPage::operationsBusy() const { return actionContext().operationsBusy; }
+
+bool BrowserPage::visible() const { return m_visible; }
 
 void BrowserPage::pinFolders(std::vector<files::Bookmark> bookmarks, std::size_t before) {
   if (!m_pins.add(std::move(bookmarks), before)) {
@@ -2306,7 +2186,7 @@ void BrowserPage::openPlaceMenu(const files::Bookmark& bookmark, float x, float 
               bookmark.location, action == 3 ? (index > 0 ? index - 1 : 0) : std::min(index + 1, pins.size() - 1)
           );
         } else if (action == 5) {
-          showProperties(
+          m_propertiesController.show(
               {{.location = bookmark.location,
                 .name = bookmark.label,
                 .displayName = bookmark.label,
@@ -2334,23 +2214,11 @@ bool BrowserPage::canEmptyTrash() const {
       && !m_creator.busy();
 }
 
-void BrowserPage::updateOperationProgress() {
-  if (m_permissions.busy()
-      || m_batchRenamer.applying()
-      || m_archives.busy()
-      || m_transfers.busy()
-      || m_restore.busy()
-      || m_trash.busy()
-      || m_emptyTrash.busy()) {
-    m_operationProgress.startRepeating(std::chrono::milliseconds(100), [this] {
-      m_batchRename.progressTick();
-      m_permissionDirty = m_permissions.busy();
-      m_browserDirty = true;
-      m_surface->requestUpdate();
-    });
-  } else {
-    m_operationProgress.stop();
-  }
+void BrowserPage::operationProgressTick() {
+  m_batchRename.progressTick();
+  m_propertiesController.progressTick();
+  m_browserDirty = true;
+  m_surface->requestUpdate();
 }
 
 void BrowserPage::showContaining(const files::Location& location) {
@@ -2465,143 +2333,6 @@ void BrowserPage::showCenteredDialog(std::unique_ptr<Flex> root, float preferred
   m_menuSurface->requestLayout();
 }
 
-files::Location BrowserPage::archiveDestination(const files::Location& source) {
-  return source.parent().value_or(source).child(files::archiveFolderName(source));
-}
-
-void BrowserPage::openArchiveDialog(
-    std::vector<files::Location> sources, std::vector<std::string> selected, bool compress
-) {
-  if (sources.empty() || m_archives.busy()) {
-    return;
-  }
-  const auto formats = files::archiveFormats();
-  if (compress && formats.empty()) {
-    actionError("No archive writer is available.");
-    return;
-  }
-  const auto source = sources.front();
-  const auto parent = source.parent();
-  if (!parent) {
-    actionError("The source has no destination parent.");
-    return;
-  }
-  const auto& base = *parent;
-  const std::string name = (sources.size() == 1 ? source.displayName().value_or("Archive") : "Archive")
-      + (formats.empty() ? ".zip" : std::string(formats.front().suffix));
-  auto root = std::make_unique<ArchiveDialog>(
-      compress, name, files::locationEditText(compress ? base : archiveDestination(source)),
-      [this, sources = std::move(sources), selected = std::move(selected), base,
-       compress](const std::string& name, const std::string& path, files::ArchiveFormat format) -> std::string {
-        if (path.empty()) {
-          return "Enter a destination folder.";
-        }
-        auto destination = files::resolveLocationText(path, base);
-        if (!destination.nativePath()) {
-          return "Choose a native destination folder.";
-        }
-        if (compress) {
-          if (auto problem = files::filenameProblem(name)) {
-            return *problem;
-          }
-          const auto formats = files::archiveFormats();
-          const auto found = std::ranges::find(formats, format, &files::ArchiveFormatInfo::format);
-          if (found == formats.end() || !name.ends_with(found->suffix)) {
-            return "Use the filename extension for the selected format.";
-          }
-          destination = destination.child(name);
-        }
-        const bool started = compress ? m_archives.compress(sources, destination, format)
-                                      : m_archives.extract(sources.front(), destination, selected);
-        if (!started) {
-          return "Could not start the archive operation.";
-        }
-        dismissMenu();
-        return {};
-      },
-      [this] { dismissMenu(); }
-  );
-  auto* dialog = root.get();
-  const float width = std::min(520.0F, static_cast<float>(m_surface->width()) - 32.0F);
-  UiPhaseScope phase(UiPhase::Layout);
-  LayoutConstraints constraints;
-  constraints.setExactWidth(width);
-  const float height = std::min(
-      root->measure(m_surface->renderTarget().renderer(), constraints).height,
-      static_cast<float>(m_surface->height()) - 48.0F
-  );
-  showPopup(
-      std::move(root), nullptr, {(m_surface->width() - width) * 0.5F, (m_surface->height() - height) * 0.5F, 1, 1},
-      width, height
-  );
-  if (m_menuSurface) {
-    m_dialogHeight = height;
-    m_menuDispatcher.setFocus(dialog->focusArea());
-  }
-}
-
-void BrowserPage::deferCloseArchive() {
-  const std::weak_ptr<int> lifetime = m_lifetime;
-  DeferredCall::callLater([this, lifetime] {
-    if (!lifetime.expired()) {
-      closeArchive();
-    }
-  });
-}
-
-void BrowserPage::closeArchive() {
-  m_archiveWanted = false;
-  if (!m_archiveView) {
-    return;
-  }
-  closeMenu();
-  m_dispatcher.cancelPointerCapture();
-  m_dispatcher.setFocus(m_list->focusArea());
-  auto* page = std::exchange(m_archiveView, nullptr);
-  auto removed = m_root->removeChild(page);
-  m_surface->requestLayout();
-}
-
-void BrowserPage::syncArchive() {
-  UiPhaseScope phase(UiPhase::Layout);
-  if (m_archiveWanted && !m_archiveView) {
-    closeSettings();
-    closeMenu();
-    cancelDrag();
-    clearCompletions();
-    if (m_editingLocation) {
-      endLocationEdit(false);
-    }
-    auto root = std::make_unique<ArchiveView>(
-        m_icons, [this] { return m_connection.keyboardModifiers(); }, [this] { deferCloseArchive(); },
-        [this](std::vector<std::string> selected) {
-          if (m_archives.catalog()) {
-            openArchiveDialog({m_archives.catalog()->source}, std::move(selected), false);
-          }
-        },
-        [this](const std::string& path) { (void)m_archives.openMember(path); },
-        [this] {
-          if (m_archiveSource) {
-            (void)m_archives.inspect(*m_archiveSource);
-          }
-        },
-        [this] { m_archives.cancel(); }
-    );
-    m_archiveView = root.get();
-    root->setParticipatesInLayout(false);
-    root->setZIndex(1000);
-    m_root->addChild(std::move(root));
-    m_dispatcher.cancelPointerCapture();
-    m_dispatcher.setFocus(m_archiveView->focusArea());
-  }
-  if (m_archiveView) {
-    m_archiveView->sync(
-        m_archives.catalog(), m_archives.phase(), m_archives.items(), m_archives.bytes(), m_archives.error()
-    );
-    m_surface->requestLayout();
-  }
-}
-
 void BrowserPage::deferCloseSettings() {
   const std::weak_ptr<int> lifetime = m_lifetime;
   DeferredCall::callLater([this, lifetime] {
@@ -2629,7 +2360,7 @@ void BrowserPage::openSettings() {
     deferCloseSettings();
     return;
   }
-  closeArchive();
+  m_archiveController.close();
   closeMenu();
   cancelDrag();
   clearCompletions();
@@ -2970,684 +2701,6 @@ void BrowserPage::showApplications(const files::DirectoryEntry& entry) {
         m_menuSurface->requestLayout();
       }
   );
-}
-
-void BrowserPage::showAdvancedPermissions(bool advanced, bool focus) {
-  if (!m_permissionBasic || !m_permissionAdvanced) {
-    return;
-  }
-  m_aclActive = advanced;
-  m_permissionBasic->setVisible(!advanced);
-  m_permissionBasic->setParticipatesInLayout(!advanced);
-  m_permissionAdvanced->setVisible(advanced);
-  m_permissionAdvanced->setParticipatesInLayout(advanced);
-  m_permissionSave->setEnabled(propertiesCanApply() && !actionContext().operationsBusy);
-  m_permissionScroll->requestScrollToOffset(0);
-  if (focus) {
-    m_menuDispatcher.setFocus((advanced ? m_permissionAdvancedBack : m_permissionAdvancedOpen)->inputArea());
-  }
-  m_menuSurface->requestLayout();
-}
-
-bool BrowserPage::propertiesCanApply() const {
-  if (m_aclActive) {
-    return m_aclEditor ? m_aclEditor->canApply() : m_bulkAclEditor && m_bulkAclEditor->canApply();
-  }
-  return m_permissionEditor && m_permissionEditor->canApply();
-}
-
-void BrowserPage::syncPermissions() {
-  const auto& snapshot = m_permissions.snapshot();
-  if (m_permissionEditor) {
-    m_permissionEditor->sync(snapshot);
-    if (m_aclEditor) {
-      m_aclEditor->sync(snapshot);
-    }
-    if (m_bulkAclEditor) {
-      m_bulkAclEditor->sync(snapshot);
-    }
-    m_permissionSave->setEnabled(propertiesCanApply() && !actionContext().operationsBusy);
-    m_permissionSave->setText(snapshot.phase == files::PermissionPhase::Saving ? "Saving…" : "Apply");
-    if (m_permissionResults) {
-      m_permissionResults->sync(snapshot.results);
-      const bool saving = snapshot.phase == files::PermissionPhase::Saving;
-      m_permissionStatus->setText(
-          m_permissions.busy()
-              ? (snapshot.cancelRequested ? "Cancelling…"
-                                          : std::format(
-                                                "{} · {} items completed",
-                                                m_permissions.collecting() ? "Collecting targets (total unknown)"
-                                                    : saving               ? "Applying changes"
-                                                                           : "Reading selection",
-                                                m_permissions.completed()
-                                            ))
-              : permissionStatusText(snapshot)
-      );
-      if (m_permissions.collecting() && !snapshot.cancelRequested) {
-        m_permissionStatus->setText(
-            std::format("Collecting targets… {} found · total unknown", m_permissions.completed())
-        );
-      }
-      if (snapshot.recursive && m_permissions.busy() && !m_permissions.collecting() && !snapshot.cancelRequested) {
-        m_permissionStatus->setText(
-            std::format("Applying changes · {} of {} collected items", m_permissions.completed(), m_permissions.total())
-        );
-      }
-      m_permissionStatus->setColor(
-          colorSpecFromRole(snapshot.failed() ? ColorRole::Error : ColorRole::OnSurfaceVariant)
-      );
-      m_permissionReport->setEnabled(!m_permissions.busy() && !snapshot.report.empty() && m_clipboard.available());
-      m_permissionCancel->setVisible(saving);
-      m_permissionCancel->setParticipatesInLayout(saving);
-      m_permissionCancel->setEnabled(!snapshot.cancelRequested);
-      if (snapshot.finished) {
-        m_permissionTabs->setSelectedIndex(m_permissionResultTab);
-      }
-    }
-    if (snapshot.failed() && !snapshot.finished && snapshot.phase == files::PermissionPhase::Ready) {
-      m_permissionTabs->setSelectedIndex(1);
-      showAdvancedPermissions(snapshot.aclOperation);
-      m_permissionScroll->requestScrollIntoView(
-          snapshot.aclOperation ? (m_aclEditor ? m_aclEditor->messageNode() : m_bulkAclEditor->messageNode())
-                                : m_permissionEditor->messageNode()
-      );
-    }
-    m_menuSurface->requestLayout();
-  }
-  if ((snapshot.phase == files::PermissionPhase::Ready || snapshot.phase == files::PermissionPhase::Cancelled)
-      && snapshot.applied) {
-    browser().refresh();
-  }
-  if (const auto status = permissionStatusText(snapshot);
-      !m_permissions.busy() && !status.empty() && (!m_permissionEditor || snapshot.applied)) {
-    actionError(status);
-  }
-}
-
-void BrowserPage::showProperties(const std::vector<files::DirectoryEntry>& targets, bool captureCurrentLocation) {
-  if (m_permissions.busy()) {
-    actionError("A Properties request is still finishing.");
-    return;
-  }
-  const bool editable = !targets.empty() && targets.size() <= 4096;
-  const bool multiple = targets.size() > 1;
-  const bool folders = std::ranges::any_of(targets, [](const auto& entry) {
-    return entry.type == files::FileType::Directory
-        && !entry.symlink
-        && entry.location.nativePath()
-        && !entry.location.isTrash();
-  });
-  const bool withResults = multiple || folders;
-  const float width = std::min(editable ? 600.0F : 440.0F, static_cast<float>(m_surface->width()) - 32.0F);
-  ScrollView* scroll = nullptr;
-  auto body = ui::scrollView(
-      {.out = &scroll, .viewportPaddingH = 0.0F, .viewportPaddingV = 0.0F, .fillWidth = true, .flexGrow = 1.0F}
-  );
-  body->setReserveScrollbarGutter(true);
-  body->content()->setAlign(FlexAlign::Stretch);
-  body->content()->setGap(Style::spaceMd);
-  auto general = ui::column({.align = FlexAlign::Stretch, .gap = Style::spaceMd});
-  auto* generalGroup = general.get();
-  const auto literal = [](Label& label) { label.setUseMarkup(false); };
-  const auto field = [&](const std::string& name, const std::string& value) {
-    general->addChild(
-        ui::row(
-            {.align = FlexAlign::Start, .gap = Style::spaceMd},
-            ui::label(
-                {.text = name,
-                 .fontSize = Style::fontSizeCaption,
-                 .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
-                 .minWidth = 76.0F,
-                 .maxWidth = 76.0F}
-            ),
-            ui::label(
-                {.text = value, .maxWidth = width - 132.0F, .maxLines = 3, .flexGrow = 1.0F, .configure = literal}
-            )
-        )
-    );
-  };
-  if (targets.size() == 1) {
-    const auto& entry = targets.front();
-    auto icon = std::make_unique<files::FileIcon>(m_icons, 48.0F);
-    icon->bind(entry.icon, colorSpecFromRole(ColorRole::OnSurface));
-    general->addChild(
-        ui::row(
-            {.align = FlexAlign::Center, .gap = Style::spaceMd}, std::move(icon),
-            ui::column(
-                {.align = FlexAlign::Start, .gap = Style::spaceXs, .flexGrow = 1.0F},
-                ui::label(
-                    {.text = entry.displayName,
-                     .fontWeight = FontWeight::SemiBold,
-                     .maxWidth = width - 104.0F,
-                     .maxLines = 2,
-                     .configure = literal}
-                ),
-                ui::label(
-                    {.text = entry.symlink                          ? "Symbolic link"
-                         : entry.type == files::FileType::Directory ? "Folder"
-                                                                    : "File",
-                     .fontSize = Style::fontSizeCaption,
-                     .color = colorSpecFromRole(ColorRole::OnSurfaceVariant)}
-                )
-            )
-        )
-    );
-    general->addChild(ui::separator({}));
-    field("Location", files::locationEditText(entry.location));
-    if (entry.location.isTrash()) {
-      field("Original", entry.trash.original ? files::locationEditText(*entry.trash.original) : "Unknown");
-      field("Deleted", entry.trash.deletionDate.value_or("Unknown"));
-    }
-    if (entry.type != files::FileType::Directory) {
-      const files::GString size(entry.size ? g_format_size_full(*entry.size, G_FORMAT_SIZE_IEC_UNITS) : nullptr);
-      field("Size", size ? size.get() : "Unknown");
-    }
-    if (entry.modifiedSeconds && *entry.modifiedSeconds <= static_cast<std::uint64_t>(G_MAXINT64)) {
-      const std::unique_ptr<GDateTime, decltype(&g_date_time_unref)> date(
-          g_date_time_new_from_unix_local(static_cast<gint64>(*entry.modifiedSeconds)), &g_date_time_unref
-      );
-      if (date) {
-        const files::GString text(g_date_time_format(date.get(), "%Y-%m-%d %H:%M:%S"));
-        field("Modified", text.get());
-      }
-    }
-  } else {
-    field("Selection", std::format("{} items", targets.size()));
-    if (!editable) {
-      field("Permissions", "Select at most 4096 items for permission editing.");
-    }
-  }
-  body->content()->addChild(std::move(general));
-  PermissionEditor* editor = nullptr;
-  AclEditor* acl = nullptr;
-  BulkAclEditor* bulkAcl = nullptr;
-  Flex *permissionsGroup = nullptr, *basicGroup = nullptr, *advancedGroup = nullptr;
-  Button *advancedOpen = nullptr, *advancedBack = nullptr;
-  Segmented* tabs = nullptr;
-  Button *save = nullptr, *reportButton = nullptr, *cancelButton = nullptr;
-  Label* progress = nullptr;
-  PermissionResultsView* results = nullptr;
-  std::unique_ptr<PermissionResultsView> resultView;
-  if (editable) {
-    auto permissions = std::make_unique<PermissionEditor>(
-        [this] {
-          if (m_permissionEditor && m_permissionSave) {
-            m_permissionSave->setEnabled(propertiesCanApply() && !actionContext().operationsBusy);
-          }
-          m_menuSurface->requestLayout();
-        },
-        multiple, folders
-    );
-    editor = permissions.get();
-    auto basic = ui::column(
-        {.out = &basicGroup, .align = FlexAlign::Stretch, .gap = Style::spaceSm},
-        ui::row(
-            {.justify = FlexJustify::End},
-            ui::button(
-                {.out = &advancedOpen,
-                 .text = "Advanced permissions…",
-                 .variant = ButtonVariant::Ghost,
-                 .onClick = [this] { showAdvancedPermissions(true, true); }}
-            )
-        ),
-        std::move(permissions)
-    );
-    const auto aclChanged = [this] {
-      if (m_permissionSave) {
-        m_permissionSave->setEnabled(propertiesCanApply() && !actionContext().operationsBusy);
-      }
-      m_menuSurface->requestLayout();
-    };
-    std::unique_ptr<Flex> aclControl;
-    if (multiple) {
-      auto control = std::make_unique<BulkAclEditor>(aclChanged);
-      bulkAcl = control.get();
-      aclControl = std::move(control);
-    } else {
-      auto control = std::make_unique<AclEditor>(aclChanged);
-      acl = control.get();
-      aclControl = std::move(control);
-    }
-    auto advanced = ui::column(
-        {.out = &advancedGroup,
-         .align = FlexAlign::Stretch,
-         .gap = Style::spaceSm,
-         .visible = false,
-         .participatesInLayout = false},
-        ui::row(
-            {.justify = FlexJustify::Start},
-            ui::button(
-                {.out = &advancedBack,
-                 .text = "Back to permissions",
-                 .glyph = "chevron-left",
-                 .variant = ButtonVariant::Ghost,
-                 .onClick = [this] { showAdvancedPermissions(false, true); }}
-            )
-        ),
-        ui::label({.text = "Advanced permissions", .fontWeight = FontWeight::SemiBold}), std::move(aclControl)
-    );
-    body->content()->addChild(
-        ui::column(
-            {.out = &permissionsGroup, .align = FlexAlign::Stretch, .visible = false, .participatesInLayout = false},
-            std::move(basic), std::move(advanced)
-        )
-    );
-    if (withResults) {
-      resultView = std::make_unique<PermissionResultsView>();
-      results = resultView.get();
-      resultView->setVisible(false);
-      resultView->setParticipatesInLayout(false);
-    }
-  }
-  std::unique_ptr<Node> propertiesBody;
-  if (resultView) {
-    propertiesBody =
-        ui::column({.align = FlexAlign::Stretch, .flexGrow = 1.0F}, std::move(body), std::move(resultView));
-  } else {
-    propertiesBody = std::move(body);
-  }
-  std::vector<ui::SegmentedOption> propertyTabs{
-      {.label = "General", .glyph = {}, .tooltip = {}}, {.label = "Permissions", .glyph = {}, .tooltip = {}}
-  };
-  constexpr std::size_t resultTab = 2;
-  if (withResults) {
-    propertyTabs.push_back({.label = "Results", .glyph = {}, .tooltip = {}});
-  }
-  auto root = ui::column(
-      {.align = FlexAlign::Stretch,
-       .gap = Style::spaceMd,
-       .padding = Style::spaceMd,
-       .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
-       .radius = Style::radiusLg,
-       .border = colorSpecFromRole(ColorRole::OutlineVariant)},
-      ui::row(
-          {.align = FlexAlign::Center, .gap = Style::spaceSm},
-          ui::label({.text = "Properties", .fontWeight = FontWeight::SemiBold, .flexGrow = 1.0F}),
-          ui::button(
-              {.glyph = "x",
-               .controlHeight = Style::controlHeightSm,
-               .variant = ButtonVariant::Default,
-               .tooltip = "Close",
-               .minWidth = Style::controlHeightSm,
-               .maxWidth = Style::controlHeightSm,
-               .onClick = [this] { dismissMenu(); }}
-          )
-      ),
-      ui::segmented(
-          {.out = &tabs,
-           .options = std::move(propertyTabs),
-           .equalSegmentWidths = true,
-           .visible = editable,
-           .participatesInLayout = editable,
-           .onChange =
-               [this, generalGroup, permissionsGroup, scroll, results](std::size_t index) {
-                 generalGroup->setVisible(index == 0);
-                 generalGroup->setParticipatesInLayout(index == 0);
-                 if (permissionsGroup) {
-                   permissionsGroup->setVisible(index == 1);
-                   permissionsGroup->setParticipatesInLayout(index == 1);
-                 }
-                 showAdvancedPermissions(false);
-                 if (m_permissionSave) {
-                   m_permissionSave->setEnabled(propertiesCanApply() && !actionContext().operationsBusy);
-                 }
-                 if (results) {
-                   results->setVisible(index == resultTab);
-                   results->setParticipatesInLayout(index == resultTab);
-                   scroll->setVisible(index != resultTab);
-                   scroll->setParticipatesInLayout(index != resultTab);
-                 }
-                 scroll->requestScrollToOffset(0);
-                 m_menuSurface->requestLayout();
-               }}
-      ),
-      std::move(propertiesBody)
-  );
-  if (editable) {
-    if (withResults) {
-      root->addChild(
-          ui::label({.out = &progress, .fontSize = Style::fontSizeCaption, .maxLines = 2, .configure = literal})
-      );
-    }
-    root->addChild(
-        ui::row(
-            {.align = FlexAlign::Center, .justify = FlexJustify::End, .gap = Style::spaceSm},
-            ui::button(
-                {.out = &reportButton,
-                 .text = "Copy report",
-                 .enabled = false,
-                 .variant = ButtonVariant::Ghost,
-                 .visible = withResults,
-                 .participatesInLayout = withResults,
-                 .onClick = [this] { m_clipboard.setClipboardText(m_permissions.snapshot().report); }}
-            ),
-            ui::button(
-                {.out = &cancelButton,
-                 .text = "Cancel",
-                 .variant = ButtonVariant::Ghost,
-                 .visible = false,
-                 .participatesInLayout = false,
-                 .onClick = [this] { m_permissions.cancel(); }}
-            ),
-            ui::button({.text = "Close", .variant = ButtonVariant::Ghost, .onClick = [this] { dismissMenu(); }}),
-            ui::button(
-                {.out = &save, .text = "Apply", .enabled = false, .variant = ButtonVariant::Primary, .onClick = [this] {
-                   if (m_permissionEditor && !actionContext().operationsBusy) {
-                     if (m_aclActive && m_bulkAclEditor) {
-                       (void)m_permissions.applyAclPatch(m_bulkAclEditor->edit());
-                     } else if (m_aclActive && m_aclEditor) {
-                       (void)m_permissions.applyAcl(m_aclEditor->edit());
-                     } else if (m_permissionEditor->recursive()) {
-                       (void)m_permissions.applyRecursive(m_permissionEditor->recursiveEdit());
-                     } else {
-                       (void)m_permissions.apply(m_permissionEditor->edit());
-                     }
-                   }
-                 }}
-            )
-        )
-    );
-  }
-  UiPhaseScope phase(UiPhase::Layout);
-  LayoutConstraints constraints;
-  constraints.setExactWidth(width);
-  const float height = editable ? std::min(600.0F, static_cast<float>(m_surface->height()) - 64.0F)
-                                : std::min(
-                                      root->measure(m_surface->renderTarget().renderer(), constraints).height,
-                                      static_cast<float>(m_surface->height()) - 64.0F
-                                  );
-  if (editable) {
-    root->setSize(width, height);
-  }
-  showPopup(
-      std::move(root), nullptr, {(m_surface->width() - width) * 0.5F, (m_surface->height() - height) * 0.5F, 1, 1},
-      width, height
-  );
-  if (m_menuSurface && editable) {
-    m_activeDialog.bind(ActiveDialog::Kind::Properties, [this] {
-      if (!m_permissionEditor) {
-        return;
-      }
-      m_permissions.cancel();
-      m_permissionEditor = nullptr;
-      m_permissionBasic = m_permissionAdvanced = nullptr;
-      m_permissionAdvancedOpen = m_permissionAdvancedBack = nullptr;
-      m_aclEditor = nullptr;
-      m_bulkAclEditor = nullptr;
-      m_aclActive = false;
-      m_permissionResultTab = 2;
-      m_permissionResults = nullptr;
-      m_permissionReport = m_permissionCancel = nullptr;
-      m_permissionStatus = nullptr;
-      m_permissionTabs = nullptr;
-      m_permissionSave = nullptr;
-      m_permissionScroll = nullptr;
-      if (m_list) {
-        m_dispatcher.setFocus(m_list->focusArea());
-      }
-    });
-    m_permissionEditor = editor;
-    m_permissionBasic = basicGroup;
-    m_permissionAdvanced = advancedGroup;
-    m_permissionAdvancedOpen = advancedOpen;
-    m_permissionAdvancedBack = advancedBack;
-    m_aclEditor = acl;
-    m_bulkAclEditor = bulkAcl;
-    m_aclActive = false;
-    m_permissionResultTab = resultTab;
-    m_permissionResults = results;
-    m_permissionReport = reportButton;
-    m_permissionCancel = cancelButton;
-    m_permissionStatus = progress;
-    m_permissionTabs = tabs;
-    m_permissionSave = save;
-    m_permissionScroll = scroll;
-    m_dialogWidth = width;
-    m_dialogHeight = height;
-    m_menuDispatcher.setFocusChangeCallback([this](InputArea*, InputArea* focused) {
-      if (m_permissionScroll) {
-        m_permissionScroll->requestScrollIntoView(focused);
-        m_menuSurface->requestLayout();
-      }
-    });
-    if (captureCurrentLocation) {
-      (void)m_permissions.prepare(targets.front().location);
-    } else if (multiple) {
-      (void)m_permissions.prepare(targets);
-    } else {
-      (void)m_permissions.prepare(targets.front());
-    }
-  }
-}
-
-void BrowserPage::syncTransferConflict() {
-  if (m_popupAvailable && !m_popupAvailable()) {
-    return;
-  }
-  const bool archive = m_archives.conflict().has_value();
-  const bool restore = m_restore.conflict().has_value();
-  const auto conflict = restore ? m_restore.conflict() : archive ? m_archives.conflict() : m_transfers.conflict();
-  if (m_activeTransferConflict && !conflict) {
-    dismissMenu();
-    return;
-  }
-  if (!conflict || m_menuSurface != nullptr) {
-    return;
-  }
-  const float width = std::min(520.0F, static_cast<float>(m_surface->width()) - 32.0F);
-  auto facts = [&](const std::string& title, bool folder, std::optional<std::uint64_t> bytes,
-                   std::optional<std::uint64_t> modified) {
-    std::string description = folder ? "Folder" : "File";
-    if (!folder && bytes) {
-      const files::GString size(g_format_size_full(*bytes, G_FORMAT_SIZE_IEC_UNITS));
-      description += " · " + std::string(size.get());
-    }
-    std::string date = "Modification time unknown";
-    if (modified && *modified <= static_cast<std::uint64_t>(G_MAXINT64)) {
-      const std::unique_ptr<GDateTime, decltype(&g_date_time_unref)> value(
-          g_date_time_new_from_unix_local(static_cast<gint64>(*modified)), &g_date_time_unref
-      );
-      if (value) {
-        const files::GString text(g_date_time_format(value.get(), "%Y-%m-%d %H:%M"));
-        date = text.get();
-      }
-    }
-    return ui::column(
-        {.align = FlexAlign::Stretch, .gap = Style::spaceXs, .flexGrow = 1.0F},
-        ui::label(
-            {.text = title, .fontSize = Style::fontSizeCaption, .color = colorSpecFromRole(ColorRole::OnSurfaceVariant)}
-        ),
-        ui::label({.text = description, .maxWidth = (width - 48.0F) * 0.5F, .maxLines = 1}),
-        ui::label(
-            {.text = date,
-             .fontSize = Style::fontSizeCaption,
-             .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
-             .maxWidth = (width - 48.0F) * 0.5F,
-             .maxLines = 1}
-        )
-    );
-  };
-  const auto applyToAll = std::make_shared<bool>(false);
-  const auto choose = [this, archive, restore, applyToAll, id = conflict->id](files::TransferConflictChoice choice) {
-    if (restore ? m_restore.resolve(id, choice)
-            : archive
-            ? m_archives.resolve(id, choice)
-            : m_transfers.resolve(id, choice, *applyToAll && choice != files::TransferConflictChoice::Cancel)) {
-      m_activeTransferConflict.reset();
-      dismissMenu();
-    }
-  };
-  Button* keepBoth = nullptr;
-  auto root = ui::column(
-      {.align = FlexAlign::Stretch,
-       .gap = Style::spaceMd,
-       .padding = Style::spaceMd,
-       .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
-       .radius = Style::radiusLg,
-       .border = colorSpecFromRole(ColorRole::OutlineVariant)},
-      ui::label({.text = "Item already exists", .fontWeight = FontWeight::SemiBold}),
-      ui::label(
-          {.text = conflict->name,
-           .maxWidth = width - 24.0F,
-           .maxLines = 2,
-           .configure = [](Label& name) { name.setUseMarkup(false); }}
-      ),
-      ui::label(
-          {.text = restore ? files::locationEditText(conflict->destination) : "",
-           .fontSize = Style::fontSizeCaption,
-           .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
-           .maxWidth = width - 24.0F,
-           .maxLines = 2,
-           .visible = restore,
-           .participatesInLayout = restore,
-           .configure = [](Label& path) { path.setUseMarkup(false); }}
-      ),
-      ui::separator({}),
-      ui::row(
-          {.align = FlexAlign::Start, .gap = Style::spaceMd},
-          facts("Incoming", conflict->sourceDirectory, conflict->sourceSize, conflict->sourceModified),
-          facts("Existing", conflict->destinationDirectory, conflict->destinationSize, conflict->destinationModified)
-      ),
-      ui::label(
-          {.text = restore                      ? "Folder replacement is unavailable. Keep both or skip this item."
-               : conflict->canMerge && !archive ? "Merge keeps existing contents and asks about conflicting "
-                                                  "children. Replace removes the whole existing folder."
-                                                : "Replace removes the existing folder and its contents.",
-           .fontSize = Style::fontSizeCaption,
-           .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
-           .maxWidth = width - 24.0F,
-           .maxLines = 2,
-           .visible = conflict->destinationDirectory,
-           .participatesInLayout = conflict->destinationDirectory}
-      ),
-      ui::row(
-          {.align = FlexAlign::Center,
-           .gap = Style::spaceSm,
-           .visible = !archive && !restore && conflict->canApplyToAll,
-           .participatesInLayout = !archive && !restore && conflict->canApplyToAll},
-          ui::toggle({.onChange = [applyToAll](bool checked) { *applyToAll = checked; }}),
-          ui::label(
-              {.text = conflict->scopeLabel,
-               .fontSize = Style::fontSizeCaption,
-               .maxWidth = width - 96.0F,
-               .maxLines = 2}
-          )
-      ),
-      ui::row(
-          {.align = FlexAlign::Center, .justify = FlexJustify::End, .gap = Style::spaceSm},
-          ui::button(
-              {.text = "Cancel",
-               .variant = ButtonVariant::Ghost,
-               .onClick = [choose] { choose(files::TransferConflictChoice::Cancel); }}
-          ),
-          ui::button(
-              {.text = "Skip",
-               .variant = ButtonVariant::Ghost,
-               .onClick = [choose] { choose(files::TransferConflictChoice::Skip); }}
-          ),
-          ui::button(
-              {.out = &keepBoth,
-               .text = "Keep both",
-               .variant = ButtonVariant::Primary,
-               .onClick = [choose] { choose(files::TransferConflictChoice::KeepBoth); }}
-          ),
-          ui::button(
-              {.text = "Merge",
-               .variant = ButtonVariant::Ghost,
-               .visible = !archive && !restore && conflict->canMerge,
-               .participatesInLayout = !archive && !restore && conflict->canMerge,
-               .onClick = [choose] { choose(files::TransferConflictChoice::Merge); }}
-          ),
-          ui::button(
-              {.text = "Replace",
-               .enabled = !restore || (!conflict->sourceDirectory && !conflict->destinationDirectory),
-               .variant = ButtonVariant::Destructive,
-               .tooltip = restore && (conflict->sourceDirectory || conflict->destinationDirectory)
-                   ? "Folder replacement is unavailable; keep both or skip."
-                   : "Replace the existing item",
-               .onClick = [choose] { choose(files::TransferConflictChoice::Replace); }}
-          )
-      )
-  );
-  UiPhaseScope phase(UiPhase::Layout);
-  LayoutConstraints constraints;
-  constraints.setExactWidth(width);
-  const float height = std::min(
-      root->measure(m_surface->renderTarget().renderer(), constraints).height,
-      static_cast<float>(m_surface->height()) - 64.0F
-  );
-  showPopup(
-      std::move(root), nullptr, {(m_surface->width() - width) * 0.5F, (m_surface->height() - height) * 0.5F, 1, 1},
-      width, height
-  );
-  if (m_menuSurface != nullptr) {
-    m_activeDialog.bind(ActiveDialog::Kind::TransferConflict, [this] {
-      if (const auto id = std::exchange(m_activeTransferConflict, std::nullopt)) {
-        (void)(m_transferConflictRestore       ? m_restore.resolve(*id, files::TransferConflictChoice::Cancel)
-                   : m_transferConflictArchive ? m_archives.resolve(*id, files::TransferConflictChoice::Cancel)
-                                               : m_transfers.resolve(*id, files::TransferConflictChoice::Cancel));
-      }
-    });
-    m_activeTransferConflict = conflict->id;
-    m_transferConflictArchive = archive;
-    m_transferConflictRestore = restore;
-    m_menuDispatcher.setFocus(keepBoth->inputArea());
-  } else {
-    (void)(restore       ? m_restore.resolve(conflict->id, files::TransferConflictChoice::Cancel)
-               : archive ? m_archives.resolve(conflict->id, files::TransferConflictChoice::Cancel)
-                         : m_transfers.resolve(conflict->id, files::TransferConflictChoice::Cancel));
-  }
-}
-
-void BrowserPage::retryTransfer() {
-  if (actionContext().operationsBusy || m_transfers.retryable() == 0) {
-    return;
-  }
-  if (m_transfers.action() != files::TransferAction::Move || !m_clipboard.hasFiles()) {
-    (void)m_transfers.retryFailed();
-    return;
-  }
-  const auto job = m_transfers.jobId();
-  const std::weak_ptr<int> lifetime = m_lifetime;
-  m_clipboard.requestFiles([this, lifetime, job](std::optional<files::ClipboardFiles> selection) {
-    if (lifetime.expired() || m_transfers.jobId() != job || actionContext().operationsBusy) {
-      return;
-    }
-    if (selection
-        && selection->payload.cut
-        && std::ranges::any_of(selection->payload.locations, [this](const auto& location) {
-             return std::ranges::any_of(m_transfers.results(), [&](const auto& result) {
-               return result.source == location;
-             });
-           })) {
-      if (!m_clipboard.claimMove(selection->revision)) {
-        return;
-      }
-      m_clipboardTransfer = *selection;
-    }
-    if (!m_transfers.retryFailed()) {
-      if (const auto claimed = std::exchange(m_clipboardTransfer, std::nullopt)) {
-        m_clipboard.finishMove(*claimed, {});
-      }
-    }
-  });
-}
-
-bool BrowserPage::startPayloadTransfer(
-    files::FilePayload payload, const files::Location& destination, files::TransferAction action
-) {
-  if (payload.locations.empty()
-      || !destination.nativePath()
-      || std::ranges::any_of(payload.locations, [](const auto& location) { return !location.nativePath(); })) {
-    actionError("File transfers currently support native files and folders outside Trash.");
-    return false;
-  }
-  m_actionError.clear();
-  if (!m_transfers.start({std::move(payload.locations), destination, action})) {
-    actionError("Another file transfer is still finishing.");
-    return false;
-  }
-  return true;
 }
 
 bool BrowserPage::dragCurrent() const {
@@ -5252,9 +4305,7 @@ bool BrowserPage::listKey(const KeyboardEvent& event) {
 }
 
 void BrowserPage::syncBrowser() {
-  if (m_permissionEditor) {
-    m_permissionSave->setEnabled(propertiesCanApply() && !actionContext().operationsBusy);
-  }
+  m_propertiesController.updateApply();
   if (m_typeaheadContext != browser().contextSerial() || !browser().model().selectionAvailable()) {
     clearTypeahead();
   }
@@ -5476,24 +4527,7 @@ void BrowserPage::syncBrowser() {
     const files::GString size(g_format_size_full(*freeBytes, G_FORMAT_SIZE_IEC_UNITS));
     m_freeSpace->setText(std::format("{} free", size.get()));
   }
-  const bool cancellable = m_batchRenamer.applying()
-      || m_archives.busy()
-      || m_transfers.busy()
-      || m_restore.busy()
-      || m_trash.busy()
-      || m_emptyTrash.busy();
-  const bool retryable = m_transfers.retryable() > 0 && !actionContext().operationsBusy;
-  m_retryTransfer->setVisible(retryable);
-  m_retryTransfer->setParticipatesInLayout(retryable);
-  m_cancelOperation->setVisible(cancellable);
-  m_cancelOperation->setParticipatesInLayout(cancellable);
-  m_cancelOperation->setTooltip(
-      m_batchRenamer.applying() ? "Cancel batch rename"
-          : m_restore.busy()    ? "Cancel restoration"
-          : m_emptyTrash.busy() ? (m_trashController.selectedDelete() ? "Cancel deletion" : "Cancel emptying Trash")
-          : m_trash.busy()      ? "Cancel move to Trash"
-                                : "Cancel transfer"
-  );
+  m_transferController.syncOperationButtons(m_trashController.selectedDelete());
   m_notice->setText(
       snapshot.error
               || loading
@@ -5658,15 +4692,11 @@ void BrowserPage::prepareFrame(bool, bool layout) {
                                                       : ColorRole::OutlineVariant
   ));
   m_sidebarResizeLine->setVisible(m_resizingSidebar || m_sidebarResize->focused() || m_sidebarResize->hovered());
-  if (std::exchange(m_archiveDirty, false)) {
-    syncArchive();
-  }
-  syncTransferConflict();
+  m_archiveController.onFrame();
+  m_transferController.syncConflict();
   m_trashController.onFrame();
   m_createController.onFrame();
-  if (std::exchange(m_permissionDirty, false)) {
-    syncPermissions();
-  }
+  m_propertiesController.onFrame();
   m_batchRename.onFrame();
   m_renameController.onFrame();
   if (m_browserDirty) {
@@ -5782,9 +4812,7 @@ void BrowserPage::prepareFrame(bool, bool layout) {
       m_settingsView->setCompact(m_surface->width() < 800);
       m_settingsView->arrange(renderer, m_pageBounds);
     }
-    if (m_archiveView) {
-      m_archiveView->arrange(renderer, m_pageBounds);
-    }
+    m_archiveController.layout(renderer, m_pageBounds);
     layoutDetails(renderer);
     const bool columnHoverDirty = std::exchange(m_columnHoverDirty, false);
     if (columnOrderChanged || columnHoverDirty) {
@@ -5801,7 +4829,7 @@ void BrowserPage::prepareFrame(bool, bool layout) {
     if (placesFocus) {
       m_dispatcher.restoreTabFocus(std::move(*placesFocus));
     }
-    if (m_restorePlaceFocus && m_menuSurface == nullptr && !m_settingsView && !m_archiveView) {
+    if (m_restorePlaceFocus && m_menuSurface == nullptr && !m_settingsView && !m_archiveController.open()) {
       const auto location = *std::exchange(m_restorePlaceFocus, std::nullopt);
       if (m_showSidebar) {
         if (auto* area = m_places->focusArea(location)) {
@@ -6291,32 +5319,7 @@ void BrowserPage::buildScene() {
                    .maxLines = 1,
                    .textAlign = TextAlign::End}
               ),
-              ui::button(
-                  {.out = &m_retryTransfer,
-                   .text = "Retry failed",
-                   .variant = ButtonVariant::Ghost,
-                   .tooltip = "Retry failed items without repeating completed transfers",
-                   .visible = false,
-                   .participatesInLayout = false,
-                   .onClick = [this] { retryTransfer(); }}
-              ),
-              ui::button(
-                  {.out = &m_cancelOperation,
-                   .glyph = "x",
-                   .controlHeight = Style::controlHeightSm,
-                   .variant = ButtonVariant::Ghost,
-                   .tooltip = "Cancel transfer",
-                   .visible = false,
-                   .participatesInLayout = false,
-                   .onClick = [this] {
-                     m_batchRenamer.cancel();
-                     m_archives.cancel();
-                     m_transfers.cancel();
-                     m_restore.cancel();
-                     m_trash.cancel();
-                     m_emptyTrash.cancel();
-                   }}
-              )
+              m_transferController.buildRetryButton(), m_transferController.buildCancelButton()
           )
       )
   );
@@ -6547,6 +5550,20 @@ files::WaylandTextClipboard& BrowserPage::clipboard() { return m_clipboard; }
 
 files::WindowSurface& BrowserPage::surface() { return *m_surface; }
 
+bool BrowserPage::popupAvailable() { return !m_popupAvailable || m_popupAvailable(); }
+
+void BrowserPage::prepareOverlay() {
+  closeSettings();
+  closeMenu();
+  cancelDrag();
+  clearCompletions();
+  if (m_editingLocation) {
+    endLocationEdit(false);
+  }
+}
+
+Node& BrowserPage::sceneRoot() { return *m_root; }
+
 void BrowserPage::focusFileList() {
   if (m_list) {
     m_dispatcher.setFocus(m_list->focusArea());
@@ -6587,11 +5604,7 @@ void BrowserPage::showPopup(
           static_cast<std::uint32_t>(std::min(m_dialogWidth, static_cast<float>(m_surface->width()) - 32.0F));
       LayoutConstraints constraints;
       constraints.setExactWidth(static_cast<float>(width));
-      if (m_permissionEditor) {
-        m_activeDialog.root()->setSize(
-            static_cast<float>(width), std::min(600.0F, static_cast<float>(m_surface->height()) - 64.0F)
-        );
-      }
+      m_propertiesController.layoutDialog(static_cast<float>(width));
       m_batchRename.layoutDialog(static_cast<float>(width));
       m_dialogHeight = m_activeDialog.root()->measure(m_menuSurface->renderTarget().renderer(), constraints).height;
       const auto height = static_cast<std::uint32_t>(

@@ -46,6 +46,12 @@ public:
   virtual files::ActionState actionState(files::BrowserAction action, const files::ActionRequest& request) const = 0;
   // True while every target still matches the current folder listing.
   virtual bool targetsCurrent(const std::vector<files::DirectoryEntry>& targets) = 0;
+  // True while the request's folder, targets or selection for `scope` still match the page.
+  virtual bool requestCurrent(const files::ActionRequest& request, files::ActionScope scope) const = 0;
+  // True while a file operation runs or waits; actions that start one are disabled meanwhile.
+  virtual bool operationsBusy() const = 0;
+  // True while the page is shown in its window.
+  virtual bool visible() const = 0;
   // Shows `message` in the status bar.
   virtual void actionError(std::string message) = 0;
   // Replaces the status bar message without scheduling a page sync, for code that runs before one anyway.
@@ -62,6 +68,10 @@ public:
   virtual void focusFileList() = 0;
   // Focuses the sidebar entry for `location` once no popup or overlay is open.
   virtual void restorePlaceFocus(files::Location location) = 0;
+  // Closes Settings, the active dialog, drags and location editing before a full-page overlay opens.
+  virtual void prepareOverlay() = 0;
+  // Hosts full-page overlays.
+  virtual Node& sceneRoot() = 0;
 
   // Replaces the active dialog with `root` on a new popup surface anchored at `anchor`.
   virtual void showPopup(
@@ -71,12 +81,16 @@ public:
   virtual void setDialogSize(float width, float height) = 0;
   // Closes the active dialog on the next main loop iteration.
   virtual void dismissMenu() = 0;
+  // Closes the active dialog now.
+  virtual void closeMenu() = 0;
   // Null while no popup is shown.
   virtual PopupSurface* menuSurface() = 0;
   virtual InputDispatcher& menuDispatcher() = 0;
   virtual ActiveDialog& activeDialog() = 0;
   // The context menu on the popup; null while the popup shows a dialog or nothing.
   virtual ContextMenuControl* contextMenu() = 0;
+  // False while the workspace cannot show a popup for this page.
+  virtual bool popupAvailable() = 0;
   // Serial for a new popup grab: the last press, else the last input.
   virtual std::uint32_t popupSerial() = 0;
 
