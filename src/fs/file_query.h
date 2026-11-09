@@ -19,7 +19,12 @@ namespace files {
     std::optional<std::uint64_t> modifiedSeconds;
     std::optional<FileIdentity> identity;
     std::optional<std::string> linkTarget;
+    EntryMetadata metadata{};
+    std::optional<std::string> etag = std::nullopt, contentRevision = std::nullopt;
   };
+  // Blocking typed query for workers. Never follows links or reads file contents.
+  FileDetails readFileDetails(const Location& location, const CancelToken& token);
+
   // Queries one item without following links or enumerating children. No content sniffing.
   // Cancelled replies are suppressed; done runs on the initiating main context.
   void queryFileDetails(

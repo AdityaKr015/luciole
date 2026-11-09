@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace files {
   inline constexpr std::array<int, 9> kGridIconSizes{32, 48, 64, 80, 96, 128, 160, 192, 256};
@@ -33,15 +34,18 @@ namespace files {
   enum class TypingMode : std::uint8_t { Search, Typeahead };
   // Complete column allocations, including the gap after their contents. Zero
   // is the automatic Name width; metadata always has an explicit allocation.
-  using DetailsColumnWidths = std::array<int, 4>;
-  inline constexpr DetailsColumnWidths kDefaultDetailsColumnWidths{0, 152, 118, 156};
-  inline constexpr std::array<std::string_view, 4> kDetailsColumnWidthKeys{
-      "name_column_width", "type_column_width", "size_column_width", "modified_column_width"
+  inline constexpr std::size_t kDetailsColumnCount = 9;
+  using DetailsColumnWidths = std::array<int, kDetailsColumnCount + 1>;
+  inline constexpr DetailsColumnWidths kDefaultDetailsColumnWidths{0, 152, 118, 156, 156, 156, 128, 128, 112, 260};
+  inline constexpr std::array<std::string_view, kDetailsColumnCount + 1> kDetailsColumnWidthKeys{
+      "name_column_width",        "type_column_width",    "size_column_width",  "modified_column_width",
+      "accessed_column_width",    "created_column_width", "owner_column_width", "group_column_width",
+      "permissions_column_width", "location_column_width"
   };
   inline int minimumDetailsColumnWidth(std::size_t index) { return index == 0 ? 160 : 64; }
   inline int maximumDetailsColumnWidth(std::size_t index) { return index == 0 ? 16384 : 2048; }
   inline bool validDetailsColumnWidth(std::size_t index, int width) {
-    return index < 4
+    return index < kDefaultDetailsColumnWidths.size()
         && ((index == 0 && width == 0)
             || (width >= minimumDetailsColumnWidth(index) && width <= maximumDetailsColumnWidth(index)));
   }
@@ -49,27 +53,43 @@ namespace files {
     bool type = true;
     bool size = true;
     bool modified = true;
+    bool accessed = false, created = false, owner = false, group = false, permissions = false, location = false;
     bool operator==(const DetailsColumnVisibility&) const = default;
   };
-  enum class DetailsColumn : std::uint8_t { Type, Size, Modified };
-  using DetailsColumnOrder = std::array<DetailsColumn, 3>;
-  inline constexpr DetailsColumnOrder kDefaultDetailsColumnOrder{
-      DetailsColumn::Type, DetailsColumn::Size, DetailsColumn::Modified
+  enum class DetailsColumn : std::uint8_t {
+    Type,
+    Size,
+    Modified,
+    Accessed,
+    Created,
+    Owner,
+    Group,
+    Permissions,
+    Location
   };
+  using DetailsColumnOrder = std::array<DetailsColumn, kDetailsColumnCount>;
+  inline constexpr DetailsColumnOrder kDefaultDetailsColumnOrder{DetailsColumn::Type,     DetailsColumn::Size,
+                                                                 DetailsColumn::Modified, DetailsColumn::Accessed,
+                                                                 DetailsColumn::Created,  DetailsColumn::Owner,
+                                                                 DetailsColumn::Group,    DetailsColumn::Permissions,
+                                                                 DetailsColumn::Location};
   inline bool validDetailsColumnOrder(DetailsColumnOrder order) {
     std::ranges::sort(order);
     return order == kDefaultDetailsColumnOrder;
   }
+  inline constexpr std::array<std::string_view, kDetailsColumnCount> kDetailsColumnNames{
+      "type", "size", "modified", "accessed", "created", "owner", "group", "permissions", "location"
+  };
+  inline constexpr std::array<std::string_view, kDetailsColumnCount> kDetailsColumnLabels{
+      "Type", "Size", "Modified", "Accessed", "Created", "Owner", "Group", "Permissions", "Location"
+  };
   inline std::string_view detailsColumnName(DetailsColumn column) {
-    switch (column) {
-    case DetailsColumn::Type:
-      return "type";
-    case DetailsColumn::Size:
-      return "size";
-    case DetailsColumn::Modified:
-      return "modified";
-    }
-    return {};
+    const auto index = static_cast<std::size_t>(column);
+    return index < kDetailsColumnNames.size() ? kDetailsColumnNames[index] : std::string_view{};
+  }
+  inline std::string_view detailsColumnLabel(DetailsColumn column) {
+    const auto index = static_cast<std::size_t>(column);
+    return index < kDetailsColumnLabels.size() ? kDetailsColumnLabels[index] : std::string_view{};
   }
   inline std::optional<DetailsColumn> detailsColumnFromName(std::string_view name) {
     for (const auto column : kDefaultDetailsColumnOrder) {
@@ -79,7 +99,7 @@ namespace files {
     }
     return std::nullopt;
   }
-  inline bool detailsColumnVisible(DetailsColumnVisibility visibility, DetailsColumn column) {
+  inline bool& detailsColumnFlag(DetailsColumnVisibility& visibility, DetailsColumn column) {
     switch (column) {
     case DetailsColumn::Type:
       return visibility.type;
@@ -87,8 +107,30 @@ namespace files {
       return visibility.size;
     case DetailsColumn::Modified:
       return visibility.modified;
+    case DetailsColumn::Accessed:
+      return visibility.accessed;
+    case DetailsColumn::Created:
+      return visibility.created;
+    case DetailsColumn::Owner:
+      return visibility.owner;
+    case DetailsColumn::Group:
+      return visibility.group;
+    case DetailsColumn::Permissions:
+      return visibility.permissions;
+    case DetailsColumn::Location:
+      return visibility.location;
     }
-    return false;
+    std::unreachable();
+  }
+  inline bool detailsColumnVisible(DetailsColumnVisibility visibility, DetailsColumn column) {
+    return detailsColumnFlag(visibility, column);
+  }
+  inline DetailsColumnVisibility allDetailsColumns() {
+    DetailsColumnVisibility result;
+    for (const auto column : kDefaultDetailsColumnOrder) {
+      detailsColumnFlag(result, column) = true;
+    }
+    return result;
   }
   inline std::optional<DetailsColumnOrder>
   moveDetailsColumn(DetailsColumnOrder order, DetailsColumn column, int direction, DetailsColumnVisibility visible) {
@@ -137,7 +179,32 @@ namespace files {
     }
     return result;
   }
-  enum class SortField : std::uint8_t { Name, Size, Modified, Type };
+  enum class SortField : std::uint8_t {
+    Name,
+    Size,
+    Modified,
+    Type,
+    Accessed,
+    Created,
+    Owner,
+    Group,
+    Permissions,
+    Location
+  };
+  inline constexpr std::array<SortField, kDetailsColumnCount> kColumnSortFields{
+      SortField::Type,  SortField::Size,  SortField::Modified,    SortField::Accessed, SortField::Created,
+      SortField::Owner, SortField::Group, SortField::Permissions, SortField::Location
+  };
+  inline SortField detailsColumnSort(DetailsColumn column) {
+    return kColumnSortFields[static_cast<std::size_t>(column)];
+  }
+  inline std::string_view sortFieldLabel(SortField field) {
+    if (field == SortField::Name) {
+      return "Name";
+    }
+    const auto* const found = std::ranges::find(kColumnSortFields, field);
+    return found == kColumnSortFields.end() ? "Unknown" : kDetailsColumnLabels[found - kColumnSortFields.begin()];
+  }
   struct SortOptions {
     SortField field = SortField::Name;
     bool descending = false;

@@ -94,6 +94,39 @@ namespace {
     TEST_CHECK(model.entry(4)->name == "same-a");
   }
 
+  void testExtendedMetadataSort() {
+    auto a = entry(1, "a"), b = entry(2, "b"), unknown = entry(3, "unknown");
+    a.details = {.accessedSeconds = 0, .createdSeconds = 5, .owner = "alpha", .group = "group-a", .mode = 0};
+    b.details = {.accessedSeconds = 10, .createdSeconds = 20, .owner = "beta", .group = "group-b", .mode = 0644};
+    DirectoryModel model;
+    model.applySnapshot(snapshot({unknown, b, a}));
+    model.select(1, SelectionMode::Replace);
+    for (const auto field :
+         {SortField::Accessed, SortField::Created, SortField::Owner, SortField::Group, SortField::Permissions}) {
+      model.setSort({field, false, false});
+      rows(model, {1, 2, 3});
+      model.setSort({field, true, false});
+      rows(model, {2, 1, 3});
+      TEST_CHECK(model.selection().selected.contains(1));
+    }
+    a.location = Location::fromPath("/tmp/a/file");
+    b.location = Location::fromPath("/tmp/b/file");
+    model.applySnapshot(snapshot({b, a}));
+    model.setSort({SortField::Location, false, false});
+    rows(model, {1, 2});
+    model.setSort({SortField::Location, true, false});
+    rows(model, {2, 1});
+    const auto columns = files::DetailsColumns::forWidth(300, files::allDetailsColumns());
+    TEST_CHECK(columns.contentWidth > 1500 && columns.nameWidth == 160);
+    for (const auto column : files::kDefaultDetailsColumnOrder) {
+      TEST_CHECK(columns.visible(column) && columns.width(column) >= 56);
+    }
+    const auto reordered = files::insertDetailsColumnBefore(
+        files::kDefaultDetailsColumnOrder, files::DetailsColumn::Owner, files::DetailsColumn::Type
+    );
+    TEST_CHECK(reordered && reordered->front() == files::DetailsColumn::Owner);
+  }
+
   void testDetailsLayout() {
     const auto wide = files::DetailsColumns::forWidth(1000);
     TEST_CHECK(wide.contentWidth == 1000 && wide.nameWidth == 558 && wide.showType);
@@ -101,7 +134,7 @@ namespace {
     TEST_CHECK(ultrawide.nameWidth == 3558 && ultrawide.contentWidth == 4000);
     const auto bounded = files::DetailsColumns::forWidth(100000);
     TEST_CHECK(files::validDetailsColumnWidth(0, static_cast<int>(bounded.nameWidth)));
-    const files::DetailsColumnWidths requested{400, 200, 96, 180};
+    const files::DetailsColumnWidths requested{400, 200, 96, 180, 156, 156, 128, 128, 112, 260};
     const auto narrow = files::DetailsColumns::forWidth(300, {}, requested);
     const auto expanded = files::DetailsColumns::forWidth(1600, {}, requested);
     TEST_CHECK(
@@ -122,15 +155,24 @@ namespace {
     );
     TEST_CHECK(
         (files::moveDetailsColumn(defaults, Column::Type, 1, {})
-         == files::DetailsColumnOrder{Column::Size, Column::Type, Column::Modified})
+         == files::DetailsColumnOrder{
+             Column::Size, Column::Type, Column::Modified, Column::Accessed, Column::Created, Column::Owner,
+             Column::Group, Column::Permissions, Column::Location
+         })
     );
     TEST_CHECK(
         (files::moveDetailsColumn(defaults, Column::Modified, -1, {})
-         == files::DetailsColumnOrder{Column::Type, Column::Modified, Column::Size})
+         == files::DetailsColumnOrder{
+             Column::Type, Column::Modified, Column::Size, Column::Accessed, Column::Created, Column::Owner,
+             Column::Group, Column::Permissions, Column::Location
+         })
     );
     TEST_CHECK(
         (files::moveDetailsColumn(defaults, Column::Type, 1, {.size = false})
-         == files::DetailsColumnOrder{Column::Modified, Column::Size, Column::Type})
+         == files::DetailsColumnOrder{
+             Column::Modified, Column::Size, Column::Type, Column::Accessed, Column::Created, Column::Owner,
+             Column::Group, Column::Permissions, Column::Location
+         })
     );
     TEST_CHECK(
         !files::moveDetailsColumn(defaults, Column::Type, -1, {.type = false})
@@ -145,11 +187,17 @@ namespace {
     const auto defaults = files::kDefaultDetailsColumnOrder;
     TEST_CHECK(
         (files::insertDetailsColumnBefore(defaults, Column::Type, std::nullopt)
-         == files::DetailsColumnOrder{Column::Size, Column::Modified, Column::Type})
+         == files::DetailsColumnOrder{
+             Column::Size, Column::Modified, Column::Accessed, Column::Created, Column::Owner, Column::Group,
+             Column::Permissions, Column::Location, Column::Type
+         })
     );
     TEST_CHECK(
         (files::insertDetailsColumnBefore(defaults, Column::Modified, Column::Type)
-         == files::DetailsColumnOrder{Column::Modified, Column::Type, Column::Size})
+         == files::DetailsColumnOrder{
+             Column::Modified, Column::Type, Column::Size, Column::Accessed, Column::Created, Column::Owner,
+             Column::Group, Column::Permissions, Column::Location
+         })
     );
     TEST_CHECK(
         files::insertDetailsColumnBefore(defaults, Column::Type, Column::Type) == defaults
@@ -471,6 +519,7 @@ int main() {
     g_setenv("LANGUAGE", "C", true);
     std::setlocale(LC_ALL, "C");
     testSortAndMetadata();
+    testExtendedMetadataSort();
     testDetailsLayout();
     testDetailsColumnMoves();
     testDetailsColumnInsertion();

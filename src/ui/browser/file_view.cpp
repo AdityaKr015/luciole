@@ -1,5 +1,6 @@
 #include "ui/browser/file_view.h"
 
+#include "browser/entry_details.h"
 #include "core/input/key_modifiers.h"
 #include "core/log.h"
 #include "fs/gio_ptr.h"
@@ -71,35 +72,22 @@ namespace {
                    .configure = [](Label& label) { label.setUseMarkup(false); }}
               ),
               ui::label(
-                  {.out = &m_parent,
-                   .fontSize = Style::fontSizeCaption,
-                   .maxLines = 1,
-                   .configure = [](Label& label) { label.setUseMarkup(false); }}
+                  {.out = &m_parent, .fontSize = Style::fontSizeCaption, .maxLines = 1, .configure = [](Label& label) {
+                     label.setUseMarkup(false);
+                   }}
               )
-          ),
-          ui::label(
-              {.out = &m_kind,
-               .fontSize = Style::fontSizeCaption,
-               .minWidth = 144.0F,
-               .maxWidth = 144.0F,
-               .maxLines = 1}
-          ),
-          ui::label(
-              {.out = &m_size,
-               .fontSize = Style::fontSizeCaption,
-               .minWidth = 110.0F,
-               .maxWidth = 110.0F,
-               .maxLines = 1,
-               .textAlign = TextAlign::Start}
-          ),
-          ui::label(
-              {.out = &m_modified,
-               .fontSize = Style::fontSizeCaption,
-               .minWidth = 148.0F,
-               .maxWidth = 148.0F,
-               .maxLines = 1}
           )
       );
+      for (const auto column : files::kDefaultDetailsColumnOrder) {
+        row->addChild(
+            ui::label(
+                {.out = &m_details[static_cast<std::size_t>(column)],
+                 .fontSize = Style::fontSizeCaption,
+                 .maxLines = 1,
+                 .configure = [](Label& label) { label.setUseMarkup(false); }}
+            )
+        );
+      }
       row->addChild(ui::glyph({.out = &m_arrow, .glyph = "chevron-right", .glyphSize = 14.0F}));
       addChild(std::move(row));
     }
@@ -112,7 +100,7 @@ namespace {
       m_columns = columns;
       m_columnOrder = order;
       m_icon->setOpacity(cut ? 0.4F : entry.hidden ? kHiddenIconOpacity : 1.0F);
-      for (auto* label : {m_name, m_parent, m_kind, m_size, m_modified}) {
+      for (auto* label : {m_name, m_parent}) {
         label->setOpacity(entry.hidden && !selected ? kHiddenTextOpacity : 1.0F);
       }
       const bool directory = entry.type == files::FileType::Directory;
@@ -125,18 +113,17 @@ namespace {
       m_icon->setEmblems(presentation.showEmblems && entry.symlink, presentation.showEmblems && readOnly);
       m_name->setText(entry.displayName);
       m_parent->setText(entry.parentDisplayName);
-      m_fullDate = modifiedTime(entry.modifiedSeconds, "%Y-%m-%d %H:%M");
       m_parent->setVisible(!entry.parentDisplayName.empty());
       m_parent->setParticipatesInLayout(!entry.parentDisplayName.empty());
       m_parent->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurfaceVariant));
-      m_kind->setUseMarkup(false);
-      m_kind->setText(typeLabel);
-      m_size->setText(fileSize(entry));
+      for (const auto column : files::kDefaultDetailsColumnOrder) {
+        auto* label = m_details[static_cast<std::size_t>(column)];
+        label->setText(columns.visible(column) ? files::entryColumnText(entry, column, typeLabel) : "");
+        label->setOpacity(entry.hidden && !selected ? kHiddenTextOpacity : 1.0F);
+        label->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurfaceVariant));
+      }
       const auto text = colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurface);
       m_name->setColor(path ? colorSpecFromRole(ColorRole::Primary) : text);
-      m_kind->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurfaceVariant));
-      m_size->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurfaceVariant));
-      m_modified->setColor(colorSpecFromRole(selected ? ColorRole::OnPrimaryContainer : ColorRole::OnSurfaceVariant));
       m_background->setFill(
           !selected && (hovered || path) ? colorSpecFromRole(ColorRole::SurfaceContainerHigh) : clearColorSpec()
       );
@@ -151,29 +138,19 @@ namespace {
     void doLayout(Renderer& renderer) override {
       if (m_columnOrder != m_appliedColumnOrder) {
         for (const auto column : m_columnOrder) {
-          Node* label = column == files::DetailsColumn::Type ? m_kind
-              : column == files::DetailsColumn::Size         ? m_size
-                                                             : m_modified;
+          Node* label = m_details[static_cast<std::size_t>(column)];
           m_row->addChild(m_row->removeChild(label));
         }
         m_appliedColumnOrder = m_columnOrder;
       }
       const auto& columns = m_columns;
-      m_kind->setVisible(columns.showType);
-      m_kind->setParticipatesInLayout(columns.showType);
-      m_size->setVisible(columns.showSize);
-      m_size->setParticipatesInLayout(columns.showSize);
-      m_modified->setVisible(columns.showModified);
-      m_modified->setParticipatesInLayout(columns.showModified);
-      m_size->setMinWidth(columns.sizeWidth);
-      m_size->setMaxWidth(columns.sizeWidth);
-      m_modified->setMinWidth(columns.modifiedWidth);
-      m_modified->setMaxWidth(columns.modifiedWidth);
-      m_modified->setText(m_fullDate);
-      m_kind->setMinWidth(columns.typeWidth);
-      m_kind->setMaxWidth(columns.typeWidth);
-      m_nameColumn->setMinWidth(columns.nameWidth - m_iconSize - 16.0F);
-      m_nameColumn->setMaxWidth(columns.nameWidth - m_iconSize - 16.0F);
+      for (const auto column : files::kDefaultDetailsColumnOrder) {
+        auto* label = m_details[static_cast<std::size_t>(column)];
+        label->setVisible(columns.visible(column));
+        label->setParticipatesInLayout(columns.visible(column));
+        label->setMinWidth(columns.width(column));
+        label->setMaxWidth(columns.width(column));
+      }
       const float nameWidth =
           m_miller ? std::max(32.0F, width() - m_iconSize - 64.0F) : columns.nameWidth - m_iconSize - 16.0F;
       m_nameColumn->setMinWidth(nameWidth);
@@ -195,13 +172,10 @@ namespace {
     files::FileIcon* m_icon = nullptr;
     Label* m_name = nullptr;
     Label* m_parent = nullptr;
-    Label* m_kind = nullptr;
-    Label* m_size = nullptr;
-    Label* m_modified = nullptr;
+    std::array<Label*, files::kDetailsColumnCount> m_details{};
     Glyph* m_arrow = nullptr;
     bool m_miller;
     float m_iconSize = 24.0F;
-    std::string m_fullDate;
     files::DetailsColumns m_columns;
     files::DetailsColumnOrder m_columnOrder = files::kDefaultDetailsColumnOrder;
     files::DetailsColumnOrder m_appliedColumnOrder = files::kDefaultDetailsColumnOrder;

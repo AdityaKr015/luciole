@@ -11,6 +11,7 @@ namespace {
   constexpr const char* kAttributes =
       "standard::name,standard::display-name,standard::type,standard::is-hidden,standard::is-symlink,"
       "standard::icon,standard::size,time::modified,etag::value,id::file,id::filesystem,"
+      "time::access,time::created,owner::user,owner::group,unix::mode,"
       "access::can-read,access::can-write,access::can-execute,access::can-rename,access::can-trash,access::can-delete,"
       "trash::orig-path,trash::deletion-date,standard::fast-content-type";
   constexpr unsigned int kMaxDepth = 256;
@@ -212,7 +213,8 @@ struct files::RecursiveSearch::State : std::enable_shared_from_this<State> {
          .icon = readFileIcon(info, location),
          .trash = location.isTrash() ? readTrashInfo(info) : TrashInfo{},
          .identity = readFileIdentity(info),
-         .contentType = readFastContentType(info)}
+         .contentType = readFastContentType(info),
+         .details = readEntryMetadata(info)}
     );
   }
 };

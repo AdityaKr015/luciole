@@ -23,6 +23,7 @@ namespace files {
   FileType fileType(GFileType type);
 
   std::optional<FileIdentity> readFileIdentity(GFileInfo* info);
+  EntryMetadata readEntryMetadata(GFileInfo* info);
   FileAccess readFileAccess(GFileInfo* info);
   FilesystemInfo readFilesystemInfo(GFileInfo* info);
   std::optional<std::string> readFastContentType(GFileInfo* info);

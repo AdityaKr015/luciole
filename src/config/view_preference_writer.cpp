@@ -241,7 +241,13 @@ void files::ViewPreferenceWriter::saveColumnWidths(DetailsColumnWidths widths) {
       {{BrowserPreference::NameColumnWidth, widths[0]},
        {BrowserPreference::TypeColumnWidth, widths[1]},
        {BrowserPreference::SizeColumnWidth, widths[2]},
-       {BrowserPreference::ModifiedColumnWidth, widths[3]}}
+       {BrowserPreference::ModifiedColumnWidth, widths[3]},
+       {BrowserPreference::AccessedColumnWidth, widths[4]},
+       {BrowserPreference::CreatedColumnWidth, widths[5]},
+       {BrowserPreference::OwnerColumnWidth, widths[6]},
+       {BrowserPreference::GroupColumnWidth, widths[7]},
+       {BrowserPreference::PermissionsColumnWidth, widths[8]},
+       {BrowserPreference::LocationColumnWidth, widths[9]}}
   );
 }
 void files::ViewPreferenceWriter::saveDetailsColumns(DetailsColumnVisibility visibility) {
@@ -249,6 +255,13 @@ void files::ViewPreferenceWriter::saveDetailsColumns(DetailsColumnVisibility vis
       {BrowserPreference::ShowTypeColumn, visibility.type},
       {BrowserPreference::ShowSizeColumn, visibility.size},
       {BrowserPreference::ShowModifiedColumn, visibility.modified},
+      {BrowserPreference::ShowAccessedColumn, visibility.accessed},
+      {BrowserPreference::ShowCreatedColumn, visibility.created},
+      {BrowserPreference::ShowOwnerColumn, visibility.owner},
+      {BrowserPreference::ShowGroupColumn, visibility.group},
+      {BrowserPreference::ShowPermissionsColumn, visibility.permissions},
+      {BrowserPreference::ShowLocationColumn, visibility.location},
+
   });
 }
 void files::ViewPreferenceWriter::setChangedCallback(std::function<void(const std::string&)> callback) {

@@ -15,6 +15,12 @@ namespace files {
     bool operator==(const FileIdentity&) const = default;
   };
 
+  struct EntryMetadata {
+    std::optional<std::uint64_t> accessedSeconds, createdSeconds;
+    std::optional<std::string> owner, group;
+    std::optional<std::uint32_t> mode;
+    bool operator==(const EntryMetadata&) const = default;
+  };
   struct FileAccess {
     std::optional<bool> read;
     std::optional<bool> write;

@@ -72,11 +72,23 @@ namespace files {
     ShowTypeColumn,
     ShowSizeColumn,
     ShowModifiedColumn,
+    ShowAccessedColumn,
+    ShowCreatedColumn,
+    ShowOwnerColumn,
+    ShowGroupColumn,
+    ShowPermissionsColumn,
+    ShowLocationColumn,
     ColumnOrder,
     NameColumnWidth,
     TypeColumnWidth,
     SizeColumnWidth,
     ModifiedColumnWidth,
+    AccessedColumnWidth,
+    CreatedColumnWidth,
+    OwnerColumnWidth,
+    GroupColumnWidth,
+    PermissionsColumnWidth,
+    LocationColumnWidth,
     ThumbnailPolicy,
     ThumbnailMaxFileMib,
     ThumbnailMaxMegapixels,
@@ -124,11 +136,23 @@ namespace files {
     static constexpr PreferenceKey<bool> ShowTypeColumn{Id::ShowTypeColumn};
     static constexpr PreferenceKey<bool> ShowSizeColumn{Id::ShowSizeColumn};
     static constexpr PreferenceKey<bool> ShowModifiedColumn{Id::ShowModifiedColumn};
+    static constexpr PreferenceKey<bool> ShowAccessedColumn{Id::ShowAccessedColumn};
+    static constexpr PreferenceKey<bool> ShowCreatedColumn{Id::ShowCreatedColumn};
+    static constexpr PreferenceKey<bool> ShowOwnerColumn{Id::ShowOwnerColumn};
+    static constexpr PreferenceKey<bool> ShowGroupColumn{Id::ShowGroupColumn};
+    static constexpr PreferenceKey<bool> ShowPermissionsColumn{Id::ShowPermissionsColumn};
+    static constexpr PreferenceKey<bool> ShowLocationColumn{Id::ShowLocationColumn};
     static constexpr PreferenceKey<files::DetailsColumnOrder> ColumnOrder{Id::ColumnOrder};
     static constexpr PreferenceKey<int> NameColumnWidth{Id::NameColumnWidth};
     static constexpr PreferenceKey<int> TypeColumnWidth{Id::TypeColumnWidth};
     static constexpr PreferenceKey<int> SizeColumnWidth{Id::SizeColumnWidth};
     static constexpr PreferenceKey<int> ModifiedColumnWidth{Id::ModifiedColumnWidth};
+    static constexpr PreferenceKey<int> AccessedColumnWidth{Id::AccessedColumnWidth};
+    static constexpr PreferenceKey<int> CreatedColumnWidth{Id::CreatedColumnWidth};
+    static constexpr PreferenceKey<int> OwnerColumnWidth{Id::OwnerColumnWidth};
+    static constexpr PreferenceKey<int> GroupColumnWidth{Id::GroupColumnWidth};
+    static constexpr PreferenceKey<int> PermissionsColumnWidth{Id::PermissionsColumnWidth};
+    static constexpr PreferenceKey<int> LocationColumnWidth{Id::LocationColumnWidth};
     static constexpr PreferenceKey<files::ThumbnailPolicy> ThumbnailPolicy{Id::ThumbnailPolicy};
     static constexpr PreferenceKey<int> ThumbnailMaxFileMib{Id::ThumbnailMaxFileMib};
     static constexpr PreferenceKey<int> ThumbnailMaxMegapixels{Id::ThumbnailMaxMegapixels};

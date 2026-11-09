@@ -35,6 +35,13 @@ namespace files {
     SortType,
     SortSize,
     SortModified,
+    SortAccessed,
+    SortCreated,
+    SortOwner,
+    SortGroup,
+    SortPermissions,
+    SortLocation,
+
     Ascending,
     Descending,
     FoldersFirst,

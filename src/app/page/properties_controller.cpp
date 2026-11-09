@@ -35,6 +35,10 @@
 
 PropertiesController::PropertiesController(PageContext& page, files::FileIconCache& icons)
     : m_page(page), m_icons(icons) {
+  m_selectionMetadata.setChangedCallback([this] {
+    m_metadataDirty = true;
+    m_page.requestSync();
+  });
   m_metadata.setChangedCallback([this] {
     m_metadataDirty = true;
     m_page.requestSync();
@@ -76,10 +80,15 @@ void PropertiesController::syncMetadata() {
   if (!m_metadataView || !m_page.menuSurface()) {
     return;
   }
-  auto fields = m_metadata.fields();
+  auto fields = m_multiple ? files::MetadataFields{} : m_metadata.fields();
+  if (m_multiple) {
+    for (const auto& [label, value] : m_selectionMetadata.fields()) {
+      fields.push_back({label, value, false});
+    }
+  }
   if (m_job) {
     const auto& snapshot = m_job->service<files::PermissionService>().snapshot();
-    if (!snapshot.multiple && snapshot.info && snapshot.info->current) {
+    if (snapshot.info && snapshot.info->current) {
       const auto& info = *snapshot.info;
       const auto replace = [&](std::string label, std::string value) {
         const auto found = std::ranges::find(fields, label, &files::MetadataField::label);
@@ -89,9 +98,27 @@ void PropertiesController::syncMetadata() {
           fields.push_back({std::move(label), std::move(value), false});
         }
       };
-      replace("Owner", info.ownerName.empty() ? std::to_string(info.owner) : info.ownerName);
-      replace("Group", info.groupName.empty() ? std::to_string(info.group) : info.groupName);
-      replace("Permissions", std::format("{:04o}", info.mode & 07777U));
+      if (!snapshot.multiple || !m_selectionMetadata.busy()) {
+        const char* const unknown = snapshot.unknownItems ? " (some unknown)" : "";
+        replace(
+            "Owner",
+            (snapshot.mixedOwner          ? "Mixed"
+                 : info.ownerName.empty() ? std::to_string(info.owner)
+                                          : info.ownerName)
+                + std::string(unknown)
+        );
+        replace(
+            "Group",
+            (snapshot.mixedGroup          ? "Mixed"
+                 : info.groupName.empty() ? std::to_string(info.group)
+                                          : info.groupName)
+                + std::string(unknown)
+        );
+        replace(
+            "Permissions",
+            (snapshot.mixedMode ? "Mixed" : std::format("{:04o}", info.mode & 07777U)) + std::string(unknown)
+        );
+      }
     }
   }
   m_metadataView->sync(fields, m_metadataWidth);
@@ -121,7 +148,7 @@ void PropertiesController::layoutDialog(float width) {
     m_metadataWidth = metadataWidth;
     syncMetadata();
   }
-  if (m_permissionEditor) {
+  if (m_permissionEditor || m_metadataView) {
     m_page.activeDialog().root()->setSize(
         width, std::min(600.0F, static_cast<float>(m_page.surface().height()) - 64.0F)
     );
@@ -329,6 +356,11 @@ PropertiesController::Body PropertiesController::buildBody(
     if (!editable) {
       field("Permissions", "Select at most 4096 items for permission editing.");
     }
+  }
+  if (multiple) {
+    auto metadata = std::make_unique<FileMetadataView>();
+    metadataView = metadata.get();
+    general->addChild(std::move(metadata));
   }
   body->content()->addChild(std::move(general));
   PermissionEditor* editor = nullptr;
@@ -578,12 +610,13 @@ void PropertiesController::show(const std::vector<files::DirectoryEntry>& target
   UiPhaseScope phase(UiPhase::Layout);
   LayoutConstraints constraints;
   constraints.setExactWidth(width);
-  const float height = editable ? std::min(600.0F, static_cast<float>(surface.height()) - 64.0F)
-                                : std::min(
-                                      root->measure(surface.renderTarget().renderer(), constraints).height,
-                                      static_cast<float>(surface.height()) - 64.0F
-                                  );
-  if (editable) {
+  const float height = (editable || multiple)
+      ? std::min(600.0F, static_cast<float>(surface.height()) - 64.0F)
+      : std::min(
+            root->measure(surface.renderTarget().renderer(), constraints).height,
+            static_cast<float>(surface.height()) - 64.0F
+        );
+  if (editable || multiple) {
     root->setSize(width, height);
   }
   m_page.showPopup(
@@ -594,10 +627,16 @@ void PropertiesController::show(const std::vector<files::DirectoryEntry>& target
     m_page.activeDialog().bind(ActiveDialog::Kind::Properties, [this] { close(); });
     m_metadataView = body.metadata;
     m_metadataWidth = std::max(1.0F, width - Style::spaceMd * 2 - Style::scrollbarWidth - Style::scrollbarGap);
+    m_multiple = multiple;
     if (m_metadataView) {
-      m_metadata.show(targets.front(), m_page.settings().thumbnails);
+      if (multiple) {
+        m_selectionMetadata.show(targets);
+      } else {
+        m_metadata.show(targets.front(), m_page.settings().thumbnails);
+      }
       m_metadataDirty = true;
     }
+    m_page.setDialogSize(width, height);
     if (!editable) {
       return;
     }
@@ -617,7 +656,6 @@ void PropertiesController::show(const std::vector<files::DirectoryEntry>& target
     m_permissionTabs = tabs;
     m_permissionSave = save;
     m_permissionScroll = scroll;
-    m_page.setDialogSize(width, height);
     m_page.menuDispatcher().setFocusChangeCallback([this](InputArea*, InputArea* focused) {
       if (m_permissionScroll) {
         m_permissionScroll->requestScrollIntoView(focused);
@@ -638,6 +676,8 @@ void PropertiesController::show(const std::vector<files::DirectoryEntry>& target
 
 void PropertiesController::close() {
   m_metadata.clear();
+  m_selectionMetadata.clear();
+  m_multiple = false;
   m_metadataView = nullptr;
   m_metadataDirty = false;
   // Saving goes on for the page that takes the job over once this page left its window.

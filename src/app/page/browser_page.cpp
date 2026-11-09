@@ -1208,6 +1208,13 @@ void BrowserPage::runAction(
       {Action::SortType, sort},
       {Action::SortSize, sort},
       {Action::SortModified, sort},
+      {Action::SortAccessed, sort},
+      {Action::SortCreated, sort},
+      {Action::SortOwner, sort},
+      {Action::SortGroup, sort},
+      {Action::SortPermissions, sort},
+      {Action::SortLocation, sort},
+
       {Action::Ascending, sort},
       {Action::Descending, sort},
       {Action::FoldersFirst, sort},
@@ -1336,7 +1343,14 @@ void BrowserPage::sortAction(Action action) {
   const auto field = action == Action::SortName ? files::SortField::Name
       : action == Action::SortType              ? files::SortField::Type
       : action == Action::SortSize              ? files::SortField::Size
-                                                : files::SortField::Modified;
+      : action == Action::SortAccessed          ? files::SortField::Accessed
+      : action == Action::SortCreated           ? files::SortField::Created
+      : action == Action::SortOwner             ? files::SortField::Owner
+      : action == Action::SortGroup             ? files::SortField::Group
+      : action == Action::SortPermissions       ? files::SortField::Permissions
+      : action == Action::SortLocation          ? files::SortField::Location
+
+                                       : files::SortField::Modified;
   if (action == Action::Ascending || action == Action::Descending) {
     options.descending = action == Action::Descending;
   } else if (action == Action::FoldersFirst) {
@@ -1780,11 +1794,11 @@ void BrowserPage::syncBrowser() {
   m_list->setRowGap(gridMode ? metrics.gap : m_viewMode == files::ViewMode::Miller ? 0.0F : 2.0F);
   const auto& sort = model.sort();
   m_detailsHeader.sync(sort);
-  const char* field = sort.field == files::SortField::Name ? "Name"
-      : sort.field == files::SortField::Size               ? "Size"
-      : sort.field == files::SortField::Type               ? "Type"
-                                                           : "Modified";
-  const char* direction = sort.field == files::SortField::Modified ? (sort.descending ? "newest first" : "oldest first")
+  const auto field = files::sortFieldLabel(sort.field);
+  const char* direction = (sort.field == files::SortField::Modified
+                           || sort.field == files::SortField::Accessed
+                           || sort.field == files::SortField::Created)
+      ? (sort.descending ? "newest first" : "oldest first")
       : sort.field == files::SortField::Size ? (sort.descending ? "largest first" : "smallest first")
                                              : (sort.descending ? "Z to A" : "A to Z");
   m_menuButton->setTooltip(

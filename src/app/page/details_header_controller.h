@@ -136,14 +136,12 @@ private:
   MenuController& m_menus;
   Flex* m_listHeader = nullptr;
   Button* m_nameHeader = nullptr;
-  Button* m_sizeHeader = nullptr;
-  Button* m_modifiedHeader = nullptr;
-  Button* m_typeHeader = nullptr;
+  std::array<Button*, files::kDetailsColumnCount> m_headers{};
   files::DetailsColumns m_detailsColumns;
   files::DetailsColumnWidths m_columnWidths = files::kDefaultDetailsColumnWidths;
   std::optional<ColumnResize> m_columnResize;
-  std::array<InputArea*, 4> m_columnResizeHandles{};
-  std::array<Separator*, 4> m_columnResizeLines{};
+  std::array<InputArea*, files::kDetailsColumnCount + 1> m_columnResizeHandles{};
+  std::array<Separator*, files::kDetailsColumnCount + 1> m_columnResizeLines{};
   Flex* m_detailsHeaderViewport = nullptr;
   Box* m_detailsScrollHost = nullptr;
   Scrollbar* m_detailsScrollbar = nullptr;

@@ -77,6 +77,7 @@ namespace files {
       std::string filterKey;
       std::string typeLabel;
       std::optional<std::string> typeSortKey;
+      std::array<std::optional<std::string>, 3> detailSortKeys{};
     };
 
     void rebuildProjection();

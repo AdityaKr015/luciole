@@ -37,7 +37,13 @@ namespace {
       {{files::SortField::Name, "name"},
        {files::SortField::Size, "size"},
        {files::SortField::Modified, "modified"},
-       {files::SortField::Type, "type"}}
+       {files::SortField::Type, "type"},
+       {files::SortField::Accessed, "accessed"},
+       {files::SortField::Created, "created"},
+       {files::SortField::Owner, "owner"},
+       {files::SortField::Group, "group"},
+       {files::SortField::Permissions, "permissions"},
+       {files::SortField::Location, "location"}}
   );
   constexpr auto kViewModes = std::to_array<Named<files::ViewMode>>(
       {{files::ViewMode::List, "list"}, {files::ViewMode::Grid, "grid"}, {files::ViewMode::Miller, "miller"}}
@@ -84,16 +90,27 @@ namespace {
   decode(const Rule<files::DetailsColumnOrder>& /*rule*/, const toml::node& node) {
     const auto* columns = node.as_array();
     files::DetailsColumnOrder order{};
-    if (columns == nullptr || columns->size() != order.size()) {
+    if (columns == nullptr || columns->size() < 3 || columns->size() > order.size()) {
       return std::nullopt;
     }
-    for (std::size_t index = 0; index < order.size(); ++index) {
-      const auto* name = columns->get(index)->as_string();
-      const auto column = name != nullptr ? files::detailsColumnFromName(name->get()) : std::nullopt;
-      if (!column) {
+    std::array<bool, files::kDetailsColumnCount> seen{};
+    std::size_t index = 0;
+    for (const auto& item : *columns) {
+      const auto* name = item.as_string();
+      const auto column = name ? files::detailsColumnFromName(name->get()) : std::nullopt;
+      if (!column || seen[static_cast<std::size_t>(*column)]) {
         return std::nullopt;
       }
-      order[index] = *column;
+      seen[static_cast<std::size_t>(*column)] = true;
+      order[index++] = *column;
+    }
+    if (!seen[0] || !seen[1] || !seen[2]) {
+      return std::nullopt;
+    }
+    for (const auto column : files::kDefaultDetailsColumnOrder) {
+      if (!seen[static_cast<std::size_t>(column)]) {
+        order[index++] = column;
+      }
     }
     return order;
   }
@@ -111,7 +128,7 @@ namespace {
   std::string expected(const Rule<bool>& /*rule*/) { return "expected a boolean"; }
   std::string expected(const Rule<int>& rule) { return std::string(rule.expected); }
   std::string expected(const Rule<files::DetailsColumnOrder>& /*rule*/) {
-    return "expected an array containing 'type', 'size', and 'modified' exactly once";
+    return "expected unique column names including 'type', 'size', and 'modified'; optional columns may be omitted";
   }
   template <class T>
     requires std::is_enum_v<T>
@@ -209,6 +226,14 @@ namespace {
       describe(P::ShowTypeColumn, "show_type_column", [](S& s) -> auto& { return s.columns.type; }),
       describe(P::ShowSizeColumn, "show_size_column", [](S& s) -> auto& { return s.columns.size; }),
       describe(P::ShowModifiedColumn, "show_modified_column", [](S& s) -> auto& { return s.columns.modified; }),
+      describe(P::ShowAccessedColumn, "show_accessed_column", [](S& s) -> auto& { return s.columns.accessed; }),
+      describe(P::ShowCreatedColumn, "show_created_column", [](S& s) -> auto& { return s.columns.created; }),
+      describe(P::ShowOwnerColumn, "show_owner_column", [](S& s) -> auto& { return s.columns.owner; }),
+      describe(P::ShowGroupColumn, "show_group_column", [](S& s) -> auto& { return s.columns.group; }),
+      describe(
+          P::ShowPermissionsColumn, "show_permissions_column", [](S& s) -> auto& { return s.columns.permissions; }
+      ),
+      describe(P::ShowLocationColumn, "show_location_column", [](S& s) -> auto& { return s.columns.location; }),
       describe(P::ColumnOrder, "column_order", [](S& s) -> auto& { return s.columnOrder; }),
       describe(
           P::NameColumnWidth, files::kDetailsColumnWidthKeys[0], [](S& s) -> auto& { return s.columnWidths[0]; },
@@ -225,6 +250,30 @@ namespace {
       describe(
           P::ModifiedColumnWidth, files::kDetailsColumnWidthKeys[3], [](S& s) -> auto& { return s.columnWidths[3]; },
           {columnWidth<3>, "expected an integer width from 64 to 2048"}
+      ),
+      describe(
+          P::AccessedColumnWidth, files::kDetailsColumnWidthKeys[4], [](S& s) -> auto& { return s.columnWidths[4]; },
+          {columnWidth<4>, "expected an integer width from 64 to 2048"}
+      ),
+      describe(
+          P::CreatedColumnWidth, files::kDetailsColumnWidthKeys[5], [](S& s) -> auto& { return s.columnWidths[5]; },
+          {columnWidth<5>, "expected an integer width from 64 to 2048"}
+      ),
+      describe(
+          P::OwnerColumnWidth, files::kDetailsColumnWidthKeys[6], [](S& s) -> auto& { return s.columnWidths[6]; },
+          {columnWidth<6>, "expected an integer width from 64 to 2048"}
+      ),
+      describe(
+          P::GroupColumnWidth, files::kDetailsColumnWidthKeys[7], [](S& s) -> auto& { return s.columnWidths[7]; },
+          {columnWidth<7>, "expected an integer width from 64 to 2048"}
+      ),
+      describe(
+          P::PermissionsColumnWidth, files::kDetailsColumnWidthKeys[8], [](S& s) -> auto& { return s.columnWidths[8]; },
+          {columnWidth<8>, "expected an integer width from 64 to 2048"}
+      ),
+      describe(
+          P::LocationColumnWidth, files::kDetailsColumnWidthKeys[9], [](S& s) -> auto& { return s.columnWidths[9]; },
+          {columnWidth<9>, "expected an integer width from 64 to 2048"}
       ),
       describe(
           P::ThumbnailPolicy, "thumbnail_policy", [](S& s) -> auto& { return s.thumbnails.policy; },

@@ -465,83 +465,77 @@ void MenuController::showContextMenu(
 
 void MenuController::openColumnsMenu(const LayoutRect& anchor, std::optional<files::DetailsColumn> column) {
   std::vector<ContextMenuControlEntry> entries{
-      {.label = "Name", .enabled = false, .checkmark = true, .toggleState = 1},
+      {.label = "Name", .enabled = false, .checkmark = true, .toggleState = 1}
   };
   for (const auto candidate : m_columns.columnOrder()) {
-    const char* label = candidate == files::DetailsColumn::Type ? "Type"
-        : candidate == files::DetailsColumn::Size               ? "Size"
-                                                                : "Modified";
     entries.push_back(
         {.id = static_cast<int>(candidate) + 1,
-         .label = label,
+         .label = std::string(files::detailsColumnLabel(candidate)),
          .checkmark = true,
          .toggleState = files::detailsColumnVisible(m_columns.columnVisibility(), candidate) ? 1 : 0}
     );
   }
   entries.push_back({.label = "", .separator = true});
   entries.push_back(
-      {.id = 4,
-       .label = "Show all columns",
+      {.id = 100, .label = "Show all columns", .enabled = m_columns.columnVisibility() != files::allDetailsColumns()}
+  );
+  entries.push_back(
+      {.id = 106,
+       .label = "Reset column visibility",
        .enabled = m_columns.columnVisibility() != files::DetailsColumnVisibility{}}
   );
   const int left = Style::rtl() ? 1 : -1;
   if (column) {
     entries.push_back({.label = "", .separator = true});
     entries.push_back(
-        {.id = 5, .label = "Move left", .enabled = m_columns.movedColumnOrder(*column, left).has_value()}
+        {.id = 101, .label = "Move left", .enabled = m_columns.movedColumnOrder(*column, left).has_value()}
     );
     entries.push_back(
-        {.id = 6, .label = "Move right", .enabled = m_columns.movedColumnOrder(*column, -left).has_value()}
+        {.id = 102, .label = "Move right", .enabled = m_columns.movedColumnOrder(*column, -left).has_value()}
     );
   }
   entries.push_back({.label = "", .separator = true});
   entries.push_back(
-      {.id = 7, .label = "Reset column order", .enabled = m_columns.columnOrder() != files::kDefaultDetailsColumnOrder}
+      {.id = 103,
+       .label = "Reset column order",
+       .enabled = m_columns.columnOrder() != files::kDefaultDetailsColumnOrder}
   );
   const std::size_t widthIndex = column ? static_cast<std::size_t>(*column) + 1 : 0;
   entries.push_back(
-      {.id = 8,
+      {.id = 104,
        .label = "Reset column width",
        .enabled = m_columns.columnWidths()[widthIndex] != files::kDefaultDetailsColumnWidths[widthIndex]}
   );
   entries.push_back(
-      {.id = 9,
+      {.id = 105,
        .label = "Reset all column widths",
        .enabled = m_columns.columnWidths() != files::kDefaultDetailsColumnWidths}
   );
   showContextMenu(
       std::move(entries),
       [this, column, left, widthIndex](int id) {
-        if (id == 8 || id == 9) {
-          auto widths = id == 9 ? files::kDefaultDetailsColumnWidths : m_columns.columnWidths();
+        if (id == 104 || id == 105) {
+          auto widths = id == 105 ? files::kDefaultDetailsColumnWidths : m_columns.columnWidths();
           widths[widthIndex] = files::kDefaultDetailsColumnWidths[widthIndex];
           m_columns.setDetailsColumnWidths(widths);
-          m_page.focusFileList();
-          return;
-        }
-        if ((id == 5 || id == 6) && column) {
-          if (const auto order = m_columns.movedColumnOrder(*column, id == 5 ? left : -left)) {
+        } else if ((id == 101 || id == 102) && column) {
+          if (const auto order = m_columns.movedColumnOrder(*column, id == 101 ? left : -left)) {
             m_columns.setDetailsColumnOrder(*order);
           }
-          m_page.focusFileList();
-          return;
-        }
-        if (id == 7) {
+        } else if (id == 103) {
           m_columns.setDetailsColumnOrder(files::kDefaultDetailsColumnOrder);
-          m_page.focusFileList();
-          return;
+        } else {
+          auto visibility = m_columns.columnVisibility();
+          if (id >= 1 && id <= static_cast<int>(files::kDetailsColumnCount)) {
+            auto& flag = files::detailsColumnFlag(visibility, static_cast<files::DetailsColumn>(id - 1));
+            flag = !flag;
+          } else if (id == 100) {
+            visibility = files::allDetailsColumns();
+          } else if (id == 106) {
+            visibility = {};
+          }
+          m_columns.setDetailsColumnVisibility(visibility);
         }
-        auto visibility = m_columns.columnVisibility();
-        if (id == 1) {
-          visibility.type = !visibility.type;
-        } else if (id == 2) {
-          visibility.size = !visibility.size;
-        } else if (id == 3) {
-          visibility.modified = !visibility.modified;
-        } else if (id == 4) {
-          visibility = {};
-        }
-        m_columns.setDetailsColumnVisibility(visibility);
         m_page.focusFileList();
       },
       anchor
@@ -583,8 +577,9 @@ void MenuController::showActionMenu(
 
 void MenuController::openSortMenu(std::optional<LayoutRect> anchor, bool alignLeft) {
   showActionMenu(
-      {Action::SortName, Action::SortType, Action::SortSize, Action::SortModified, std::nullopt, Action::Ascending,
-       Action::Descending, std::nullopt, Action::FoldersFirst},
+      {Action::SortName, Action::SortType, Action::SortSize, Action::SortModified, Action::SortAccessed,
+       Action::SortCreated, Action::SortOwner, Action::SortGroup, Action::SortPermissions, Action::SortLocation,
+       std::nullopt, Action::Ascending, Action::Descending, std::nullopt, Action::FoldersFirst},
       true, !anchor.has_value(), anchor, alignLeft
   );
 }

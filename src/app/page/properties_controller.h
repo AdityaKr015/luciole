@@ -1,5 +1,6 @@
 #pragma once
 
+#include "browser/selection_details.h"
 #include "thumbnails/preview_metadata.h"
 
 #include <cstddef>
@@ -76,6 +77,8 @@ private:
   ScrollView* m_permissionScroll = nullptr;
   Button* m_permissionSave = nullptr;
   files::PreviewMetadataService m_metadata;
+  files::SelectionDetailsService m_selectionMetadata;
+  bool m_multiple = false;
   FileMetadataView* m_metadataView = nullptr;
   float m_metadataWidth = 0;
   bool m_metadataDirty = false;

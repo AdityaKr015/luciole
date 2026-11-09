@@ -1,5 +1,6 @@
 #include "browser/directory_model.h"
 
+#include "browser/entry_details.h"
 #include "browser/selection_tools.h"
 #include "fs/name_matching.h"
 
@@ -64,6 +65,18 @@ bool files::DirectoryModel::applySnapshot(DirectorySnapshot snapshot) {
       const GString collated(g_utf8_collate_key_for_filename(foldedDisplayText(typeLabel).c_str(), -1));
       typeSortKey = collated.get();
     }
+    std::array<std::optional<std::string>, 3> detailKeys;
+    for (std::size_t k = 0; k < detailKeys.size(); ++k) {
+      const auto column = k == 0 ? DetailsColumn::Owner : k == 1 ? DetailsColumn::Group : DetailsColumn::Location;
+      const bool known = k == 0 ? entry.details.owner.has_value()
+          : k == 1              ? entry.details.group.has_value()
+                                : entry.location.parent().has_value();
+      if (known) {
+        const auto value = foldedDisplayText(entryColumnText(entry, column));
+        const GString collated(g_utf8_collate_key_for_filename(value.c_str(), -1));
+        detailKeys[k] = collated.get();
+      }
+    }
     m_presentations.emplace(
         entry.id,
         Presentation{
@@ -71,7 +84,8 @@ bool files::DirectoryModel::applySnapshot(DirectorySnapshot snapshot) {
             .sortKey = sortKey.get(),
             .filterKey = std::move(key),
             .typeLabel = std::move(typeLabel),
-            .typeSortKey = std::move(typeSortKey)
+            .typeSortKey = std::move(typeSortKey),
+            .detailSortKeys = std::move(detailKeys)
         }
     );
   }
@@ -128,9 +142,21 @@ bool files::DirectoryModel::less(EntryId left, EntryId right) const {
     if (first && first != second) {
       return m_sort.descending ? first > second : first < second;
     }
+  } else if (
+      m_sort.field == SortField::Owner || m_sort.field == SortField::Group || m_sort.field == SortField::Location
+  ) {
+    const auto index = m_sort.field == SortField::Owner ? 0 : m_sort.field == SortField::Group ? 1 : 2;
+    const auto& first = leftPresentation.detailSortKeys[index];
+    const auto& second = rightPresentation.detailSortKeys[index];
+    if (first.has_value() != second.has_value()) {
+      return first.has_value();
+    }
+    if (first && first != second) {
+      return m_sort.descending ? first > second : first < second;
+    }
   } else if (m_sort.field != SortField::Name) {
-    const auto& first = m_sort.field == SortField::Size ? a.size : a.modifiedSeconds;
-    const auto& second = m_sort.field == SortField::Size ? b.size : b.modifiedSeconds;
+    const auto first = entrySortNumber(a, m_sort.field);
+    const auto second = entrySortNumber(b, m_sort.field);
     // Unknown metadata stays last in both directions; zero is a real value.
     if (first.has_value() != second.has_value()) {
       return first.has_value();

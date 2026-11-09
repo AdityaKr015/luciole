@@ -75,13 +75,19 @@ namespace {
     writer.saveDetailsColumns({false, true, false});
     const files::DetailsColumnVisibility hiddenColumns{false, false, false};
     writer.saveDetailsColumns(hiddenColumns);
-    writer.saveColumnOrder({files::DetailsColumn::Size, files::DetailsColumn::Type, files::DetailsColumn::Modified});
-    const files::DetailsColumnOrder finalOrder{
-        files::DetailsColumn::Modified, files::DetailsColumn::Size, files::DetailsColumn::Type
-    };
+    writer.saveColumnOrder(
+        {files::DetailsColumn::Size, files::DetailsColumn::Type, files::DetailsColumn::Modified,
+         files::DetailsColumn::Accessed, files::DetailsColumn::Created, files::DetailsColumn::Owner,
+         files::DetailsColumn::Group, files::DetailsColumn::Permissions, files::DetailsColumn::Location}
+    );
+    const files::DetailsColumnOrder finalOrder{files::DetailsColumn::Modified, files::DetailsColumn::Size,
+                                               files::DetailsColumn::Type,     files::DetailsColumn::Accessed,
+                                               files::DetailsColumn::Created,  files::DetailsColumn::Owner,
+                                               files::DetailsColumn::Group,    files::DetailsColumn::Permissions,
+                                               files::DetailsColumn::Location};
     writer.saveColumnOrder(finalOrder);
-    writer.saveColumnWidths({400, 200, 100, 180});
-    const files::DetailsColumnWidths finalWidths{640, 192, 96, 224};
+    writer.saveColumnWidths({400, 200, 100, 180, 156, 156, 128, 128, 112, 260});
+    const files::DetailsColumnWidths finalWidths{640, 192, 96, 224, 156, 156, 128, 128, 112, 260};
     writer.saveColumnWidths(finalWidths);
     writer.saveInteraction(files::ActivationMode::SingleClick, files::TypingMode::Search);
     writer.saveInteraction(files::ActivationMode::DoubleClick, files::TypingMode::Typeahead);

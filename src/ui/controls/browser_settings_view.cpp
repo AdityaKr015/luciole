@@ -87,7 +87,13 @@ BrowserSettingsView::BrowserSettingsView(
       {{"Name", files::SortField::Name},
        {"Type", files::SortField::Type},
        {"Size", files::SortField::Size},
-       {"Modified", files::SortField::Modified}}
+       {"Modified", files::SortField::Modified},
+       {"Accessed", files::SortField::Accessed},
+       {"Created", files::SortField::Created},
+       {"Owner", files::SortField::Owner},
+       {"Group", files::SortField::Group},
+       {"Permissions", files::SortField::Permissions},
+       {"Location", files::SortField::Location}}
   );
   addBool(P::SortDescending, "Reverse order");
   addBool(P::DirectoriesFirst, "Folders first");
@@ -111,25 +117,31 @@ BrowserSettingsView::BrowserSettingsView(
   addBool(P::ShowTypeColumn, "Type");
   addBool(P::ShowSizeColumn, "Size");
   addBool(P::ShowModifiedColumn, "Modified");
+  addBool(P::ShowAccessedColumn, "Accessed");
+  addBool(P::ShowCreatedColumn, "Created");
+  addBool(P::ShowOwnerColumn, "Owner");
+  addBool(P::ShowGroupColumn, "Group");
+  addBool(P::ShowPermissionsColumn, "Permissions");
+  addBool(P::ShowLocationColumn, "Location");
   addNumber(P::NameColumnWidth, "Name width (0 = auto)", widths(160, 16384, true));
   addNumber(P::TypeColumnWidth, "Type width", widths(64, 2048));
   addNumber(P::SizeColumnWidth, "Size width", widths(64, 2048));
   addNumber(P::ModifiedColumnWidth, "Modified width", widths(64, 2048));
-  Choices<files::DetailsColumnOrder> orders;
-  auto order = files::kDefaultDetailsColumnOrder;
-  do {
-    std::string label;
-    for (const auto column : order) {
-      if (!label.empty()) {
-        label += " / ";
-      }
-      label += column == files::DetailsColumn::Type ? "Type"
-          : column == files::DetailsColumn::Size    ? "Size"
-                                                    : "Modified";
-    }
-    orders.emplace_back(label, order);
-  } while (std::ranges::next_permutation(order).found);
-  addChoice(P::ColumnOrder, "Column order", orders);
+  addNumber(P::AccessedColumnWidth, "Accessed width", widths(64, 2048));
+  addNumber(P::CreatedColumnWidth, "Created width", widths(64, 2048));
+  addNumber(P::OwnerColumnWidth, "Owner width", widths(64, 2048));
+  addNumber(P::GroupColumnWidth, "Group width", widths(64, 2048));
+  addNumber(P::PermissionsColumnWidth, "Permissions width", widths(64, 2048));
+  addNumber(P::LocationColumnWidth, "Location width", widths(64, 2048));
+  auto orderLabel = ui::label({.fontSize = Style::fontSizeCaption, .maxWidth = 180.0F});
+  auto* orderText = orderLabel.get();
+  addRow<files::DetailsColumnOrder>(
+      P::ColumnOrder, "Column order",
+      [orderText](const auto& order) {
+        orderText->setText(order == files::kDefaultDetailsColumnOrder ? "Default" : "Custom");
+      },
+      std::move(orderLabel)
+  );
   section("Thumbnails");
   addChoice(
       P::ThumbnailPolicy, "Show thumbnails",

@@ -61,3 +61,30 @@ std::optional<files::FileIdentity> files::readFileIdentity(GFileInfo* info) {
   }
   return FileIdentity{filesystem, file};
 }
+
+files::EntryMetadata files::readEntryMetadata(GFileInfo* info) {
+  EntryMetadata result;
+  const auto number = [&](const char* key) -> std::optional<std::uint64_t> {
+    return g_file_info_get_attribute_type(info, key) == G_FILE_ATTRIBUTE_TYPE_UINT64
+        ? std::optional(g_file_info_get_attribute_uint64(info, key))
+        : std::nullopt;
+  };
+  const auto text = [&](const char* key) -> std::optional<std::string> {
+    if (g_file_info_get_attribute_type(info, key) != G_FILE_ATTRIBUTE_TYPE_STRING) {
+      return {};
+    }
+    const char* value = g_file_info_get_attribute_string(info, key);
+    if (!value || !*value || !g_utf8_validate(value, -1, nullptr)) {
+      return {};
+    }
+    return value;
+  };
+  result.accessedSeconds = number(G_FILE_ATTRIBUTE_TIME_ACCESS);
+  result.createdSeconds = number(G_FILE_ATTRIBUTE_TIME_CREATED);
+  result.owner = text(G_FILE_ATTRIBUTE_OWNER_USER);
+  result.group = text(G_FILE_ATTRIBUTE_OWNER_GROUP);
+  if (g_file_info_get_attribute_type(info, G_FILE_ATTRIBUTE_UNIX_MODE) == G_FILE_ATTRIBUTE_TYPE_UINT32) {
+    result.mode = g_file_info_get_attribute_uint32(info, G_FILE_ATTRIBUTE_UNIX_MODE) & 07777U;
+  }
+  return result;
+}

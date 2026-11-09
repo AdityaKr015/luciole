@@ -34,6 +34,7 @@ test_table = [
   {'name': 'browser-controller', 'deps': [browser_dep, event_loop_dep], 'env': gio_env},
   {'name': 'miller-columns', 'deps': [browser_dep, event_loop_dep], 'env': gio_env},
   {'name': 'navigation-services', 'deps': [browser_dep, platform_dep, event_loop_dep], 'env': gio_env},
+  {'name': 'selection-details', 'deps': [browser_dep, event_loop_dep], 'timeout': 60, 'env': gio_env},
   {'name': 'settings', 'deps': [config_dep, browser_dep], 'env': ['G_DEBUG=fatal-warnings']},
   {'name': 'atomic-file', 'deps': [fs_dep]},
   {'name': 'xdg-dirs', 'deps': [fs_dep]},

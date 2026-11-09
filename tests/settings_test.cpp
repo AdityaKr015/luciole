@@ -582,9 +582,10 @@ namespace {
   void testDetailsColumnWidths() {
     using P = files::BrowserPreference;
     using S = files::AtomicWriteState;
-    constexpr std::array preferences{
-        P::NameColumnWidth, P::TypeColumnWidth, P::SizeColumnWidth, P::ModifiedColumnWidth
-    };
+    constexpr std::array preferences{P::NameColumnWidth,     P::TypeColumnWidth,     P::SizeColumnWidth,
+                                     P::ModifiedColumnWidth, P::AccessedColumnWidth, P::CreatedColumnWidth,
+                                     P::OwnerColumnWidth,    P::GroupColumnWidth,    P::PermissionsColumnWidth,
+                                     P::LocationColumnWidth};
     Fixture fixture;
     files::ConfigService config(fixture.paths());
     TEST_CHECK(config.reload() && config.settings().browser.columnWidths == files::kDefaultDetailsColumnWidths);
@@ -641,6 +642,48 @@ namespace {
     }
   }
 
+  void testExtendedColumns() {
+    using P = files::BrowserPreference;
+    const std::array keys{P::ShowAccessedColumn, P::ShowCreatedColumn,     P::ShowOwnerColumn,
+                          P::ShowGroupColumn,    P::ShowPermissionsColumn, P::ShowLocationColumn};
+    Fixture fixture;
+    files::ConfigService config(fixture.paths());
+    TEST_CHECK(config.reload());
+    for (std::size_t i = 0; i < keys.size(); ++i) {
+      TEST_CHECK(!files::preferenceValue(config.settings().browser, keys[i]));
+      const auto column = static_cast<files::DetailsColumn>(i + 3);
+      const auto key = "show_" + std::string(files::detailsColumnName(column)) + "_column";
+      fixture.write("config.toml", "[browser]\n" + key + "=true\nshow_hidden=true\n");
+      TEST_CHECK(config.reload());
+      TEST_CHECK(files::preferenceValue(config.settings().browser, keys[i]));
+      const std::array off{files::OverrideEdit{keys[i], false}};
+      TEST_CHECK(config.saveOverrides(off) == files::AtomicWriteState::Durable);
+      auto loaded = files::loadSettings(fixture.paths());
+      TEST_CHECK(loaded && !files::preferenceValue(loaded->browser, keys[i]) && loaded->browser.showHidden);
+      const std::array reset{files::OverrideEdit{keys[i], std::nullopt}};
+      TEST_CHECK(config.saveOverrides(reset) == files::AtomicWriteState::Durable);
+      TEST_CHECK(files::preferenceValue(config.settings().browser, keys[i]));
+      fixture.write("config.toml", "[browser]\n" + key + "='true'\n");
+      TEST_CHECK(!files::validateConfigFile(fixture.paths().base).empty());
+    }
+    fixture.write("config.toml", "[browser]\ncolumn_order=['owner','type','size','modified']\n");
+    TEST_CHECK(config.reload());
+    TEST_CHECK(config.settings().browser.columnOrder.front() == files::DetailsColumn::Owner);
+    TEST_CHECK(files::validDetailsColumnOrder(config.settings().browser.columnOrder));
+    auto order = files::kDefaultDetailsColumnOrder;
+    std::ranges::reverse(order);
+    const std::array edit{files::OverrideEdit{P::ColumnOrder, order}};
+    TEST_CHECK(config.saveOverrides(edit) == files::AtomicWriteState::Durable);
+    TEST_CHECK(files::loadSettings(fixture.paths())->browser.columnOrder == order);
+    for (const auto field :
+         {files::SortField::Accessed, files::SortField::Created, files::SortField::Owner, files::SortField::Group,
+          files::SortField::Permissions, files::SortField::Location}) {
+      const std::array sort{files::OverrideEdit{P::SortBy, field}};
+      TEST_CHECK(config.saveOverrides(sort) == files::AtomicWriteState::Durable);
+      TEST_CHECK(files::loadSettings(fixture.paths())->browser.sort.field == field);
+    }
+  }
+
   void testDetailsColumnOrder() {
     using Column = files::DetailsColumn;
     using Preference = files::BrowserPreference;
@@ -648,7 +691,9 @@ namespace {
     Fixture fixture;
     files::ConfigService config(fixture.paths());
     TEST_CHECK(config.reload() && config.settings().browser.columnOrder == files::kDefaultDetailsColumnOrder);
-    const files::DetailsColumnOrder baseOrder{Column::Modified, Column::Type, Column::Size};
+    const files::DetailsColumnOrder baseOrder{Column::Modified, Column::Type,        Column::Size,
+                                              Column::Accessed, Column::Created,     Column::Owner,
+                                              Column::Group,    Column::Permissions, Column::Location};
     const std::string base = "[browser]\ncolumn_order = ['modified', 'type', 'size']\nshow_size_column = false\n";
     fixture.write("config.toml", base);
     fixture.write("settings.toml", "[browser]\ngrid_icon_size = 64\n");
@@ -664,11 +709,15 @@ namespace {
           && !loaded->browser.columns.size
           && loaded->browser.gridIconSize == 64
       );
-    } while (std::ranges::next_permutation(order).found);
+    } while (std::ranges::next_permutation(order.begin(), order.begin() + 3).found);
     const auto saved = read(fixture.paths().overrides);
     for (const auto& edit : std::array{
              files::OverrideEdit{
-                 Preference::ColumnOrder, files::DetailsColumnOrder{Column::Type, Column::Type, Column::Size}
+                 Preference::ColumnOrder,
+                 files::DetailsColumnOrder{
+                     Column::Type, Column::Type, Column::Size, Column::Accessed, Column::Created, Column::Owner,
+                     Column::Group, Column::Permissions, Column::Location
+                 }
              },
              files::OverrideEdit{
                  Preference::ColumnOrder, files::DetailsColumnOrder{Column::Type, Column::Size, static_cast<Column>(99)}
@@ -869,6 +918,7 @@ int main() {
     testSidebarVisibility();
     testPreviewVisibility();
     testDetailsColumnVisibility();
+    testExtendedColumns();
     testDetailsColumnOrder();
     testDetailsColumnWidths();
     testInteractionModes();

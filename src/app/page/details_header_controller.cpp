@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <format>
 #include <utility>
 #include <vector>
 
@@ -54,6 +55,41 @@ void DetailsHeaderController::applySettings(
 
 std::unique_ptr<Flex> DetailsHeaderController::buildHeader() {
   m_appliedColumnOrder = files::kDefaultDetailsColumnOrder;
+  auto row = ui::row(
+      {.out = &m_detailsHeaderRow,
+       .align = FlexAlign::Center,
+       .paddingH = Style::spaceMd - Style::spaceXs,
+       .participatesInLayout = false}
+  );
+  row->addChild(
+      ui::button(
+          {.out = &m_nameHeader,
+           .text = "Name",
+           .fontSize = Style::fontSizeCaption,
+           .controlHeight = Style::controlHeightSm,
+           .contentAlign = ButtonContentAlign::Start,
+           .variant = ButtonVariant::Ghost,
+           .tooltip = "Sort by name; click again to reverse",
+           .paddingH = Style::spaceXs,
+           .onClick = [this] { sortBy(files::SortField::Name); }}
+      )
+  );
+  for (const auto column : files::kDefaultDetailsColumnOrder) {
+    const auto index = static_cast<std::size_t>(column);
+    row->addChild(
+        ui::button(
+            {.out = &m_headers[index],
+             .text = std::string(files::detailsColumnLabel(column)),
+             .fontSize = Style::fontSizeCaption,
+             .controlHeight = Style::controlHeightSm,
+             .contentAlign = ButtonContentAlign::Start,
+             .variant = ButtonVariant::Ghost,
+             .tooltip = std::format("Sort by {}; click again to reverse", files::detailsColumnName(column)),
+             .paddingH = Style::spaceXs,
+             .onClick = [this, column] { sortBy(files::detailsColumnSort(column)); }}
+        )
+    );
+  }
   return ui::column(
       {.out = &m_listHeader, .align = FlexAlign::Stretch},
       ui::row(
@@ -66,62 +102,7 @@ std::unique_ptr<Flex> DetailsHeaderController::buildHeader() {
                .clipChildren = true,
                .height = 32.0F,
                .flexGrow = 1.0F},
-              ui::row(
-                  {.out = &m_detailsHeaderRow,
-                   .align = FlexAlign::Center,
-                   .paddingH = Style::spaceMd - Style::spaceXs,
-                   .participatesInLayout = false},
-                  ui::button(
-                      {.out = &m_nameHeader,
-                       .text = "Name",
-                       .fontSize = Style::fontSizeCaption,
-                       .controlHeight = Style::controlHeightSm,
-                       .contentAlign = ButtonContentAlign::Start,
-                       .variant = ButtonVariant::Ghost,
-                       .tooltip = "Sort by name; click again to reverse",
-                       .paddingH = Style::spaceXs,
-                       .onClick = [this] { sortBy(files::SortField::Name); }}
-                  ),
-                  ui::button(
-                      {.out = &m_typeHeader,
-                       .text = "Type",
-                       .fontSize = Style::fontSizeCaption,
-                       .controlHeight = Style::controlHeightSm,
-                       .contentAlign = ButtonContentAlign::Start,
-                       .variant = ButtonVariant::Ghost,
-                       .tooltip = "Sort by type; click again to reverse",
-                       .minWidth = 144.0F + 2 * Style::spaceXs,
-                       .maxWidth = 144.0F + 2 * Style::spaceXs,
-                       .paddingH = Style::spaceXs,
-                       .onClick = [this] { sortBy(files::SortField::Type); }}
-                  ),
-                  ui::button(
-                      {.out = &m_sizeHeader,
-                       .text = "Size",
-                       .fontSize = Style::fontSizeCaption,
-                       .controlHeight = Style::controlHeightSm,
-                       .contentAlign = ButtonContentAlign::Start,
-                       .variant = ButtonVariant::Ghost,
-                       .tooltip = "Sort by size; click again to reverse",
-                       .minWidth = 110.0F + 2 * Style::spaceXs,
-                       .maxWidth = 110.0F + 2 * Style::spaceXs,
-                       .paddingH = Style::spaceXs,
-                       .onClick = [this] { sortBy(files::SortField::Size); }}
-                  ),
-                  ui::button(
-                      {.out = &m_modifiedHeader,
-                       .text = "Modified",
-                       .fontSize = Style::fontSizeCaption,
-                       .controlHeight = Style::controlHeightSm,
-                       .contentAlign = ButtonContentAlign::Start,
-                       .variant = ButtonVariant::Ghost,
-                       .tooltip = "Sort by modification time; click again to reverse",
-                       .minWidth = 148.0F + 2 * Style::spaceXs,
-                       .maxWidth = 148.0F + 2 * Style::spaceXs,
-                       .paddingH = Style::spaceXs,
-                       .onClick = [this] { sortBy(files::SortField::Modified); }}
-                  )
-              )
+              std::move(row)
           ),
           ui::box({.width = Style::scrollbarWidth + Style::scrollbarGap})
       ),
@@ -147,7 +128,7 @@ std::unique_ptr<Box> DetailsHeaderController::buildScrollbar() {
 }
 
 void DetailsHeaderController::attach(Node& root) {
-  for (std::size_t index = 0; index < 4; ++index) {
+  for (std::size_t index = 0; index < m_columnWidths.size(); ++index) {
     auto handle = std::make_unique<InputArea>();
     handle->setParticipatesInLayout(false);
     handle->setZIndex(10);
@@ -229,7 +210,7 @@ void DetailsHeaderController::focusChanged(InputArea* focused) {
   if (m_nameHeader == nullptr || m_page.viewMode() != files::ViewMode::List) {
     return;
   }
-  for (std::size_t index = 0; index < 4; ++index) {
+  for (std::size_t index = 0; index < m_columnWidths.size(); ++index) {
     if (widthHeader(index)->inputArea() == focused) {
       m_revealDetailsHeader = widthHeader(index);
       m_page.surface().requestLayout();
@@ -242,17 +223,15 @@ void DetailsHeaderController::sync(const files::SortOptions& sort) {
   m_listAdapter.setDetailsColumnOrder(m_columnOrder);
   const char* indicator = sort.descending ? "arrow-down" : "arrow-up";
   m_nameHeader->setGlyph(indicator);
-  m_sizeHeader->setGlyph(indicator);
-  m_modifiedHeader->setGlyph(indicator);
-  m_typeHeader->setGlyph(indicator);
   m_nameHeader->glyph()->setVisible(sort.field == files::SortField::Name);
   m_nameHeader->glyph()->setParticipatesInLayout(sort.field == files::SortField::Name);
-  m_sizeHeader->glyph()->setVisible(sort.field == files::SortField::Size);
-  m_sizeHeader->glyph()->setParticipatesInLayout(sort.field == files::SortField::Size);
-  m_modifiedHeader->glyph()->setVisible(sort.field == files::SortField::Modified);
-  m_modifiedHeader->glyph()->setParticipatesInLayout(sort.field == files::SortField::Modified);
-  m_typeHeader->glyph()->setVisible(sort.field == files::SortField::Type);
-  m_typeHeader->glyph()->setParticipatesInLayout(sort.field == files::SortField::Type);
+  for (const auto column : files::kDefaultDetailsColumnOrder) {
+    auto* header = columnHeader(column);
+    header->setGlyph(indicator);
+    const bool active = sort.field == files::detailsColumnSort(column);
+    header->glyph()->setVisible(active);
+    header->glyph()->setParticipatesInLayout(active);
+  }
   m_listHeader->setVisible(m_page.viewMode() == files::ViewMode::List);
   m_listHeader->setParticipatesInLayout(m_page.viewMode() == files::ViewMode::List);
 }
@@ -319,7 +298,7 @@ bool DetailsHeaderController::widthKey(const KeyboardEvent& event) {
   if (m_page.viewMode() == files::ViewMode::List
       && event.modifiers == KeyMod::Ctrl
       && (event.sym == XKB_KEY_Left || event.sym == XKB_KEY_Right)) {
-    for (std::size_t index = 0; index < 4; ++index) {
+    for (std::size_t index = 0; index < m_columnWidths.size(); ++index) {
       if (m_dispatcher.focusedArea() == widthHeader(index)->inputArea()) {
         auto widths = m_columnWidths;
         const int delta = (event.sym == XKB_KEY_Right ? 16 : -16) * (Style::rtl() ? -1 : 1);
@@ -342,7 +321,8 @@ bool DetailsHeaderController::widthKey(const KeyboardEvent& event) {
 bool DetailsHeaderController::menuKey(const KeyboardEvent& event) {
   if ((event.sym == XKB_KEY_Menu && event.modifiers == 0)
       || (event.sym == XKB_KEY_F10 && event.modifiers == KeyMod::Shift)) {
-    for (auto* header : {m_nameHeader, m_typeHeader, m_sizeHeader, m_modifiedHeader}) {
+    for (std::size_t index = 0; index < m_columnWidths.size(); ++index) {
+      auto* header = widthHeader(index);
       if (m_dispatcher.focusedArea() == header->inputArea()) {
         std::optional<files::DetailsColumn> column;
         for (const auto candidate : m_columnOrder) {
@@ -438,7 +418,7 @@ bool DetailsHeaderController::layoutColumns(bool miller) {
   const bool overflow = list && columns.contentWidth > viewport + 0.5F;
   m_detailsScrollHost->setVisible(overflow);
   m_detailsScrollHost->setParticipatesInLayout(overflow);
-  for (std::size_t index = 0; index < 4; ++index) {
+  for (std::size_t index = 0; index < m_columnWidths.size(); ++index) {
     auto* header = widthHeader(index);
     const bool visible =
         index == 0 || files::detailsColumnVisible(m_columnVisibility, static_cast<files::DetailsColumn>(index - 1));
@@ -472,7 +452,7 @@ void DetailsHeaderController::layoutHeader(Renderer& renderer) {
   auto* focused = m_dispatcher.focusedArea();
   Button* reveal = std::exchange(m_revealDetailsHeader, nullptr);
   if (focused != m_lastDetailsFocus && !m_columnResize && !m_columnDrag) {
-    for (std::size_t index = 0; index < 4; ++index) {
+    for (std::size_t index = 0; index < m_columnWidths.size(); ++index) {
       if (widthHeader(index)->inputArea() == focused) {
         reveal = widthHeader(index);
       }
@@ -493,7 +473,7 @@ void DetailsHeaderController::layoutHeader(Renderer& renderer) {
   }
   m_detailsScrollbar->update(viewport, columns.contentWidth, m_detailsOffset);
   m_detailsScrollbar->arrange(renderer, {0, 0, viewport, Style::scrollbarWidth});
-  for (std::size_t index = 0; index < 4; ++index) {
+  for (std::size_t index = 0; index < m_columnWidths.size(); ++index) {
     auto* handle = m_columnResizeHandles[index];
     auto* header = widthHeader(index);
     handle->setVisible(list && header->visible());
@@ -614,23 +594,12 @@ void DetailsHeaderController::layoutDrag(Renderer& renderer) {
 }
 
 Button* DetailsHeaderController::columnHeader(files::DetailsColumn column) const {
-  switch (column) {
-  case files::DetailsColumn::Type:
-    return m_typeHeader;
-  case files::DetailsColumn::Size:
-    return m_sizeHeader;
-  case files::DetailsColumn::Modified:
-    return m_modifiedHeader;
-  }
-  return nullptr;
+  return m_headers[static_cast<std::size_t>(column)];
 }
 
 std::optional<files::DetailsColumnOrder>
 DetailsHeaderController::movedColumnOrder(files::DetailsColumn column, int direction) const {
-  return files::moveDetailsColumn(
-      m_columnOrder, column, direction,
-      {m_detailsColumns.showType, m_detailsColumns.showSize, m_detailsColumns.showModified}
-  );
+  return files::moveDetailsColumn(m_columnOrder, column, direction, m_columnVisibility);
 }
 
 void DetailsHeaderController::setDetailsColumnOrder(files::DetailsColumnOrder order) {
@@ -653,7 +622,14 @@ void DetailsHeaderController::sortBy(files::SortField field) {
   const auto action = field == files::SortField::Name ? Action::SortName
       : field == files::SortField::Type               ? Action::SortType
       : field == files::SortField::Size               ? Action::SortSize
-                                                      : Action::SortModified;
+      : field == files::SortField::Accessed           ? Action::SortAccessed
+      : field == files::SortField::Created            ? Action::SortCreated
+      : field == files::SortField::Owner              ? Action::SortOwner
+      : field == files::SortField::Group              ? Action::SortGroup
+      : field == files::SortField::Permissions        ? Action::SortPermissions
+      : field == files::SortField::Location           ? Action::SortLocation
+
+                                            : Action::SortModified;
   if (m_page.browser().model().sort().field == field) {
     m_page.dispatchAction(options.descending ? Action::Descending : Action::Ascending);
   } else {

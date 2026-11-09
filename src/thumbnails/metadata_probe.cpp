@@ -86,15 +86,19 @@ namespace {
            std::format("{:04o}", g_file_info_get_attribute_uint32(info, G_FILE_ATTRIBUTE_UNIX_MODE) & 07777U), false}
       );
     }
-    if (g_file_info_get_attribute_type(info, G_FILE_ATTRIBUTE_TIME_CREATED) == G_FILE_ATTRIBUTE_TYPE_UINT64) {
-      const auto seconds = g_file_info_get_attribute_uint64(info, G_FILE_ATTRIBUTE_TIME_CREATED);
+    for (const auto& [attribute, label] :
+         {std::pair{G_FILE_ATTRIBUTE_TIME_CREATED, "Created"}, std::pair{G_FILE_ATTRIBUTE_TIME_ACCESS, "Accessed"}}) {
+      if (g_file_info_get_attribute_type(info, attribute) != G_FILE_ATTRIBUTE_TYPE_UINT64) {
+        continue;
+      }
+      const auto seconds = g_file_info_get_attribute_uint64(info, attribute);
       const std::unique_ptr<GDateTime, decltype(&g_date_time_unref)> date(
           seconds <= G_MAXINT64 ? g_date_time_new_from_unix_local(static_cast<gint64>(seconds)) : nullptr,
           &g_date_time_unref
       );
       if (date) {
         const files::GString value(g_date_time_format(date.get(), "%Y-%m-%d %H:%M"));
-        fields.push_back({"Created", value.get(), false});
+        fields.push_back({label, value.get(), false});
       }
     }
     return fields;
@@ -141,8 +145,8 @@ files::probePreviewMetadata(const DirectoryEntry& entry, ThumbnailOptions option
       "," G_FILE_ATTRIBUTE_ID_FILE "," G_FILE_ATTRIBUTE_ID_FILESYSTEM "," G_FILE_ATTRIBUTE_TIME_CHANGED
       ",time::changed-nsec," G_FILE_ATTRIBUTE_TIME_CHANGED_USEC "," G_FILE_ATTRIBUTE_STANDARD_SIZE
       "," G_FILE_ATTRIBUTE_TIME_MODIFIED "," G_FILE_ATTRIBUTE_OWNER_USER "," G_FILE_ATTRIBUTE_OWNER_GROUP
-      "," G_FILE_ATTRIBUTE_UNIX_MODE "," G_FILE_ATTRIBUTE_TIME_CREATED "," G_FILE_ATTRIBUTE_UNIX_DEVICE
-      "," G_FILE_ATTRIBUTE_UNIX_INODE,
+      "," G_FILE_ATTRIBUTE_UNIX_MODE "," G_FILE_ATTRIBUTE_TIME_CREATED "," G_FILE_ATTRIBUTE_TIME_ACCESS
+      "," G_FILE_ATTRIBUTE_UNIX_DEVICE "," G_FILE_ATTRIBUTE_UNIX_INODE,
       G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, cancel, nullptr
   ));
   if (!current || !matches(entry, current.get())) {
