@@ -43,7 +43,6 @@
 #include "ui/builders.h"
 #include "ui/controls/acl_editor.h"
 #include "ui/controls/archive_view.h"
-#include "ui/controls/batch_rename_dialog.h"
 #include "ui/controls/browser_settings_view.h"
 #include "ui/controls/bulk_acl_editor.h"
 #include "ui/controls/context_menu.h"
@@ -291,7 +290,7 @@ BrowserPage::BrowserPage(
   });
   m_batchRenamer.setChangedCallback([this] {
     updateOperationProgress();
-    m_batchRenameDirty = true;
+    m_batchRename.markDirty();
     m_browserDirty = true;
     m_surface->requestUpdate();
   });
@@ -1000,10 +999,8 @@ void BrowserPage::pointer(const PointerEvent& event) {
     return;
   }
   const auto x = static_cast<float>(event.sx), y = static_cast<float>(event.sy);
-  if (dispatcher == &m_menuDispatcher && m_batchRenameDialog) {
-    m_batchRenameDialog->tooltipPointer(
-        x, y, event.type == PointerEvent::Type::Motion || event.type == PointerEvent::Type::Enter
-    );
+  if (dispatcher == &m_menuDispatcher) {
+    m_batchRename.pointer(x, y, event.type == PointerEvent::Type::Motion || event.type == PointerEvent::Type::Enter);
   }
   if (dispatcher == &m_dispatcher
       && event.type == PointerEvent::Type::Button
@@ -2037,7 +2034,7 @@ void BrowserPage::dispatchAction(Action action, const files::ActionRequest& requ
     if (targets.size() == 1) {
       openFileRename(targets.front());
     } else {
-      openBatchRename(targets);
+      m_batchRename.open(targets);
     }
     break;
   case Action::CreateLink:
@@ -2137,6 +2134,7 @@ void BrowserPage::openPatternSelection(const files::ActionRequest& request) {
       width, height
   );
   if (m_menuSurface) {
+    m_activeDialog.bind(ActiveDialog::Kind::PatternSelection, [this] { m_patternEditor = nullptr; });
     m_patternEditor = control;
     m_menuDispatcher.setFocus(control->input()->inputArea());
     control->input()->selectAll();
@@ -2464,6 +2462,14 @@ void BrowserPage::openEmptyTrash(std::optional<std::vector<files::DirectoryEntry
       width, height
   );
   if (m_menuSurface != nullptr) {
+    m_activeDialog.bind(ActiveDialog::Kind::EmptyTrash, [this] {
+      if (std::exchange(m_emptyTrashDialog, false)) {
+        m_emptyTrash.cancel();
+      }
+      m_emptyTrashMessage = nullptr;
+      m_emptyTrashSize = nullptr;
+      m_emptyTrashConfirm = nullptr;
+    });
     m_emptyTrashDialog = true;
     m_selectedTrashDelete = selection.has_value();
     m_emptyTrashMessage = message;
@@ -2551,7 +2557,7 @@ void BrowserPage::updateOperationProgress() {
       || m_trash.busy()
       || m_emptyTrash.busy()) {
     m_operationProgress.startRepeating(std::chrono::milliseconds(100), [this] {
-      m_batchRenameDirty = m_batchRenamer.applying();
+      m_batchRename.progressTick();
       m_permissionDirty = m_permissions.busy();
       m_browserDirty = true;
       m_surface->requestUpdate();
@@ -2801,6 +2807,7 @@ void BrowserPage::openCreateItem(
       width, height
   );
   if (m_menuSurface != nullptr) {
+    m_activeDialog.bind(ActiveDialog::Kind::CreateItem, [this] { closeCreation(); });
     m_createEditor = control;
     m_createParent = std::move(parent);
     m_creationPreparing = true;
@@ -2879,6 +2886,7 @@ void BrowserPage::openLinkDialog(const files::DirectoryEntry& target) {
       width, height
   );
   if (m_menuSurface) {
+    m_activeDialog.bind(ActiveDialog::Kind::Link, [this] { closeCreation(); });
     m_linkDialog = dialog;
     m_linkPreparing = true;
     m_dialogHeight = height;
@@ -2946,86 +2954,18 @@ void BrowserPage::syncCreation() {
   }
 }
 
-void BrowserPage::openBatchRename(const std::vector<files::DirectoryEntry>& targets) {
-  if (!actionState(Action::Rename, requestFor(targets)).enabled || !targetsCurrent(targets)) {
-    actionError("This selection cannot be renamed right now.");
-    return;
-  }
-  auto root = std::make_unique<BatchRenameDialog>(
-      targets.size(), [this](files::BatchRenameOptions options) { (void)m_batchRenamer.preview(std::move(options)); },
-      [this] { (void)m_batchRenamer.apply(); },
-      [this] {
-        if (m_batchRenamer.applying()) {
-          m_batchRenamer.cancel();
-        } else {
-          dismissMenu();
-        }
-      },
-      [this] { dismissMenu(); }, [this] { m_clipboard.setClipboardText(m_batchRenamer.snapshot().report); },
-      [this] {
-        if (m_menuSurface) {
-          m_menuSurface->requestUpdate();
-        }
-      }
-  );
-  auto* dialog = root.get();
-  const float width = std::min(760.0F, static_cast<float>(m_surface->width()) - 32.0F);
-  const float height = std::min(560.0F, static_cast<float>(m_surface->height()) - 64.0F);
-  root->setSize(width, height);
-  showPopup(
-      std::move(root), nullptr, {(m_surface->width() - width) * 0.5F, (m_surface->height() - height) * 0.5F, 1, 1},
-      width, height
-  );
-  if (m_menuSurface) {
-    m_batchRenameDialog = dialog;
-    m_batchRenameReported = false;
-    m_dialogHeight = height;
-    m_dialogWidth = width;
-    m_menuDispatcher.setFocusChangeCallback([this](InputArea*, InputArea* focused) {
-      if (m_batchRenameDialog) {
-        m_batchRenameDialog->reveal(focused);
-        m_menuSurface->requestLayout();
-      }
-    });
-    m_menuDispatcher.setFocus(dialog->firstInput()->inputArea());
-    dialog->firstInput()->selectAll();
-    if (!m_batchRenamer.prepare(targets)) {
-      actionError("Another rename is still finishing.");
-      dismissMenu();
+void BrowserPage::closeCreation() {
+  if (m_createParent || m_linkDialog) {
+    m_creator.cancel();
+    if (m_list != nullptr) {
+      m_dispatcher.setFocus(m_list->focusArea());
     }
   }
-}
-
-void BrowserPage::syncBatchRename() {
-  const auto& snapshot = m_batchRenamer.snapshot();
-  if (m_batchRenameDialog) {
-    m_batchRenameDialog->sync(snapshot, m_batchRenamer.completed(), m_clipboard.available());
-    m_menuSurface->requestLayout();
-  }
-  if (snapshot.phase == files::BatchRenamePhase::Finished && !m_batchRenameReported) {
-    m_batchRenameReported = true;
-    const auto count =
-        std::ranges::count(*snapshot.results, files::BatchRenameOutcome::Renamed, &files::BatchRenameResult::outcome);
-    std::string message = std::format("{} items renamed.", count);
-    const auto problem =
-        std::ranges::find_if(*snapshot.results, [](const auto& result) { return result.error.has_value(); });
-    if (problem != snapshot.results->end()) {
-      message += " " + files::fileErrorText(problem->error);
-    }
-    actionError(std::move(message));
-    if (snapshot.parent == browser().model().snapshot().location) {
-      m_batchReveal.clear();
-      for (const auto& result : *snapshot.results) {
-        if (result.actual) {
-          m_batchReveal.push_back(*result.actual);
-        }
-      }
-      browser().refresh();
-      m_batchRevealContext = browser().contextSerial();
-    }
-  } else if (snapshot.phase == files::BatchRenamePhase::Error && !m_batchRenameDialog) {
-    actionError("Could not rename: " + files::fileErrorText(snapshot.error));
-  }
+  m_createEditor = nullptr;
+  m_linkDialog = nullptr;
+  m_linkPreparing = false;
+  m_createParent.reset();
+  m_creationPreparing = false;
 }
 
 bool BrowserPage::canFileRename(const files::DirectoryEntry& entry) const {
@@ -3052,6 +2992,17 @@ void BrowserPage::openFileRename(files::DirectoryEntry target) {
   const LayoutRect anchor{(m_surface->width() - width) * 0.5F, (m_surface->height() - height) * 0.5F, 1, 1};
   showPopup(std::move(editor), nullptr, anchor, width, height);
   if (m_menuSurface != nullptr) {
+    m_activeDialog.bind(ActiveDialog::Kind::FileRename, [this] {
+      if (m_fileRenameTarget) {
+        m_renamer.cancel();
+        if (m_list != nullptr) {
+          m_dispatcher.setFocus(m_list->focusArea());
+        }
+      }
+      m_fileRenameEditor = nullptr;
+      m_fileRenameTarget.reset();
+      m_fileRenamePreparing = false;
+    });
     m_fileRenameEditor = control;
     m_fileRenameTarget = std::move(target);
     m_fileRenamePreparing = true;
@@ -3153,6 +3104,14 @@ void BrowserPage::openPlaceRename(const files::Bookmark& bookmark) {
       width, height
   );
   if (m_menuSurface != nullptr) {
+    m_activeDialog.bind(ActiveDialog::Kind::PlaceRename, [this] {
+      if (m_placeRenameTarget) {
+        m_restorePlaceFocus = m_placeRenameTarget->location;
+      }
+      m_placeEditor = nullptr;
+      m_placeRenameTarget.reset();
+      m_pendingPlaceLabel.reset();
+    });
     m_placeEditor = control;
     m_placeRenameTarget = current;
     m_menuDispatcher.setFocus(control->input()->inputArea());
@@ -3537,16 +3496,18 @@ void BrowserPage::openSelectDropdown(const DropdownRequest& request, DropdownCal
     m_menu->setHighlightedIndex(request.selectedIndex);
     revealMenuHighlight();
   }
-  m_selectDismiss = [lifetime, dismiss = callbacks.onDismiss] {
+  m_activeDialog.bind(ActiveDialog::Kind::Dropdown, [lifetime, dismiss = callbacks.onDismiss] {
     if (!lifetime.expired() && dismiss) {
       dismiss();
     }
-  };
+  });
 }
 
 void BrowserPage::closeSelectDropdown() { dismissMenu(); }
 
-bool BrowserPage::isSelectDropdownOpen() const { return m_menuSurface && static_cast<bool>(m_selectDismiss); }
+bool BrowserPage::isSelectDropdownOpen() const {
+  return m_menuSurface && m_activeDialog.kind() == ActiveDialog::Kind::Dropdown;
+}
 
 void BrowserPage::openAbout() {
   ScrollView* scroll = nullptr;
@@ -3628,6 +3589,10 @@ void BrowserPage::openAbout() {
   );
   showCenteredDialog(std::move(root));
   if (m_menuSurface) {
+    m_activeDialog.bind(ActiveDialog::Kind::About, [this] {
+      m_aboutScroll = nullptr;
+      m_aboutMessage = nullptr;
+    });
     m_aboutScroll = scroll;
     m_aboutMessage = message;
   }
@@ -3713,6 +3678,7 @@ void BrowserPage::showQuickPreview() {
       width, height
   );
   if (m_menuSurface) {
+    m_activeDialog.bind(ActiveDialog::Kind::QuickPreview, [this] { m_quickPreview = nullptr; });
     m_quickPreview = control;
     syncPreview();
   }
@@ -3749,15 +3715,19 @@ void BrowserPage::showApplications(const files::DirectoryEntry& entry) {
   if (!m_menuSurface) {
     return;
   }
+  m_activeDialog.bind(ActiveDialog::Kind::Applications, [this] {
+    m_appChoiceContainer = nullptr;
+    m_appChoiceScroll = nullptr;
+  });
   m_appChoiceContainer = choices;
   m_appChoiceScroll = choiceScroll;
-  const auto generation = m_menuGeneration;
+  const auto generation = m_activeDialog.generation();
   const auto request = requestFor({entry});
   const std::weak_ptr<int> lifetime = m_lifetime;
   m_launcher.applications(
       entry.contentType.value_or("application/octet-stream"),
       [this, lifetime, generation, request, entry](std::vector<files::ApplicationChoice> apps) {
-        if (lifetime.expired() || !m_appChoiceContainer || generation != m_menuGeneration || !m_active) {
+        if (lifetime.expired() || !m_appChoiceContainer || generation != m_activeDialog.generation() || !m_active) {
           return;
         }
         while (!m_appChoiceContainer->children().empty()) {
@@ -4195,6 +4165,28 @@ void BrowserPage::showProperties(const std::vector<files::DirectoryEntry>& targe
       width, height
   );
   if (m_menuSurface && editable) {
+    m_activeDialog.bind(ActiveDialog::Kind::Properties, [this] {
+      if (!m_permissionEditor) {
+        return;
+      }
+      m_permissions.cancel();
+      m_permissionEditor = nullptr;
+      m_permissionBasic = m_permissionAdvanced = nullptr;
+      m_permissionAdvancedOpen = m_permissionAdvancedBack = nullptr;
+      m_aclEditor = nullptr;
+      m_bulkAclEditor = nullptr;
+      m_aclActive = false;
+      m_permissionResultTab = 2;
+      m_permissionResults = nullptr;
+      m_permissionReport = m_permissionCancel = nullptr;
+      m_permissionStatus = nullptr;
+      m_permissionTabs = nullptr;
+      m_permissionSave = nullptr;
+      m_permissionScroll = nullptr;
+      if (m_list) {
+        m_dispatcher.setFocus(m_list->focusArea());
+      }
+    });
     m_permissionEditor = editor;
     m_permissionBasic = basicGroup;
     m_permissionAdvanced = advancedGroup;
@@ -4390,6 +4382,13 @@ void BrowserPage::syncTransferConflict() {
       width, height
   );
   if (m_menuSurface != nullptr) {
+    m_activeDialog.bind(ActiveDialog::Kind::TransferConflict, [this] {
+      if (const auto id = std::exchange(m_activeTransferConflict, std::nullopt)) {
+        (void)(m_transferConflictRestore       ? m_restore.resolve(*id, files::TransferConflictChoice::Cancel)
+                   : m_transferConflictArchive ? m_archives.resolve(*id, files::TransferConflictChoice::Cancel)
+                                               : m_transfers.resolve(*id, files::TransferConflictChoice::Cancel));
+      }
+    });
     m_activeTransferConflict = conflict->id;
     m_transferConflictArchive = archive;
     m_transferConflictRestore = restore;
@@ -5232,13 +5231,13 @@ void BrowserPage::openBreadcrumbMenu(const files::Location& target, LayoutRect a
     }
   };
   showContextMenu(entries, activate, anchor);
-  const auto generation = m_menuGeneration;
+  const auto generation = m_activeDialog.generation();
   const auto siblingParent = target.parent().value_or(target);
   m_siblingCompletion.children(
       siblingParent, browser().model().filter().showHidden,
       [this, context, generation, anchor, targets, entries = std::move(entries),
        activate](const files::PathSuggestions& suggestions) mutable {
-        if (context != browser().contextSerial() || generation != m_menuGeneration || !m_menuSurface) {
+        if (context != browser().contextSerial() || generation != m_activeDialog.generation() || !m_menuSurface) {
           return;
         }
         entries.pop_back();
@@ -6331,30 +6330,7 @@ void BrowserPage::syncBrowser() {
       m_list->scrollToIndex(static_cast<std::size_t>(found - model.rows().begin()));
     }
   }
-  if (!m_batchReveal.empty() && snapshot.status != files::DirectoryStatus::Loading) {
-    if (m_batchRevealContext == browser().contextSerial()) {
-      std::unordered_set<std::string> uris;
-      for (const auto& target : m_batchReveal) {
-        uris.insert(target.uri());
-      }
-      std::vector<files::EntryId> ids;
-      for (const auto id : model.rows()) {
-        if (const auto* entry = model.entry(id); entry && uris.contains(entry->location.uri())) {
-          ids.push_back(id);
-        }
-      }
-      browser().model().replaceSelection(ids);
-      if (!ids.empty()) {
-        const auto found = std::ranges::find(model.rows(), ids.front());
-        m_list->scrollToIndex(static_cast<std::size_t>(found - model.rows().begin()));
-      }
-    }
-    // Staging emits several monitor events. Keep reconciling while the results
-    // are open, then leave the final selection under normal user control.
-    if (!m_batchRenameDialog || m_batchRevealContext != browser().contextSerial()) {
-      m_batchReveal.clear();
-    }
-  }
+  m_batchRename.revealRenamed(*m_list);
   if (!m_revealTargets.empty() && snapshot.status != files::DirectoryStatus::Loading) {
     const auto targets = std::exchange(m_revealTargets, {});
     const bool properties = std::exchange(m_revealProperties, false);
@@ -6499,9 +6475,7 @@ void BrowserPage::prepareFrame(bool, bool layout) {
   if (std::exchange(m_permissionDirty, false)) {
     syncPermissions();
   }
-  if (std::exchange(m_batchRenameDirty, false)) {
-    syncBatchRename();
-  }
+  m_batchRename.onFrame();
   if (std::exchange(m_renameDirty, false)) {
     syncFileRename();
   }
@@ -7330,10 +7304,10 @@ void BrowserPage::revealMenuHighlight() {
 }
 
 void BrowserPage::dismissMenu() {
-  const auto generation = m_menuGeneration;
+  const auto generation = m_activeDialog.generation();
   const std::weak_ptr<int> lifetime = m_lifetime;
   DeferredCall::callLater([this, generation, lifetime] {
-    if (!lifetime.expired() && generation == m_menuGeneration) {
+    if (!lifetime.expired() && generation == m_activeDialog.generation()) {
       closeMenu();
     }
   });
@@ -7342,99 +7316,48 @@ void BrowserPage::dismissMenu() {
 void BrowserPage::closeMenu() {
   closeDocumentMenu();
   m_documentRow.reset();
-  m_quickPreview = nullptr;
-  m_appChoiceContainer = nullptr;
-  m_appChoiceScroll = nullptr;
   m_launcher.cancelApplications();
   if (!m_previewBounds || !previewVisible()) {
     m_preview.clear();
   }
-  ++m_menuGeneration;
-  if (std::exchange(m_emptyTrashDialog, false)) {
-    m_emptyTrash.cancel();
-  }
-  m_emptyTrashMessage = nullptr;
-  m_emptyTrashSize = nullptr;
-  m_emptyTrashConfirm = nullptr;
-  if (const auto id = std::exchange(m_activeTransferConflict, std::nullopt)) {
-    (void)(m_transferConflictRestore       ? m_restore.resolve(*id, files::TransferConflictChoice::Cancel)
-               : m_transferConflictArchive ? m_archives.resolve(*id, files::TransferConflictChoice::Cancel)
-                                           : m_transfers.resolve(*id, files::TransferConflictChoice::Cancel));
-  }
-  if (m_placeRenameTarget) {
-    m_restorePlaceFocus = m_placeRenameTarget->location;
-  }
-  if (m_fileRenameTarget) {
-    m_renamer.cancel();
-    if (m_list != nullptr) {
-      m_dispatcher.setFocus(m_list->focusArea());
-    }
-  }
-  if (m_permissionEditor) {
-    m_permissions.cancel();
-    m_permissionEditor = nullptr;
-    m_permissionBasic = m_permissionAdvanced = nullptr;
-    m_permissionAdvancedOpen = m_permissionAdvancedBack = nullptr;
-    m_aclEditor = nullptr;
-    m_bulkAclEditor = nullptr;
-    m_aclActive = false;
-    m_permissionResultTab = 2;
-    m_permissionResults = nullptr;
-    m_permissionReport = m_permissionCancel = nullptr;
-    m_permissionStatus = nullptr;
-    m_permissionTabs = nullptr;
-    m_permissionSave = nullptr;
-    m_permissionScroll = nullptr;
-    if (m_list) {
-      m_dispatcher.setFocus(m_list->focusArea());
-    }
-  }
-  if (m_batchRenameDialog) {
-    m_batchRenamer.cancel();
-    m_batchRenameDialog = nullptr;
-    if (m_list) {
-      m_dispatcher.setFocus(m_list->focusArea());
-    }
-  }
-  if (m_createParent || m_linkDialog) {
-    m_creator.cancel();
-    if (m_list != nullptr) {
-      m_dispatcher.setFocus(m_list->focusArea());
-    }
-  }
-  m_createEditor = nullptr;
-  m_linkDialog = nullptr;
-  m_linkPreparing = false;
-  m_createParent.reset();
-  m_creationPreparing = false;
-  m_fileRenameEditor = nullptr;
-  m_fileRenameTarget.reset();
-  m_fileRenamePreparing = false;
-  m_placeEditor = nullptr;
-  m_placeRenameTarget.reset();
-  m_pendingPlaceLabel.reset();
+  m_activeDialog.close();
   m_menuDispatcher.setSceneRoot(nullptr);
   m_menuDispatcher.setTextInputContext(nullptr, nullptr);
   if (m_menuSurface != nullptr) {
     m_menuSurface->setSceneRoot(nullptr);
   }
-  m_patternEditor = nullptr;
-  if (auto dismiss = std::exchange(m_selectDismiss, {})) {
-    dismiss();
-  }
-  m_aboutScroll = nullptr;
-  m_aboutMessage = nullptr;
   m_dialogHeight.reset();
   m_dialogWidth = 588.0F;
   m_dialogPosition.reset();
   m_dialogResizePending = false;
   m_menuDispatcher.setFocusChangeCallback({});
-  m_menuRoot.reset();
+  m_activeDialog.release();
   m_menu = nullptr;
   m_menuScroll = nullptr;
   m_menuSurface.reset();
   m_dispatcher.setTextInputContext(m_surface->wlSurface(), &m_textInput);
   m_surface->requestLayout();
+}
+
+void BrowserPage::setDialogSize(float width, float height) {
+  m_dialogHeight = height;
+  m_dialogWidth = width;
+}
+
+PopupSurface* BrowserPage::menuSurface() { return m_menuSurface.get(); }
+
+InputDispatcher& BrowserPage::menuDispatcher() { return m_menuDispatcher; }
+
+ActiveDialog& BrowserPage::activeDialog() { return m_activeDialog; }
+
+files::WaylandTextClipboard& BrowserPage::clipboard() { return m_clipboard; }
+
+files::WindowSurface& BrowserPage::surface() { return *m_surface; }
+
+void BrowserPage::focusFileList() {
+  if (m_list) {
+    m_dispatcher.setFocus(m_list->focusArea());
+  }
 }
 
 LayoutRect BrowserPage::sceneRect(const Node& node) {
@@ -7450,14 +7373,14 @@ void BrowserPage::showPopup(
   clearCompletions();
   closeMenu();
   m_menu = menu;
-  m_menuRoot = std::move(root);
+  m_activeDialog.open(std::move(root));
   m_menuSurface = std::make_unique<PopupSurface>(m_connection);
   m_menuSurface->setRenderContext(&m_renderer);
   m_menuSurface->setAnimationManager(&m_animations);
   m_menuSurface->setDismissedCallback([this] { dismissMenu(); });
-  m_menuRoot->setAnimationManager(&m_animations);
-  m_menuSurface->setSceneRoot(m_menuRoot.get());
-  m_menuDispatcher.setSceneRoot(m_menuRoot.get());
+  m_activeDialog.root()->setAnimationManager(&m_animations);
+  m_menuSurface->setSceneRoot(m_activeDialog.root());
+  m_menuDispatcher.setSceneRoot(m_activeDialog.root());
   m_menuDispatcher.setCursorShapeCallback([this](std::uint32_t serial, std::uint32_t shape) {
     m_connection.extension<files::DesktopIntegration>().setCursorShape(serial, shape);
   });
@@ -7472,16 +7395,12 @@ void BrowserPage::showPopup(
       LayoutConstraints constraints;
       constraints.setExactWidth(static_cast<float>(width));
       if (m_permissionEditor) {
-        m_menuRoot->setSize(
+        m_activeDialog.root()->setSize(
             static_cast<float>(width), std::min(600.0F, static_cast<float>(m_surface->height()) - 64.0F)
         );
       }
-      if (m_batchRenameDialog) {
-        m_batchRenameDialog->setSize(
-            static_cast<float>(width), std::min(560.0F, static_cast<float>(m_surface->height()) - 64.0F)
-        );
-      }
-      m_dialogHeight = m_menuRoot->measure(m_menuSurface->renderTarget().renderer(), constraints).height;
+      m_batchRename.layoutDialog(static_cast<float>(width));
+      m_dialogHeight = m_activeDialog.root()->measure(m_menuSurface->renderTarget().renderer(), constraints).height;
       const auto height = static_cast<std::uint32_t>(
           std::ceil(std::min(*m_dialogHeight, static_cast<float>(m_surface->height()) - 64.0F))
       );
@@ -7512,7 +7431,7 @@ void BrowserPage::showPopup(
       constraints.setExactWidth(static_cast<float>(m_menuSurface->width()));
       const auto height = static_cast<std::uint32_t>(std::ceil(
           std::clamp(
-              m_menuRoot->measure(m_menuSurface->renderTarget().renderer(), constraints).height, 1.0F,
+              m_activeDialog.root()->measure(m_menuSurface->renderTarget().renderer(), constraints).height, 1.0F,
               static_cast<float>(m_surface->height()) - 64.0F
           )
       ));
@@ -7532,13 +7451,11 @@ void BrowserPage::showPopup(
         );
       }
     }
-    m_menuRoot->arrange(
+    m_activeDialog.root()->arrange(
         m_menuSurface->renderTarget().renderer(),
         {0, 0, static_cast<float>(m_menuSurface->width()), static_cast<float>(m_menuSurface->height())}
     );
-    if (m_batchRenameDialog) {
-      m_batchRenameDialog->syncTooltip(m_menuSurface->renderTarget().renderer());
-    }
+    m_batchRename.syncTooltip(m_menuSurface->renderTarget().renderer());
     if (m_quickPreview) {
       m_quickPreview->sync(
           m_preview.snapshot(), static_cast<float>(m_menuSurface->width()), static_cast<float>(m_menuSurface->height()),
@@ -7547,7 +7464,7 @@ void BrowserPage::showPopup(
       if (!m_preview.snapshot().image || !m_preview.snapshot().image->pixels) {
         m_quickPreview->clear(m_menuSurface->renderTarget().renderer());
       }
-      m_menuRoot->arrange(
+      m_activeDialog.root()->arrange(
           m_menuSurface->renderTarget().renderer(),
           {0, 0, static_cast<float>(m_menuSurface->width()), static_cast<float>(m_menuSurface->height())}
       );

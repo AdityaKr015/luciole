@@ -1,5 +1,8 @@
 #pragma once
 
+#include "app/page/active_dialog.h"
+#include "app/page/batch_rename_controller.h"
+#include "app/page/page_context.h"
 #include "app/workspace_command.h"
 #include "app/workspace_layout.h"
 #include "browser/action_registry.h"
@@ -34,7 +37,6 @@
 #include "ui/browser/places_sidebar.h"
 #include "ui/controls/acl_editor.h"
 #include "ui/controls/archive_view.h"
-#include "ui/controls/batch_rename_dialog.h"
 #include "ui/controls/browser_settings_view.h"
 #include "ui/controls/bulk_acl_editor.h"
 #include "ui/controls/context_menu.h"
@@ -62,7 +64,7 @@
 #include <string>
 #include <utility>
 
-class BrowserPage : public TextInputClient, public SelectPopupContext {
+class BrowserPage final : public TextInputClient, public SelectPopupContext, public PageContext {
 public:
   using Action = files::BrowserAction;
 
@@ -73,7 +75,7 @@ public:
       files::ViewPreferenceWriter& preferences
   );
 
-  files::BrowserController& browser();
+  files::BrowserController& browser() override;
   const files::BrowserController& browser() const;
   void focusMiller(std::size_t index, bool reveal = true);
 
@@ -182,16 +184,16 @@ private:
 
   files::ActionContext actionContext() const;
   files::ActionRequest actionRequest(bool withTargets = true) const;
-  files::ActionRequest requestFor(const std::vector<files::DirectoryEntry>& entries) const;
-  files::ActionState actionState(Action action, const files::ActionRequest& request) const;
+  files::ActionRequest requestFor(const std::vector<files::DirectoryEntry>& entries) const override;
+  files::ActionState actionState(Action action, const files::ActionRequest& request) const override;
   ContextMenuControlEntry actionEntry(Action action, const files::ActionRequest& request, bool radio = false) const;
   void dispatchAction(Action action);
   void dispatchAction(Action action, const files::ActionRequest& request);
   void openPatternSelection(const files::ActionRequest& request);
 
-  void actionError(std::string message);
+  void actionError(std::string message) override;
 
-  bool targetsCurrent(const std::vector<files::DirectoryEntry>& targets);
+  bool targetsCurrent(const std::vector<files::DirectoryEntry>& targets) override;
 
   void pinFolders(std::vector<files::Bookmark> bookmarks, std::size_t before);
 
@@ -220,9 +222,7 @@ private:
   void submitCreateItem(std::string name);
   void openLinkDialog(const files::DirectoryEntry& target);
   void syncCreation();
-
-  void openBatchRename(const std::vector<files::DirectoryEntry>& targets);
-  void syncBatchRename();
+  void closeCreation();
 
   bool canFileRename(const files::DirectoryEntry& entry) const;
   void openFileRename(files::DirectoryEntry target);
@@ -411,14 +411,21 @@ private:
   void buildScene();
 
   void revealMenuHighlight();
-  void dismissMenu();
+  void dismissMenu() override;
   void closeMenu();
   static LayoutRect sceneRect(const Node& node);
 
   void showPopup(
       std::unique_ptr<Flex> root, ContextMenuControl* menu, LayoutRect anchor, float width, float height,
       bool alignLeft = false
-  );
+  ) override;
+  void setDialogSize(float width, float height) override;
+  PopupSurface* menuSurface() override;
+  InputDispatcher& menuDispatcher() override;
+  ActiveDialog& activeDialog() override;
+  files::WaylandTextClipboard& clipboard() override;
+  files::WindowSurface& surface() override;
+  void focusFileList() override;
 
   void showContextMenu(
       std::vector<ContextMenuControlEntry> entries, std::function<void(int)> action, LayoutRect anchor,
@@ -477,7 +484,6 @@ private:
   bool m_settingsDirty = false;
   BrowserSettingsView* m_settingsView = nullptr;
   std::shared_ptr<int> m_settingsLifetime;
-  std::function<void()> m_selectDismiss;
   ScrollView* m_aboutScroll = nullptr;
   Label* m_aboutMessage = nullptr;
   std::optional<float> m_dialogHeight;
@@ -552,11 +558,7 @@ private:
   ScrollView* m_permissionScroll = nullptr;
   Button* m_permissionSave = nullptr;
   bool m_permissionDirty = false;
-  BatchRenameDialog* m_batchRenameDialog = nullptr;
-  bool m_batchRenameDirty = false;
-  bool m_batchRenameReported = false;
-  std::vector<files::Location> m_batchReveal;
-  std::uint64_t m_batchRevealContext = 0;
+  BatchRenameController m_batchRename{*this, m_batchRenamer};
   files::CreateService m_creator;
   files::TemplateCatalog m_templates;
   Timer m_operationProgress;
@@ -689,7 +691,7 @@ private:
   bool m_fileKeyboardFocus = false;
   bool m_locationInvalid = false;
   std::unique_ptr<PopupSurface> m_menuSurface;
-  std::unique_ptr<Flex> m_menuRoot;
+  ActiveDialog m_activeDialog;
   ContextMenuControl* m_menu = nullptr;
   std::unique_ptr<PopupSurface> m_documentSurface;
   std::unique_ptr<Flex> m_documentRoot;
@@ -716,7 +718,6 @@ private:
   std::optional<std::string> m_pendingPlaceLabel;
   std::optional<files::Location> m_restorePlaceFocus;
   InputDispatcher m_menuDispatcher;
-  std::uint64_t m_menuGeneration = 0;
   std::optional<std::uint64_t> m_activeTransferConflict;
   std::shared_ptr<int> m_lifetime = std::make_shared<int>(0);
 };
