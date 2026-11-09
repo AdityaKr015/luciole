@@ -1,6 +1,7 @@
 #include "browser/action_registry.h"
 #include "browser/selection_tools.h"
 #include "core/input/key_modifiers.h"
+#include "fs/archive_type.h"
 #include "fs/gio_interop.h"
 #include "test_check.h"
 #include "ui/browser/action_shortcuts.h"
@@ -225,6 +226,29 @@ namespace {
     model.select(7);
     TEST_CHECK(!R::state(A::Compress, c, R::capture(c)).enabled);
   }
+  void testSplitArchiveActions() {
+    files::DirectoryModel model;
+    auto data = snapshot();
+    data.entries.push_back(entry(7, "download.ZIP.001"));
+    data.entries.push_back(entry(8, "download.ZIP.002"));
+    data.entries.back().contentType = "application/zip";
+    model.applySnapshot(data);
+    model.select(7);
+    files::ActionContext context{.model = model, .context = 1, .query = {}, .pinned = {}};
+    auto request = R::capture(context);
+    for (const auto action : {A::BrowseArchive, A::ExtractHere, A::ExtractTo}) {
+      TEST_CHECK(R::state(action, context, request).enabled);
+    }
+    model.select(8);
+    request = R::capture(context);
+    for (const auto action : {A::BrowseArchive, A::ExtractHere, A::ExtractTo}) {
+      TEST_CHECK(!R::state(action, context, request).enabled);
+    }
+    TEST_CHECK(files::archiveFolderName(data.entries[6].location) == "download");
+    TEST_CHECK(!files::isSupportedArchive(files::Location::fromUri("sftp://example.invalid/test.zip.001"), {}));
+    TEST_CHECK(!files::splitZipPart(files::Location::fromPath("/tmp/test.zip.01")));
+    TEST_CHECK(!files::splitZipPart(files::Location::fromPath("/tmp/test.zip.001.bak")));
+  }
   void testCapabilitiesAndTargets() {
     files::DirectoryModel model;
     auto data = snapshot();
@@ -433,6 +457,7 @@ int main() {
     testActionTable();
     testShortcuts();
     testArchiveActions();
+    testSplitArchiveActions();
     testTrashActions();
     testLinkActions();
     testFileClipboardActions();

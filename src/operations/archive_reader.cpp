@@ -1,4 +1,5 @@
 #include "fs/filename.h"
+#include "operations/archive_input.h"
 #include "operations/archive_support.h"
 
 #include <algorithm>
@@ -17,21 +18,12 @@ namespace {
   namespace fs = std::filesystem;
   struct Reader {
     Work& work;
-    Fd input;
+    Input input;
     std::string filename, original;
     std::unique_ptr<struct archive, decltype(&archive_read_free)> value{archive_read_new(), &archive_read_free};
     std::array<char, 65536> buffer{};
-    std::uint64_t readBytes = 0;
     Reader(const Location& source, Work& request, const Passwords* passwords = nullptr)
-        : work(request), input(opened(::open(native(source).c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK))),
-          filename(native(source)) {
-      const auto info = statFd(input.get());
-      if (!S_ISREG(info.st_mode)
-          || info.st_size <= 0
-          || static_cast<std::uint64_t>(info.st_size) > work.limits.maxArchiveBytes) {
-        throwFileError(FileErrorKind::Unsupported, "Archive is empty, special, or exceeds the input-size limit.");
-      }
-      original = stamp(info);
+        : work(request), input(source, request), filename(native(source)), original(input.fingerprint()) {
       if (work.progress.sourceStamp.empty()) {
         work.progress.sourceStamp = original;
       } else if (work.progress.sourceStamp != original) {
@@ -40,10 +32,18 @@ namespace {
       if (!value) {
         throwFileError(FileErrorKind::Other, "Could not initialize the archive reader.");
       }
-      requireArchive(archive_read_support_format_zip(value.get()), value.get(), work);
-      requireArchive(archive_read_support_format_tar(value.get()), value.get(), work);
+      // Split input needs the final central directory; never recover a partial
+      // set with the streaming ZIP reader after a missing or corrupt last part.
+      requireArchive(
+          input.split() ? archive_read_support_format_zip_seekable(value.get())
+                        : archive_read_support_format_zip(value.get()),
+          value.get(), work
+      );
+      if (!input.split()) {
+        requireArchive(archive_read_support_format_tar(value.get()), value.get(), work);
+      }
       requireArchive(archive_read_support_filter_none(value.get()), value.get(), work);
-      if (archive_zlib_version()) {
+      if (!input.split() && archive_zlib_version()) {
         requireArchive(archive_read_support_filter_gzip(value.get()), value.get(), work);
       }
       if (passwords) {
@@ -68,11 +68,7 @@ namespace {
                 auto& reader = *static_cast<Reader*>(data);
                 try {
                   reader.work.check();
-                  const auto position = ::lseek(reader.input.get(), offset, whence);
-                  if (position < 0) {
-                    systemError("Could not seek archive");
-                  }
-                  return position;
+                  return reader.input.seek(offset, whence);
                 } catch (...) {
                   reader.work.failure = std::current_exception();
                   archive_set_error(a, EIO, "Archive seek failed");
@@ -89,17 +85,7 @@ namespace {
                 auto& reader = *static_cast<Reader*>(data);
                 try {
                   reader.work.check();
-                  if (reader.readBytes > reader.work.limits.maxArchiveBytes * 4) {
-                    throwFileError(FileErrorKind::Unsupported, "Archive exceeded its input-work limit.");
-                  }
-                  ssize_t count;
-                  do {
-                    count = ::read(reader.input.get(), reader.buffer.data(), reader.buffer.size());
-                  } while (count < 0 && errno == EINTR);
-                  if (count < 0) {
-                    systemError("Could not read archive");
-                  }
-                  reader.readBytes += static_cast<std::uint64_t>(count);
+                  const auto count = reader.input.read(reader.buffer);
                   *block = reader.buffer.data();
                   return count;
                 } catch (...) {
@@ -113,14 +99,7 @@ namespace {
           value.get(), work
       );
     }
-    void unchanged() const {
-      struct stat named{};
-      if (stamp(statFd(input.get())) != original
-          || ::lstat(filename.c_str(), &named) != 0
-          || stamp(named) != original) {
-        throwFileError(FileErrorKind::Changed, "The archive changed during this operation. Reload its contents.");
-      }
-    }
+    void unchanged() const { input.unchanged(); }
     bool next(struct archive_entry*& entry) {
       work.check();
       const auto status = archive_read_next_header(value.get(), &entry);

@@ -1,5 +1,6 @@
 #include "event_loop/glib_poll_source.h"
 #include "fs/gio_ptr.h"
+#include "operations/archive_input.h"
 #include "operations/archive_service.h"
 #include "operations/archive_work.h"
 #include "test_check.h"
@@ -7,10 +8,12 @@
 #include <algorithm>
 #include <archive.h>
 #include <archive_entry.h>
+#include <array>
 #include <chrono>
 #include <csignal>
 #include <fcntl.h>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <gio/gio.h>
 #include <print>
@@ -438,6 +441,198 @@ namespace {
     TEST_CHECK(service.error() && !service.passwordRequest());
     TEST_CHECK(!fs::exists(output) && fs::is_empty(fixture.root / "tmp"));
   }
+  std::vector<fs::path>
+  splitZip(const fs::path& folder, const std::string& name, const std::string& bytes, std::size_t chunk) {
+    fs::create_directories(folder);
+    std::vector<fs::path> result;
+    for (std::size_t offset = 0; offset < bytes.size(); offset += chunk) {
+      const auto path = folder / (name + std::format(".{:03}", result.size() + 1));
+      result.push_back(path);
+    }
+    // Discovery must use volume numbers, independently of directory insertion order.
+    for (std::size_t i = result.size(); i > 0; --i) {
+      write(result[i - 1], bytes.substr((i - 1) * chunk, chunk));
+    }
+    return result;
+  }
+  template <typename Action> void rejects(Action action) {
+    bool failed = false;
+    try {
+      action();
+    } catch (const files::FileErrorException&) {
+      failed = true;
+    }
+    TEST_CHECK(failed);
+  }
+  void testSplitInput(const Fixture& fixture) {
+    std::string bytes;
+    for (std::size_t i = 0; i < 131072; ++i) {
+      bytes += static_cast<char>(i % 251);
+    }
+    const auto parts = splitZip(fixture.root / "seek-parts", "virtual.zip", bytes, 1024);
+    files::archive_work::Progress progress;
+    files::CancelToken cancel;
+    auto work = files::archive_work::workFor({}, cancel, progress);
+    files::archive_work::Input input(location(parts.front()), work);
+    TEST_CHECK(input.split() && !input.fingerprint().empty());
+    std::array<char, 65536> buffer{};
+    TEST_CHECK(input.seek(4093, SEEK_SET) == 4093);
+    TEST_CHECK(input.read(buffer) == buffer.size());
+    TEST_CHECK(std::string_view(buffer.data(), buffer.size()) == std::string_view(bytes).substr(4093, buffer.size()));
+    TEST_CHECK(input.seek(-4, SEEK_CUR) == 4093 + 65536 - 4);
+    TEST_CHECK(input.seek(-7, SEEK_END) == static_cast<std::int64_t>(bytes.size() - 7));
+    TEST_CHECK(
+        input.read(buffer) == 7
+        && std::string_view(buffer.data(), 7) == std::string_view(bytes).substr(bytes.size() - 7)
+    );
+    TEST_CHECK(input.read(buffer) == 0);
+    rejects([&] { (void)input.seek(INT64_MIN, SEEK_END); });
+    TEST_CHECK(input.seek(INT64_MAX, SEEK_SET) == INT64_MAX);
+    rejects([&] { (void)input.seek(1, SEEK_CUR); });
+    rejects([&] { (void)input.seek(0, -99); });
+    TEST_CHECK(input.seek(0, SEEK_SET) == 0);
+    input.unchanged();
+    write(parts[1], "replacement");
+    rejects([&] { input.unchanged(); });
+    cancel.cancel();
+    rejects([&] { (void)input.read(buffer); });
+  }
+  void testSplitZip(const Fixture& fixture, Pump& pump) {
+    const auto plain = fixture.root / "split-source.txt";
+    write(plain, "payload spanning split ZIP parts");
+    const auto archive = fixture.root / "before-splitting.zip";
+    files::ArchiveService service;
+    TEST_CHECK(service.compress({location(plain)}, location(archive), files::ArchiveFormat::Zip));
+    wait(service, pump);
+    TEST_CHECK(!service.error());
+    if (::geteuid() != 0) {
+      const auto restricted = fixture.root / "unlistable-parent";
+      fs::create_directory(restricted);
+      fs::copy_file(archive, restricted / "known.zip");
+      TEST_CHECK(::chmod(restricted.c_str(), 0111) == 0);
+      TEST_CHECK(service.inspect(location(restricted / "known.zip")));
+      wait(service, pump);
+      TEST_CHECK(!service.error());
+      TEST_CHECK(::chmod(restricted.c_str(), 0700) == 0);
+    }
+    const auto parts = splitZip(fixture.root / "zip-parts", "café.ZIP", read(archive), 17);
+    TEST_CHECK(parts.size() > 2 && files::isSupportedArchive(location(parts[0]), {}));
+    TEST_CHECK(!files::isSupportedArchive(location(parts[1]), "application/zip"));
+    TEST_CHECK(files::archiveFolderName(location(parts[0])) == "café");
+    TEST_CHECK(service.inspect(location(parts.front())));
+    wait(service, pump);
+    TEST_CHECK(!service.error() && service.catalog() && service.catalog()->source == location(parts.front()));
+    const auto known = service.catalog();
+    const auto output = fixture.root / "split-output";
+    TEST_CHECK(service.extract(location(parts.front()), location(output), {plain.filename().native()}));
+    wait(service, pump);
+    TEST_CHECK(!service.error() && read(output / plain.filename()) == read(plain));
+    TEST_CHECK(service.openMember(plain.filename().native()));
+    wait(service, pump);
+    const auto opened = service.takeOpenedFile();
+    TEST_CHECK(opened && read(*opened->nativePath()) == read(plain));
+    service.shutdown();
+    wait(service, pump);
+    TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
+    write(parts[1], "changed second volume");
+    files::ArchiveService changed;
+    TEST_CHECK(changed.extract(location(parts.front()), location(fixture.root / "stale-split"), {}, known));
+    wait(changed, pump);
+    TEST_CHECK(changed.error() && !fs::exists(fixture.root / "stale-split"));
+  }
+  void testSplitFailures(const Fixture& fixture, Pump& pump) {
+    const auto archive = fixture.root / "full-encrypted.zip";
+    encryptedZip(archive);
+    const auto bytes = read(archive);
+    for (unsigned failure = 0; failure < 9; ++failure) {
+      const auto folder = fixture.root / ("invalid-parts-" + std::to_string(failure));
+      const auto parts = splitZip(folder, "test.zip", bytes, 17);
+      if (failure == 0) {
+        fs::remove(parts[1]);
+      } else if (failure == 1) {
+        fs::remove(parts.back());
+      } else if (failure == 2) {
+        fs::resize_file(parts[1], 0);
+      } else if (failure == 3) {
+        fs::remove(parts[1]);
+        fs::create_symlink(parts[0], parts[1]);
+      } else if (failure == 4) {
+        fs::remove(parts[1]);
+        fs::create_hard_link(parts[0], parts[1]);
+      } else if (failure == 5) {
+        fs::remove(parts[1]);
+        TEST_CHECK(::mkfifo(parts[1].c_str(), 0600) == 0);
+      } else if (failure == 6) {
+        write(folder / "test.zip.129", "unsupported extra volume");
+      } else if (failure == 7) {
+        auto damaged = read(parts.back());
+        damaged.pop_back();
+        write(parts.back(), damaged);
+      }
+      files::ArchiveLimits limits;
+      if (failure == 8) {
+        limits.maxArchiveBytes = bytes.size() - 1;
+      }
+      files::ArchiveService service(limits);
+      const auto output = folder / "output";
+      TEST_CHECK(service.extract(location(parts.front()), location(output)));
+      wait(service, pump);
+      TEST_CHECK(service.error() && !service.passwordRequest() && !fs::exists(output));
+      TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
+    }
+    // A middle part must never be treated as an independently recoverable archive.
+    const auto parts = splitZip(fixture.root / "middle-part", "test.zip", bytes, 17);
+    files::ArchiveService middle;
+    TEST_CHECK(middle.inspect(location(parts[1])));
+    wait(middle, pump);
+    TEST_CHECK(middle.error() && !middle.catalog());
+    // Numbered parts do not opt TAR into the split ZIP reader.
+    const auto tarFile = fixture.root / "not-a-zip.tar";
+    tar(tarFile, {{"file", "payload", {}}});
+    const auto fake = splitZip(fixture.root / "fake-zip", "fake.zip", read(tarFile), 1024);
+    files::ArchiveService fakeZip;
+    TEST_CHECK(fakeZip.inspect(location(fake.front())));
+    wait(fakeZip, pump);
+    TEST_CHECK(fakeZip.error() && !fakeZip.catalog());
+  }
+  void testSplitPasswordAndChanges(const Fixture& fixture, Pump& pump) {
+    const auto archive = fixture.root / "split-encrypted.zip";
+    encryptedZip(archive);
+    const auto bytes = read(archive);
+    const auto parts = splitZip(fixture.root / "encrypted-parts", "secret.zip", bytes, 17);
+    const auto output = fixture.root / "unlocked-parts";
+    files::ArchiveService service;
+    TEST_CHECK(service.extract(location(parts.front()), location(output)));
+    const auto request = passwordRequest(service, pump);
+    TEST_CHECK(service.providePassword(request.id, "wrong"));
+    const auto retry = passwordRequest(service, pump);
+    TEST_CHECK(retry.retry && service.providePassword(retry.id, "test password"));
+    wait(service, pump);
+    TEST_CHECK(!service.error() && read(output / "secret.txt") == "secret");
+    TEST_CHECK(service.extract(location(parts.front()), location(fixture.root / "split-cancelled")));
+    (void)passwordRequest(service, pump);
+    service.cancel();
+    wait(service, pump);
+    TEST_CHECK(service.error() && !fs::exists(fixture.root / "split-cancelled"));
+    TEST_CHECK(service.extract(location(parts.front()), location(fixture.root / "split-replaced")));
+    const auto replacement = passwordRequest(service, pump);
+    const auto original = read(parts[1]);
+    // Same bytes and pathname, a different inode: all volumes participate in the retry stamp.
+    fs::remove(parts[1]);
+    write(parts[1], original);
+    TEST_CHECK(service.providePassword(replacement.id, "test password"));
+    wait(service, pump);
+    TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Changed);
+    TEST_CHECK(!fs::exists(fixture.root / "split-replaced") && fs::is_empty(fixture.root / "tmp"));
+    const auto newSet = splitZip(fixture.root / "extended-parts", "secret.zip", bytes, 17);
+    files::ArchiveService extended;
+    TEST_CHECK(extended.extract(location(newSet.front()), location(fixture.root / "split-extended")));
+    const auto pending = passwordRequest(extended, pump);
+    write(newSet.back().parent_path() / std::format("secret.zip.{:03}", newSet.size() + 1), "extra data");
+    TEST_CHECK(extended.providePassword(pending.id, "test password"));
+    wait(extended, pump);
+    TEST_CHECK(extended.error() && !fs::exists(fixture.root / "split-extended"));
+  }
   int boundedWriteFailure() {
     Fixture fixture;
     const auto source = fixture.root / "large.txt";
@@ -508,6 +703,10 @@ int main(int argc, char** argv) {
     testPasswordCancellationAndChanges(fixture, pump);
     testEncryptedBoundaries(fixture, pump);
     testEncryptedCorruption(fixture, pump);
+    testSplitInput(fixture);
+    testSplitZip(fixture, pump);
+    testSplitFailures(fixture, pump);
+    testSplitPasswordAndChanges(fixture, pump);
     testCancelAndDestruction(fixture, pump);
     files::GioPtr<GSubprocess> child(
         g_subprocess_new(G_SUBPROCESS_FLAGS_NONE, nullptr, "/proc/self/exe", "--bounded-write-failure", nullptr)

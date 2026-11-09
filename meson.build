@@ -175,6 +175,7 @@ libarchive = dependency('libarchive')
 operations_lib = static_library('files-operations',
   files(
     'src/operations/archive_icons.cpp',
+    'src/operations/archive_input.cpp',
     'src/operations/archive_service.cpp',
     'src/operations/archive_reader.cpp',
     'src/operations/archive_support.cpp',
