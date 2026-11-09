@@ -52,8 +52,33 @@ std::unique_ptr<Flex> StatusBarController::build() {
 
 std::unique_ptr<Flex> StatusBarController::buildNotice() {
   return ui::column(
-      {.out = &m_noticeArea, .align = FlexAlign::Stretch, .flexGrow = 1.0F},
-      ui::label({.out = &m_notice, .textAlign = TextAlign::Center})
+      {.out = &m_noticeArea,
+       .align = FlexAlign::Center,
+       .justify = FlexJustify::Center,
+       .gap = Style::spaceSm,
+       .padding = Style::spaceLg,
+       .flexGrow = 1.0F},
+      ui::glyph(
+          {.out = &m_noticeGlyph,
+           .glyph = "folder-open",
+           .glyphSize = 48.0F,
+           .color = colorSpecFromRole(ColorRole::OnSurfaceVariant)}
+      ),
+      ui::label(
+          {.out = &m_notice,
+           .fontSize = Style::fontSizeTitle,
+           .fontWeight = FontWeight::SemiBold,
+           .maxLines = 2,
+           .textAlign = TextAlign::Center,
+           .configure = [](Label& label) { label.setUseMarkup(false); }}
+      ),
+      ui::label(
+          {.out = &m_noticeDetail,
+           .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
+           .maxLines = 4,
+           .textAlign = TextAlign::Center,
+           .configure = [](Label& label) { label.setUseMarkup(false); }}
+      )
   );
 }
 
@@ -212,18 +237,37 @@ void StatusBarController::sync(bool miller) {
   }
   m_needed = m_transferController.syncOperationButtons() || m_needed;
   m_pill->setVisible(m_needed);
-  m_notice->setText(
-      snapshot.error
-              || loading
-              || snapshot.status == files::DirectoryStatus::Cancelled
-              || !m_page.browser().message().empty()
-              || !m_settings.error().empty()
-          ? status
-          : !m_page.browser().searchQuery().empty() ? "No matching files or folders."
-          : snapshot.entries.empty()
-          ? (snapshot.location == files::Location::trash() ? "Trash is empty." : "This folder is empty.")
-          : "No visible items."
-  );
+  // Empty list: a glyph, a short title and, when useful, one explanatory sentence.
+  struct Notice {
+    const char* glyph;
+    std::string title, detail;
+  };
+  const auto notice = [&]() -> Notice {
+    if (snapshot.error) {
+      return {"alert-triangle", "Could not open this folder", status};
+    }
+    if (loading) {
+      return {"hourglass-empty", status, {}};
+    }
+    if (snapshot.status == files::DirectoryStatus::Cancelled
+        || !m_page.browser().message().empty()
+        || !m_settings.error().empty()) {
+      return {"alert-triangle", status, {}};
+    }
+    if (const auto& query = m_page.browser().searchQuery(); !query.empty()) {
+      return {"search", "No results", std::format("No files or folders match “{}”.", query)};
+    }
+    if (snapshot.entries.empty()) {
+      return snapshot.location == files::Location::trash() ? Notice{"trash", "Trash is empty", {}}
+                                                           : Notice{"folder-open", "This folder is empty", {}};
+    }
+    return {"eye-off", "No visible items", "Hidden and backup files are not shown."};
+  }();
+  m_noticeGlyph->setGlyph(notice.glyph);
+  m_notice->setText(notice.title);
+  m_noticeDetail->setText(notice.detail);
+  m_noticeDetail->setVisible(!notice.detail.empty());
+  m_noticeDetail->setParticipatesInLayout(!notice.detail.empty());
   const bool empty = model.rows().empty();
   m_noticeArea->setVisible(empty && !miller);
   m_noticeArea->setParticipatesInLayout(empty && !miller);

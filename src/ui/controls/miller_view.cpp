@@ -425,7 +425,7 @@ void MillerView::doLayout(Renderer& renderer) {
         snapshot.status == files::DirectoryStatus::Loading || snapshot.status == files::DirectoryStatus::Idle
             ? "Loading…"
             : snapshot.error ? snapshot.error->message
-                             : "This folder is empty."
+                             : "This folder is empty"
     );
     view.notice->setVisible(empty);
     if (empty) {

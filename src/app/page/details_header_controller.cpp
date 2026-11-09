@@ -229,8 +229,10 @@ void DetailsHeaderController::sync(const files::SortOptions& sort) {
     header->glyph()->setVisible(active);
     header->glyph()->setParticipatesInLayout(active);
   }
-  m_listHeader->setVisible(m_page.viewMode() == files::ViewMode::List);
-  m_listHeader->setParticipatesInLayout(m_page.viewMode() == files::ViewMode::List);
+  // An empty list shows only the empty-state notice; headers there would sort nothing.
+  const bool shown = m_page.viewMode() == files::ViewMode::List && !m_page.browser().model().rows().empty();
+  m_listHeader->setVisible(shown);
+  m_listHeader->setParticipatesInLayout(shown);
 }
 
 bool DetailsHeaderController::applyOrder() {
@@ -412,7 +414,7 @@ bool DetailsHeaderController::layoutColumns(bool miller) {
   const bool columnsChanged = columns != m_detailsColumns;
   m_detailsColumns = columns;
   m_viewport = viewport;
-  const bool overflow = list && columns.contentWidth > viewport + 0.5F;
+  const bool overflow = list && !m_page.browser().model().rows().empty() && columns.contentWidth > viewport + 0.5F;
   m_detailsScrollHost->setVisible(overflow);
   m_detailsScrollHost->setParticipatesInLayout(overflow);
   for (std::size_t index = 0; index < m_columnWidths.size(); ++index) {

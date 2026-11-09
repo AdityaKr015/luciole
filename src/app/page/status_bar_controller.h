@@ -11,6 +11,7 @@ namespace files {
 
 class FileKeyboardController;
 class Flex;
+class Glyph;
 class Label;
 class PageContext;
 class Renderer;
@@ -60,6 +61,8 @@ private:
   Label* m_freeSpace = nullptr;
   bool m_freeSpaceAvailable = false;
   bool m_needed = false;
+  Glyph* m_noticeGlyph = nullptr;
   Label* m_notice = nullptr;
+  Label* m_noticeDetail = nullptr;
   Flex* m_noticeArea = nullptr;
 };
