@@ -250,14 +250,14 @@ namespace {
   }
   State openWith(const C& c, const R& r) {
     return require(
-        single(r)
+        !r.targets.empty()
             && all(
                 c, r,
                 [](const DirectoryEntry& entry) {
                   return entry.type == FileType::Regular && !entry.symlink && entry.access.read != false;
                 }
             ),
-        "Select one readable file."
+        "Select readable files."
     );
   }
   bool sortField(const C& c, files::SortField field) { return c.model.sort().field == field; }

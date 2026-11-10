@@ -14,14 +14,17 @@
 #include "ui/style.h"
 #include "wayland/popup_surface.h"
 
+#include <algorithm>
 #include <chrono>
+#include <format>
 #include <string>
 #include <utility>
 
 struct ApplicationChooserController::Session {
-  files::DirectoryEntry entry;
+  std::vector<std::string> types;
+  std::vector<files::Location> locations;
   files::ActionRequest request;
-  std::uint64_t generation;
+  std::uint64_t generation = 0;
   std::string query;
   bool other = false, useDefault = false, submitting = false, canSetDefault = false;
 };
@@ -39,9 +42,24 @@ bool ApplicationChooserController::current(const std::shared_ptr<Session>& sessi
       && session->generation == m_page.activeDialog().generation();
 }
 
-void ApplicationChooserController::show(const files::DirectoryEntry& entry) {
-  auto session = std::make_shared<Session>(entry, m_page.requestFor({entry}), 0);
-  session->canSetDefault = entry.contentType && *entry.contentType != "application/octet-stream";
+void ApplicationChooserController::show(const files::DirectoryEntry& entry) { show(std::vector{entry}); }
+
+void ApplicationChooserController::show(const std::vector<files::DirectoryEntry>& entries) {
+  if (entries.empty()) {
+    return;
+  }
+  auto session = std::make_shared<Session>();
+  session->request = m_page.requestFor(entries);
+  for (const auto& entry : entries) {
+    session->types.push_back(entry.contentType.value_or("application/octet-stream"));
+    session->locations.push_back(entry.location);
+  }
+  std::ranges::sort(session->types);
+  const auto duplicates = std::ranges::unique(session->types);
+  session->types.erase(duplicates.begin(), duplicates.end());
+  session->canSetDefault = session->types.size() == 1
+      && !session->types.front().empty()
+      && session->types.front() != "application/octet-stream";
   Flex* choices = nullptr;
   ScrollView* choiceScroll = nullptr;
   Input* search = nullptr;
@@ -59,7 +77,11 @@ void ApplicationChooserController::show(const files::DirectoryEntry& entry) {
       )
   );
   auto root = ui::column(
-      {.align = FlexAlign::Stretch}, files::dialogHeader("Open With", "apps", [this] { m_page.dismissMenu(); }),
+      {.align = FlexAlign::Stretch},
+      files::dialogHeader(
+          entries.size() == 1 ? "Open With" : std::format("Open {} Files With", entries.size()), "apps",
+          [this] { m_page.dismissMenu(); }
+      ),
       ui::input(
           {.out = &search,
            .placeholder = "Search applications…",
@@ -89,9 +111,12 @@ void ApplicationChooserController::show(const files::DirectoryEntry& entry) {
                  }
                }}
       ),
-      ui::separator({}),
+      ui::separator({.visible = session->types.size() == 1, .participatesInLayout = session->types.size() == 1}),
       ui::row(
-          {.align = FlexAlign::Center, .gap = Style::spaceSm},
+          {.align = FlexAlign::Center,
+           .gap = Style::spaceSm,
+           .visible = session->types.size() == 1,
+           .participatesInLayout = session->types.size() == 1},
           ui::label({.text = "Use as default for this file type", .maxLines = 2, .flexGrow = 1}),
           ui::toggle(
               {.out = &useDefault,
@@ -151,7 +176,7 @@ void ApplicationChooserController::load() {
   enableChoices(false);
   const std::weak_ptr<int> lifetime = m_lifetime;
   m_launcher.applications(
-      m_session->entry.contentType.value_or("application/octet-stream"),
+      m_session->types,
       [this, lifetime, session = m_session](files::ApplicationList apps) {
         if (!lifetime.expired() && current(session)) {
           populate(session, std::move(apps));
@@ -228,7 +253,7 @@ void ApplicationChooserController::choose(
     return;
   }
   if (!session->useDefault) {
-    m_launcher.openWith(session->entry.location, app);
+    m_launcher.openWith(session->locations, app);
     m_page.dismissMenu();
     return;
   }
@@ -239,12 +264,12 @@ void ApplicationChooserController::choose(
   m_default->setEnabled(false);
   showError({});
   const std::weak_ptr<int> lifetime = m_lifetime;
-  m_launcher.setDefault(*session->entry.contentType, app, [this, lifetime, session, app](const std::string& error) {
+  m_launcher.setDefault(session->types.front(), app, [this, lifetime, session, app](const std::string& error) {
     if (lifetime.expired() || !current(session)) {
       return;
     }
     if (error.empty() && m_page.actionState(files::BrowserAction::OpenWith, session->request).enabled) {
-      m_launcher.openWith(session->entry.location, app);
+      m_launcher.openWith(session->locations, app);
       m_page.dismissMenu();
       return;
     }

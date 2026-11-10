@@ -3,7 +3,9 @@
 #include "wayland/toplevel_surface.h"
 #include "wayland/wayland_extension.h"
 
+#include <functional>
 #include <memory>
+#include <string>
 
 struct wl_cursor_theme;
 struct wl_data_device_manager;
@@ -13,9 +15,14 @@ struct PointerEvent;
 class WaylandConnection;
 
 namespace files {
+  class LaunchActivation;
   class DesktopIntegration final : public WaylandExtension {
   public:
     explicit DesktopIntegration(WaylandConnection& connection);
+    ~DesktopIntegration() override;
+    void requestActivation(
+        wl_surface* source, std::uint32_t serial, const std::string& appId, std::function<void(std::string)> completed
+    );
     void onGlobal(wl_registry*, std::uint32_t, std::string_view, std::uint32_t) override;
     void onGlobalRemove(std::uint32_t name) override;
     void releaseGlobals() override;
@@ -32,7 +39,8 @@ namespace files {
     wl_cursor_theme* m_cursorTheme = nullptr;
     wl_surface* m_cursorSurface = nullptr;
     std::uint32_t m_dataGlobal = 0, m_decorationGlobal = 0, m_shapeGlobal = 0;
-    std::uint32_t m_enterSerial = 0;
+    std::uint32_t m_enterSerial = 0, m_activationGlobal = 0;
+    std::unique_ptr<LaunchActivation> m_activation;
   };
 
   class WindowSurface final : public ToplevelSurface {

@@ -12,6 +12,7 @@ pkgs.mkShell {
     llvmPackages_23.clang-tools
     llvmPackages_23.libclang
     python3
+    dbus
     nixfmt
     statix
     deadnix

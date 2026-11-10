@@ -15,6 +15,7 @@
   fontconfig,
   cairo,
   glib,
+  dbus,
   gvfs,
   pango,
   harfbuzz,
@@ -122,6 +123,8 @@ stdenv.mkDerivation (finalAttrs: {
     autoAddDriverRunpath
     makeWrapper
   ];
+
+  nativeCheckInputs = [ dbus ];
 
   buildInputs = [
     wayland

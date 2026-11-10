@@ -26,15 +26,23 @@ namespace files {
     ~FileLauncher();
     FileLauncher(const FileLauncher&) = delete;
     FileLauncher& operator=(const FileLauncher&) = delete;
+    using ActivationReply = std::function<void(std::string)>;
+    using ActivationProvider = std::function<void(const std::string&, ActivationReply)>;
+    void setActivationProvider(ActivationProvider provider);
     void open(const Location& location);
     void applications(
         std::string mime, std::function<void(ApplicationList)> callback, bool includeOther = false,
+        std::string search = {}
+    );
+    void applications(
+        std::vector<std::string> types, std::function<void(ApplicationList)> callback, bool includeOther = false,
         std::string search = {}
     );
     // Explicit system MIME association change; does not launch a file.
     void setDefault(std::string mime, ApplicationChoice application, std::function<void(std::string)> callback);
     void cancelApplications();
     void openWith(const Location& location, const ApplicationChoice& application);
+    void openWith(const std::vector<Location>& locations, const ApplicationChoice& application);
     void setChangedCallback(std::function<void(const std::string&)> callback);
     bool busy() const;
 

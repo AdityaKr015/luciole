@@ -28,6 +28,7 @@ class ApplicationChooserController {
 public:
   ApplicationChooserController(PageContext& page, files::FileLauncher& launcher, files::FileIconCache& icons);
   void show(const files::DirectoryEntry& entry);
+  void show(const std::vector<files::DirectoryEntry>& entries);
   void revealFocus(InputArea* focused);
 
 private:

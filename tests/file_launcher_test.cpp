@@ -11,9 +11,15 @@
 #include <string_view>
 
 namespace {
-  files::ApplicationList query(files::FileLauncher& launcher, bool all, std::string search = {}) {
+  struct VariantUnref {
+    void operator()(GVariant* value) const { g_variant_unref(value); }
+  };
+  using Variant = std::unique_ptr<GVariant, VariantUnref>;
+  files::ApplicationList query(
+      files::FileLauncher& launcher, bool all, std::string search = {}, std::vector<std::string> types = {"text/plain"}
+  ) {
     std::optional<files::ApplicationList> result;
-    launcher.applications("text/plain", [&](auto value) { result = std::move(value); }, all, std::move(search));
+    launcher.applications(std::move(types), [&](auto value) { result = std::move(value); }, all, std::move(search));
     const auto deadline = g_get_monotonic_time() + 5000000;
     while (launcher.busy()) {
       (void)g_main_context_iteration(nullptr, false);
@@ -57,6 +63,98 @@ namespace {
     return other.choices.front();
   }
 
+  void testDbus(files::FileLauncher& launcher, const std::vector<files::Location>& locations) {
+    const files::GioPtr<GTestDBus> bus(g_test_dbus_new(G_TEST_DBUS_NONE));
+    g_test_dbus_up(bus.get());
+    files::GioPtr<GDBusConnection> connection(g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, nullptr));
+    TEST_CHECK(connection);
+    const Variant name(g_dbus_connection_call_sync(
+        connection.get(), "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName",
+        g_variant_new("(su)", "org.example.Fixture", 4U), G_VARIANT_TYPE("(u)"), G_DBUS_CALL_FLAGS_NONE, 2000, nullptr,
+        nullptr
+    ));
+    TEST_CHECK(name);
+    const char* xml = "<node><interface name='org.freedesktop.Application'>"
+                      "<method name='Open'><arg type='as' direction='in'/><arg type='a{sv}' direction='in'/></method>"
+                      "</interface></node>";
+    GDBusNodeInfo* node = g_dbus_node_info_new_for_xml(xml, nullptr);
+    TEST_CHECK(node);
+    struct Received {
+      std::vector<std::string> uris;
+      std::string token;
+      int calls = 0;
+    } received;
+    static const GDBusInterfaceVTable handler{
+        .method_call =
+            [](GDBusConnection*, const char*, const char*, const char*, const char* method, GVariant* parameters,
+               GDBusMethodInvocation* invocation, gpointer data) {
+              auto& received = *static_cast<Received*>(data);
+              TEST_CHECK(std::string_view(method) == "Open");
+              const Variant uris(g_variant_get_child_value(parameters, 0));
+              const Variant platform(g_variant_get_child_value(parameters, 1));
+              const char* token = nullptr;
+              TEST_CHECK(g_variant_lookup(platform.get(), "activation-token", "&s", &token));
+              received.token = token;
+              for (gsize i = 0; i < g_variant_n_children(uris.get()); ++i) {
+                const char* uri = nullptr;
+                g_variant_get_child(uris.get(), i, "&s", &uri);
+                received.uris.emplace_back(uri);
+              }
+              ++received.calls;
+              g_dbus_method_invocation_return_value(invocation, nullptr);
+            },
+        .get_property = nullptr,
+        .set_property = nullptr,
+        .padding = {}
+    };
+    const auto registration = g_dbus_connection_register_object(
+        connection.get(), "/org/example/Fixture", node->interfaces[0], &handler, &received, nullptr, nullptr
+    );
+    TEST_CHECK(registration);
+    g_dbus_node_info_unref(node);
+    const auto choices = query(launcher, false);
+    const auto app = std::ranges::find(choices.choices, "org.example.Fixture.desktop", &files::ApplicationChoice::id);
+    TEST_CHECK(app != choices.choices.end());
+    launcher.setActivationProvider([](const auto&, const auto& reply) { reply("dbus-fresh"); });
+    launcher.openWith(locations, *app);
+    const auto wait = [&](int count) {
+      const auto deadline = g_get_monotonic_time() + 5000000;
+      while (launcher.busy() || received.calls < count) {
+        (void)g_main_context_iteration(nullptr, false);
+        TEST_CHECK(g_get_monotonic_time() < deadline);
+        g_usleep(1000);
+      }
+    };
+    wait(1);
+    std::vector<std::string> expected;
+    expected.reserve(locations.size());
+    for (const auto& location : locations) {
+      expected.push_back(location.uri());
+    }
+    TEST_CHECK(received.token == "dbus-fresh" && received.uris == expected);
+    received.uris.clear();
+    launcher.open(locations.front());
+    wait(2);
+    TEST_CHECK(received.token == "dbus-fresh" && received.uris == std::vector{locations.front().uri()});
+    TEST_CHECK(g_dbus_connection_unregister_object(connection.get(), registration));
+    TEST_CHECK(g_dbus_connection_close_sync(connection.get(), nullptr, nullptr));
+    connection.reset();
+    g_test_dbus_down(bus.get());
+  }
+
+  void testMixed(files::FileLauncher& launcher) {
+    const auto common = query(launcher, false, "Private", {"image/png", "text/plain", "image/png"});
+    TEST_CHECK(
+        common.choices.size() == 1
+        && common.choices.front().id == "common.desktop"
+        && common.choices.front().suggested
+        && !common.choices.front().isDefault
+    );
+    TEST_CHECK(query(launcher, false, "launch fixture Café", {"image/png", "text/plain"}).choices.empty());
+    const auto other = query(launcher, true, "launch fixture Café", {"image/png", "text/plain"});
+    TEST_CHECK(other.choices.size() == 1 && !other.choices.front().suggested && !other.choices.front().isDefault);
+  }
+
   void testDefault(files::FileLauncher& launcher, const files::ApplicationChoice& app, bool failure) {
     const auto set = [&](const std::string& mime) {
       std::optional<std::string> error;
@@ -97,6 +195,8 @@ int main(int argc, char** argv) {
     const bool catalog = mode == "catalog", changeDefault = mode == "default", defaultError = mode == "default-error";
     const bool other = mode == "other";
     const bool with = mode == "with" || other;
+    const bool batch = mode == "batch" || mode == "batch-single";
+    const bool tokens = mode == "tokens", activationDestroy = mode == "activation-destroy";
     int callbacks = 0, errors = 0;
     launcher->setChangedCallback([&](const std::string& error) {
       ++callbacks;
@@ -105,6 +205,67 @@ int main(int argc, char** argv) {
       }
     });
     const auto deadline = g_get_monotonic_time() + 5000000;
+    if (mode == "dbus") {
+      std::vector<files::Location> locations;
+      for (int i = 2; i < argc; ++i) {
+        locations.push_back(files::Location::fromPath(argv[i]));
+      }
+      testDbus(*launcher, locations);
+      TEST_CHECK(callbacks == 2 && errors == 0);
+      return 0;
+    }
+    if (mode == "mixed-catalog") {
+      testMixed(*launcher);
+      return 0;
+    }
+    if (batch || tokens || activationDestroy) {
+      const auto apps = query(*launcher, false);
+      const auto app = std::ranges::find(apps.choices, "fixture.desktop", &files::ApplicationChoice::id);
+      TEST_CHECK(app != apps.choices.end());
+      std::vector<files::Location> locations;
+      for (int i = 2; i < argc; ++i) {
+        locations.push_back(files::Location::fromPath(argv[i]));
+      }
+      std::vector<files::FileLauncher::ActivationReply> replies;
+      std::vector<std::string> appIds;
+      if (tokens || activationDestroy) {
+        launcher->setActivationProvider([&](const std::string& id, auto reply) {
+          appIds.push_back(id);
+          replies.push_back(std::move(reply));
+        });
+      }
+      if (batch || activationDestroy) {
+        launcher->openWith(locations, *app);
+      } else {
+        TEST_CHECK(locations.size() == 2);
+        launcher->openWith(locations.front(), *app);
+        launcher->open(locations.back());
+      }
+      TEST_CHECK(launcher->busy());
+      if (activationDestroy) {
+        TEST_CHECK(replies.size() == 1 && callbacks == 0);
+        launcher.reset();
+        replies.front()("cancelled-token");
+        replies.front()("duplicate-token");
+        TEST_CHECK(callbacks == 0);
+      } else {
+        if (tokens) {
+          TEST_CHECK(
+              (appIds == std::vector<std::string>{"fixture.desktop", ""}) && replies.size() == 2 && callbacks == 0
+          );
+          replies[1]("fresh-second");
+          replies[0]("fresh-first");
+          replies[0]("ignored-duplicate");
+        }
+        while (launcher->busy()) {
+          (void)g_main_context_iteration(nullptr, false);
+          TEST_CHECK(g_get_monotonic_time() < deadline);
+          g_usleep(1000);
+        }
+        TEST_CHECK(callbacks == (tokens ? 2 : 1) && errors == 0);
+      }
+      return 0;
+    }
     std::optional<files::ApplicationChoice> choice;
     bool staleChoice = false;
     if (other || catalog || changeDefault || defaultError) {

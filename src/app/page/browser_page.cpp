@@ -128,6 +128,11 @@ BrowserPage::BrowserPage(
     m_surface->requestUpdate();
   });
   m_miller.setFileActivatedCallback([this](const files::Location& target) { m_launcher.open(target); });
+  m_launcher.setActivationProvider([this](const std::string& appId, files::FileLauncher::ActivationReply reply) {
+    m_connection.extension<files::DesktopIntegration>().requestActivation(
+        m_surface->wlSurface(), m_connection.lastInputSerial(), appId, std::move(reply)
+    );
+  });
   m_launcher.setChangedCallback([this](const std::string& error) {
     m_statusBar.setMessage(error.empty() ? "" : std::format("Could not open the file: {}", error));
     m_aboutController.launcherChanged(error);
@@ -1181,7 +1186,7 @@ void BrowserPage::runAction(
        }},
       {Action::QuickPreview, [](BrowserPage& page, const Call&) { page.m_previewController.showQuick(); }},
       {Action::OpenWith,
-       [](BrowserPage& page, const Call& call) { page.m_applicationChooser.show(call.targets.front()); }},
+       [](BrowserPage& page, const Call& call) { page.m_applicationChooser.show(call.targets); }},
       {Action::SortName, sort},
       {Action::SortType, sort},
       {Action::SortSize, sort},

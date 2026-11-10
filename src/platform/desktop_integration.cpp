@@ -1,13 +1,27 @@
 #include "platform/desktop_integration.h"
 
 #include "cursor-shape-v1-client-protocol.h"
+#include "platform/launch_activation.h"
 #include "wayland/wayland_connection.h"
+#include "xdg-activation-v1-client-protocol.h"
 #include "xdg-decoration-unstable-v1-client-protocol.h"
 
 #include <algorithm>
 #include <wayland-cursor.h>
 
 files::DesktopIntegration::DesktopIntegration(WaylandConnection& connection) : m_connection(connection) {}
+
+files::DesktopIntegration::~DesktopIntegration() = default;
+
+void files::DesktopIntegration::requestActivation(
+    wl_surface* source, std::uint32_t serial, const std::string& appId, std::function<void(std::string)> completed
+) {
+  if (m_activation) {
+    m_activation->request(source, m_connection.seat(), serial, appId, std::move(completed));
+  } else {
+    completed({});
+  }
+}
 
 void files::DesktopIntegration::onGlobal(
     wl_registry* registry, std::uint32_t name, std::string_view interface, std::uint32_t version
@@ -22,11 +36,19 @@ void files::DesktopIntegration::onGlobal(
         wl_registry_bind(registry, name, &zxdg_decoration_manager_v1_interface, 1)
     );
     m_decorationGlobal = name;
+  } else if (interface == "xdg_activation_v1" && !m_activation) {
+    auto* manager = static_cast<xdg_activation_v1*>(wl_registry_bind(registry, name, &xdg_activation_v1_interface, 1));
+    m_activation = std::make_unique<LaunchActivation>(manager);
+    m_activationGlobal = name;
   } else if (interface == "wp_cursor_shape_manager_v1") {
     m_shapeGlobal = name;
   }
 }
 void files::DesktopIntegration::onGlobalRemove(std::uint32_t name) {
+  if (name == m_activationGlobal) {
+    m_activationGlobal = 0;
+    m_activation.reset();
+  }
   if (name == m_dataGlobal) {
     wl_data_device_manager_destroy(m_dataDeviceManager);
     m_dataDeviceManager = nullptr;
@@ -42,6 +64,8 @@ void files::DesktopIntegration::onGlobalRemove(std::uint32_t name) {
   }
 }
 void files::DesktopIntegration::releaseGlobals() {
+  m_activation.reset();
+  m_activationGlobal = 0;
   if (m_cursorSurface) {
     wl_surface_destroy(m_cursorSurface);
     m_cursorSurface = nullptr;

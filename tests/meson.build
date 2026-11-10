@@ -2,6 +2,14 @@
 # shared library identity setup and links only the modules it exercises.
 gio_env = ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local']
 python = import('python').find_installation('python3')
+# The launcher suite starts its own private bus, never the desktop session bus.
+find_program('dbus-daemon')
+
+activation_server = custom_target('launch-activation-server-header',
+  input: protocol_root / 'staging/xdg-activation/xdg-activation-v1.xml',
+  output: 'launch-activation-server-protocol.h',
+  command: [scanner, 'server-header', '@INPUT@', '@OUTPUT@'],
+)
 
 test_table = [
   {'name': 'input-lifetime', 'deps': [noctalia_ui_dep]},
@@ -31,6 +39,7 @@ test_table = [
   {'name': 'directory-session', 'deps': [fs_dep, event_loop_dep], 'env': gio_env},
   {'name': 'directory-tree', 'deps': [browser_dep], 'timeout': 60, 'env': gio_env},
   {'name': 'directory-model', 'deps': [browser_dep, event_loop_dep], 'env': gio_env},
+  {'name': 'launch-activation', 'deps': [platform_dep, dependency('wayland-server')], 'sources': [activation_server]},
   {'name': 'file-launcher', 'deps': [platform_dep, event_loop_dep], 'wrapper': files('file_launcher_test.py')},
   {'name': 'browser-controller', 'deps': [browser_dep, event_loop_dep], 'env': gio_env},
   {'name': 'miller-columns', 'deps': [browser_dep, event_loop_dep], 'env': gio_env},
@@ -49,6 +58,7 @@ foreach entry : test_table
   exe = executable(name + '-test',
     'library_test_setup.cpp',
     name.replace('-', '_') + '_test.cpp',
+    entry.get('sources', []),
     dependencies: entry['deps'] + [noctalia_ui_dep],
     override_options: ['b_ndebug=false'],
   )

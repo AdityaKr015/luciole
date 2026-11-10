@@ -278,6 +278,8 @@ platform_lib = static_library('files-platform',
   files(
     'src/platform/desktop_integration.cpp',
     'src/platform/file_launcher.cpp',
+    'src/platform/launch_activation.cpp',
+    'src/platform/launch_context.cpp',
     'src/platform/terminal_launcher.cpp',
   ),
   protocol_sources,

@@ -3,6 +3,7 @@
 #include "core/log.h"
 #include "fs/gio_interop.h"
 #include "fs/name_matching.h"
+#include "platform/launch_context.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -28,13 +29,39 @@ struct files::FileLauncher::State {
   std::uint64_t nextSerial = 0;
   std::uint64_t querySerial = 0;
   GioPtr<GCancellable> queryCancel;
+  ActivationProvider activation;
+  static void context(
+      const std::shared_ptr<State>& state, const std::string& appId,
+      std::function<void(GioPtr<GAppLaunchContext>)> ready
+  ) {
+    auto replied = std::make_shared<bool>(false);
+    auto reply = [state, replied, ready = std::move(ready)](const std::string& token) {
+      if (std::exchange(*replied, true)) {
+        return;
+      }
+      if (g_cancellable_is_cancelled(state->cancellable.get())) {
+        --state->active;
+        return;
+      }
+      ready(launchContext(token));
+    };
+    if (const auto provider = state->activation) {
+      provider(appId, std::move(reply));
+    } else {
+      reply({});
+    }
+  }
 };
 
 files::FileLauncher::FileLauncher() : m_state(std::make_shared<State>()) {}
 files::FileLauncher::~FileLauncher() {
   cancelApplications();
   m_state->changed = {};
+  m_state->activation = {};
   g_cancellable_cancel(m_state->cancellable.get());
+}
+void files::FileLauncher::setActivationProvider(ActivationProvider provider) {
+  m_state->activation = std::move(provider);
 }
 void files::FileLauncher::cancelApplications() {
   ++m_state->querySerial;
@@ -45,12 +72,23 @@ void files::FileLauncher::cancelApplications() {
 void files::FileLauncher::applications(
     std::string mime, std::function<void(ApplicationList)> callback, bool includeOther, std::string search
 ) {
+  applications(std::vector{std::move(mime)}, std::move(callback), includeOther, std::move(search));
+}
+void files::FileLauncher::applications(
+    std::vector<std::string> types, std::function<void(ApplicationList)> callback, bool includeOther, std::string search
+) {
+  if (types.empty()) {
+    types.emplace_back("application/octet-stream");
+  }
+  std::ranges::sort(types);
+  const auto duplicates = std::ranges::unique(types);
+  types.erase(duplicates.begin(), duplicates.end());
   cancelApplications();
   m_state->queryCancel.reset(g_cancellable_new());
   struct Query {
     std::shared_ptr<State> state;
     std::uint64_t serial;
-    std::string mime;
+    std::vector<std::string> types;
     std::function<void(ApplicationList)> callback;
     bool includeOther;
     std::string search;
@@ -72,14 +110,28 @@ void files::FileLauncher::applications(
   ));
   g_task_set_task_data(
       task.get(),
-      new Query{m_state, m_state->querySerial, std::move(mime), std::move(callback), includeOther, std::move(search)},
+      new Query{m_state, m_state->querySerial, std::move(types), std::move(callback), includeOther, std::move(search)},
       [](gpointer data) { delete static_cast<Query*>(data); }
   );
   g_task_run_in_thread(task.get(), [](GTask* task, gpointer, gpointer data, GCancellable* cancel) {
     const auto& query = *static_cast<Query*>(data);
     auto result = std::make_unique<ApplicationList>();
     const auto search = foldedDisplayText(query.search);
-    const GioPtr<GAppInfo> defaultApp(g_app_info_get_default_for_type(query.mime.c_str(), false));
+    const GioPtr<GAppInfo> defaultApp(
+        query.types.size() == 1 ? g_app_info_get_default_for_type(query.types.front().c_str(), false) : nullptr
+    );
+    std::vector<std::set<std::string>> supporting;
+    for (std::size_t index = 1; index < query.types.size() && !g_cancellable_is_cancelled(cancel); ++index) {
+      auto* apps = g_app_info_get_all_for_type(query.types[index].c_str());
+      std::set<std::string> ids;
+      for (auto* item = apps; item; item = item->next) {
+        if (const auto* id = g_app_info_get_id(G_APP_INFO(item->data))) {
+          ids.emplace(id);
+        }
+      }
+      g_list_free_full(apps, g_object_unref);
+      supporting.push_back(std::move(ids));
+    }
     std::set<std::string> seen;
     const auto append = [&](GList* applications, bool suggested) {
       for (auto* item = applications; item && !g_cancellable_is_cancelled(cancel); item = item->next) {
@@ -87,6 +139,7 @@ void files::FileLauncher::applications(
         const char* id = g_app_info_get_id(app);
         const char* name = g_app_info_get_display_name(app);
         if (!id
+            || (suggested && std::ranges::any_of(supporting, [id](const auto& ids) { return !ids.contains(id); }))
             || !name
             || !g_app_info_should_show(app)
             || (!g_app_info_supports_files(app) && !g_app_info_supports_uris(app))
@@ -104,7 +157,7 @@ void files::FileLauncher::applications(
       }
       g_list_free_full(applications, g_object_unref);
     };
-    append(g_app_info_get_all_for_type(query.mime.c_str()), true);
+    append(g_app_info_get_all_for_type(query.types.front().c_str()), true);
     if (query.includeOther && !g_cancellable_is_cancelled(cancel)) {
       append(g_app_info_get_all(), false);
     }
@@ -183,35 +236,48 @@ void files::FileLauncher::setDefault(
 }
 
 void files::FileLauncher::openWith(const Location& location, const ApplicationChoice& application) {
-  if (!application.app) {
+  openWith(std::vector{location}, application);
+}
+void files::FileLauncher::openWith(const std::vector<Location>& locations, const ApplicationChoice& application) {
+  if (!application.app || locations.empty()) {
     return;
   }
   struct LaunchWith {
     std::shared_ptr<State> state;
     std::shared_ptr<GAppInfo> app;
     GioPtr<GAppLaunchContext> context{g_app_launch_context_new()};
-    std::string uri;
+    std::vector<std::string> uris;
+    GList* list = nullptr;
+    ~LaunchWith() { g_list_free(list); }
   };
-  auto* request =
-      new LaunchWith{m_state, application.app, GioPtr<GAppLaunchContext>(g_app_launch_context_new()), location.uri()};
-  GList uris{request->uri.data(), nullptr, nullptr};
   ++m_state->active;
-  g_app_info_launch_uris_async(
-      request->app.get(), &uris, request->context.get(), m_state->cancellable.get(),
-      [](GObject* app, GAsyncResult* result, gpointer data) {
-        const std::unique_ptr<LaunchWith> request(static_cast<LaunchWith*>(data));
-        GError* error = nullptr;
-        const bool success = g_app_info_launch_uris_finish(G_APP_INFO(app), result, &error);
-        kLog.debug("Open With GIO completion ({})", success ? "success" : "failed");
-        --request->state->active;
-        const std::string message = error ? error->message : success ? "" : "Could not open this file.";
-        g_clear_error(&error);
-        if (request->state->changed && !g_cancellable_is_cancelled(request->state->cancellable.get())) {
-          request->state->changed(message);
-        }
-      },
-      request
-  );
+  State::context(m_state, application.id, [state = m_state, locations, application](GioPtr<GAppLaunchContext> context) {
+    auto* request = new LaunchWith{state, application.app, std::move(context), {}};
+    request->uris.reserve(locations.size());
+    for (const auto& location : locations) {
+      request->uris.push_back(location.uri());
+    }
+    for (auto& uri : request->uris) {
+      request->list = g_list_prepend(request->list, uri.data());
+    }
+    request->list = g_list_reverse(request->list);
+    g_app_info_launch_uris_async(
+        request->app.get(), request->list, request->context.get(), state->cancellable.get(),
+        [](GObject* app, GAsyncResult* result, gpointer data) {
+          const std::unique_ptr<LaunchWith> request(static_cast<LaunchWith*>(data));
+          GError* error = nullptr;
+          const bool success = g_app_info_launch_uris_finish(G_APP_INFO(app), result, &error);
+          kLog.debug("Open With GIO completion ({})", success ? "success" : "failed");
+          --request->state->active;
+          const std::string message = error ? error->message : success ? "" : "Could not open this file.";
+          g_clear_error(&error);
+          if (request->state->changed && !g_cancellable_is_cancelled(request->state->cancellable.get())) {
+            request->state->changed(message);
+          }
+        },
+        request
+    );
+  });
 }
 void files::FileLauncher::setChangedCallback(std::function<void(const std::string&)> callback) {
   m_state->changed = std::move(callback);
@@ -222,60 +288,62 @@ void files::FileLauncher::open(const Location& location) {
   const auto serial = ++m_state->nextSerial;
   kLog.debug("request {}: begin", serial);
   ++m_state->active;
-  auto* launch = new State::Launch{m_state, GioPtr<GAppLaunchContext>(g_app_launch_context_new()), serial, started};
-  kLog.debug("request {}: context ready at {:.2f} ms", serial, launch->elapsedMs());
-  g_signal_connect(
-      launch->context.get(), "launch-started",
-      G_CALLBACK(+[](GAppLaunchContext*, GAppInfo* app, GVariant*, gpointer data) {
-        const auto& request = *static_cast<State::Launch*>(data);
-        const char* handler = g_app_info_get_id(app);
-        kLog.debug(
-            "request {}: handler={} at {:.2f} ms", request.serial, handler ? handler : "unknown", request.elapsedMs()
-        );
-      }),
-      launch
-  );
-  g_signal_connect(
-      launch->context.get(), "launched",
-      G_CALLBACK(+[](GAppLaunchContext*, GAppInfo*, GVariant* platform, gpointer data) {
-        const auto& request = *static_cast<State::Launch*>(data);
-        gint32 pid = 0;
-        if (platform) {
-          (void)g_variant_lookup(platform, "pid", "i", &pid);
-        }
-        kLog.debug(
-            "request {}: desktop handoff at {:.2f} ms (pid={}, not viewer readiness)", request.serial,
-            request.elapsedMs(), pid
-        );
-      }),
-      launch
-  );
-  g_app_info_launch_default_for_uri_async(
-      location.uri().c_str(), launch->context.get(), m_state->cancellable.get(),
-      [](GObject*, GAsyncResult* result, gpointer data) {
-        const std::unique_ptr<State::Launch> request(static_cast<State::Launch*>(data));
-        const auto& state = request->state;
-        GError* error = nullptr;
-        const bool launched = g_app_info_launch_default_for_uri_finish(result, &error);
-        --state->active;
-        const bool cancelled = g_cancellable_is_cancelled(state->cancellable.get());
-        kLog.debug(
-            "request {}: GIO completion at {:.2f} ms ({})", request->serial, request->elapsedMs(),
-            cancelled      ? "cancelled"
-                : launched ? "success"
-                           : "failed"
-        );
-        const auto callback = state->changed;
-        const std::string message = error != nullptr ? error->message : (launched ? "" : "Could not open this file.");
-        g_clear_error(&error);
-        if (callback && !cancelled) {
-          callback(message);
-        }
-      },
-      launch
-  );
-  kLog.debug(
-      "request {}: GIO call returned at {:.2f} ms", serial,
-      static_cast<double>(g_get_monotonic_time() - started) / 1000.0
-  );
+  State::context(m_state, {}, [state = m_state, location, serial, started](GioPtr<GAppLaunchContext> context) {
+    auto* launch = new State::Launch{state, std::move(context), serial, started};
+    kLog.debug("request {}: context ready at {:.2f} ms", serial, launch->elapsedMs());
+    g_signal_connect(
+        launch->context.get(), "launch-started",
+        G_CALLBACK(+[](GAppLaunchContext*, GAppInfo* app, GVariant*, gpointer data) {
+          const auto& request = *static_cast<State::Launch*>(data);
+          const char* handler = g_app_info_get_id(app);
+          kLog.debug(
+              "request {}: handler={} at {:.2f} ms", request.serial, handler ? handler : "unknown", request.elapsedMs()
+          );
+        }),
+        launch
+    );
+    g_signal_connect(
+        launch->context.get(), "launched",
+        G_CALLBACK(+[](GAppLaunchContext*, GAppInfo*, GVariant* platform, gpointer data) {
+          const auto& request = *static_cast<State::Launch*>(data);
+          gint32 pid = 0;
+          if (platform) {
+            (void)g_variant_lookup(platform, "pid", "i", &pid);
+          }
+          kLog.debug(
+              "request {}: desktop handoff at {:.2f} ms (pid={}, not viewer readiness)", request.serial,
+              request.elapsedMs(), pid
+          );
+        }),
+        launch
+    );
+    g_app_info_launch_default_for_uri_async(
+        location.uri().c_str(), launch->context.get(), state->cancellable.get(),
+        [](GObject*, GAsyncResult* result, gpointer data) {
+          const std::unique_ptr<State::Launch> request(static_cast<State::Launch*>(data));
+          const auto& state = request->state;
+          GError* error = nullptr;
+          const bool launched = g_app_info_launch_default_for_uri_finish(result, &error);
+          --state->active;
+          const bool cancelled = g_cancellable_is_cancelled(state->cancellable.get());
+          kLog.debug(
+              "request {}: GIO completion at {:.2f} ms ({})", request->serial, request->elapsedMs(),
+              cancelled      ? "cancelled"
+                  : launched ? "success"
+                             : "failed"
+          );
+          const auto callback = state->changed;
+          const std::string message = error != nullptr ? error->message : (launched ? "" : "Could not open this file.");
+          g_clear_error(&error);
+          if (callback && !cancelled) {
+            callback(message);
+          }
+        },
+        launch
+    );
+    kLog.debug(
+        "request {}: GIO call returned at {:.2f} ms", serial,
+        static_cast<double>(g_get_monotonic_time() - started) / 1000.0
+    );
+  });
 }

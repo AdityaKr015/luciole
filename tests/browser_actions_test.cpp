@@ -178,6 +178,15 @@ namespace {
     model.select(1);
     const auto request = R::capture(context);
     TEST_CHECK(R::state(A::OpenWith, context, request).enabled && R::state(A::QuickPreview, context, request).enabled);
+    model.select(3, files::SelectionMode::Toggle);
+    const auto batch = R::capture(context);
+    TEST_CHECK(batch.targets.size() == 2 && R::state(A::OpenWith, context, batch).enabled);
+    TEST_CHECK(!R::state(A::QuickPreview, context, batch).enabled);
+    auto changed = snapshot();
+    changed.entries[2].access.read = false;
+    ++changed.generation;
+    model.applySnapshot(changed);
+    TEST_CHECK(!R::state(A::OpenWith, context, R::capture(context)).enabled);
     model.select(6);
     TEST_CHECK(
         !R::state(A::OpenWith, context, R::capture(context)).enabled

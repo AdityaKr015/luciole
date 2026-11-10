@@ -25,22 +25,26 @@ def run_case(binary, mode, names):
             raise RuntimeError("shared MIME database prerequisite unavailable")
         handler = root / "handler.py"
         log = root / "launched.jsonl"
+        token_log = root / "tokens.jsonl"
         handler.write_text(
             "import json,os,sys\nfrom pathlib import Path\n"
             f"with Path({str(log)!r}).open('a') as stream:\n"
             " stream.write(json.dumps([os.fsencode(arg).hex() for arg in sys.argv[1:]])+'\\n')\n"
+            f"with Path({str(token_log)!r}).open('a') as stream:\n"
+            " stream.write(json.dumps([sys.argv[1:],os.getenv('XDG_ACTIVATION_TOKEN'),os.getenv('DESKTOP_STARTUP_ID')])+'\\n')\n"
         )
         desktop = root / "data/applications/fixture.desktop"
         desktop.write_text(
             "[Desktop Entry]\nType=Application\nName=Private launch fixture\n"
-            f"Exec={sys.executable} {handler} %U\n"
-            "MimeType=text/plain;\n" + ("NoDisplay=false\n" if mode in ("with", "other", "default", "default-error", "catalog") else "NoDisplay=true\n")
+            f"Exec={sys.executable} {handler} {'%u' if mode == 'batch-single' else '%U'}\n"
+            + ("StartupNotify=true\n" if mode == "tokens" else "") +
+            "MimeType=text/plain;\n" + ("NoDisplay=false\n" if mode in ("with", "other", "default", "default-error", "catalog", "batch", "batch-single", "tokens", "activation-destroy", "mixed-catalog") else "NoDisplay=true\n")
         )
         (root / "config/mimeapps.list").write_text(
             "[Default Applications]\ntext/plain=fixture.desktop;\n"
         )
         (root / "data/applications/mimeinfo.cache").write_text("[MIME Cache]\ntext/plain=fixture.desktop;\n")
-        if mode in ("other", "default", "default-error", "catalog"):
+        if mode in ("other", "default", "default-error", "catalog", "batch", "batch-single", "tokens", "activation-destroy", "mixed-catalog"):
             for filename, title, arguments, extra in (
                 ("other.desktop", "Noctalia launch fixture Café", "%U", "MimeType=image/png;"),
                 ("hidden.desktop", "Hidden Café", "%U", "NoDisplay=true"),
@@ -55,6 +59,21 @@ def run_case(binary, mode, names):
                     (root / "data/applications" / f"bulk-{index:03}.desktop").write_text(
                         f"[Desktop Entry]\nType=Application\nName={title}\nExec={sys.executable} {handler} %U\n"
                     )
+        if mode == "mixed-catalog":
+            (root / "data/applications/common.desktop").write_text(
+                "[Desktop Entry]\nType=Application\nName=Private common fixture\n"
+                f"Exec={sys.executable} {handler} %U\nMimeType=image/png;text/plain;\n"
+            )
+            (root / "data/applications/mimeinfo.cache").write_text(
+                "[MIME Cache]\ntext/plain=fixture.desktop;common.desktop;\nimage/png=other.desktop;common.desktop;\n"
+            )
+        if mode == "dbus":
+            desktop.rename(root / "data/applications/org.example.Fixture.desktop")
+            desktop = root / "data/applications/org.example.Fixture.desktop"
+            desktop.write_text(desktop.read_text().replace("NoDisplay=true", "NoDisplay=false")
+                               + "DBusActivatable=true\nStartupNotify=true\n")
+            for filename in (root / "config/mimeapps.list", root / "data/applications/mimeinfo.cache"):
+                filename.write_text(filename.read_text().replace("fixture.desktop", "org.example.Fixture.desktop"))
         if mode == "default-error":
             (root / "config/mimeapps.list").unlink()
             (root / "config").rmdir()
@@ -97,13 +116,15 @@ def run_case(binary, mode, names):
             GIO_USE_PORTALS="0",
             NOCTALIA_FILES_LOG_LEVEL="debug",
             G_DEBUG="fatal-warnings",
+            XDG_ACTIVATION_TOKEN="inherited-stale",
+            DESKTOP_STARTUP_ID="inherited-startup",
         )
         result = subprocess.run(
             [binary, mode, *paths], env=env, capture_output=True, timeout=10, check=False
         )
         if result.returncode != 0:
             raise AssertionError((result.returncode, result.stdout.decode(errors="replace"), result.stderr.decode(errors="replace")))
-        if mode in ("open", "sequential", "with", "other", "default"):
+        if mode in ("open", "sequential", "with", "other", "default", "batch", "batch-single", "tokens"):
             deadline = time.monotonic() + 5
             expected = sorted(path.hex() for path in paths)
             while True:
@@ -120,7 +141,19 @@ def run_case(binary, mode, names):
                 if time.monotonic() >= deadline:
                     raise AssertionError((actual, expected, result.stderr))
                 time.sleep(0.01)
-        if mode in ("catalog", "default-error") and log.exists():
+        if mode in ("batch", "batch-single"):
+            invocations = [json.loads(line) for line in log.read_text().splitlines()]
+            if len(invocations) != (1 if mode == "batch" else len(paths)):
+                raise AssertionError("desktop multi/single-URI dispatch ignored")
+        if token_log.exists():
+            values = [json.loads(line) for line in token_log.read_text().splitlines()]
+            if mode == "tokens":
+                expected_tokens = {os.fsdecode(paths[0]): "fresh-first", os.fsdecode(paths[1]): "fresh-second"}
+                if len(values) != 2 or any(expected_tokens.get(args[0]) != token or startup != token for args, token, startup in values):
+                    raise AssertionError(("incorrect fresh token handoff", values))
+            elif any(token or startup for _, token, startup in values):
+                raise AssertionError("inherited token escaped into a child")
+        if mode in ("catalog", "default-error", "mixed-catalog", "activation-destroy", "dbus") and log.exists():
             raise AssertionError("application discovery/default change launched a handler")
         if mode in ("default", "other"):
             associations = configparser.ConfigParser(interpolation=None)
@@ -134,7 +167,7 @@ def run_case(binary, mode, names):
             raise AssertionError("desktop dispatch escaped its fixture")
         # Debug diagnostics identify stages and requests, without recording file payloads.
         diagnostics = result.stderr.decode(errors="replace")
-        if mode not in ("catalog", "default-error") and "GIO completion" not in diagnostics:
+        if mode not in ("catalog", "default-error", "mixed-catalog", "activation-destroy", "dbus") and "GIO completion" not in diagnostics:
             raise AssertionError("missing launch timing diagnostics")
         if mode in ("open", "sequential") and ("handler=fixture.desktop" not in diagnostics or "desktop handoff" not in diagnostics):
             raise AssertionError("missing desktop handoff timing")
@@ -151,6 +184,12 @@ def main():
     run_case(binary, "default", [b"new-default.txt"])
     run_case(binary, "default-error", [b"never-launched.txt"])
     run_case(binary, "catalog", [b"unused.txt"])
+    run_case(binary, "batch", [b"grouped.txt", "space ' $() café\n.txt".encode(), b"raw-\xff.txt"])
+    run_case(binary, "batch-single", [b"individual1.txt", b"individual2.txt"])
+    run_case(binary, "mixed-catalog", [b"unused.txt"])
+    run_case(binary, "dbus", [b"via-bus.txt", "space café.txt".encode(), b"raw-\xff.txt"])
+    run_case(binary, "tokens", [b"explicit-token.txt", b"default-token.txt"])
+    run_case(binary, "activation-destroy", [b"never-launched.txt"])
     run_case(binary, "error", [b"missing.txt"])
     run_case(binary, "destroy", [b"cancelled.txt"])
     print("file launcher desktop integration checks passed")

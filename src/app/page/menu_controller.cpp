@@ -123,8 +123,8 @@ std::vector<ContextMenuControlEntry> MenuController::itemMenuEntries(const files
   const bool trash = request.targets.front().location.isTrash();
 
   add(Action::Open);
+  add(Action::OpenWith);
   if (one) {
-    add(Action::OpenWith);
     add(Action::QuickPreview);
   }
   if (singleFolder) {
