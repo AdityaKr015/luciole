@@ -16,7 +16,7 @@ namespace files {
 struct KeyboardEvent;
 struct PointerEvent;
 struct wl_surface;
-class BrowserSettingsView;
+class SettingsDialog;
 class PageContext;
 class RenderContext;
 class SelectDropdownPopup;
@@ -65,7 +65,7 @@ private:
   WaylandConnection& m_connection;
   RenderContext& m_renderer;
   std::function<void()> m_clearThumbnails;
-  BrowserSettingsView* m_view = nullptr;
+  SettingsDialog* m_view = nullptr;
   std::unique_ptr<SelectDropdownPopup> m_dropdown;
   std::optional<files::Settings> m_pending;
   std::string m_error;

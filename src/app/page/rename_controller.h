@@ -11,7 +11,7 @@ namespace files {
   class PinService;
 } // namespace files
 
-class NameEditor;
+class NameDialog;
 class OperationJob;
 class PageContext;
 
@@ -39,11 +39,11 @@ private:
   files::PinService& m_pins;
   // The editor's job: checks the target, then renames it.
   std::shared_ptr<OperationJob> m_job;
-  NameEditor* m_fileRenameEditor = nullptr;
+  NameDialog* m_fileRenameEditor = nullptr;
   std::optional<files::DirectoryEntry> m_fileRenameTarget;
   bool m_fileRenamePreparing = false;
   bool m_dirty = false;
-  NameEditor* m_placeEditor = nullptr;
+  NameDialog* m_placeEditor = nullptr;
   std::optional<files::Bookmark> m_placeRenameTarget;
   std::optional<std::string> m_pendingPlaceLabel;
 };

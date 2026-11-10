@@ -10,7 +10,7 @@
 #include <string>
 
 class LinkDialog;
-class NameEditor;
+class NameDialog;
 class OperationJob;
 class PageContext;
 class SubmenuController;
@@ -45,7 +45,7 @@ private:
   std::shared_ptr<OperationJob> m_job;
   files::TemplateCatalog& m_templates;
   SubmenuController& m_submenus;
-  NameEditor* m_createEditor = nullptr;
+  NameDialog* m_createEditor = nullptr;
   LinkDialog* m_linkDialog = nullptr;
   bool m_linkPreparing = false;
   std::optional<files::Location> m_createParent;

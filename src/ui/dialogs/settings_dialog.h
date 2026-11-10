@@ -9,9 +9,9 @@
 class Label;
 class ScrollView;
 
-class BrowserSettingsView final : public Flex {
+class SettingsDialog final : public Flex {
 public:
-  BrowserSettingsView(
+  SettingsDialog(
       std::function<void(files::OverrideEdit)> change, std::function<void()> reset, std::function<void()> close,
       std::function<void()> clearThumbnails
   );

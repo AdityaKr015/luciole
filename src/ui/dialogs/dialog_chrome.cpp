@@ -1,4 +1,4 @@
-#include "ui/controls/dialog_chrome.h"
+#include "ui/dialogs/dialog_chrome.h"
 
 #include "ui/builders.h"
 

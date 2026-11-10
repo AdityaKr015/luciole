@@ -9,10 +9,10 @@
 #include "platform/desktop_integration.h"
 #include "render/scene/input_area.h"
 #include "render/scene/input_dispatcher.h"
-#include "ui/controls/batch_rename_dialog.h"
 #include "ui/controls/file_error_text.h"
 #include "ui/controls/input.h"
 #include "ui/controls/virtual_grid_view.h"
+#include "ui/dialogs/batch_rename_dialog.h"
 #include "wayland/popup_surface.h"
 
 #include <algorithm>

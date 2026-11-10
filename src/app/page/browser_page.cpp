@@ -44,9 +44,9 @@
 #include "ui/controls/context_menu.h"
 #include "ui/controls/input.h"
 #include "ui/controls/miller_view.h"
-#include "ui/controls/name_editor.h"
 #include "ui/controls/scroll_view.h"
 #include "ui/controls/tooltip_presenter.h"
+#include "ui/dialogs/name_dialog.h"
 #include "ui/palette.h"
 #include "wayland/popup_surface.h"
 #include "wayland/text_input_service.h"
@@ -1380,7 +1380,7 @@ void BrowserPage::unpinTargets(const std::vector<files::DirectoryEntry>& targets
 
 void BrowserPage::openPatternSelection(const files::ActionRequest& request) {
   const float width = std::min(440.0F, static_cast<float>(m_surface->width()) - 32.0F);
-  auto editor = std::make_unique<NameEditor>(
+  auto editor = std::make_unique<NameDialog>(
       width, "Select by pattern", "cursor-text", m_selectionPattern,
       "Use * for any text and ? for one character. Matches visible names, ignoring case.",
       files::selectionPatternProblem,

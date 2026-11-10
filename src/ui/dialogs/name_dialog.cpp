@@ -1,9 +1,9 @@
-#include "ui/controls/name_editor.h"
+#include "ui/dialogs/name_dialog.h"
 
 #include "ui/builders.h"
-#include "ui/controls/dialog_chrome.h"
+#include "ui/dialogs/dialog_chrome.h"
 
-NameEditor::NameEditor(
+NameDialog::NameDialog(
     float width, const std::string& title, const std::string& glyph, const std::string& value, std::string hint,
     std::function<std::optional<std::string>(const std::string&)> validate, std::function<void(std::string)> submit,
     std::function<void()> cancel, std::string action, std::string busyAction
@@ -58,7 +58,7 @@ NameEditor::NameEditor(
   );
 }
 
-void NameEditor::setSaving(bool saving) {
+void NameDialog::setSaving(bool saving) {
   m_saving = saving;
   m_input->setEnabled(!saving);
   m_save->setEnabled(!saving);
@@ -66,13 +66,13 @@ void NameEditor::setSaving(bool saving) {
   m_cancel->setText(saving ? "Close" : "Cancel");
 }
 
-void NameEditor::showError(const std::string& error) {
+void NameDialog::showError(const std::string& error) {
   m_input->setInvalid(!error.empty());
   m_message->setText(error.empty() ? m_hint : error);
   m_message->setColor(colorSpecFromRole(error.empty() ? ColorRole::OnSurfaceVariant : ColorRole::Error));
 }
 
-void NameEditor::submit() {
+void NameDialog::submit() {
   if (m_saving) {
     return;
   }

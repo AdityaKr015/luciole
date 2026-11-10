@@ -1,11 +1,11 @@
-#include "ui/controls/browser_settings_view.h"
+#include "ui/dialogs/settings_dialog.h"
 
 #include "ui/builders.h"
 #include "ui/controls/button.h"
 #include "ui/controls/card_style.h"
-#include "ui/controls/dialog_chrome.h"
 #include "ui/controls/select.h"
 #include "ui/controls/stepper.h"
+#include "ui/dialogs/dialog_chrome.h"
 
 #include <algorithm>
 #include <format>
@@ -24,7 +24,7 @@ namespace {
   }
 } // namespace
 
-BrowserSettingsView::BrowserSettingsView(
+SettingsDialog::SettingsDialog(
     std::function<void(files::OverrideEdit)> change, std::function<void()> reset, std::function<void()> close,
     std::function<void()> clearThumbnails
 )
@@ -195,7 +195,7 @@ BrowserSettingsView::BrowserSettingsView(
   );
 }
 
-void BrowserSettingsView::section(const std::string& title, const std::string& glyph) {
+void SettingsDialog::section(const std::string& title, const std::string& glyph) {
   const auto index = m_pages.size();
   Button* button = nullptr;
   m_navigationScroll->content()->addChild(
@@ -229,7 +229,7 @@ void BrowserSettingsView::section(const std::string& title, const std::string& g
   m_pages.push_back(page.get());
   m_body->content()->addChild(std::move(page));
 }
-void BrowserSettingsView::group(const std::string& title) {
+void SettingsDialog::group(const std::string& title) {
   // Same caption heading as the places sidebar; top space separates it from the previous group.
   const float top = m_section->children().empty() ? 0.0F : Style::spaceMd;
   m_section->addChild(
@@ -245,7 +245,7 @@ void BrowserSettingsView::group(const std::string& title) {
       )
   );
 }
-void BrowserSettingsView::selectPage(std::size_t selected) {
+void SettingsDialog::selectPage(std::size_t selected) {
   for (std::size_t index = 0; index < m_pages.size(); ++index) {
     m_pages[index]->setVisible(index == selected);
     m_pages[index]->setParticipatesInLayout(index == selected);
@@ -254,13 +254,13 @@ void BrowserSettingsView::selectPage(std::size_t selected) {
   m_body->requestScrollToOffset(0);
   m_navigationScroll->requestScrollIntoView(m_navButtons[selected]);
 }
-void BrowserSettingsView::setCompact(bool compact) {
+void SettingsDialog::setCompact(bool compact) {
   const float width = compact ? 152.0F : 192.0F;
   m_navigation->setMinWidth(width);
   m_navigation->setMaxWidth(width);
 }
 template <class T>
-void BrowserSettingsView::addRow(
+void SettingsDialog::addRow(
     files::PreferenceKey<T> key, const std::string& title, std::function<void(const T&)> show,
     std::unique_ptr<Node> control
 ) {
@@ -275,7 +275,7 @@ void BrowserSettingsView::addRow(
 }
 
 template <class T>
-void BrowserSettingsView::addChoice(files::PreferenceKey<T> key, const std::string& title, const Choices<T>& choices) {
+void SettingsDialog::addChoice(files::PreferenceKey<T> key, const std::string& title, const Choices<T>& choices) {
   auto control = std::make_unique<Select>();
   auto* select = control.get();
   std::vector<std::string> options;
@@ -297,7 +297,7 @@ void BrowserSettingsView::addChoice(files::PreferenceKey<T> key, const std::stri
   addRow<T>(key, title, show, std::move(control));
 }
 
-void BrowserSettingsView::addBool(files::PreferenceKey<bool> key, const std::string& title) {
+void SettingsDialog::addBool(files::PreferenceKey<bool> key, const std::string& title) {
   Toggle* control = nullptr;
   auto row = ui::row(
       {.justify = FlexJustify::End, .width = 180.0F},
@@ -306,7 +306,7 @@ void BrowserSettingsView::addBool(files::PreferenceKey<bool> key, const std::str
   addRow<bool>(key, title, [control](bool value) { control->setCheckedImmediate(value); }, std::move(row));
 }
 
-void BrowserSettingsView::addNumber(
+void SettingsDialog::addNumber(
     files::PreferenceKey<int> key, const std::string& title, const std::vector<int>& values, std::string suffix
 ) {
   auto control = std::make_unique<Stepper>();
@@ -338,7 +338,7 @@ void BrowserSettingsView::addNumber(
   addRow<int>(key, title, show, std::move(control));
 }
 
-template <class T> void BrowserSettingsView::send(files::PreferenceKey<T> key, std::optional<T> value) {
+template <class T> void SettingsDialog::send(files::PreferenceKey<T> key, std::optional<T> value) {
   // Choosing the inherited value stores no override.
   if (value && *value == files::preferenceValue(m_inherited, key)) {
     value.reset();
@@ -349,7 +349,7 @@ template <class T> void BrowserSettingsView::send(files::PreferenceKey<T> key, s
   m_status->setColor(colorSpecFromRole(ColorRole::OnSurfaceVariant));
   m_change(value ? files::OverrideEdit(key, *value) : files::OverrideEdit(key, std::nullopt));
 }
-void BrowserSettingsView::sync(
+void SettingsDialog::sync(
     const files::BrowserSettings& settings, const files::BrowserSettings& inherited, bool busy,
     const std::string& error, bool clearingThumbnails
 ) {
@@ -363,7 +363,7 @@ void BrowserSettingsView::sync(
   m_status->setText(!error.empty() ? error : clearingThumbnails ? "Clearing cache…" : busy ? "Saving…" : "");
   m_status->setColor(colorSpecFromRole(error.empty() ? ColorRole::OnSurfaceVariant : ColorRole::Error));
 }
-void BrowserSettingsView::reveal(const Node* node) {
+void SettingsDialog::reveal(const Node* node) {
   m_navigationScroll->requestScrollIntoView(node);
   m_body->requestScrollIntoView(node);
 }

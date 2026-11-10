@@ -1,7 +1,6 @@
-#include "ui/controls/batch_rename_dialog.h"
+#include "ui/dialogs/batch_rename_dialog.h"
 
 #include "ui/builders.h"
-#include "ui/controls/dialog_chrome.h"
 #include "ui/controls/file_error_text.h"
 #include "ui/controls/input.h"
 #include "ui/controls/scroll_view.h"
@@ -10,6 +9,7 @@
 #include "ui/controls/toggle.h"
 #include "ui/controls/tooltip_presenter.h"
 #include "ui/controls/virtual_grid_view.h"
+#include "ui/dialogs/dialog_chrome.h"
 
 #include <algorithm>
 #include <array>

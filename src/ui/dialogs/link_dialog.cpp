@@ -1,11 +1,11 @@
-#include "ui/controls/link_dialog.h"
+#include "ui/dialogs/link_dialog.h"
 
 #include "fs/filename.h"
 #include "ui/builders.h"
-#include "ui/controls/dialog_chrome.h"
 #include "ui/controls/input.h"
 #include "ui/controls/scroll_view.h"
 #include "ui/controls/segmented.h"
+#include "ui/dialogs/dialog_chrome.h"
 
 LinkDialog::LinkDialog(
     float width, std::string source, std::string name, std::string destination, bool hardAllowed,

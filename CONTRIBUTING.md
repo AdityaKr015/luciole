@@ -54,7 +54,7 @@ Comments explain what the current code does and any non-obvious constraint a rea
 
 ### Module layering
 
-Each directory under `src/` builds as one static library in `meson.build` (`ui/browser` and `ui/controls` together form `ui`), and its dependencies list only the modules it may include. A module includes only these:
+Each directory under `src/` builds as one static library in `meson.build` (`ui/browser`, `ui/controls`, and `ui/dialogs` together form `ui`), and its dependencies list only the modules it may include. A module includes only these:
 
 - `model`: plain option and enum types; nothing from `src/` or `lib/`.
 - `fs`: GIO file access, locations, atomic writes, transfer result types; no other module.

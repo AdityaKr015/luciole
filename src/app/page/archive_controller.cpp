@@ -18,6 +18,7 @@
 #include "render/scene/input_dispatcher.h"
 #include "ui/controls/archive_view.h"
 #include "ui/controls/file_error_text.h"
+#include "ui/dialogs/archive_dialog.h"
 #include "wayland/popup_surface.h"
 #include "wayland/wayland_connection.h"
 #include "wayland/wayland_seat.h"

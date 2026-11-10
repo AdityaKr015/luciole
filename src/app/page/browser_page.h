@@ -50,10 +50,10 @@
 #include "ui/controls/context_menu.h"
 #include "ui/controls/input.h"
 #include "ui/controls/miller_view.h"
-#include "ui/controls/name_editor.h"
 #include "ui/controls/scroll_view.h"
 #include "ui/controls/separator.h"
 #include "ui/controls/tooltip_presenter.h"
+#include "ui/dialogs/name_dialog.h"
 #include "wayland/popup_surface.h"
 #include "wayland/text_input_service.h"
 #include "wayland/toplevel_surface.h"
@@ -298,7 +298,7 @@ private:
   bool m_restartMiller = false;
   const files::BrowserController* m_lastBrowser = nullptr;
   files::ActivationMode m_activationMode = files::ActivationMode::DoubleClick;
-  NameEditor* m_patternEditor = nullptr;
+  NameDialog* m_patternEditor = nullptr;
   std::string m_selectionPattern = "*";
   files::FileIconCache& m_icons;
   files::ThumbnailService& m_thumbnails;

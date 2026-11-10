@@ -14,8 +14,8 @@
 #include "ui/controls/context_menu.h"
 #include "ui/controls/file_error_text.h"
 #include "ui/controls/input.h"
-#include "ui/controls/link_dialog.h"
-#include "ui/controls/name_editor.h"
+#include "ui/dialogs/link_dialog.h"
+#include "ui/dialogs/name_dialog.h"
 #include "wayland/popup_surface.h"
 
 #include <algorithm>
@@ -100,7 +100,7 @@ void CreateController::openCreateItem(
   const float width = std::min(420.0F, static_cast<float>(surface.width()) - 32.0F);
   const bool document = kind == files::CreateKind::Document;
   const auto display = source ? files::filenameDisplayText(source->name) : std::string{};
-  auto editor = std::make_unique<NameEditor>(
+  auto editor = std::make_unique<NameDialog>(
       width,
       kind == files::CreateKind::Folder ? "New folder"
           : document                    ? "New document"

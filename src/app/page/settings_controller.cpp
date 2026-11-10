@@ -8,8 +8,8 @@
 #include "render/scene/input_dispatcher.h"
 #include "thumbnails/thumbnail_service.h"
 #include "ui/browser/action_shortcuts.h"
-#include "ui/controls/browser_settings_view.h"
 #include "ui/controls/select_dropdown_popup.h"
+#include "ui/dialogs/settings_dialog.h"
 #include "wayland/popup_surface.h"
 #include "wayland/wayland_connection.h"
 #include "wayland/wayland_seat.h"
@@ -71,7 +71,7 @@ void SettingsController::toggle() {
     return;
   }
   m_viewLifetime = std::make_shared<int>(0);
-  auto root = std::make_unique<BrowserSettingsView>(
+  auto root = std::make_unique<SettingsDialog>(
       [this](files::OverrideEdit edit) {
         m_preferences.submit({edit});
         if (auto* surface = m_page.menuSurface()) {
