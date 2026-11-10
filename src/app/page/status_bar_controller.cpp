@@ -35,7 +35,12 @@ std::unique_ptr<Flex> StatusBarController::build() {
        .minHeight = Style::controlHeightSm,
        .visible = false,
        .participatesInLayout = false},
-      ui::label({.out = &m_status, .maxLines = 1, .configure = [](Label& label) { label.setUseMarkup(false); }}),
+      ui::label(
+          {.out = &m_status,
+           .fontSize = Style::fontSizeCaption,
+           .maxLines = 1,
+           .configure = [](Label& label) { label.setUseMarkup(false); }}
+      ),
       ui::label(
           {.out = &m_freeSpace,
            .fontSize = Style::fontSizeCaption,
@@ -242,7 +247,7 @@ void StatusBarController::sync(bool miller) {
     const char* glyph;
     std::string title, detail;
   };
-  const auto notice = [&]() -> Notice {
+  const auto notice = [&] -> Notice {
     if (snapshot.error) {
       return {"alert-triangle", "Could not open this folder", status};
     }
