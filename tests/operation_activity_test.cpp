@@ -73,16 +73,27 @@ namespace {
     auto live = workspace.hub.activities();
     TEST_CHECK(live.size() == 1 && !live[0].finished && live[0].canCancel && !live[0].progress);
     pump.until([&] { return service.conflict().has_value(); });
-    fs::permissions(fixture.root / "destination", fs::perms::owner_read | fs::perms::owner_exec);
+    const auto destination = fixture.root / "destination";
+    const auto held = fixture.root / "held-destination";
+    // A changed destination identity forces failure for both root and ordinary users.
+    fs::rename(destination, held);
+    fs::create_directory(destination);
     TEST_CHECK(service.resolve(service.conflict()->id, luciole::TransferConflictChoice::Replace));
     pump.until([&] { return !service.busy(); });
-    fs::permissions(fixture.root / "destination", fs::perms::owner_all);
     auto result = workspace.hub.activities();
     TEST_CHECK(
         result.size() == 1 && result[0].finished && result[0].state == ActivityState::Partial && result[0].canRetry
     );
+    TEST_CHECK(service.results().size() == 2);
+    TEST_CHECK(service.results()[0].outcome == luciole::TransferOutcome::Copied);
+    TEST_CHECK(service.results()[1].outcome == luciole::TransferOutcome::Failed);
+    TEST_CHECK(service.results()[1].error && service.results()[1].error->kind == luciole::FileErrorKind::Changed);
+    TEST_CHECK(fs::is_regular_file(held / "success") && fs::is_empty(destination));
     TEST_CHECK(result[0].report && result[0].report->contains("missing"));
     TEST_CHECK(!workspace.hub.cancelActivity(job->id()));
+    // Restore the same directory identity so the captured failed item can retry.
+    TEST_CHECK(fs::remove(destination));
+    fs::rename(held, destination);
     TEST_CHECK(service.retryFailed());
     live = workspace.hub.activities();
     TEST_CHECK(live.size() == 1 && live[0].id == job->id() && !live[0].finished);
