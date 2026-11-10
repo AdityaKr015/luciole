@@ -5,6 +5,7 @@
 #include "core/input/key_symbols.h"
 #include "ui/builders.h"
 #include "ui/controls/button.h"
+#include "ui/controls/card_style.h"
 #include "ui/controls/scroll_view.h"
 #include "ui/controls/virtual_grid_view.h"
 
@@ -16,7 +17,7 @@ namespace {
     TreeButton() {
       setVariant(ButtonVariant::Ghost);
       setContentAlign(ButtonContentAlign::Start);
-      setControlHeight(36);
+      setControlHeight(files::kSideListRowHeight);
       setGlyph("folder");
       setText(" ");
       label()->setUseMarkup(false);
@@ -141,7 +142,7 @@ files::SidebarTreeView::SidebarTreeView() : m_adapter(std::make_unique<Adapter>(
   grid->setFlexGrow(1);
   grid->setColumns(1);
   grid->setSquareCells(false);
-  grid->setCellHeight(36);
+  grid->setCellHeight(files::kSideListRowHeight);
   grid->setRowGap(4);
   grid->setAdapter(m_adapter.get());
   grid->focusArea()->setTabFocusKey("sidebar-tree");

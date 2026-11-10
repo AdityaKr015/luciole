@@ -157,6 +157,7 @@ void files::PlacesSidebar::addDriveRow(const Drive& drive) {
   auto button = ui::button(
       {.text = drive.label,
        .glyph = drive.glyph,
+       .controlHeight = files::kSideListRowHeight,
        .contentAlign = ButtonContentAlign::Start,
        .variant = ButtonVariant::Ghost,
        .paddingH = files::kSideListRowPaddingH,
@@ -224,6 +225,7 @@ void files::PlacesSidebar::addRow(const Bookmark& bookmark, const std::string& g
   auto button = ui::button(
       {.text = bookmark.label,
        .glyph = glyph,
+       .controlHeight = files::kSideListRowHeight,
        .contentAlign = ButtonContentAlign::Start,
        .variant = ButtonVariant::Ghost,
        .paddingH = files::kSideListRowPaddingH,
@@ -401,7 +403,7 @@ void files::PlacesSidebar::rebuild() {
     addRow(pins[i], known == m_pins.userPlaces().end() ? "folder" : known->glyphName, i);
   }
   if (m_showDrives && !m_drives.drives().empty()) {
-    content->addChild(ui::box({.fill = clearColorSpec(), .height = Style::spaceSm}));
+    content->addChild(ui::column({.align = FlexAlign::Stretch, .paddingV = Style::spaceXs}, ui::separator({})));
     heading("Drives");
     for (const auto& drive : m_drives.drives()) {
       addDriveRow(drive);

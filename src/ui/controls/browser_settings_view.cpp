@@ -201,6 +201,7 @@ void BrowserSettingsView::section(const std::string& title, std::string_view cus
           {.out = &button,
            .text = title,
            .glyph = glyph,
+           .controlHeight = files::kSideListRowHeight,
            .contentAlign = ButtonContentAlign::Start,
            .variant = ButtonVariant::Ghost,
            .paddingH = files::kSideListRowPaddingH,
