@@ -16,12 +16,13 @@ files::PlacesSidebar::PlacesSidebar(PinService& pins, DriveMonitor& drives) : m_
   setAlign(FlexAlign::Stretch);
   setMinWidth(static_cast<float>(kDefaultSidebarWidth));
   setMaxWidth(static_cast<float>(kDefaultSidebarWidth));
-  files::applySideListStyle(*this);
-  setPadding(files::kSideListPadding);
+  // Rows sit on the window chrome. Their right inset is the 8px resize-handle gap before the content
+  // (kWorkspaceInset), so the left inset matches it and nothing else pads the rows horizontally.
+  setPadding(files::kSideListPadding, 0.0F, files::kSideListPadding, Style::spaceSm);
   addChild(
       ui::scrollView(
           {.out = &m_scroll,
-           .viewportPaddingH = files::kSideListViewportPaddingH,
+           .viewportPaddingH = 0.0F,
            .viewportPaddingV = files::kSideListViewportPaddingV,
            .fillWidth = true,
            .flexGrow = 1.0F}
