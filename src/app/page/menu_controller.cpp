@@ -137,8 +137,9 @@ std::vector<ContextMenuControlEntry> MenuController::itemMenuEntries(const files
     entries.push_back(
         {.id = PasteInto,
          .label = "Paste into Folder",
-         .enabled =
-             !m_page.operationsBusy() && single->location.nativePath().has_value() && single->access.write != false}
+         .enabled = !m_page.operationsBusy()
+             && files::transferLocationSupported(single->location)
+             && single->access.write != false}
     );
   }
   if (m_page.hasOtherPane()) {

@@ -174,7 +174,7 @@ const std::vector<files::Bookmark>* DragDropController::draggedFolders() const {
 files::FileDropTarget DragDropController::externalDrop(float x, float y, const std::vector<files::Bookmark>* pins) {
   m_externalDraggingHere = true;
   updateExternalScroll();
-  // External offers are decoded only after a drop. Native worker validation
+  // External offers are decoded only after a drop. Transfer worker validation
   // still checks self/descendant/alias targets before any filesystem change.
   if (pins && m_sidebar.visible() && m_pins.editable() && !m_sidebar.places().folderAt(x, y)) {
     if (const auto slot = m_sidebar.places().dropSlot(x, y)) {
@@ -212,7 +212,7 @@ files::FileDropTarget DragDropController::externalDestination(const files::Locat
       || m_page.overlay()
       || m_page.menuSurface() != nullptr
       || m_page.operationsBusy()
-      || !destination.nativePath()) {
+      || !files::transferLocationSupported(destination)) {
     return {};
   }
   m_externalDropTarget = DropTarget{destination, rect};
@@ -236,6 +236,8 @@ files::FileDropTarget DragDropController::externalDestination(const files::Locat
           },
       .preferred = (m_connection.keyboardModifiers() & KeyMod::Alt) != 0 ? files::DragAction::Ask
           : (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0       ? files::DragAction::Copy
+          : (m_connection.keyboardModifiers() & KeyMod::Shift) != 0      ? files::DragAction::Move
+          : !destination.isNative()                                      ? files::DragAction::Copy
                                                                          : files::DragAction::Move
   };
 }
@@ -250,7 +252,10 @@ std::optional<std::pair<files::Location, LayoutRect>> DragDropController::foreig
       return std::nullopt;
     }
     const auto* entry = m_page.browser().model().entry(rows[*index]);
-    if (!entry || entry->symlink || entry->type != files::FileType::Directory || !entry->location.nativePath()) {
+    if (!entry
+        || entry->symlink
+        || entry->type != files::FileType::Directory
+        || !files::transferLocationSupported(entry->location)) {
       return std::nullopt;
     }
     if (auto rect = m_page.fileList()->itemRect(*index)) {
@@ -259,7 +264,7 @@ std::optional<std::pair<files::Location, LayoutRect>> DragDropController::foreig
     return std::nullopt;
   }
   const auto& location = m_page.browser().model().snapshot().location;
-  if (location && location->nativePath() && m_page.browser().searchQuery().empty()) {
+  if (location && files::transferLocationSupported(*location) && m_page.browser().searchQuery().empty()) {
     return std::pair(*location, sceneRect(m_page.filePane()));
   }
   return std::nullopt;
@@ -282,7 +287,7 @@ bool DragDropController::dragCurrent() const {
 
 bool DragDropController::validDropFolder(const files::Location& destination) const {
   if (m_externalHover) {
-    if (!destination.nativePath()) {
+    if (!files::transferLocationSupported(destination)) {
       return false;
     }
     const auto* payload = m_page.clipboard().dragFiles();
@@ -298,12 +303,12 @@ bool DragDropController::validDropFolder(const files::Location& destination) con
     }
     return differentParent || (m_connection.keyboardModifiers() & (KeyMod::Ctrl | KeyMod::Alt)) != 0;
   }
-  if (!m_drag || m_drag->sourcePin || !destination.nativePath()) {
+  if (!m_drag || m_drag->sourcePin || !files::transferLocationSupported(destination)) {
     return false;
   }
   bool anyDifferentParent = false;
   for (const auto& source : m_drag->entries) {
-    if (!source.location.nativePath() || source.location == destination) {
+    if (!files::transferLocationSupported(source.location) || source.location == destination) {
       return false;
     }
     const auto* entry = m_page.browser().model().entry(source.id);
@@ -659,7 +664,11 @@ void DragDropController::layout(Renderer& renderer) {
   } else if (slot) {
     m_sidebar.showDropLine(renderer, *slot);
   }
-  const bool copy = (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0;
+  const bool copy = (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0
+      || ((m_connection.keyboardModifiers() & KeyMod::Shift) == 0
+          && m_lastDropTarget
+          && (!m_lastDropTarget->location.isNative()
+              || std::ranges::any_of(m_drag->entries, [](const auto& source) { return !source.location.isNative(); })));
   const auto shape = slot
       ? (m_drag->sourcePin ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY)
       : m_lastDropTarget
@@ -676,7 +685,11 @@ void DragDropController::finishDrag() {
   const auto previous = m_lastDropTarget;
   const auto slot = pinDropSlot();
   const auto drag = *m_drag;
-  const bool copy = (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0;
+  const bool copy = (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0
+      || ((m_connection.keyboardModifiers() & KeyMod::Shift) == 0
+          && target
+          && (!target->location.isNative()
+              || std::ranges::any_of(drag.entries, [](const auto& source) { return !source.location.isNative(); })));
   cancelDrag();
   if (!current) {
     return;

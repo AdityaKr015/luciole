@@ -3,11 +3,14 @@
 #include "fs/background_job.h"
 #include "fs/cancel_token.h"
 #include "fs/filename.h"
+#include "fs/gio_interop.h"
 #include "fs/posix_fd.h"
 #include "operations/conflict_gate.h"
+#include "operations/provider_transfer.h"
 #include "operations/transfer_copy.h"
 #include "operations/transfer_staging.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <fcntl.h>
@@ -25,6 +28,7 @@ namespace {
     explicit Job(files::TransferRequest transfer) : request(std::move(transfer)) {}
     files::TransferRequest request;
     std::vector<std::shared_ptr<Node>> nodes;
+    std::unique_ptr<files::ProviderTransfer> provider;
     std::map<std::pair<dev_t, ino_t>, struct stat> changedLinks;
     std::size_t mergedItems = 0;
     std::vector<files::TransferResult> outcomes;
@@ -41,6 +45,20 @@ namespace {
     std::string report;
   };
 
+  std::string reportUri(const files::Location& location) {
+    const std::unique_ptr<GUri, decltype(&g_uri_unref)> parsed(
+        g_uri_parse(
+            location.uri().c_str(), static_cast<GUriFlags>(G_URI_FLAGS_ENCODED | G_URI_FLAGS_HAS_PASSWORD), nullptr
+        ),
+        g_uri_unref
+    );
+    if (!parsed) {
+      return "[invalid location]";
+    }
+    const files::GString safe(g_uri_to_string_partial(parsed.get(), G_URI_HIDE_PASSWORD));
+    return safe ? safe.get() : "[invalid location]";
+  }
+
   std::string jobReport(const std::vector<files::TransferResult>& results) {
     std::string report = "Transfer results\n";
     constexpr std::array labels{"Moved", "Copied", "Skipped", "Failed", "Cancelled", "Partial", "Linked"};
@@ -48,8 +66,8 @@ namespace {
       if (report.size() > 16 * 1024 * 1024) {
         return;
       }
-      report += result.source.uri()
-          + (result.destination ? " -> " + result.destination->uri() : "")
+      report += reportUri(result.source)
+          + (result.destination ? " -> " + reportUri(*result.destination) : "")
           + "\n  "
           + labels.at(static_cast<std::size_t>(result.outcome));
       report += result.retryable ? " (retry available)" : "";
@@ -372,7 +390,21 @@ bool files::TransferService::launch(TransferRequest request, bool retry) {
         work.allowMerge = allowMerge;
         work.changedLinks = job->changedLinks;
         work.mergedItems = job->mergedItems;
-        auto outcomes = retry ? retryJob(*job, work, owner->completed) : runFirst(*job, work, owner->completed);
+        const bool remote = !job->request.destination.isNative()
+            || std::ranges::any_of(job->request.sources, [](const auto& source) { return !source.isNative(); });
+        if (remote && !job->provider) {
+          job->provider = std::make_unique<ProviderTransfer>(job->request);
+        }
+        auto outcomes = remote
+            ? job->provider->run(
+                  token, owner->bytes, owner->completed,
+                  [&](TransferConflict conflict) {
+                    const auto answer = owner->gate.ask(std::move(conflict), token, [owner] { State::notify(owner); });
+                    return answer ? answer->choice : TransferConflictChoice::Cancel;
+                  }
+              )
+            : retry ? retryJob(*job, work, owner->completed)
+                    : runFirst(*job, work, owner->completed);
         job->changedLinks = std::move(work.changedLinks);
         job->mergedItems = work.mergedItems;
         job->outcomes = outcomes;
@@ -391,7 +423,7 @@ bool files::TransferService::launch(TransferRequest request, bool retry) {
           owner->report = jobReport(owner->results);
         }
         owner->job = job;
-        owner->retryable = 0;
+        owner->retryable = job->provider ? job->provider->retryable() : 0;
         for (const auto& node : job->nodes) {
           if (node) {
             owner->retryable += retryCount(*node);

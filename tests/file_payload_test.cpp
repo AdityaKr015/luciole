@@ -25,6 +25,15 @@ namespace {
     const auto commented = parseFilePayload(kUriListMime, "# selection\r\n\r\nfile:///tmp/a%20b\r\n");
     TEST_CHECK(commented && commented->locations.front().nativePath() == "/tmp/a b");
   }
+  void testRemoteRoundTrip() {
+    const files::FilePayload remote{{files::Location::fromUri("sftp://user@example.invalid/path/a%20b%FF.txt")}, true};
+    for (const auto mime : {files::kUriListMime, files::kGnomeFilesMime}) {
+      const auto encoded = files::encodeFilePayload(remote, mime);
+      TEST_CHECK(encoded);
+      const auto decoded = files::parseFilePayload(mime, *encoded);
+      TEST_CHECK(decoded && decoded->locations == remote.locations);
+    }
+  }
   void testRejection() {
     using namespace files;
     for (const auto* bytes :
@@ -74,6 +83,7 @@ int main() {
   try {
     testRoundTrip();
     testRejection();
+    testRemoteRoundTrip();
     testPartialMoves();
     std::println("file payload tests passed");
     return 0;

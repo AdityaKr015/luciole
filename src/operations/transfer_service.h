@@ -35,7 +35,7 @@ namespace files {
     bool allowMerge = true; // Archive publication keeps its separate all-or-nothing folder policy.
   };
 
-  // One serial native-filesystem job. Workers never access browser models or UI.
+  // One serial native-filesystem or verified-provider job. Workers never access browser models or UI.
   class TransferService {
   public:
     TransferService();

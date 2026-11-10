@@ -31,6 +31,7 @@ test_table = [
   {'name': 'rename-service', 'deps': [operations_dep, browser_dep, event_loop_dep], 'env': gio_env},
   {'name': 'batch-rename-service', 'deps': [operations_dep, event_loop_dep], 'env': gio_env},
   {'name': 'permission-service', 'deps': [operations_dep, event_loop_dep], 'env': gio_env},
+  {'name': 'provider-transfer', 'deps': [operations_dep, event_loop_dep], 'env': gio_env},
   {'name': 'transfer-service', 'deps': [operations_dep, event_loop_dep], 'timeout': 90, 'env': gio_env},
   {'name': 'places', 'deps': [browser_dep, event_loop_dep], 'env': gio_env},
   {'name': 'file-icon', 'deps': [thumbnails_dep, imaging_dep, system_dep, event_loop_dep], 'env': gio_env},

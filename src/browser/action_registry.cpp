@@ -1,6 +1,7 @@
 #include "browser/action_registry.h"
 
 #include "fs/archive_type.h"
+#include "fs/transfer_types.h"
 
 #include <algorithm>
 #include <array>
@@ -55,12 +56,12 @@ namespace {
       return unavailable("The application clipboard is unavailable.");
     }
     if (!all(c, r, [&](const DirectoryEntry& entry) {
-          return entry.location.nativePath().has_value()
+          return transferLocationSupported(entry.location)
               && entry.access.read.value_or(true)
               && (entry.type == FileType::Directory || entry.type == FileType::Regular || entry.symlink)
-              && (!cut || entry.access.rename.value_or(true));
+              && (!cut || (entry.access.rename != false && entry.access.remove != false));
         })) {
-      return unavailable("Select accessible native files or folders outside Trash.");
+      return unavailable("Select accessible local or SFTP files or folders outside Trash.");
     }
     return {};
   }
@@ -77,7 +78,13 @@ namespace {
     if (!c.clipboardAvailable || !c.clipboardHasFiles) {
       return unavailable("The clipboard has no available files.");
     }
-    return createItem(c, r);
+    if (!r.folder || !transferLocationSupported(*r.folder) || !c.query.empty() || !ready(c)) {
+      return unavailable("Open an available local or SFTP folder first.");
+    }
+    if (c.model.snapshot().metadata.access.write == false || c.model.snapshot().metadata.filesystem.readOnly == true) {
+      return unavailable("Writing to this folder is not permitted.");
+    }
+    return writable(c);
   }
   State renameOrTrash(const C& c, const R& r, bool rename) {
     if (const auto state = writable(c); !state.enabled) {

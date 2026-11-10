@@ -165,9 +165,10 @@ void TransferController::chooseDrop(
     finish(false);
     return;
   }
-  if (!destination.nativePath()
-      || std::ranges::any_of(payload.locations, [](const auto& item) { return !item.nativePath(); })) {
-    m_page.actionError("File transfers currently support native files and folders outside Trash.");
+  if (!files::transferLocationSupported(destination) || std::ranges::any_of(payload.locations, [](const auto& item) {
+        return !files::transferLocationSupported(item);
+      })) {
+    m_page.actionError("File transfers support local and mounted SFTP folders outside Trash.");
     finish(false);
     return;
   }
@@ -234,7 +235,10 @@ void TransferController::chooseDrop(
   add("Copy Here", "copy", files::TransferAction::Copy, pending->options.canCopy);
   add("Move Here", "arrows-move", files::TransferAction::Move, pending->options.canMove);
   add(pending->payload.locations.size() == 1 ? "Create Link Here" : "Create Links Here", "link",
-      files::TransferAction::Link, pending->options.canCopy);
+      files::TransferAction::Link,
+      pending->options.canCopy
+          && destination.isNative()
+          && std::ranges::all_of(pending->payload.locations, [](const auto& source) { return source.isNative(); }));
   root->addChild(ui::separator({}));
   root->addChild(ui::button({.text = "Cancel", .variant = ButtonVariant::Ghost, .onClick = [this] {
                                m_page.dismissMenu();
@@ -514,9 +518,11 @@ std::shared_ptr<OperationJob> TransferController::startPayloadTransfer(
     files::FilePayload payload, const files::Location& destination, files::TransferAction action
 ) {
   if (payload.locations.empty()
-      || !destination.nativePath()
-      || std::ranges::any_of(payload.locations, [](const auto& location) { return !location.nativePath(); })) {
-    m_page.actionError("File transfers currently support native files and folders outside Trash.");
+      || !files::transferLocationSupported(destination)
+      || std::ranges::any_of(payload.locations, [](const auto& location) {
+           return !files::transferLocationSupported(location);
+         })) {
+    m_page.actionError("File transfers support local and mounted SFTP folders outside Trash.");
     return nullptr;
   }
   m_page.setActionMessage({});

@@ -8,6 +8,9 @@
 #include <vector>
 
 namespace files {
+  // Verified transfer backends; this check never performs remote I/O.
+  bool transferLocationSupported(const Location& location);
+
   enum class TransferAction { Move, Copy, Link };
   enum class TransferOutcome { Moved, Copied, Skipped, Failed, Cancelled, Partial, Linked };
   struct TransferResult {

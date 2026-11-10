@@ -78,6 +78,10 @@ namespace {
     data.entries[0].location = files::Location::fromUri("sftp://example.invalid/source");
     ++data.generation;
     model.applySnapshot(data);
+    TEST_CHECK(R::state(A::CopyFiles, c, R::capture(c)).enabled);
+    data.entries[0].location = files::Location::fromUri("smb://example.invalid/share/source");
+    ++data.generation;
+    model.applySnapshot(data);
     TEST_CHECK(!R::state(A::CopyFiles, c, R::capture(c)).enabled);
   }
   void testTrashActions() {
