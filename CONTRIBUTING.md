@@ -14,7 +14,7 @@ Owned text files must not contain em dashes or trailing whitespace and must end 
 
 ### Lint
 
-Code must pass clang-tidy with warnings treated as errors, using the same `.clang-tidy` check set as noctalia. `src/.clang-tidy` adds one project rule on top: functions in `src/` stay under 250 lines (`readability-function-size`); split a feature out instead of growing an orchestrator. `just lint` checks the whole tree; while iterating, lint only the `.cpp` files you touched:
+Code must pass clang-tidy with warnings treated as errors, using the same `.clang-tidy` check set as noctalia. `src/.clang-tidy` adds one project rule on top: functions in `src/` stay under 250 lines (`readability-function-size`); split a feature out instead of growing an orchestrator. `just lint` checks all of `src/`; `lib/` is linted in noctalia-shell. While iterating, lint only the `.cpp` files you touched:
 
 ```sh
 clang-tidy -p build-debug --warnings-as-errors='*' <touched .cpp files...>
