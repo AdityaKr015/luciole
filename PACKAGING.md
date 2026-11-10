@@ -140,6 +140,8 @@ With the default relative `datadir=share`, Meson installs:
 <prefix>/share/luciole/assets/fonts/tabler-icons-license.txt
 <prefix>/share/luciole/templates/colors.toml
 <prefix>/share/dbus-1/services/org.freedesktop.FileManager1.service
+<prefix>/share/applications/dev.noctalia.luciole.desktop
+<prefix>/share/icons/hicolor/scalable/apps/dev.noctalia.luciole.svg
 <prefix>/share/bash-completion/completions/luciole
 <prefix>/share/zsh/site-functions/_luciole
 <prefix>/share/fish/vendor_completions.d/luciole.fish
@@ -148,7 +150,7 @@ With the default relative `datadir=share`, Meson installs:
 
 The fonts directory is required at runtime. Keep the Tabler license alongside its font/metadata and preserve applicable source notices. The palette template is a Noctalia integration resource, not an automatically installed user configuration.
 
-Current Meson rules do not install a desktop entry, application icon, AppStream/metainfo file, manual page or systemd unit. Desktop/MIME/default-file-manager registration remains planned. Do not assume the sibling projects' installed files exist here.
+The desktop entry and scalable icon are named after the Wayland app id `dev.noctalia.luciole`, so compositors and launchers match the window to its icon. The entry declares `inode/directory` support but does not make Luciole the default file manager. Current Meson rules do not install an AppStream/metainfo file, manual page or systemd unit. Do not assume the sibling projects' installed files exist here.
 
 ### Asset lookup and staging
 
