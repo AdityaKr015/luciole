@@ -37,20 +37,18 @@ BrowserSettingsView::BrowserSettingsView(
       {.out = &m_navigation, .align = FlexAlign::Stretch, .width = 192.0F},
       ui::scrollView(
           {.out = &m_navigationScroll,
-           .viewportPaddingH = files::kSideListViewportPaddingH,
+           .viewportPaddingH = 0.0F,
            .viewportPaddingV = files::kSideListViewportPaddingV,
            .fillWidth = true,
            .flexGrow = 1.0F}
       )
   );
-  files::applySideListStyle(*navigation);
-  navigation->setPadding(files::kSideListPadding);
   m_navigationScroll->content()->setAlign(FlexAlign::Stretch);
   m_navigationScroll->content()->setGap(Style::spaceXs);
   auto body = ui::scrollView(
       {.out = &m_body,
        .viewportPaddingH = 0.0F,
-       .viewportPaddingV = 0.0F,
+       .viewportPaddingV = files::kSideListViewportPaddingV,
        .fillWidth = true,
        .flexGrow = 1.0F,
        .configure = [](ScrollView& view) { view.setReserveScrollbarGutter(true); }}
@@ -58,17 +56,22 @@ BrowserSettingsView::BrowserSettingsView(
   m_body->content()->setAlign(FlexAlign::Stretch);
   addChild(
       ui::row(
-          {.align = FlexAlign::Stretch, .gap = Style::spaceMd, .flexGrow = 1.0F}, std::move(navigation), std::move(body)
+          {.align = FlexAlign::Stretch, .gap = Style::spaceMd, .flexGrow = 1.0F}, std::move(navigation),
+          ui::box({.fill = colorSpecFromRole(ColorRole::OutlineVariant), .width = Style::borderWidth}), std::move(body)
       )
   );
-  section("Browsing");
+  section("General", "adjustments-horizontal");
   addChoice(
-      P::ViewMode, "View",
-      {{"Grid", files::ViewMode::Grid}, {"List", files::ViewMode::List}, {"Columns", files::ViewMode::Miller}}
+      P::ActivationMode, "Open items",
+      {{"Single click", files::ActivationMode::SingleClick}, {"Double click", files::ActivationMode::DoubleClick}}
   );
-  addNumber(P::GridIconSize, "Icon size", {files::kGridIconSizes.begin(), files::kGridIconSizes.end()});
-  addNumber(P::MillerColumnWidth, "Column width", {180, 208, 240, 260, 300, 360, 480, 640, 800});
-  addBool(P::MillerShowParents, "Show parent folders in Columns");
+  addChoice(
+      P::TypingMode, "When typing",
+      {{"Search subfolders", files::TypingMode::Search}, {"Select names", files::TypingMode::Typeahead}}
+  );
+  addBool(P::ShowHidden, "Show hidden files");
+  addBool(P::ShowBackups, "Show backup files (*~)");
+  group("Sorting");
   addChoice(
       P::SortBy, "Sort by",
       {{"Name", files::SortField::Name},
@@ -84,46 +87,26 @@ BrowserSettingsView::BrowserSettingsView(
   );
   addBool(P::SortDescending, "Reverse order");
   addBool(P::DirectoriesFirst, "Folders first");
-  addBool(P::ShowHidden, "Show hidden files");
-  addBool(P::ShowBackups, "Show backup files (*~)");
-  section("Behavior");
+  section("Views", "layout-grid");
   addChoice(
-      P::ActivationMode, "Open items",
-      {{"Single click", files::ActivationMode::SingleClick}, {"Double click", files::ActivationMode::DoubleClick}}
+      P::ViewMode, "View",
+      {{"Grid", files::ViewMode::Grid}, {"List", files::ViewMode::List}, {"Columns", files::ViewMode::Miller}}
   );
   addChoice(
-      P::TypingMode, "When typing",
-      {{"Search subfolders", files::TypingMode::Search}, {"Select names", files::TypingMode::Typeahead}}
+      P::Density, "Density",
+      {{"Compact", files::ViewDensity::Compact}, {"Comfortable", files::ViewDensity::Comfortable}}
   );
-  section("Sidebar");
-  addBool(P::ShowSidebar, "Show sidebar");
-  addBool(P::SidebarTree, "Show folder tree");
-  addBool(P::ShowDrives, "Show drives");
-  addNumber(P::SidebarWidth, "Sidebar width", widths(files::kMinSidebarWidth, files::kMaxSidebarWidth));
-  section("Preview");
-  addBool(P::ShowPreview, "Show preview");
-  addNumber(P::PreviewWidth, "Preview width", widths(208, 800));
-  section("List columns");
+  addBool(P::ShowEmblems, "Link and read-only emblems");
+  group("Grid");
+  addNumber(P::GridIconSize, "Icon size", {files::kGridIconSizes.begin(), files::kGridIconSizes.end()});
+  addBool(P::ShowSizeCaption, "File size caption");
+  addBool(P::ShowTypeCaption, "File type caption");
+  addBool(P::ShowModifiedCaption, "Modified date caption");
+  group("Columns");
+  addNumber(P::MillerColumnWidth, "Column width", {180, 208, 240, 260, 300, 360, 480, 640, 800});
+  addBool(P::MillerShowParents, "Show parent folders");
+  section("List columns", "list-details");
   addBool(P::ExpandableFolders, "Expandable folders");
-  addBool(P::ShowTypeColumn, "Type");
-  addBool(P::ShowSizeColumn, "Size");
-  addBool(P::ShowModifiedColumn, "Modified");
-  addBool(P::ShowAccessedColumn, "Accessed");
-  addBool(P::ShowCreatedColumn, "Created");
-  addBool(P::ShowOwnerColumn, "Owner");
-  addBool(P::ShowGroupColumn, "Group");
-  addBool(P::ShowPermissionsColumn, "Permissions");
-  addBool(P::ShowLocationColumn, "Location");
-  addNumber(P::NameColumnWidth, "Name width (0 = auto)", widths(160, 16384, true));
-  addNumber(P::TypeColumnWidth, "Type width", widths(64, 2048));
-  addNumber(P::SizeColumnWidth, "Size width", widths(64, 2048));
-  addNumber(P::ModifiedColumnWidth, "Modified width", widths(64, 2048));
-  addNumber(P::AccessedColumnWidth, "Accessed width", widths(64, 2048));
-  addNumber(P::CreatedColumnWidth, "Created width", widths(64, 2048));
-  addNumber(P::OwnerColumnWidth, "Owner width", widths(64, 2048));
-  addNumber(P::GroupColumnWidth, "Group width", widths(64, 2048));
-  addNumber(P::PermissionsColumnWidth, "Permissions width", widths(64, 2048));
-  addNumber(P::LocationColumnWidth, "Location width", widths(64, 2048));
   auto orderLabel = ui::label({.fontSize = Style::fontSizeCaption, .maxWidth = 180.0F});
   auto* orderText = orderLabel.get();
   addRow<files::DetailsColumnOrder>(
@@ -133,7 +116,37 @@ BrowserSettingsView::BrowserSettingsView(
       },
       std::move(orderLabel)
   );
-  section("Thumbnails");
+  group("Visible columns");
+  addBool(P::ShowTypeColumn, "Type");
+  addBool(P::ShowSizeColumn, "Size");
+  addBool(P::ShowModifiedColumn, "Modified");
+  addBool(P::ShowAccessedColumn, "Accessed");
+  addBool(P::ShowCreatedColumn, "Created");
+  addBool(P::ShowOwnerColumn, "Owner");
+  addBool(P::ShowGroupColumn, "Group");
+  addBool(P::ShowPermissionsColumn, "Permissions");
+  addBool(P::ShowLocationColumn, "Location");
+  group("Column widths");
+  addNumber(P::NameColumnWidth, "Name (0 = auto)", widths(160, 16384, true));
+  addNumber(P::TypeColumnWidth, "Type", widths(64, 2048));
+  addNumber(P::SizeColumnWidth, "Size", widths(64, 2048));
+  addNumber(P::ModifiedColumnWidth, "Modified", widths(64, 2048));
+  addNumber(P::AccessedColumnWidth, "Accessed", widths(64, 2048));
+  addNumber(P::CreatedColumnWidth, "Created", widths(64, 2048));
+  addNumber(P::OwnerColumnWidth, "Owner", widths(64, 2048));
+  addNumber(P::GroupColumnWidth, "Group", widths(64, 2048));
+  addNumber(P::PermissionsColumnWidth, "Permissions", widths(64, 2048));
+  addNumber(P::LocationColumnWidth, "Location", widths(64, 2048));
+  section("Sidebar & preview", "layout-sidebar");
+  group("Sidebar");
+  addBool(P::ShowSidebar, "Show sidebar");
+  addBool(P::SidebarTree, "Show folder tree");
+  addBool(P::ShowDrives, "Show drives");
+  addNumber(P::SidebarWidth, "Sidebar width", widths(files::kMinSidebarWidth, files::kMaxSidebarWidth));
+  group("Preview");
+  addBool(P::ShowPreview, "Show preview");
+  addNumber(P::PreviewWidth, "Preview width", widths(208, 800));
+  section("Thumbnails", "photo");
   addChoice(
       P::ThumbnailPolicy, "Show thumbnails",
       {{"Never", files::ThumbnailPolicy::Never},
@@ -159,17 +172,6 @@ BrowserSettingsView::BrowserSettingsView(
            .onClick = std::move(clearThumbnails)}
       )
   );
-  section("Appearance", "adjustments-horizontal");
-  addChoice(
-      P::Density, "Density",
-      {{"Compact", files::ViewDensity::Compact}, {"Comfortable", files::ViewDensity::Comfortable}}
-  );
-  addBool(P::ShowEmblems, "Link and read-only emblems");
-  m_section->addChild(ui::separator({}));
-  m_section->addChild(ui::label({.text = "Grid captions", .fontWeight = FontWeight::SemiBold}));
-  addBool(P::ShowSizeCaption, "File size");
-  addBool(P::ShowTypeCaption, "File type");
-  addBool(P::ShowModifiedCaption, "Modified date");
   selectPage(0);
   // Fixed footer: status text never changes the dialog's layout.
   addChild(
@@ -182,19 +184,19 @@ BrowserSettingsView::BrowserSettingsView(
                .flexGrow = 1.0F,
                .configure = [](Label& label) { label.setUseMarkup(false); }}
           ),
-          ui::button({.text = "Reset all settings", .variant = ButtonVariant::Destructive, .onClick = std::move(reset)})
+          ui::button(
+              {.text = "Reset all settings",
+               .glyph = "restore",
+               .controlHeight = Style::controlHeightSm,
+               .variant = ButtonVariant::Ghost,
+               .onClick = std::move(reset)}
+          )
       )
   );
 }
 
-void BrowserSettingsView::section(const std::string& title, std::string_view customGlyph) {
+void BrowserSettingsView::section(const std::string& title, const std::string& glyph) {
   const auto index = m_pages.size();
-  const std::string glyph = !customGlyph.empty() ? std::string(customGlyph)
-      : index == 0                               ? "layout-grid"
-      : index == 1                               ? "hand-click"
-      : index == 2                               ? "layout-sidebar"
-      : index == 3                               ? "columns-3"
-                                                 : "photo";
   Button* button = nullptr;
   m_navigationScroll->content()->addChild(
       ui::button(
@@ -211,7 +213,7 @@ void BrowserSettingsView::section(const std::string& title, std::string_view cus
   );
   m_navButtons.push_back(button);
   auto page = ui::column(
-      {.align = FlexAlign::Stretch, .gap = 16.0F},
+      {.align = FlexAlign::Stretch, .gap = Style::spaceMd},
       ui::row(
           {.align = FlexAlign::Center, .gap = 8.0F},
           ui::glyph({.glyph = glyph, .color = colorSpecFromRole(ColorRole::Primary)}),
@@ -223,18 +225,25 @@ void BrowserSettingsView::section(const std::string& title, std::string_view cus
           )
       )
   );
-  page->addChild(
-      ui::column(
-          {.out = &m_section,
-           .align = FlexAlign::Stretch,
-           .gap = 8.0F,
-           .padding = 12.0F,
-           .fill = colorSpecFromRole(ColorRole::SurfaceContainerLow),
-           .radius = Style::radiusLg}
-      )
-  );
+  page->addChild(ui::column({.out = &m_section, .align = FlexAlign::Stretch, .gap = Style::spaceXs}));
   m_pages.push_back(page.get());
   m_body->content()->addChild(std::move(page));
+}
+void BrowserSettingsView::group(const std::string& title) {
+  // Same caption heading as the places sidebar; top space separates it from the previous group.
+  const float top = m_section->children().empty() ? 0.0F : Style::spaceMd;
+  m_section->addChild(
+      ui::column(
+          {.align = FlexAlign::Start,
+           .configure = [top](Flex& heading) { heading.setPadding(top, 0.0F, Style::spaceXs, 0.0F); }},
+          ui::label(
+              {.text = title,
+               .fontSize = Style::fontSizeCaption,
+               .fontWeight = FontWeight::SemiBold,
+               .color = colorSpecFromRole(ColorRole::OnSurfaceVariant)}
+          )
+      )
+  );
 }
 void BrowserSettingsView::selectPage(std::size_t selected) {
   for (std::size_t index = 0; index < m_pages.size(); ++index) {
