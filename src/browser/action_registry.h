@@ -87,6 +87,8 @@ namespace files {
     RunProgram,
     RunInTerminal,
     Scripts,
+    UndoRename,
+    RedoRename,
     TargetTerminal
   };
   // TargetTerminal stays the last enumerator.
@@ -117,6 +119,7 @@ namespace files {
     bool clipboardAvailable = false;
     bool clipboardHasFiles = false;
     bool terminalAvailable = false;
+    bool canUndoRename = false, canRedoRename = false;
   };
   struct ActionState {
     bool enabled = true;

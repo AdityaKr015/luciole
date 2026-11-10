@@ -14,7 +14,15 @@ Native folder merging revalidates identities and scopes conflict decisions to th
 
 The [clipboard transport](../../src/clipboard/file_payload.h) and [desktop integration](../../src/platform/desktop_integration.h) preserve URI/raw-name semantics, action negotiation and one deletion owner across windows/clients. Native link drops and Ask negotiation reuse the existing transfer paths. Network operations require verified mounted/authenticated GIO providers; pending credential/connection UI is not an implicit capability.
 
-Undo/redo, retained overwrite content and durable interrupted-job journals remain planned. Do not infer recoverability from a successful copy or temporary staging. Never silently resume deletion after a crash.
+Transfer/batch/creation/Trash undo, retained overwrite content and durable interrupted-job journals remain planned. Do not infer recoverability from a successful copy or temporary staging. Never silently resume deletion after a crash.
+
+## Single-item rename history
+
+[RenameReceipt](../../src/operations/rename_receipt.h) records a completed native rename with held parent/item descriptors and the resulting item revision. [RenameService](../../src/operations/rename_service.h) captures it on its worker and replays it through the same asynchronous job lifecycle. Reversal reopens the named parent, checks its pinned identity and both held/named item revisions, then uses `renameat2(RENAME_NOREPLACE)`. Raw names are preserved; symlinks are checked without following them. Revision comparisons include inode/type, size, mode, ownership, link count and nanosecond modification/change times, excluding access time.
+
+The OperationHub owns one in-memory record and its Undo/Redo direction across pages/windows. Only successful captured mutations arm history. A mutation generation prevents older job completions from resurrecting invalidated history. Starting a new mutating job clears the prior record; preparation and read-only archive inspection do not. The same rule applies to retries. Replay uses an ordinary Follow-scope rename job, blocks new page operation actions while running and participates in application shutdown/draining. Collision/access errors retain a retryable record; changed/missing items or a replaced parent retire it. If a rename commits but capturing its next receipt fails, report the completed rename without arming another inverse.
+
+This first scope is single-item native Rename only. It does not overwrite, save deleted content, traverse directories, persist a journal or claim atomic exclusion of a hostile writer between final source validation and rename. Keyboard routing leaves input undo/redo with the focused editor. [Rename-service tests](../../tests/rename_service_test.cpp) cover actual reversible filesystem effects and refusal cases; application-wide history and input routing also require real isolated-window checks.
 
 ## Other operations
 

@@ -991,7 +991,11 @@ bool BrowserPage::shortcutKey(const KeyboardEvent& event) {
   const bool editing = m_locationBar.textFocused();
   if (!editing
       && !event.repeat
-      && dispatchShortcut(event, {Action::CopyFiles, Action::CutFiles, Action::PasteFiles, Action::ShowPreview})) {
+      && dispatchShortcut(
+          event,
+          {Action::CopyFiles, Action::CutFiles, Action::PasteFiles, Action::ShowPreview, Action::UndoRename,
+           Action::RedoRename}
+      )) {
     return true;
   }
   if (!editing
@@ -1112,7 +1116,9 @@ files::ActionContext BrowserPage::actionContext() const {
       .showPreview = m_savedSettings.showPreview,
       .clipboardAvailable = m_clipboard.available(),
       .clipboardHasFiles = m_clipboard.hasFiles(),
-      .terminalAvailable = m_terminal.available()
+      .terminalAvailable = m_terminal.available(),
+      .canUndoRename = m_hub.canUndoRename(),
+      .canRedoRename = m_hub.canRedoRename()
   };
 }
 
@@ -1311,6 +1317,8 @@ void BrowserPage::runAction(
       {Action::Scripts, [](BrowserPage& page, const Call&) {
         page.m_submenus.open(files::ActionRegistry::menuId(Action::Scripts), false);
       }},
+      {Action::UndoRename, [](BrowserPage& page, const Call&) { (void)page.m_hub.replayRename(page.m_workspaceId, false); }},
+      {Action::RedoRename, [](BrowserPage& page, const Call&) { (void)page.m_hub.replayRename(page.m_workspaceId, true); }},
       {Action::TargetTerminal,
        [](BrowserPage& page, const Call& call) { page.openTerminal(call.targets.front().location); }},
   });

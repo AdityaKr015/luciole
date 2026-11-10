@@ -39,9 +39,9 @@ namespace {
       while (!done()) {
         TEST_CHECK(std::chrono::steady_clock::now() < deadline);
         std::vector<pollfd> fds;
-        const auto first = source.addPollFds(fds);
+        const auto first = m_source.addPollFds(fds);
         TEST_CHECK(::poll(fds.data(), fds.size(), 1) >= 0);
-        source.dispatch(fds, first);
+        m_source.dispatch(fds, first);
       }
     }
     void prepare(files::RenameService& service, const fs::path& path) {
@@ -55,7 +55,7 @@ namespace {
     }
 
   private:
-    GlibPollSource source;
+    GlibPollSource m_source;
   };
   void successfulRenames(Pump& pump) {
     Fixture fixture;
@@ -71,7 +71,7 @@ namespace {
     TEST_CHECK(service.snapshot().destination == location(fixture.root / "résumé 文.txt"));
     pump.prepare(service, fixture.root / "résumé 文.txt");
     pump.rename(service, "résumé 文.txt");
-    TEST_CHECK(service.snapshot().status == files::RenameStatus::Succeeded);
+    TEST_CHECK(service.snapshot().status == files::RenameStatus::Succeeded && !service.snapshot().receipt);
     pump.prepare(service, fixture.root / "résumé 文.txt");
     pump.rename(service, "RÉSUMÉ 文.txt");
     TEST_CHECK(read(fixture.root / "RÉSUMÉ 文.txt") == "content");
@@ -220,6 +220,108 @@ namespace {
     });
     TEST_CHECK(model.selection().selected.contains(id) && model.selection().focused == id);
   }
+  void undoRedo(Pump& pump) {
+    Fixture fixture;
+    files::RenameService service;
+    const auto raw = std::string("raw-;") + static_cast<char>(0xff);
+    write(fixture.root / raw, "content");
+    pump.prepare(service, fixture.root / raw);
+    pump.rename(service, "résumé 文.txt");
+    TEST_CHECK(service.snapshot().receipt != nullptr);
+    auto receipt = service.snapshot().receipt;
+    TEST_CHECK(service.replay(receipt));
+    TEST_CHECK(!service.replay(receipt));
+    pump.until([&] { return !service.busy(); });
+    TEST_CHECK(service.snapshot().status == files::RenameStatus::Succeeded);
+    TEST_CHECK(read(fixture.root / raw) == "content" && !fs::exists(fixture.root / "résumé 文.txt"));
+    for (int i = 0; i < 6; ++i) {
+      receipt = service.snapshot().receipt;
+      TEST_CHECK(receipt && service.replay(receipt));
+      pump.until([&] { return !service.busy(); });
+      TEST_CHECK(service.snapshot().status == files::RenameStatus::Succeeded && service.snapshot().receipt);
+    }
+    auto stale = receipt;
+    TEST_CHECK(service.replay(stale));
+    pump.until([&] { return !service.busy(); });
+    TEST_CHECK(service.snapshot().status == files::RenameStatus::Error);
+    pump.prepare(service, fixture.root / raw);
+    pump.rename(service, "readable");
+    receipt = service.snapshot().receipt;
+    write(fixture.root / raw, "do not overwrite");
+    TEST_CHECK(service.replay(receipt));
+    pump.until([&] { return !service.busy(); });
+    TEST_CHECK(
+        service.snapshot().status == files::RenameStatus::Error
+        && service.snapshot().error->kind == files::FileErrorKind::Exists
+    );
+    TEST_CHECK(read(fixture.root / raw) == "do not overwrite" && read(fixture.root / "readable") == "content");
+    fs::remove(fixture.root / raw);
+    TEST_CHECK(service.replay(receipt));
+    pump.until([&] { return !service.busy(); });
+    TEST_CHECK(service.snapshot().status == files::RenameStatus::Succeeded && read(fixture.root / raw) == "content");
+    pump.prepare(service, fixture.root / raw);
+    pump.rename(service, "readable");
+    receipt = service.snapshot().receipt;
+    const auto time = fs::last_write_time(fixture.root / "readable");
+    write(fixture.root / "readable", "changed");
+    fs::last_write_time(fixture.root / "readable", time);
+    TEST_CHECK(service.replay(receipt));
+    pump.until([&] { return !service.busy(); });
+    TEST_CHECK(
+        service.snapshot().status == files::RenameStatus::Error
+        && service.snapshot().error->kind == files::FileErrorKind::Changed
+    );
+    TEST_CHECK(read(fixture.root / "readable") == "changed" && !fs::exists(fixture.root / raw));
+  }
+  void undoTargetChanges(Pump& pump) {
+    Fixture fixture;
+    files::RenameService service;
+    fs::create_directory(fixture.root / "parent");
+    write(fixture.root / "parent/a", "original");
+    pump.prepare(service, fixture.root / "parent/a");
+    pump.rename(service, "b");
+    auto receipt = service.snapshot().receipt;
+    fs::rename(fixture.root / "parent/b", fixture.root / "parent/held");
+    write(fixture.root / "parent/b", "replacement");
+    TEST_CHECK(service.replay(receipt));
+    pump.until([&] { return !service.busy(); });
+    TEST_CHECK(
+        service.snapshot().status == files::RenameStatus::Error && read(fixture.root / "parent/b") == "replacement"
+    );
+    pump.prepare(service, fixture.root / "parent/b");
+    pump.rename(service, "c");
+    receipt = service.snapshot().receipt;
+    fs::rename(fixture.root / "parent", fixture.root / "old-parent");
+    fs::create_directory(fixture.root / "parent");
+    write(fixture.root / "parent/c", "other parent");
+    TEST_CHECK(service.replay(receipt));
+    pump.until([&] { return !service.busy(); });
+    TEST_CHECK(
+        service.snapshot().status == files::RenameStatus::Error && read(fixture.root / "parent/c") == "other parent"
+    );
+    fs::create_directory(fixture.root / "folder");
+    write(fixture.root / "folder/child", "nested");
+    pump.prepare(service, fixture.root / "folder");
+    pump.rename(service, "renamed-folder");
+    TEST_CHECK(service.replay(service.snapshot().receipt));
+    pump.until([&] { return !service.busy(); });
+    TEST_CHECK(
+        service.snapshot().status == files::RenameStatus::Succeeded && read(fixture.root / "folder/child") == "nested"
+    );
+    fs::create_symlink("missing", fixture.root / "link");
+    pump.prepare(service, fixture.root / "link");
+    pump.rename(service, "renamed-link");
+    TEST_CHECK(service.replay(service.snapshot().receipt));
+    service.cancel();
+    pump.until([&] { return !service.busy(); });
+    const bool committed = service.snapshot().status == files::RenameStatus::Succeeded;
+    TEST_CHECK(
+        (committed || service.snapshot().status == files::RenameStatus::Cancelled)
+        && fs::is_symlink(fixture.root / "link") == committed
+        && fs::is_symlink(fixture.root / "renamed-link") != committed
+    );
+    TEST_CHECK(!service.replay({}));
+  }
 } // namespace
 int main() {
   try {
@@ -228,6 +330,8 @@ int main() {
     collisionsAndReplacement(pump);
     validationAndCancellation(pump);
     selectionSurvives(pump);
+    undoRedo(pump);
+    undoTargetChanges(pump);
     std::println("rename-service tests passed");
     return 0;
   } catch (const std::exception& error) {

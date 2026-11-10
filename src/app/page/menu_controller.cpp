@@ -97,6 +97,8 @@ std::vector<ContextMenuControlEntry> MenuController::folderMenuEntries(const fil
   add(Action::NewDocument);
   entries.back().hasSubmenu = true;
   add(Action::PasteFiles);
+  add(Action::UndoRename);
+  add(Action::RedoRename);
   addSeparator(entries);
   add(Action::SelectAll);
   add(Action::InvertSelection);
@@ -706,6 +708,9 @@ void MenuController::openMenu() {
       {.label = "", .separator = true}
   };
   const auto request = m_page.actionRequest(true);
+  entries.push_back(actionEntry(Action::UndoRename, request));
+  entries.push_back(actionEntry(Action::RedoRename, request));
+  addSeparator(entries);
   entries.push_back(actionEntry(Action::Search, request));
   for (const auto action : {Action::Grid, Action::List, Action::Miller}) {
     entries.push_back(actionEntry(action, request, true));

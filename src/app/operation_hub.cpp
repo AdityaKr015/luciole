@@ -4,6 +4,35 @@
 #include <utility>
 #include <vector>
 
+namespace {
+  bool mutating(const OperationJob& job) {
+    switch (job.kind()) {
+    case JobKind::Rename:
+      return job.service<files::RenameService>().snapshot().status == files::RenameStatus::Renaming;
+    case JobKind::Create:
+      return job.service<files::CreateService>().snapshot().status == files::CreateStatus::Creating;
+    case JobKind::Permission:
+      return job.service<files::PermissionService>().snapshot().phase == files::PermissionPhase::Saving;
+    case JobKind::BatchRename:
+      return job.service<files::BatchRenameService>().applying();
+    case JobKind::Trash:
+      return job.service<files::TrashService>().snapshot().status == files::TrashStatus::Trashing;
+    case JobKind::EmptyTrash:
+      return job.service<files::EmptyTrashService>().snapshot().status == files::EmptyTrashStatus::Emptying;
+    case JobKind::Archive: {
+      const auto phase = job.service<files::ArchiveService>().phase();
+      return phase == files::ArchivePhase::Compressing
+          || phase == files::ArchivePhase::Extracting
+          || phase == files::ArchivePhase::Transferring;
+    }
+    case JobKind::Transfer:
+    case JobKind::Restore:
+      return job.running();
+    }
+    std::unreachable();
+  }
+} // namespace
+
 OperationJob::OperationJob(files::JobId id, Service service) : m_id(id), m_service(std::move(service)) {}
 
 OperationJob::~OperationJob() {
@@ -107,6 +136,14 @@ std::shared_ptr<OperationJob> OperationHub::add(files::TabId page, OperationJob:
 }
 
 void OperationHub::changed(OperationJob& job) {
+  if (!job.m_mutationStarted && mutating(job)) {
+    job.m_mutationStarted = true;
+    job.m_historyGeneration = ++m_historyGeneration;
+    if (job.renameReplay() == RenameReplay::None) {
+      m_renameReceipt.reset();
+      m_renameRedo = false;
+    }
+  }
   bool finished = false;
   if (job.running()) {
     job.m_running = true;
@@ -114,6 +151,10 @@ void OperationHub::changed(OperationJob& job) {
     job.m_resultTaken = false;
   } else if (std::exchange(job.m_running, false)) {
     finished = true;
+    if (job.m_mutationStarted && job.kind() == JobKind::Rename) {
+      recordRename(job);
+    }
+    job.m_mutationStarted = false;
     if (auto idle = std::exchange(job.m_idle, {})) {
       idle(job);
     }
@@ -190,4 +231,40 @@ void OperationHub::shutdown() {
 
 bool OperationHub::busy() const {
   return std::ranges::any_of(m_jobs, [](const auto& item) { return item.second->running(); });
+}
+
+bool OperationHub::renameReplayBusy() const {
+  return std::ranges::any_of(m_jobs, [](const auto& item) {
+    return item.second->renameReplay() != RenameReplay::None && item.second->running();
+  });
+}
+
+bool OperationHub::canUndoRename() const { return m_renameReceipt && !m_renameRedo && !busy(); }
+bool OperationHub::canRedoRename() const { return m_renameReceipt && m_renameRedo && !busy(); }
+
+bool OperationHub::replayRename(files::TabId page, bool redo) {
+  if (!attached(page) || !(redo ? canRedoRename() : canUndoRename())) {
+    return false;
+  }
+  auto job = create<files::RenameService>(page);
+  job->m_renameReplay = redo ? RenameReplay::Redo : RenameReplay::Undo;
+  return job->service<files::RenameService>().replay(m_renameReceipt);
+}
+
+void OperationHub::recordRename(const OperationJob& job) {
+  if (job.m_historyGeneration != m_historyGeneration) {
+    return;
+  }
+  const auto& snapshot = job.service<files::RenameService>().snapshot();
+  if (snapshot.status == files::RenameStatus::Succeeded) {
+    m_renameReceipt = snapshot.receipt;
+    m_renameRedo = job.renameReplay() == RenameReplay::Undo;
+  } else if (
+      snapshot.error
+      && (snapshot.error->kind == files::FileErrorKind::Changed
+          || snapshot.error->kind == files::FileErrorKind::Missing
+          || snapshot.error->kind == files::FileErrorKind::NotDirectory)
+  ) {
+    m_renameReceipt.reset();
+  }
 }

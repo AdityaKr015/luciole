@@ -475,6 +475,24 @@ namespace {
     model.select(90);
     TEST_CHECK(!R::state(A::Rename, c, R::capture(c)).enabled && R::state(A::Open, c, R::capture(c)).enabled);
   }
+  void testRenameHistoryActions() {
+    files::DirectoryModel model;
+    model.applySnapshot(snapshot());
+    files::ActionContext c{.model = model, .query = {}, .pinned = {}};
+    const auto request = R::capture(c);
+    TEST_CHECK(!R::state(A::UndoRename, c, request).enabled && !R::state(A::RedoRename, c, request).enabled);
+    c.canUndoRename = true;
+    TEST_CHECK(R::state(A::UndoRename, c, request).enabled && !R::state(A::RedoRename, c, request).enabled);
+    c.operationsBusy = true;
+    TEST_CHECK(!R::state(A::UndoRename, c, request).enabled);
+    c.operationsBusy = false;
+    c.canUndoRename = false;
+    c.canRedoRename = true;
+    ++c.context;
+    TEST_CHECK(R::state(A::RedoRename, c, request).enabled);
+    TEST_CHECK(files::shortcutMatches(A::UndoRename, XKB_KEY_z, KeyMod::Ctrl));
+    TEST_CHECK(files::shortcutMatches(A::RedoRename, XKB_KEY_Z, KeyMod::Ctrl | KeyMod::Shift));
+  }
   void testBulkSelection() {
     files::DirectoryModel model;
     model.applySnapshot(snapshot());
@@ -584,6 +602,7 @@ int main() {
     testFileClipboardActions();
     testPreviewActions();
     testCapabilitiesAndTargets();
+    testRenameHistoryActions();
     testBulkSelection();
     testTypeahead();
     std::println("browser action checks passed");

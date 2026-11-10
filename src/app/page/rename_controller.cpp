@@ -121,7 +121,11 @@ void RenameController::syncFileRename(const OperationJob& job) {
   }
   const bool editor = &job == m_job.get() && m_fileRenameEditor != nullptr;
   if (snapshot.status == files::RenameStatus::Succeeded) {
-    m_page.setActionMessage({});
+    m_page.setActionMessage(
+        job.renameReplay() == RenameReplay::Undo       ? "Rename undone."
+            : job.renameReplay() == RenameReplay::Redo ? "Rename redone."
+                                                       : ""
+    );
     auto& browser = m_page.browser();
     const auto& current = browser.model().snapshot().location;
     if (current && snapshot.source && snapshot.source->isInside(*current)) {
@@ -138,7 +142,12 @@ void RenameController::syncFileRename(const OperationJob& job) {
     }
   } else if (!editor) {
     if (snapshot.status == files::RenameStatus::Error) {
-      m_page.actionError("Could not rename: " + renameErrorText(snapshot.error));
+      m_page.actionError(
+          (job.renameReplay() == RenameReplay::Undo       ? "Could not undo rename: "
+               : job.renameReplay() == RenameReplay::Redo ? "Could not redo rename: "
+                                                          : "Could not rename: ")
+          + renameErrorText(snapshot.error)
+      );
     }
   } else if (snapshot.status == files::RenameStatus::Ready || snapshot.status == files::RenameStatus::Error) {
     m_fileRenameEditor->setSaving(false);

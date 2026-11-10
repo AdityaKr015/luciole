@@ -536,6 +536,18 @@ namespace {
              );
            }},
       {.action = A::Scripts, .label = "Scripts", .shortcut = "", .scope = S::Selection, .rule = scripts},
+      {.action = A::UndoRename,
+       .label = "Undo Rename",
+       .shortcut = "Ctrl+Z",
+       .rule = [](
+                   const C& c, const R&
+               ) { return require(c.canUndoRename && !c.operationsBusy, "No rename can be undone right now."); }},
+      {.action = A::RedoRename,
+       .label = "Redo Rename",
+       .shortcut = "Ctrl+Shift+Z",
+       .rule = [](
+                   const C& c, const R&
+               ) { return require(c.canRedoRename && !c.operationsBusy, "No rename can be redone right now."); }},
       {.action = A::TargetTerminal,
        .label = "Open in Terminal",
        .shortcut = "",

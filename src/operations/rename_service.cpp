@@ -26,6 +26,7 @@ namespace {
   struct Reply {
     std::shared_ptr<Target> target;
     std::optional<files::Location> destination;
+    std::shared_ptr<const files::RenameReceipt> receipt;
   };
 } // namespace
 
@@ -55,6 +56,7 @@ struct files::RenameService::State {
           if (result && result->destination) {
             owner->snapshot.destination = std::move(result->destination);
             owner->snapshot.status = RenameStatus::Succeeded;
+            owner->snapshot.receipt = std::move(result->receipt);
             owner->target.reset();
           } else if (token.cancelled()) {
             owner->snapshot.status = RenameStatus::Cancelled;
@@ -94,7 +96,9 @@ bool files::RenameService::prepare(const Location& source) {
     return false;
   }
   m_state->target.reset();
-  m_state->snapshot = {.status = RenameStatus::Preparing, .source = source, .destination = std::nullopt, .error = {}};
+  m_state->snapshot = {
+      .status = RenameStatus::Preparing, .source = source, .destination = std::nullopt, .error = {}, .receipt = {}
+  };
   State::launch(m_state, [source](const CancelToken&) {
     const auto path = source.nativePath();
     if (!path) {
@@ -104,7 +108,7 @@ bool files::RenameService::prepare(const Location& source) {
     if (name.empty() || name == "." || name == "..") {
       throwFileError(FileErrorKind::InvalidArgument, "The filesystem root cannot be renamed.");
     }
-    return Reply{.target = std::make_shared<Target>(*path), .destination = std::nullopt};
+    return Reply{.target = std::make_shared<Target>(*path), .destination = std::nullopt, .receipt = {}};
   });
   return true;
 }
@@ -147,7 +151,33 @@ bool files::RenameService::rename(std::string name) {
            ) != 0) {
       throwErrno(errno);
     }
-    return Reply{.target = {}, .destination = std::move(destination)};
+    std::shared_ptr<const RenameReceipt> receipt;
+    if (name != target->name) {
+      try {
+        receipt = RenameReceipt::capture(
+            Location::fromPath((std::filesystem::path(target->parentPath) / target->name).native()), destination,
+            target->parent.get(), target->item.get()
+        );
+      } catch (const FileErrorException&) {
+        // Successful mutation remains successful even if the optional history cannot be captured.
+      }
+    }
+    return Reply{.target = {}, .destination = std::move(destination), .receipt = std::move(receipt)};
+  });
+  return true;
+}
+
+bool files::RenameService::replay(std::shared_ptr<const RenameReceipt> receipt) {
+  if (busy() || !receipt) {
+    return false;
+  }
+  m_state->target.reset();
+  m_state->snapshot = {
+      .status = RenameStatus::Renaming, .source = receipt->destination(), .destination = {}, .error = {}, .receipt = {}
+  };
+  State::launch(m_state, [receipt = std::move(receipt)](const CancelToken& token) {
+    auto inverse = receipt->reverse(token);
+    return Reply{.target = {}, .destination = receipt->source(), .receipt = std::move(inverse)};
   });
   return true;
 }

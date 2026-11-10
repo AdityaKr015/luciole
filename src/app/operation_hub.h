@@ -35,6 +35,7 @@ enum class JobKind : std::uint8_t {
 // Follow: the job moves to another page when its page leaves the window. Page: the job only feeds its page, as a
 // dialog's preparation does; it is cancelled when the page leaves, unless OperationHub::follow() released it first.
 enum class JobScope : std::uint8_t { Follow, Page };
+enum class RenameReplay : std::uint8_t { None, Undo, Redo };
 
 // One file operation with a service instance of its own. A page starts it; the page that owns it shows it.
 class OperationJob : public std::enable_shared_from_this<OperationJob> {
@@ -60,6 +61,7 @@ public:
   bool running() const;
   // True once the service has run.
   bool ran() const { return m_ran; }
+  RenameReplay renameReplay() const { return m_renameReplay; }
   // Running, or prepared and waiting to start; a page disables actions that start a job meanwhile.
   bool pending() const;
   // The status bar's cancel button stops it.
@@ -79,6 +81,9 @@ private:
   files::JobId m_id;
   Service m_service;
   bool m_running = false, m_ran = false, m_resultTaken = false;
+  bool m_mutationStarted = false;
+  std::uint64_t m_historyGeneration = 0;
+  RenameReplay m_renameReplay = RenameReplay::None;
   std::function<void(OperationJob&)> m_idle;
 };
 
@@ -147,18 +152,26 @@ public:
   void shutdown();
   // True while any job runs.
   bool busy() const;
+  bool renameReplayBusy() const;
+  bool canUndoRename() const;
+  bool canRedoRename() const;
+  bool replayRename(files::TabId page, bool redo);
 
 private:
   std::shared_ptr<OperationJob> add(files::TabId page, OperationJob::Service service, JobScope scope);
   void changed(OperationJob& job);
   void notify(files::TabId page, OperationJob& job);
   bool retained(const OperationJob& job) const;
+  void recordRename(const OperationJob& job);
 
   const files::TabWorkspace& m_workspace;
   files::JobRouting m_routing;
   std::map<files::JobId, std::shared_ptr<OperationJob>> m_jobs;
   std::map<files::TabId, Owner*> m_owners;
   files::JobId m_next = 0;
+  std::shared_ptr<const files::RenameReceipt> m_renameReceipt;
+  std::uint64_t m_historyGeneration = 0;
+  bool m_renameRedo = false;
 };
 
 // One page's view of the hub: the jobs it starts and the ones it owns now.
@@ -186,7 +199,7 @@ public:
   }
   // True while an owned job runs or waits to start.
   bool busy() const {
-    return newest([](const OperationJob& job) { return job.pending(); }) != nullptr;
+    return m_hub.renameReplayBusy() || newest([](const OperationJob& job) { return job.pending(); }) != nullptr;
   }
 
 private:
