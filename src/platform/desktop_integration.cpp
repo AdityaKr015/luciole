@@ -96,6 +96,9 @@ void files::DesktopIntegration::setCursorShape(std::uint32_t serial, std::uint32
   case WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY:
     name = "copy";
     break;
+  case WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_CONTEXT_MENU:
+    name = "context-menu";
+    break;
   case WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE:
     name = "move";
     break;

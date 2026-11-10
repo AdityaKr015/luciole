@@ -150,7 +150,10 @@ std::string StatusBarController::operationStatus() const {
     const auto& transfers = job->service<files::TransferService>();
     const files::GString size(g_format_size(transfers.bytes()));
     return std::format(
-        "{} {} of {} items · {}", transfers.action() == files::TransferAction::Copy ? "Copying" : "Moving",
+        "{} {} of {} items · {}",
+        transfers.action() == files::TransferAction::Copy       ? "Copying"
+            : transfers.action() == files::TransferAction::Link ? "Linking"
+                                                                : "Moving",
         transfers.completed(), transfers.total(), size.get()
     );
   }

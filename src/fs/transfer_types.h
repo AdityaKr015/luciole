@@ -8,8 +8,8 @@
 #include <vector>
 
 namespace files {
-  enum class TransferAction { Move, Copy };
-  enum class TransferOutcome { Moved, Copied, Skipped, Failed, Cancelled, Partial };
+  enum class TransferAction { Move, Copy, Link };
+  enum class TransferOutcome { Moved, Copied, Skipped, Failed, Cancelled, Partial, Linked };
   struct TransferResult {
     TransferResult(
         Location location, TransferOutcome value = TransferOutcome::Failed, std::optional<FileError> failure = {}

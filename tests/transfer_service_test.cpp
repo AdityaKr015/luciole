@@ -610,11 +610,73 @@ namespace {
     );
     f.clean();
   }
+  void testSymbolicLinkDrops(Pump& pump) {
+    Fixture f;
+    fs::create_directories(f.source("folder/nested"));
+    write(f.source("folder/nested/child"), "inside");
+    write(f.source("café.txt"), "source bytes");
+    fs::create_symlink("missing", f.source("broken"));
+    files::TransferService service;
+    pump.run(
+        service,
+        {location(f.source("folder")), location(f.source("folder/nested/child")), location(f.source("café.txt")),
+         location(f.source("broken"))},
+        f.root / "destination", TransferAction::Link
+    );
+    TEST_CHECK(service.results().size() == 4 && service.bytes() == 0);
+    for (const auto& result : service.results()) {
+      TEST_CHECK(result.outcome == TransferOutcome::Linked && result.destination && !result.error);
+      TEST_CHECK(fs::read_symlink(*result.destination->nativePath()) == *result.source.nativePath());
+    }
+    TEST_CHECK(read(f.source("café.txt")) == "source bytes" && read(f.destination("café.txt")) == "source bytes");
+    TEST_CHECK(read(f.source("folder/nested/child")) == "inside" && fs::is_symlink(f.destination("folder")));
+    TEST_CHECK(fs::is_symlink(f.source("broken")) && fs::is_symlink(f.destination("broken")));
+    TEST_CHECK(service.report().contains("Linked"));
+    // Collision decisions never merge directories for a symbolic-link operation.
+    pump.run(
+        service, {location(f.source("folder"))}, f.root / "destination", TransferAction::Link,
+        [](const auto& conflict) {
+          TEST_CHECK(!conflict.canMerge);
+          return TransferConflictChoice::KeepBoth;
+        }
+    );
+    TEST_CHECK(service.results().front().outcome == TransferOutcome::Linked);
+    TEST_CHECK(fs::read_symlink(f.destination("folder (1)")) == f.source("folder"));
+    fs::remove(f.destination("café.txt"));
+    write(f.destination("café.txt"), "old destination");
+    pump.run(service, {location(f.source("café.txt"))}, f.root / "destination", TransferAction::Link, [](const auto&) {
+      return TransferConflictChoice::Replace;
+    });
+    TEST_CHECK(
+        service.results().front().outcome == TransferOutcome::Linked && fs::is_symlink(f.destination("café.txt"))
+    );
+    TEST_CHECK(read(f.source("café.txt")) == "source bytes");
+    pump.run(service, {location(f.source("café.txt"))}, f.root / "source", TransferAction::Link);
+    TEST_CHECK(fs::is_symlink(f.source("café (1).txt")) && read(f.source("café.txt")) == "source bytes");
+    // A captured source replaced while a collision is pending is never linked.
+    TEST_CHECK(
+        service.start({{location(f.source("café.txt"))}, location(f.root / "destination"), TransferAction::Link})
+    );
+    pump.until([&] { return service.conflict().has_value(); });
+    fs::rename(f.source("café.txt"), f.source("original"));
+    write(f.source("café.txt"), "replacement");
+    TEST_CHECK(service.resolve(service.conflict()->id, TransferConflictChoice::KeepBoth));
+    pump.until([&] { return !service.busy(); });
+    TEST_CHECK(service.results().front().outcome == TransferOutcome::Failed);
+    TEST_CHECK(!fs::exists(f.destination("café (1).txt")) && read(f.source("café.txt")) == "replacement");
+    pump.run(service, {location(f.source("folder"))}, f.source("folder/nested"), TransferAction::Link);
+    TEST_CHECK(
+        service.results().front().outcome == TransferOutcome::Failed && !fs::exists(f.source("folder/nested/folder"))
+    );
+    f.clean();
+  }
+
 } // namespace
 
 int main() {
   try {
     Pump pump;
+    testSymbolicLinkDrops(pump);
     testMoveAndCopy(pump);
     testConflicts(pump);
     testGuardsAndRaces(pump);

@@ -15,10 +15,18 @@ namespace files {
     std::uint64_t revision;
   };
   using DropCompletion = std::function<void(bool)>;
-  using FileDropHandler = std::function<void(FilePayload, TransferAction, DropCompletion)>;
+  enum class DragAction { Copy, Move, Ask };
+  struct DropOptions {
+    DragAction action = DragAction::Copy;
+    bool canCopy = false, canMove = false;
+    // Select once before starting work. Link uses the non-destructive Copy wire action.
+    std::function<bool(TransferAction)> select;
+  };
+  using FileDropHandler = std::function<void(FilePayload, DropOptions, DropCompletion)>;
   struct FileDropTarget {
     FileDropHandler receive;
-    TransferAction preferred = TransferAction::Move;
+    DragAction preferred = DragAction::Move;
+    bool copyOnly = false;
   };
 
   // Text, file selection and drag/drop share the ordinary application data device.
@@ -47,8 +55,8 @@ namespace files {
     void setChangedCallback(std::function<void()> callback);
     bool startDrag(
         FilePayload payload, wl_surface* origin, std::uint32_t pressSerial, const LoadedImageFile* image,
-        std::function<void()> finished, std::optional<TransferAction> forcedAction,
-        std::function<void(std::optional<TransferAction>)> actionChanged
+        std::function<void()> finished, std::optional<DragAction> forcedAction,
+        std::function<void(std::optional<DragAction>)> actionChanged
     );
     const FilePayload* dragFiles() const;
     void refreshDrag();

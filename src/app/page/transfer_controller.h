@@ -41,7 +41,7 @@ public:
   void transfer(std::vector<files::Location> sources, const files::Location& destination, files::TransferAction action);
   // Transfers a dropped payload; `finish` reports whether every item arrived.
   void receiveDrop(
-      files::FilePayload payload, const files::Location& destination, files::TransferAction action,
+      files::FilePayload payload, const files::Location& destination, files::DropOptions options,
       files::DropCompletion finish
   );
   // Transfer job change: reports the outcome once the job finishes.
@@ -76,6 +76,14 @@ private:
   std::shared_ptr<OperationJob> start(files::TransferRequest request);
   std::shared_ptr<OperationJob>
   startPayloadTransfer(files::FilePayload payload, const files::Location& destination, files::TransferAction action);
+  void chooseDrop(
+      files::FilePayload payload, const files::Location& destination, files::DropOptions options,
+      files::DropCompletion finish
+  );
+  void resolvedDrop(
+      files::FilePayload payload, const files::Location& destination, files::TransferAction action,
+      files::DropCompletion finish
+  );
   void finishMove(OperationJob& job, files::ClipboardFiles selection);
   OperationJob* latestTransfer() const;
   OperationJob* cancelTarget() const;

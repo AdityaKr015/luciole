@@ -43,7 +43,7 @@ namespace {
 
   std::string jobReport(const std::vector<files::TransferResult>& results) {
     std::string report = "Transfer results\n";
-    constexpr std::array labels{"Moved", "Copied", "Skipped", "Failed", "Cancelled", "Partial"};
+    constexpr std::array labels{"Moved", "Copied", "Skipped", "Failed", "Cancelled", "Partial", "Linked"};
     std::function<void(const files::TransferResult&)> append = [&](const auto& result) {
       if (report.size() > 16 * 1024 * 1024) {
         return;
@@ -221,7 +221,7 @@ namespace {
       }
       std::set<std::pair<dev_t, ino_t>> selectedDirectories;
       for (const auto& source : sources) {
-        if (S_ISDIR(source.metadata.st_mode)) {
+        if (request.action != files::TransferAction::Link && S_ISDIR(source.metadata.st_mode)) {
           selectedDirectories.emplace(source.metadata.st_dev, source.metadata.st_ino);
         }
       }
@@ -364,7 +364,7 @@ bool files::TransferService::launch(TransferRequest request, bool retry) {
   runJob<Reply>(
       [owner = m_state, job, token = m_state->token, retry] {
         std::map<std::pair<mode_t, mode_t>, TransferConflictChoice> policies;
-        const bool allowMerge = job->request.allowMerge;
+        const bool allowMerge = job->request.allowMerge && job->request.action != TransferAction::Link;
         Work work{
             token, owner->bytes,
             conflictAsker(owner->gate, [owner] { State::notify(owner); }, token, allowMerge, policies)

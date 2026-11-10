@@ -12,6 +12,8 @@
 namespace files {
   inline constexpr std::string_view kUriListMime = "text/uri-list";
   inline constexpr std::string_view kGnomeFilesMime = "x-special/gnome-copied-files";
+  // Files-specific drag-start intent; URI data and Wayland action negotiation stay standard.
+  inline constexpr std::string_view kAskDropMime = "application/x-noctalia-files-ask";
   inline constexpr std::string_view kKdeCutMime = "application/x-kde-cutselection";
   inline constexpr std::size_t kFilePayloadLimit = 1024 * 1024;
   inline constexpr std::size_t kFilePayloadCount = 4096;

@@ -26,6 +26,7 @@ public:
     QuickPreview,
     Applications,
     TransferConflict,
+    DropAction,
     ArchivePassword,
   };
 

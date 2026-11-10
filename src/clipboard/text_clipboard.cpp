@@ -174,6 +174,7 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
     std::unordered_set<std::string> types;
     std::uint32_t actions = WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY;
     std::uint32_t action = 0;
+    std::shared_ptr<int> lifetime = std::make_shared<int>(0);
   };
   struct Reconciliation {
     std::uint64_t revision;
@@ -188,7 +189,7 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
     std::unique_ptr<DragIcon> icon = nullptr;
     std::function<void()> finished;
     std::optional<FilePayload> files;
-    std::function<void(std::optional<TransferAction>)> actionChanged = nullptr;
+    std::function<void(std::optional<DragAction>)> actionChanged = nullptr;
     std::uint32_t action = WL_DATA_DEVICE_MANAGER_DND_ACTION_NONE;
     bool accepted = false;
 
@@ -196,11 +197,13 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
       if (!drag || dropped || !actionChanged) {
         return;
       }
-      std::optional<TransferAction> selectedAction;
+      std::optional<DragAction> selectedAction;
       if (accepted && action == WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY) {
-        selectedAction = TransferAction::Copy;
+        selectedAction = DragAction::Copy;
       } else if (accepted && action == WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE) {
-        selectedAction = TransferAction::Move;
+        selectedAction = DragAction::Move;
+      } else if (accepted && action == WL_DATA_DEVICE_MANAGER_DND_ACTION_ASK) {
+        selectedAction = DragAction::Ask;
       }
       const auto callback = actionChanged;
       callback(selectedAction);
@@ -479,43 +482,63 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
     if (offer.types.contains(std::string(kUriListMime)) && hover) {
       target = hover(dragSurface, dragX, dragY);
     }
+    if (target.receive && !target.copyOnly && offer.types.contains(std::string(kAskDropMime))) {
+      target.preferred = DragAction::Ask;
+    }
     const bool modern = wl_data_offer_get_version(dragging) >= WL_DATA_OFFER_SET_ACTIONS_SINCE_VERSION;
-    const auto supported =
-        offer.actions & (WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY | WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE);
-    if (!supported) {
+    const auto mask = target.copyOnly ? WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY
+                                      : WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY
+            | WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE
+            | WL_DATA_DEVICE_MANAGER_DND_ACTION_ASK;
+    const auto supported = offer.actions & mask;
+    if (!(supported & (WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY | WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE))) {
       target = {};
     }
     if (modern) {
-      auto preferred = target.preferred == TransferAction::Copy ? WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY
-                                                                : WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE;
+      std::uint32_t preferred = target.preferred == DragAction::Copy ? WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY
+          : target.preferred == DragAction::Ask                      ? WL_DATA_DEVICE_MANAGER_DND_ACTION_ASK
+                                                                     : WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE;
       if ((preferred & supported) == 0) {
         preferred = (supported & WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY) ? WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY
                                                                          : WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE;
       }
-      wl_data_offer_set_actions(dragging, target.receive ? supported : 0, target.receive ? preferred : 0);
+      // Request Ask exclusively when selected, while preserving the source's final action mask.
+      const auto accepted = preferred == WL_DATA_DEVICE_MANAGER_DND_ACTION_ASK ? preferred : supported;
+      wl_data_offer_set_actions(dragging, target.receive ? accepted : 0, target.receive ? preferred : 0);
     }
     wl_data_offer_accept(dragging, dragSerial, target.receive ? kUriListMime.data() : nullptr);
   }
   void drop() {
     auto* offer = std::exchange(dragging, nullptr);
     auto receiver = std::move(target.receive);
+    const bool prompt = target.preferred == DragAction::Ask;
     const auto found = offers.find(offer);
     const auto action = found == offers.end() ? 0 : found->second.action;
     const bool modern = offer && wl_data_offer_get_version(offer) >= WL_DATA_OFFER_FINISH_SINCE_VERSION;
     if (leave) {
       leave();
     }
-    if (!receiver
+    if (!offer
+        || found == offers.end()
+        || !receiver
         || (modern
             && action != WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY
-            && action != WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE)) {
+            && action != WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE
+            && action != WL_DATA_DEVICE_MANAGER_DND_ACTION_ASK)) {
       discard(offer);
       return;
     }
+    const auto token = found->second.lifetime;
+    const auto supported = found->second.actions;
+    const auto live = [self = shared_from_this(), offer, token] {
+      const auto current = self->offers.find(offer);
+      return self->active && current != self->offers.end() && current->second.lifetime == token;
+    };
     read(
         offer, kUriListMime.data(), cancellable.get(),
-        [self = shared_from_this(), offer, action, modern, receiver = std::move(receiver)](auto bytes) {
-          if (!self->active) {
+        [self = shared_from_this(), offer, action, modern, prompt, supported, live,
+         receiver = std::move(receiver)](auto bytes) {
+          if (!live()) {
             return;
           }
           auto payload = bytes ? parseFilePayload(kUriListMime, *bytes)
@@ -524,18 +547,51 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
             self->discard(offer);
             return;
           }
-          const auto finish = [self, offer, modern](bool success) {
-            if (self->active && self->offers.contains(offer)) {
-              if (success && modern) {
-                wl_data_offer_finish(offer);
-              }
-              self->discard(offer);
-            }
+          struct Resolution {
+            std::uint32_t action;
+            bool chosen = false, finished = false;
           };
-          receiver(
-              std::move(*payload),
-              action == WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE ? TransferAction::Move : TransferAction::Copy, finish
+          const auto resolution = std::make_shared<Resolution>(
+              modern ? action : static_cast<std::uint32_t>(WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY)
           );
+          const bool ask = modern && action == WL_DATA_DEVICE_MANAGER_DND_ACTION_ASK;
+          const bool copy = ask ? (supported & WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY) != 0
+                                : !modern || action == WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY;
+          const bool move = ask ? (supported & WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE) != 0
+                                : modern && action == WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE;
+          DropOptions options{
+              .action = ask || prompt ? DragAction::Ask
+                  : move              ? DragAction::Move
+                                      : DragAction::Copy,
+              .canCopy = copy,
+              .canMove = move,
+              .select = [resolution, live, offer, ask, copy, move](TransferAction selected) {
+                if (!live()
+                    || resolution->chosen
+                    || resolution->finished
+                    || (selected == TransferAction::Move ? !move : !copy)) {
+                  return false;
+                }
+                resolution->chosen = true;
+                resolution->action = selected == TransferAction::Move ? WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE
+                                                                      : WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY;
+                if (ask) {
+                  wl_data_offer_set_actions(offer, resolution->action, resolution->action);
+                }
+                return true;
+              }
+          };
+          const auto finish = [self, offer, modern, live, resolution](bool success) {
+            if (!live() || resolution->finished) {
+              return;
+            }
+            resolution->finished = true;
+            if (success && modern && resolution->action != WL_DATA_DEVICE_MANAGER_DND_ACTION_ASK) {
+              wl_data_offer_finish(offer);
+            }
+            self->discard(offer);
+          };
+          receiver(std::move(*payload), std::move(options), finish);
         }
     );
   }
@@ -784,8 +840,8 @@ void files::WaylandTextClipboard::setChangedCallback(std::function<void()> callb
 }
 bool files::WaylandTextClipboard::startDrag(
     FilePayload payload, wl_surface* origin, std::uint32_t pressSerial, const LoadedImageFile* image,
-    std::function<void()> finished, std::optional<TransferAction> forcedAction,
-    std::function<void(std::optional<TransferAction>)> actionChanged
+    std::function<void()> finished, std::optional<DragAction> forcedAction,
+    std::function<void(std::optional<DragAction>)> actionChanged
 ) {
   if (!m_state->device
       || wl_data_device_manager_get_version(m_state->manager) < 3
@@ -802,18 +858,23 @@ bool files::WaylandTextClipboard::startDrag(
   }
   auto icon = DragIcon::create(m_state->compositor, m_state->shm, image);
   auto* iconSurface = icon ? icon->surface : nullptr;
-  auto* source = m_state->source(
-      {.data = {{std::string(kUriListMime), std::move(*bytes)}},
-       .drag = true,
-       .icon = std::move(icon),
-       .finished = std::move(finished),
-       .files = std::move(payload),
-       .actionChanged = std::move(actionChanged)}
-  );
-  const auto actions = forcedAction == TransferAction::Copy ? WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY
-      : forcedAction == TransferAction::Move
-      ? WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE
-      : WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY | WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE;
+  State::Source outgoing{
+      .data = {{std::string(kUriListMime), std::move(*bytes)}},
+      .drag = true,
+      .icon = std::move(icon),
+      .finished = std::move(finished),
+      .files = std::move(payload),
+      .actionChanged = std::move(actionChanged)
+  };
+  if (forcedAction == DragAction::Ask) {
+    outgoing.data.emplace(kAskDropMime, "1");
+  }
+  auto* source = m_state->source(std::move(outgoing));
+  const auto actions = forcedAction == DragAction::Copy ? WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY
+      : forcedAction == DragAction::Move                ? WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE
+                                                        : WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY
+          | WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE
+          | WL_DATA_DEVICE_MANAGER_DND_ACTION_ASK;
   wl_data_source_set_actions(source, actions);
   wl_data_device_start_drag(m_state->device, source, origin, iconSurface, pressSerial);
   if (iconSurface) {

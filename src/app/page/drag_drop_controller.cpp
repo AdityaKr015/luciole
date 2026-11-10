@@ -185,14 +185,16 @@ files::FileDropTarget DragDropController::externalDrop(float x, float y, const s
       return {
           .receive =
               [this, lifetime, bookmarks = *pins,
-               slot = *slot](const files::FilePayload&, files::TransferAction, const files::DropCompletion& finish) {
+               slot =
+                   *slot](const files::FilePayload&, const files::DropOptions&, const files::DropCompletion& finish) {
                 if (lifetime.expired() || !m_page.visible() || !m_pins.editable()) {
                   finish(false);
                   return;
                 }
                 finish(m_pins.add(bookmarks, slot));
               },
-          .preferred = files::TransferAction::Copy
+          .preferred = files::DragAction::Copy,
+          .copyOnly = true
       };
     }
   }
@@ -221,7 +223,7 @@ files::FileDropTarget DragDropController::externalDestination(const files::Locat
   return {
       .receive =
           [this, lifetime, context,
-           destination](files::FilePayload payload, files::TransferAction action, files::DropCompletion finish) {
+           destination](files::FilePayload payload, files::DropOptions options, files::DropCompletion finish) {
             if (lifetime.expired()
                 || context != m_page.browser().contextSerial()
                 || !m_page.visible()
@@ -230,10 +232,11 @@ files::FileDropTarget DragDropController::externalDestination(const files::Locat
               finish(false);
               return;
             }
-            m_transferController.receiveDrop(std::move(payload), destination, action, std::move(finish));
+            m_transferController.receiveDrop(std::move(payload), destination, std::move(options), std::move(finish));
           },
-      .preferred = (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0 ? files::TransferAction::Copy
-                                                                          : files::TransferAction::Move
+      .preferred = (m_connection.keyboardModifiers() & KeyMod::Alt) != 0 ? files::DragAction::Ask
+          : (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0       ? files::DragAction::Copy
+                                                                         : files::DragAction::Move
   };
 }
 
@@ -293,7 +296,7 @@ bool DragDropController::validDropFolder(const files::Location& destination) con
       }
       differentParent |= source.parent() != destination;
     }
-    return differentParent || (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0;
+    return differentParent || (m_connection.keyboardModifiers() & (KeyMod::Ctrl | KeyMod::Alt)) != 0;
   }
   if (!m_drag || m_drag->sourcePin || !destination.nativePath()) {
     return false;
@@ -312,7 +315,7 @@ bool DragDropController::validDropFolder(const files::Location& destination) con
     }
     anyDifferentParent = anyDifferentParent || source.location.parent() != destination;
   }
-  return anyDifferentParent || (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0;
+  return anyDifferentParent || (m_connection.keyboardModifiers() & (KeyMod::Ctrl | KeyMod::Alt)) != 0;
 }
 
 std::optional<DragDropController::DropTarget> DragDropController::dropTarget() const {
@@ -455,14 +458,17 @@ void DragDropController::startFileDrag(const std::vector<files::EntryId>& ids) {
           cancelDrag();
         }
       },
-      (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0        ? std::optional(files::TransferAction::Copy)
-          : (m_connection.keyboardModifiers() & KeyMod::Shift) != 0 ? std::optional(files::TransferAction::Move)
+      (m_connection.keyboardModifiers() & KeyMod::Alt) != 0         ? std::optional(files::DragAction::Ask)
+          : (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0  ? std::optional(files::DragAction::Copy)
+          : (m_connection.keyboardModifiers() & KeyMod::Shift) != 0 ? std::optional(files::DragAction::Move)
                                                                     : std::nullopt,
-      [this, lifetime, cursorSerial](std::optional<files::TransferAction> action) {
+      [this, lifetime, cursorSerial](std::optional<files::DragAction> action) {
         if (!lifetime.expired()) {
-          const auto shape = action == files::TransferAction::Copy ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY
-              : action == files::TransferAction::Move              ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE
-                                                                   : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP;
+          // The shared connection binds cursor-shape v1; dnd_ask requires v2.
+          const auto shape = action == files::DragAction::Copy ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY
+              : action == files::DragAction::Move              ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE
+              : action == files::DragAction::Ask               ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_CONTEXT_MENU
+                                                               : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP;
           m_connection.extension<files::DesktopIntegration>().setCursorShape(cursorSerial, shape);
         }
       }
@@ -656,8 +662,11 @@ void DragDropController::layout(Renderer& renderer) {
   const bool copy = (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0;
   const auto shape = slot
       ? (m_drag->sourcePin ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY)
-      : m_lastDropTarget ? (copy ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE)
-                         : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP;
+      : m_lastDropTarget
+      ? ((m_connection.keyboardModifiers() & KeyMod::Alt) != 0 ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_CONTEXT_MENU
+             : copy                                            ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY
+                                                               : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE)
+      : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP;
   m_connection.extension<files::DesktopIntegration>().setCursorShape(m_connection.lastInputSerial(), shape);
 }
 
@@ -679,9 +688,16 @@ void DragDropController::finishDrag() {
       sources.push_back(entry.location);
     }
     m_page.setActionMessage({});
-    m_transferController.transfer(
-        std::move(sources), target->location, copy ? files::TransferAction::Copy : files::TransferAction::Move
-    );
+    const bool ask = (m_connection.keyboardModifiers() & KeyMod::Alt) != 0;
+    files::DropOptions options{
+        .action = ask ? files::DragAction::Ask
+            : copy    ? files::DragAction::Copy
+                      : files::DragAction::Move,
+        .canCopy = true,
+        .canMove = true,
+        .select = [](files::TransferAction) { return true; }
+    };
+    m_transferController.receiveDrop({std::move(sources), false}, target->location, std::move(options), [](bool) {});
   } else if (slot) {
     m_sidebar.pinFolders(drag.bookmarks, *slot);
   }

@@ -31,11 +31,19 @@ namespace {
       ClipboardPeer* peer;
       wl_resource* source;
       MimeData data;
+      bool drag = false, dropped = false;
+      std::uint32_t actions = 0, action = 0;
     };
     wl_display* m_server = wl_display_create();
     wl_display* m_client = nullptr;
     wl_registry* m_registry = nullptr;
     wl_seat* m_seat = nullptr;
+    wl_compositor* m_compositor = nullptr;
+    wl_surface* m_surface = nullptr;
+    wl_resource* m_surfaceResource = nullptr;
+    wl_resource* m_dragOffer = nullptr;
+    std::uint32_t m_dropAction = 0, m_preferred = 0, m_mask = 0;
+    unsigned m_finished = 0, m_destroyed = 0;
     wl_data_device_manager* m_manager = nullptr;
     wl_resource* m_device = nullptr;
     wl_resource* m_selection = nullptr;
@@ -47,9 +55,9 @@ namespace {
     std::size_t m_writes = 0, m_invalidWrites = 0;
     std::uint32_t m_writtenSerial = 0;
 
-    void offer() {
+    void offer(bool drag = false, std::uint32_t actions = 0) {
       auto* resource = wl_resource_create(wl_resource_get_client(m_device), &wl_data_offer_interface, 3, 0);
-      auto* data = new Offer{this, m_selection, m_external};
+      auto* data = new Offer{this, drag ? nullptr : m_selection, m_external, drag, false, actions, 0};
       m_offers.insert(resource);
       static const struct wl_data_offer_interface implementation{
           .accept = [](wl_client*, wl_resource*, std::uint32_t, const char*) {},
@@ -74,15 +82,43 @@ namespace {
                 ::close(fd);
               },
           .destroy = [](wl_client*, wl_resource* resource) { wl_resource_destroy(resource); },
-          .finish = [](wl_client*, wl_resource*) {},
-          .set_actions = [](wl_client*, wl_resource*, std::uint32_t, std::uint32_t) {}
+          .finish =
+              [](wl_client*, wl_resource* resource) {
+                const auto& data = *static_cast<Offer*>(wl_resource_get_user_data(resource));
+                if (!data.drag || data.action == 0 || data.action == WL_DATA_DEVICE_MANAGER_DND_ACTION_ASK) {
+                  ++data.peer->m_invalidWrites;
+                } else {
+                  ++data.peer->m_finished;
+                  data.peer->m_dropAction = data.action;
+                }
+              },
+          .set_actions =
+              [](wl_client*, wl_resource* resource, std::uint32_t mask, std::uint32_t preferred) {
+                auto& data = *static_cast<Offer*>(wl_resource_get_user_data(resource));
+                if (!data.drag || (preferred & mask) != preferred || (preferred & data.actions) != preferred) {
+                  ++data.peer->m_invalidWrites;
+                  return;
+                }
+                data.peer->m_preferred = preferred;
+                data.peer->m_mask = mask;
+                data.action = preferred;
+                if (!data.dropped) {
+                  wl_data_offer_send_action(resource, preferred);
+                }
+              }
       };
       wl_resource_set_implementation(resource, &implementation, data, [](wl_resource* resource) {
         const std::unique_ptr<Offer> data(static_cast<Offer*>(wl_resource_get_user_data(resource)));
         data->peer->m_offers.erase(resource);
+        if (data->drag) {
+          ++data->peer->m_destroyed;
+          if (data->peer->m_dragOffer == resource) {
+            data->peer->m_dragOffer = nullptr;
+          }
+        }
       });
       wl_data_device_send_data_offer(m_device, resource);
-      if (m_selection) {
+      if (m_selection && !drag) {
         for (const auto& type : static_cast<Source*>(wl_resource_get_user_data(m_selection))->types) {
           wl_data_offer_send_offer(resource, type.c_str());
         }
@@ -91,7 +127,15 @@ namespace {
           wl_data_offer_send_offer(resource, type.c_str());
         }
       }
-      wl_data_device_send_selection(m_device, resource);
+      if (drag) {
+        m_dragOffer = resource;
+        wl_data_offer_send_source_actions(resource, actions);
+        wl_data_device_send_enter(
+            m_device, m_serial, m_surfaceResource, wl_fixed_from_int(1), wl_fixed_from_int(1), resource
+        );
+      } else {
+        wl_data_device_send_selection(m_device, resource);
+      }
     }
     static void bindManager(wl_client* client, void* data, std::uint32_t, std::uint32_t id) {
       auto* resource = wl_resource_create(client, &wl_data_device_manager_interface, 3, id);
@@ -169,6 +213,28 @@ namespace {
             wl_seat_send_capabilities(resource, 0);
           }
       );
+      wl_global_create(
+          m_server, &wl_compositor_interface, 1, this,
+          [](wl_client* client, void* data, std::uint32_t, std::uint32_t id) {
+            auto* resource = wl_resource_create(client, &wl_compositor_interface, 1, id);
+            static const struct wl_compositor_interface implementation{
+                .create_surface =
+                    [](wl_client* client, wl_resource* compositor, std::uint32_t id) {
+                      auto& peer = *static_cast<ClipboardPeer*>(wl_resource_get_user_data(compositor));
+                      peer.m_surfaceResource = wl_resource_create(client, &wl_surface_interface, 1, id);
+                      static const auto surface = [] {
+                        struct wl_surface_interface value{};
+                        value.destroy = [](wl_client*, wl_resource* resource) { wl_resource_destroy(resource); };
+                        return value;
+                      }();
+                      wl_resource_set_implementation(peer.m_surfaceResource, &surface, nullptr, nullptr);
+                    },
+                .create_region = nullptr,
+                .release = nullptr
+            };
+            wl_resource_set_implementation(resource, &implementation, data, nullptr);
+          }
+      );
       int fds[2];
       TEST_CHECK(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, fds) == 0);
       TEST_CHECK(wl_client_create(m_server, fds[0]) != nullptr);
@@ -183,6 +249,9 @@ namespace {
                   peer.m_manager = static_cast<wl_data_device_manager*>(
                       wl_registry_bind(registry, id, &wl_data_device_manager_interface, 3)
                   );
+                } else if (std::string_view(type) == wl_compositor_interface.name) {
+                  peer.m_compositor =
+                      static_cast<wl_compositor*>(wl_registry_bind(registry, id, &wl_compositor_interface, 1));
                 } else if (std::string_view(type) == wl_seat_interface.name) {
                   peer.m_seat = static_cast<wl_seat*>(wl_registry_bind(registry, id, &wl_seat_interface, 1));
                 }
@@ -190,7 +259,9 @@ namespace {
           .global_remove = [](void*, wl_registry*, std::uint32_t) {}
       };
       wl_registry_add_listener(m_registry, &registry, this);
-      until([this] { return m_manager && m_seat; });
+      until([this] { return m_manager && m_seat && m_compositor; });
+      m_surface = wl_compositor_create_surface(m_compositor);
+      until([this] { return m_surfaceResource != nullptr; });
       m_clipboard = std::make_unique<WaylandTextClipboard>(
           m_client, m_manager, m_seat, [this] { return m_focused ? m_serial : 0; }, nullptr, nullptr
       );
@@ -198,6 +269,8 @@ namespace {
     }
     ~ClipboardPeer() {
       m_clipboard.reset();
+      wl_surface_destroy(m_surface);
+      wl_compositor_destroy(m_compositor);
       wl_data_device_manager_destroy(m_manager);
       wl_seat_destroy(m_seat);
       wl_registry_destroy(m_registry);
@@ -271,6 +344,25 @@ namespace {
         pump();
       }
     }
+    void beginDrop(std::uint32_t actions, bool askIntent = false) {
+      m_external = {{std::string(kUriListMime), "file:///tmp/drop-source\r\n"}};
+      if (askIntent) {
+        m_external.emplace(kAskDropMime, "1");
+      }
+      m_preferred = 0;
+      offer(true, actions);
+    }
+    void drop() {
+      TEST_CHECK(m_dragOffer != nullptr);
+      static_cast<Offer*>(wl_resource_get_user_data(m_dragOffer))->dropped = true;
+      wl_data_device_send_drop(m_device);
+      wl_data_device_send_leave(m_device);
+    }
+    std::uint32_t preferred() const { return m_preferred; }
+    std::uint32_t mask() const { return m_mask; }
+    std::uint32_t dropAction() const { return m_dropAction; }
+    unsigned finished() const { return m_finished; }
+    unsigned destroyed() const { return m_destroyed; }
     ClipboardFiles capture() {
       std::optional<ClipboardFiles> selection;
       bool received = false;
@@ -387,9 +479,94 @@ namespace {
     TEST_CHECK(peer.writes() == 0);
     TEST_CHECK(peer.capture().payload.locations == original.locations);
   }
+  void testAskDropNegotiation() {
+    constexpr auto copy = WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY, move = WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE,
+                   ask = WL_DATA_DEVICE_MANAGER_DND_ACTION_ASK;
+    for (const bool askIntent : {false, true}) {
+      for (const auto selection : {TransferAction::Copy, TransferAction::Move, TransferAction::Link}) {
+        ClipboardPeer peer;
+        std::optional<DropOptions> options;
+        DropCompletion finish;
+        peer.clipboard().setDropCallbacks(
+            [&](wl_surface*, float, float) {
+              return FileDropTarget{
+                  .receive =
+                      [&](const FilePayload& payload, DropOptions received, DropCompletion complete) {
+                        TEST_CHECK(payload.locations == std::vector{Location::fromPath("/tmp/drop-source")});
+                        options = std::move(received);
+                        finish = std::move(complete);
+                      },
+                  .preferred = askIntent ? DragAction::Move : DragAction::Ask
+              };
+            },
+            [] {}
+        );
+        peer.beginDrop(copy | move | ask, askIntent);
+        peer.until([&] { return peer.preferred() == ask; });
+        TEST_CHECK(peer.mask() == ask);
+        peer.drop();
+        peer.until([&] { return options.has_value(); });
+        TEST_CHECK(options->action == DragAction::Ask && options->canCopy && options->canMove && peer.finished() == 0);
+        TEST_CHECK(options->select(selection) && !options->select(TransferAction::Move));
+        finish(true);
+        peer.until([&] { return peer.finished() == 1 && peer.destroyed() == 1; });
+        TEST_CHECK(peer.dropAction() == (selection == TransferAction::Move ? move : copy));
+        finish(true);
+        peer.pump();
+        TEST_CHECK(peer.finished() == 1);
+      }
+    }
+    // Unsupported choices and cancellation must neither finish Ask nor permit a later selection.
+    for (const std::uint32_t actions : {static_cast<std::uint32_t>(copy | ask), static_cast<std::uint32_t>(move)}) {
+      ClipboardPeer peer;
+      std::optional<DropOptions> options;
+      DropCompletion finish;
+      peer.clipboard().setDropCallbacks(
+          [&](wl_surface*, float, float) {
+            return FileDropTarget{
+                .receive =
+                    [&](const FilePayload&, DropOptions received, DropCompletion complete) {
+                      options = std::move(received);
+                      finish = std::move(complete);
+                    },
+                .preferred = DragAction::Ask
+            };
+          },
+          [] {}
+      );
+      peer.beginDrop(actions);
+      peer.until([&] { return peer.preferred() != 0; });
+      peer.drop();
+      peer.until([&] { return options.has_value(); });
+      TEST_CHECK(options->canMove == (actions == move) && options->canCopy == (actions != move));
+      TEST_CHECK(!options->select(actions == move ? TransferAction::Link : TransferAction::Move));
+      finish(false);
+      peer.until([&] { return peer.destroyed() == 1; });
+      TEST_CHECK(peer.finished() == 0 && !options->select(TransferAction::Copy));
+    }
+    // Pinning is a Copy-only operation even when a source offers Move and Ask.
+    ClipboardPeer peer;
+    peer.clipboard().setDropCallbacks(
+        [](wl_surface*, float, float) {
+          return FileDropTarget{
+              .receive = [](const FilePayload&, const DropOptions&, const DropCompletion& finish) { finish(true); },
+              .preferred = DragAction::Copy,
+              .copyOnly = true
+          };
+        },
+        [] {}
+    );
+    peer.beginDrop(copy | move | ask, true);
+    peer.until([&] { return peer.preferred() == copy; });
+    TEST_CHECK(peer.mask() == copy);
+    peer.drop();
+    peer.until([&] { return peer.finished() == 1; });
+  }
+
 } // namespace
 int main() {
   try {
+    testAskDropNegotiation();
     testDeferredCompletion(false);
     testDeferredCompletion(true);
     testReplacement(false);

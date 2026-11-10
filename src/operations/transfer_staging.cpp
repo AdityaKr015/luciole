@@ -160,7 +160,7 @@ namespace files::transfer {
             return merge(node, destination, action, work, *replace);
           }
           validateBindings(source, binding);
-          if (action == TransferAction::Copy || replace) {
+          if (action != TransferAction::Move || replace) {
             break;
           }
           work.check();
@@ -185,9 +185,23 @@ namespace files::transfer {
         work.metadataIncomplete = false;
         bool published = false;
         try {
-          const auto tree = copyTree(source.parent.get(), source.name, stage.fd(), "item", work, 0);
-          requireUnchanged(source.metadata, tree.metadata);
-          verifyTree(source.parent.get(), tree, work);
+          std::optional<Tree> tree;
+          if (action == TransferAction::Link) {
+            if (::symlinkat(source.location.nativePath()->c_str(), stage.fd(), "item") != 0) {
+              fail("Could not create symbolic link");
+            }
+          } else {
+            tree = copyTree(source.parent.get(), source.name, stage.fd(), "item", work, 0);
+            requireUnchanged(source.metadata, tree->metadata);
+          }
+          const auto verifySource = [&] {
+            if (tree) {
+              verifyTree(source.parent.get(), *tree, work);
+            } else {
+              requireUnchanged(source.metadata, info(source.parent.get(), source.name));
+            }
+          };
+          verifySource();
           for (;;) {
             work.check();
             if (replace) {
@@ -212,7 +226,7 @@ namespace files::transfer {
               return merge(node, destination, action, work, *replace);
             }
             validateBindings(source, binding);
-            verifyTree(source.parent.get(), tree, work);
+            verifySource();
             if (replace) {
               // The exchange retires the old destination: make the copy durable first. Plain copies skip this,
               // like cp and GIO.
@@ -243,12 +257,12 @@ namespace files::transfer {
             if (replace) {
               work.note(info(stage.fd(), "item"));
             }
-            result.outcome = Copied;
+            result.outcome = action == TransferAction::Link ? Linked : Copied;
             if (action == TransferAction::Move) {
               // The sources are about to go: the published copy must survive a crash first.
               synchronize(destination);
-              verifyTree(source.parent.get(), tree, work);
-              removeSource(source.parent.get(), tree, work);
+              verifySource();
+              removeSource(source.parent.get(), *tree, work);
               result.outcome = Moved;
             }
             break;

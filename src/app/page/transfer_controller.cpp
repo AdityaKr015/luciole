@@ -25,7 +25,9 @@
 
 namespace {
   bool arrived(const files::TransferResult& result) {
-    return result.outcome == files::TransferOutcome::Moved || result.outcome == files::TransferOutcome::Copied;
+    return result.outcome == files::TransferOutcome::Moved
+        || result.outcome == files::TransferOutcome::Copied
+        || result.outcome == files::TransferOutcome::Linked;
   }
 } // namespace
 
@@ -120,6 +122,23 @@ void TransferController::finishMove(OperationJob& job, files::ClipboardFiles sel
 }
 
 void TransferController::receiveDrop(
+    files::FilePayload payload, const files::Location& destination, files::DropOptions options,
+    files::DropCompletion finish
+) {
+  if (options.action == files::DragAction::Ask) {
+    chooseDrop(std::move(payload), destination, std::move(options), std::move(finish));
+    return;
+  }
+  const auto action =
+      options.action == files::DragAction::Move ? files::TransferAction::Move : files::TransferAction::Copy;
+  if (!options.select || !options.select(action)) {
+    finish(false);
+    return;
+  }
+  resolvedDrop(std::move(payload), destination, action, std::move(finish));
+}
+
+void TransferController::resolvedDrop(
     files::FilePayload payload, const files::Location& destination, files::TransferAction action,
     files::DropCompletion finish
 ) {
@@ -134,6 +153,101 @@ void TransferController::receiveDrop(
   });
 }
 
+void TransferController::chooseDrop(
+    files::FilePayload payload, const files::Location& destination, files::DropOptions options,
+    files::DropCompletion finish
+) {
+  if (payload.locations.empty()
+      || !m_page.visible()
+      || m_page.menuSurface()
+      || m_page.operationsBusy()
+      || !m_page.popupAvailable()) {
+    finish(false);
+    return;
+  }
+  if (!destination.nativePath()
+      || std::ranges::any_of(payload.locations, [](const auto& item) { return !item.nativePath(); })) {
+    m_page.actionError("File transfers currently support native files and folders outside Trash.");
+    finish(false);
+    return;
+  }
+  struct Pending {
+    files::FilePayload payload;
+    files::Location destination;
+    files::DropOptions options;
+    files::DropCompletion finish;
+    bool chosen = false;
+    ~Pending() {
+      if (!chosen) {
+        finish(false);
+      }
+    }
+    void cancel() {
+      if (!std::exchange(chosen, true)) {
+        finish(false);
+      }
+    }
+  };
+  const auto pending =
+      std::make_shared<Pending>(std::move(payload), destination, std::move(options), std::move(finish));
+  const auto context = m_page.browser().contextSerial();
+  const std::weak_ptr<int> lifetime = m_lifetime;
+  const auto choose = [this, lifetime, pending, context](files::TransferAction action) {
+    if (pending->chosen) {
+      return;
+    }
+    if (lifetime.expired()) {
+      pending->cancel();
+      return;
+    }
+    if (!m_page.visible()
+        || m_page.operationsBusy()
+        || context != m_page.browser().contextSerial()
+        || !pending->options.select
+        || !pending->options.select(action)) {
+      pending->cancel();
+      m_page.dismissMenu();
+      return;
+    }
+    pending->chosen = true;
+    m_page.dismissMenu();
+    resolvedDrop(std::move(pending->payload), pending->destination, action, std::move(pending->finish));
+  };
+  auto root = ui::column({.align = FlexAlign::Stretch});
+  files::applyDialogStyle(*root);
+  root->addChild(files::dialogHeader("Choose Drop Action", "drag-drop", [this] { m_page.dismissMenu(); }));
+  Button* focus = nullptr;
+  const auto add = [&](const char* label, const char* glyph, files::TransferAction action, bool enabled) {
+    auto button = ui::button(
+        {.text = label,
+         .glyph = glyph,
+         .contentAlign = ButtonContentAlign::Start,
+         .variant = ButtonVariant::Ghost,
+         .onClick = [choose, action] { choose(action); }}
+    );
+    button->setEnabled(enabled);
+    if (enabled && !focus) {
+      focus = button.get();
+    }
+    root->addChild(std::move(button));
+  };
+  add("Copy Here", "copy", files::TransferAction::Copy, pending->options.canCopy);
+  add("Move Here", "arrows-move", files::TransferAction::Move, pending->options.canMove);
+  add(pending->payload.locations.size() == 1 ? "Create Link Here" : "Create Links Here", "link",
+      files::TransferAction::Link, pending->options.canCopy);
+  root->addChild(ui::separator({}));
+  root->addChild(ui::button({.text = "Cancel", .variant = ButtonVariant::Ghost, .onClick = [this] {
+                               m_page.dismissMenu();
+                             }}));
+  m_page.showCenteredDialog(std::move(root), 360.0F);
+  if (m_page.menuSurface()) {
+    m_page.activeDialog().bind(ActiveDialog::Kind::DropAction, [pending] { pending->cancel(); });
+    if (focus) {
+      m_page.menuDispatcher().setFocus(focus->inputArea());
+    }
+  }
+}
+
 void TransferController::transferChanged(OperationJob& job) {
   const auto& transfers = job.service<files::TransferService>();
   if (transfers.busy() || !job.takeResult()) {
@@ -142,7 +256,10 @@ void TransferController::transferChanged(OperationJob& job) {
   const auto& results = transfers.results();
   const auto done = std::ranges::count_if(results, arrived);
   std::string message = std::format(
-      "{} item{} {}", done, done == 1 ? "" : "s", transfers.action() == files::TransferAction::Copy ? "copied" : "moved"
+      "{} item{} {}", done, done == 1 ? "" : "s",
+      transfers.action() == files::TransferAction::Copy       ? "copied"
+          : transfers.action() == files::TransferAction::Link ? "linked"
+                                                              : "moved"
   );
   if (const auto error = std::ranges::find_if(results, [](const auto& item) { return item.error.has_value(); });
       error != results.end()) {
