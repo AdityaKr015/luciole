@@ -16,7 +16,6 @@ namespace files {
 } // namespace files
 
 struct KeyboardEvent;
-class InputDispatcher;
 class LocationBarController;
 class MenuController;
 class PageContext;
@@ -27,8 +26,8 @@ class StatusBarController;
 class FileKeyboardController final : public TextInputClient {
 public:
   FileKeyboardController(
-      PageContext& page, InputDispatcher& dispatcher, TextInputService& textInput, files::MillerColumns& miller,
-      MenuController& menus, LocationBarController& locationBar, StatusBarController& status
+      PageContext& page, TextInputService& textInput, files::MillerColumns& miller, MenuController& menus,
+      LocationBarController& locationBar, StatusBarController& status
   );
 
   void setTypingMode(files::TypingMode mode) { m_typingMode = mode; }
@@ -73,7 +72,6 @@ private:
   );
 
   PageContext& m_page;
-  InputDispatcher& m_dispatcher;
   TextInputService& m_textInput;
   files::MillerColumns& m_miller;
   MenuController& m_menus;

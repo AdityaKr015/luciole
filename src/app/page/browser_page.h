@@ -71,12 +71,14 @@ class BrowserPage final : public PageContext, public OperationHub::Owner {
 public:
   using Action = files::BrowserAction;
 
-  // `id` is the page's TabId in the workspace; the page shows the jobs `hub` routes to it.
+  // `id` is the page's TabId in the workspace; the page shows the jobs `hub` routes to it. `dispatcher` is the input
+  // dispatcher of the window that owns `surface`.
   BrowserPage(
       WaylandConnection& connection, RenderContext& renderer, TextInputService& textInput,
       const files::BrowserSettings& settings, files::WaylandTextClipboard& clipboard, files::WindowSurface& surface,
-      AnimationManager& animations, files::PinService& pins, files::DriveMonitor& drives, files::FileIconCache& icons,
-      files::ThumbnailService& thumbnails, files::ViewPreferenceWriter& preferences, OperationHub& hub, files::TabId id
+      InputDispatcher& dispatcher, AnimationManager& animations, files::PinService& pins, files::DriveMonitor& drives,
+      files::FileIconCache& icons, files::ThumbnailService& thumbnails, files::ViewPreferenceWriter& preferences,
+      OperationHub& hub, files::TabId id
   );
 
   files::BrowserController& browser() override;
@@ -115,11 +117,9 @@ public:
   void reusePlacesFrom(BrowserPage& previous);
   void workspaceError(const std::string& message);
   bool owns(const Node* node) const;
-  void focusArea(InputArea* area);
-  void leavePointer();
-  InputArea* cycleFocus(bool reverse);
+  // The window dispatcher's focus moved to `focused`.
+  void focusChanged(InputArea* focused);
   bool completeLocationOnTab(std::uint32_t modifiers);
-  void nativeFocus();
   void stampFocusKeys(Node& node);
   void duplicateFrom(BrowserPage& source);
   void open(const files::Location& location);
@@ -138,11 +138,12 @@ public:
   void setPreviewBounds(std::optional<LayoutRect> bounds);
   void layoutNavigation(Renderer& renderer);
   bool dragging() const;
-  bool pointerCaptured() const;
   bool contains(float x, float y) const;
   files::WindowSurface* boundSurface() const;
-  void rebind(files::WindowSurface& surface);
-  void prepare(LayoutRect bounds, bool active, Node* host);
+  // Moves the page to another window: its surface and that window's input dispatcher.
+  void rebind(files::WindowSurface& surface, InputDispatcher& dispatcher);
+  // `roundCorner`: this pane starts the content plane beside the sidebar and rounds its top-left corner.
+  void prepare(LayoutRect bounds, bool active, bool roundCorner);
   void deactivate();
   void hide();
   void mount(Node& host);
@@ -239,9 +240,9 @@ private:
 
   // Input: pointer() and keyboard() run these hooks and the controllers' hooks in a fixed order.
   bool openInNewTab(float x, float y);
-  void pointerOverlay(InputDispatcher& dispatcher, const PointerEvent& event, float x, float y);
+  void pointerOverlay(InputDispatcher& input, const PointerEvent& event, float x, float y);
   bool millerPointer(const PointerEvent& event, float x, float y);
-  void dispatchPointer(InputDispatcher& dispatcher, const PointerEvent& event, float x, float y);
+  void dispatchPointer(InputDispatcher& input, const PointerEvent& event, float x, float y);
   std::uint32_t resizeEdges(float x, float y) const;
   bool escapeGesture(const KeyboardEvent& event);
   // Dispatches the first of `actions` whose table shortcut matches the key.
@@ -278,6 +279,7 @@ private:
   std::uint32_t popupSerial() override;
   files::WaylandTextClipboard& clipboard() override;
   files::WindowSurface& surface() override;
+  InputDispatcher& dispatcher() override;
   void focusFileList() override;
 
   WaylandConnection& m_connection;
@@ -285,6 +287,7 @@ private:
   TextInputService& m_textInput;
   AnimationManager& m_animations;
   files::WindowSurface* m_surface;
+  InputDispatcher* m_dispatcher;
   files::BrowserController m_browser;
   files::MillerColumns m_miller;
   MillerView* m_millerView = nullptr;
@@ -327,7 +330,7 @@ private:
   BatchRenameController m_batchRename{*this};
   files::TemplateCatalog m_templates;
   CreateController m_createController{*this, m_templates, m_connection, m_renderer, m_animations};
-  ArchiveController m_archiveController{*this, m_launcher, m_icons, m_connection, m_dispatcher};
+  ArchiveController m_archiveController{*this, m_launcher, m_icons, m_connection};
   TransferController m_transferController{*this, [this] { operationProgressTick(); }};
   MenuController m_menuController{
       *this,
@@ -347,16 +350,13 @@ private:
   AboutController m_aboutController{*this, m_launcher};
   ApplicationChooserController m_applicationChooser{*this, m_launcher, m_icons};
   PreviewController m_previewController{*this, m_preview, m_thumbnails, m_icons, m_renderer, m_applicationChooser};
-  DetailsHeaderController m_detailsHeader{*this,         m_dispatcher,  m_preferences,
-                                          m_listAdapter, m_gridAdapter, m_menuController};
-  LocationBarController m_locationBar{*this, m_dispatcher, m_connection, m_fileKeys, m_menuController};
-  SidebarController m_sidebar{*this,         m_dispatcher, m_pins,           m_drives,
-                              m_preferences, m_animations, m_menuController, m_renameController,
-                              m_dragDrop};
-  DragDropController m_dragDrop{*this,        m_dispatcher, m_connection, m_pins,    m_transferController,
-                                m_thumbnails, m_icons,      m_miller,     m_sidebar, m_locationBar};
-  FileKeyboardController m_fileKeys{*this,         m_dispatcher, m_textInput, m_miller, m_menuController,
-                                    m_locationBar, m_statusBar};
+  DetailsHeaderController m_detailsHeader{*this, m_preferences, m_listAdapter, m_gridAdapter, m_menuController};
+  LocationBarController m_locationBar{*this, m_connection, m_fileKeys, m_menuController};
+  SidebarController m_sidebar{*this,        m_pins,           m_drives,           m_preferences,
+                              m_animations, m_menuController, m_renameController, m_dragDrop};
+  DragDropController m_dragDrop{*this,   m_connection, m_pins,    m_transferController, m_thumbnails,
+                                m_icons, m_miller,     m_sidebar, m_locationBar};
+  FileKeyboardController m_fileKeys{*this, m_textInput, m_miller, m_menuController, m_locationBar, m_statusBar};
   StatusBarController m_statusBar{*this, m_pins, m_transferController, m_settingsController, m_fileKeys};
   std::size_t m_gridZoom = 1;
   double m_zoomScroll = 0;
@@ -384,7 +384,6 @@ private:
   std::function<bool()> m_popupAvailable, m_hasOther;
   std::optional<files::ActionRequest> m_pendingWorkspaceRequest;
 
-  InputDispatcher m_dispatcher;
   Flex* m_titlebar = nullptr;
   Flex* m_paneContentFrame = nullptr;
   VirtualGridView* m_list = nullptr;

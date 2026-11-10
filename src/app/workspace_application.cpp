@@ -235,9 +235,7 @@ void WorkspaceApplication::focus(wl_surface* surface, bool entered) {
         return;
       }
       m_focused = id;
-      if (auto found = m_model.windows().find(id); found != m_model.windows().end() && found->second.active) {
-        m_pages.at(found->second.active)->nativeFocus();
-      }
+      host->dispatcher.setTextInputContext(host->surface.wlSurface(), &m_input);
     }
   }
 }
@@ -306,7 +304,7 @@ bool WorkspaceApplication::running() {
         if (host->surface.isRunning()) {
           (void)window;
           if (page->boundSurface() != &host->surface) {
-            page->rebind(host->surface);
+            page->rebind(host->surface, host->dispatcher);
           }
           break;
         }
@@ -431,17 +429,7 @@ void WorkspaceApplication::keyboard(const KeyboardEvent& event) {
       if (page.completeLocationOnTab(event.modifiers)) {
         return;
       }
-      auto* target = page.cycleFocus(event.modifiers == KeyMod::Shift);
-      for (auto tab : host.mounted) {
-        if (tab != record->second.active && m_pages.at(tab)->owns(target)) {
-          page.focusArea(nullptr);
-          m_model.focus(host.id, tab);
-          host.surface.requestLayout();
-          prepare(host);
-          m_pages.at(tab)->focusArea(target);
-          break;
-        }
-      }
+      (void)host.dispatcher.cycleTabFocus(event.modifiers == KeyMod::Shift);
       host.surface.requestRedraw();
       return;
     }
@@ -523,14 +511,10 @@ void WorkspaceApplication::pointer(const PointerEvent& event) {
   }
   const auto& window = found->second;
   auto& active = *m_pages.at(window.active);
-  if (host->dispatcher.pointerCaptured()) {
+  // A button held on the tab strip stays with the strip.
+  if (host->dispatcher.pointerCaptured() && !host->pointerPage) {
     dispatch(host->dispatcher, event);
     return;
-  }
-  if (event.type == PointerEvent::Type::Leave
-      || !host->strip
-      || !host->strip->containsScenePoint(static_cast<float>(event.sx), static_cast<float>(event.sy))) {
-    host->dispatcher.pointerLeave();
   }
   for (auto& [tab, page] : m_pages) {
     (void)tab;
@@ -540,17 +524,20 @@ void WorkspaceApplication::pointer(const PointerEvent& event) {
     }
   }
   for (auto tab : host->mounted) {
-    if (m_pages.at(tab)->dragging() || m_pages.at(tab)->pointerCaptured()) {
+    if (m_pages.at(tab)->dragging()) {
       m_pages.at(tab)->pointer(event);
       return;
     }
   }
+  // A button held in a page stays with that page, wherever the pointer moves.
+  if (host->dispatcher.pointerCaptured() && std::ranges::contains(host->mounted, host->pointerPage)) {
+    m_pages.at(host->pointerPage)->pointer(event);
+    return;
+  }
   const auto x = static_cast<float>(event.sx), y = static_cast<float>(event.sy);
   if (host->previewDragWidth) {
     if (event.type == PointerEvent::Type::Motion) {
-      host->previewDragWidth = std::clamp(
-          static_cast<int>(std::lround(host->surface.width() - kWorkspaceInset - x - kWorkspaceInset * 0.5F)), 208, 800
-      );
+      host->previewDragWidth = std::clamp(static_cast<int>(std::lround(host->surface.width() - x)), 208, 800);
       host->surface.requestLayout();
     } else if (event.type == PointerEvent::Type::Button && !event.pressed && event.button == BTN_LEFT) {
       active.savePreviewWidth(*host->previewDragWidth);
@@ -563,11 +550,7 @@ void WorkspaceApplication::pointer(const PointerEvent& event) {
   }
   if (host->resizing) {
     if (event.type == PointerEvent::Type::Motion) {
-      m_model.resize(
-          host->id,
-          (x - host->browsingBounds.x - kWorkspaceInset * 0.5F)
-              / std::max(1.0F, host->browsingBounds.width - kWorkspaceInset)
-      );
+      m_model.resize(host->id, (x - host->browsingBounds.x) / std::max(1.0F, host->browsingBounds.width));
       host->surface.requestLayout();
     }
     if (event.type == PointerEvent::Type::Button && !event.pressed) {
@@ -607,9 +590,7 @@ void WorkspaceApplication::pointer(const PointerEvent& event) {
     }
   }
   if (host->strip && host->strip->containsScenePoint(x, y)) {
-    for (auto tab : host->mounted) {
-      m_pages.at(tab)->leavePointer();
-    }
+    host->pointerPage = 0;
     for (const auto& [tab, button] : host->buttons) {
       if (host->tabScroll->containsScenePoint(x, y)
           && button->containsScenePoint(x, y)
@@ -670,19 +651,27 @@ void WorkspaceApplication::pointer(const PointerEvent& event) {
     host->resizeStart = window.fraction;
     return;
   }
+  // A press in an inactive pane makes it the active one first, so the press lands on its full chrome.
   if (!active.overlay() && event.type == PointerEvent::Type::Button && event.pressed) {
     for (auto tab : host->mounted) {
-      if (m_pages.at(tab)->contains(x, y)) {
-        if (tab != window.active) {
-          m_model.focus(host->id, tab);
-          host->surface.requestLayout();
-          prepare(*host);
-        }
+      if (tab != window.active && m_pages.at(tab)->contains(x, y)) {
+        m_model.focus(host->id, tab);
+        host->surface.requestLayout();
+        prepare(*host);
         break;
       }
     }
   }
-  m_pages.at(m_model.windows().at(host->id).active)->pointer(event);
+  // Pane content goes to the page under the pointer; the chrome around the panes belongs to the active page.
+  auto target = m_model.windows().at(host->id).active;
+  for (auto tab : host->mounted) {
+    if (m_pages.at(tab)->contains(x, y)) {
+      target = tab;
+      break;
+    }
+  }
+  host->pointerPage = target;
+  m_pages.at(target)->pointer(event);
 }
 
 void WorkspaceApplication::clearExternalDrops() {
@@ -743,6 +732,7 @@ files::WindowId WorkspaceApplication::newWindow() {
   host->dispatcher.setCursorShapeCallback([this](auto serial, auto shape) {
     m_connection.extension<files::DesktopIntegration>().setCursorShape(serial, shape);
   });
+  host->dispatcher.setFocusChangeCallback([this, raw](InputArea*, InputArea* focused) { focusChanged(*raw, focused); });
   if (!host->surface.initialize(
           nullptr,
           {.width = 1080,
@@ -754,6 +744,7 @@ files::WindowId WorkspaceApplication::newWindow() {
       )) {
     throw std::runtime_error("Cannot initialize a Files window.");
   }
+  host->dispatcher.setTextInputContext(host->surface.wlSurface(), &m_input);
   m_hosts.emplace(id, std::move(host));
   m_focused = id;
   return id;
@@ -794,8 +785,8 @@ files::TabId WorkspaceApplication::createPage(
       : previous && m_pages.contains(previous) ? m_pages.at(previous)->options()
                                                : m_defaults;
   auto page = std::make_unique<BrowserPage>(
-      m_connection, m_renderer, m_input, settings, m_clipboard, host.surface, m_animations, m_pins, m_drives, m_icons,
-      m_thumbnails, m_preferences, m_hub, id
+      m_connection, m_renderer, m_input, settings, m_clipboard, host.surface, host.dispatcher, m_animations, m_pins,
+      m_drives, m_icons, m_thumbnails, m_preferences, m_hub, id
   );
   page->setHasOther([this, id] {
     const auto owner = m_model.owner(id);
@@ -920,7 +911,7 @@ void WorkspaceApplication::execute(
     if (m_model.reopen(window)) {
       for (auto& [pageId, value] : m_pages) {
         if (m_model.tabFor(pageId) == m_model.windows().at(window).selected) {
-          value->rebind(host.surface);
+          value->rebind(host.surface, host.dispatcher);
         }
       }
     }
@@ -972,10 +963,11 @@ void WorkspaceApplication::execute(
         std::erase(host.mounted, pageId);
       }
       m_model.move(tab, destinationWindow, m_model.windows().at(destinationWindow).tabs.size());
+      auto& target = *m_hosts.at(destinationWindow);
       for (auto pageId : pages) {
-        m_pages.at(pageId)->rebind(m_hosts.at(destinationWindow)->surface);
+        m_pages.at(pageId)->rebind(target.surface, target.dispatcher);
       }
-      m_hosts.at(destinationWindow)->surface.requestLayout();
+      target.surface.requestLayout();
     }
     break;
   }
@@ -1060,7 +1052,7 @@ void WorkspaceApplication::tabMenu(Host& host, files::TabId tab, float x, float 
 }
 
 Button::ButtonPalette WorkspaceApplication::closeTabPalette(ColorRole foreground) {
-  // Palette roles only: the selected tab sits on Primary, others on the strip's SurfaceContainer.
+  // Palette roles only: the selected tab sits on Primary, others on the strip's SurfaceContainerLow chrome.
   const bool selected = foreground == ColorRole::OnPrimary;
   const auto background =
       colorSpecFromRole(selected ? ColorRole::PrimaryContainer : ColorRole::SurfaceContainerHighest);
@@ -1086,7 +1078,10 @@ void WorkspaceApplication::rebuildStrip(Host& host, const files::TabWindow& wind
   }
   host.decorated = decorated;
   const float scrollOffset = host.tabScroll ? host.tabScroll->scrollOffset() : 0.0F;
-  host.dispatcher.cancelPointerCapture();
+  // Only a press held on the strip is lost with it; presses held in the panes survive the rebuild.
+  if (host.dispatcher.pointerCaptured() && !host.pointerPage) {
+    host.dispatcher.cancelPointerCapture();
+  }
   if (host.strip) {
     auto removed = host.root->removeChild(host.strip);
   }
@@ -1175,7 +1170,7 @@ void WorkspaceApplication::rebuildStrip(Host& host, const files::TabWindow& wind
        .align = FlexAlign::Center,
        .gap = Style::spaceXs,
        .paddingH = Style::spaceSm,
-       .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
+       .fill = colorSpecFromRole(ColorRole::SurfaceContainerLow),
        .height = kTabStripHeight,
        .participatesInLayout = false},
       std::move(scroll),
@@ -1236,10 +1231,7 @@ void WorkspaceApplication::syncTooltip(Host& host) {
           m_pages,
           [&host](const auto& item) { return item.second->boundSurface() == &host.surface && item.second->popup(); }
       )
-      || std::ranges::any_of(host.mounted, [this](auto tab) {
-           const auto& page = m_pages.at(tab);
-           return page->dragging() || page->pointerCaptured();
-         })) {
+      || std::ranges::any_of(host.mounted, [this](auto tab) { return m_pages.at(tab)->dragging(); })) {
     host.tooltip->dismiss();
     return;
   }
@@ -1254,6 +1246,25 @@ void WorkspaceApplication::syncTooltip(Host& host) {
       host.surface.renderTarget().renderer(), *host.root, host.pointerX, host.pointerY,
       {static_cast<float>(host.surface.width()), static_cast<float>(host.surface.height())}, std::move(file)
   );
+}
+
+void WorkspaceApplication::focusChanged(Host& host, InputArea* focused) {
+  for (auto tab : host.mounted) {
+    m_pages.at(tab)->focusChanged(focused);
+  }
+  const auto found = m_model.windows().find(host.id);
+  if (host.closed || focused == nullptr || found == m_model.windows().end()) {
+    return;
+  }
+  // Keyboard focus decides the active pane: a press or Tab into the other pane activates it on the next frame,
+  // which keeps the focus it just received.
+  for (auto tab : host.mounted) {
+    if (tab != found->second.active && m_pages.at(tab)->owns(focused)) {
+      m_model.focus(host.id, tab);
+      host.surface.requestLayout();
+      return;
+    }
+  }
 }
 
 void WorkspaceApplication::prepare(Host& host) {
@@ -1322,6 +1333,11 @@ void WorkspaceApplication::prepare(Host& host) {
         ui::box({.out = &host.previewResizeLine, .fill = colorSpecFromRole(ColorRole::OutlineVariant), .width = 1})
     );
     host.root->addChild(std::move(preview));
+    auto bar = ui::box({.out = &host.activePaneBar, .fill = colorSpecFromRole(ColorRole::Primary), .visible = false});
+    bar->setParticipatesInLayout(false);
+    bar->setRadius(1.0F);
+    bar->setZIndex(40);
+    host.root->addChild(std::move(bar));
   }
   auto& active = *m_pages.at(window.active);
   active.ensureScene();
@@ -1391,35 +1407,39 @@ void WorkspaceApplication::prepare(Host& host) {
   active.sidebar()->setVisible(!active.overlay());
   if (active.overlay()) {
     host.divider->setVisible(false);
+    host.activePaneBar->setVisible(false);
     host.previewDivider->setVisible(false);
     active.setPreviewBounds(std::nullopt);
-    active.prepare({0, kTabStripHeight, width, height - kTabStripHeight}, true, host.root.get());
+    active.prepare({0, kTabStripHeight, width, height - kTabStripHeight}, true, false);
     syncTooltip(host);
     return;
   }
   host.toolbarNode->arrange(renderer, {0, kTabStripHeight, width, kNavigationToolbarHeight});
-  const float top = kTabStripHeight + kNavigationToolbarHeight + kWorkspaceInset;
-  const float bodyHeight = std::max(1.0F, height - top - kWorkspaceInset);
+  // Chrome (tabs, toolbar, sidebar) wraps one flush content plane: panes and the docked preview touch, separated
+  // only by 1px lines; the plane's top-left corner is rounded where it meets the sidebar.
+  const float top = kTabStripHeight + kNavigationToolbarHeight;
+  const float bodyHeight = std::max(1.0F, height - top);
   const float sidebar = active.sidebarWidth();
-  active.sidebar()->arrange(renderer, {kWorkspaceInset, top, active.sidebarControlWidth(), bodyHeight});
-  const float left = kWorkspaceInset + sidebar;
-  const float right = width - kWorkspaceInset;
+  active.sidebar()->arrange(renderer, {0, top, active.sidebarControlWidth(), bodyHeight});
+  const float left = sidebar;
+  const float right = width;
   const bool split = visible.size() == 2;
-  // Cards (sidebar, panes, docked preview) are separated by kWorkspaceInset; dividers sit centered in the gaps.
-  const float gap = kWorkspaceInset;
-  const float previewBudget = right - left - kMinimumPaneWidth * (split ? 2.0F : 1.0F) - (split ? gap : 0.0F) - gap;
+  const float previewBudget = right - left - kMinimumPaneWidth * (split ? 2.0F : 1.0F);
   const float previewWidth = active.previewVisible() && previewBudget >= kMinimumPreviewWidth
       ? std::min(static_cast<float>(host.previewDragWidth.value_or(active.previewWidth())), previewBudget)
       : 0;
   host.previewDivider->setVisible(previewWidth > 0);
-  // Like the sidebar handle: resize lines show only while hovered, focused or dragged.
-  host.previewResizeLine->setFill(colorSpecFromRole(
-      host.previewDragWidth || host.previewDivider->focused() ? ColorRole::Primary : ColorRole::OnSurfaceVariant
-  ));
-  host.previewResizeLine->setVisible(
-      host.previewDragWidth || host.previewDivider->focused() || host.previewDivider->hovered()
+  const auto lineRole = [](bool strong, bool hovered) {
+    return colorSpecFromRole(
+        strong        ? ColorRole::Primary
+            : hovered ? ColorRole::OnSurfaceVariant
+                      : ColorRole::OutlineVariant
+    );
+  };
+  host.previewResizeLine->setFill(
+      lineRole(host.previewDragWidth || host.previewDivider->focused(), host.previewDivider->hovered())
   );
-  host.previewDivider->arrange(renderer, {right - previewWidth - gap * 0.5F - 3, top, 6, bodyHeight});
+  host.previewDivider->arrange(renderer, {right - previewWidth - 3, top, 6, bodyHeight});
   host.previewDivider->children().front()->arrange(renderer, {2.5F, 0, 1, bodyHeight});
   for (auto tab : visible) {
     m_pages.at(tab)->setPreviewBounds(
@@ -1428,25 +1448,27 @@ void WorkspaceApplication::prepare(Host& host) {
             : std::nullopt
     );
   }
-  const float content = std::max(1.0F, right - left - previewWidth - (previewWidth > 0 ? gap : 0.0F));
+  const float content = std::max(1.0F, right - left - previewWidth);
   host.browsingBounds = {left, top, content, bodyHeight};
-  const float panes = split ? std::max(1.0F, content - gap) : content;
-  const float minimumPane = std::min(kMinimumPaneWidth, panes * 0.5F);
-  const float first = split ? std::clamp(panes * window.fraction, minimumPane, panes - minimumPane) : content;
+  const float minimumPane = std::min(kMinimumPaneWidth, content * 0.5F);
+  const float first = split ? std::clamp(content * window.fraction, minimumPane, content - minimumPane) : content;
   host.divider->setVisible(split);
-  host.divider->arrange(renderer, {left + first + gap * 0.5F - 3, top, 6, bodyHeight});
+  host.divider->arrange(renderer, {left + first - 3, top, 6, bodyHeight});
   auto* splitLine = host.divider->children().front().get();
-  splitLine->setVisible(host.resizing || host.divider->focused() || host.divider->hovered());
-  static_cast<Box*>(splitLine)->setFill(
-      colorSpecFromRole(host.resizing || host.divider->focused() ? ColorRole::Primary : ColorRole::OnSurfaceVariant)
-  );
+  static_cast<Box*>(splitLine)->setFill(lineRole(host.resizing || host.divider->focused(), host.divider->hovered()));
   splitLine->arrange(renderer, {2.5F, 0, 1.0F, bodyHeight});
+  // The active pane of a split view carries a Primary bar along its top edge.
+  host.activePaneBar->setVisible(split);
   for (std::size_t index = 0; index < visible.size(); ++index) {
     const auto tab = visible[index];
-    m_pages.at(tab)->prepare(
-        {left + (index ? first + gap : 0), top, index ? panes - first : first, bodyHeight}, tab == window.active,
-        host.root.get()
-    );
+    const LayoutRect bounds{left + (index ? first : 0), top, index ? content - first : first, bodyHeight};
+    if (split && tab == window.active) {
+      // Inset by the corner radius on both ends so it reads as an indicator, not a clipped border.
+      host.activePaneBar->arrange(
+          renderer, {bounds.x + kWorkspaceRadius, top, std::max(0.0F, bounds.width - kWorkspaceRadius * 2), 2}
+      );
+    }
+    m_pages.at(tab)->prepare(bounds, tab == window.active, index == 0 && left > 0);
   }
   active.layoutNavigation(renderer);
   syncTooltip(host);

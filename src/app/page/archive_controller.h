@@ -16,7 +16,6 @@ namespace files {
 
 struct KeyboardEvent;
 class ArchiveView;
-class InputDispatcher;
 class OperationJob;
 class PageContext;
 class Renderer;
@@ -26,8 +25,7 @@ class WaylandConnection;
 class ArchiveController {
 public:
   ArchiveController(
-      PageContext& page, files::FileLauncher& launcher, files::FileIconCache& icons, WaylandConnection& connection,
-      InputDispatcher& dispatcher
+      PageContext& page, files::FileLauncher& launcher, files::FileIconCache& icons, WaylandConnection& connection
   );
 
   void compress(const std::vector<files::DirectoryEntry>& targets);
@@ -68,7 +66,6 @@ private:
   files::FileLauncher& m_launcher;
   files::FileIconCache& m_icons;
   WaylandConnection& m_connection;
-  InputDispatcher& m_dispatcher;
   ArchiveView* m_view = nullptr;
   std::optional<files::Location> m_source;
   bool m_wanted = false;

@@ -23,14 +23,14 @@
 using Action = files::BrowserAction;
 
 FileKeyboardController::FileKeyboardController(
-    PageContext& page, InputDispatcher& dispatcher, TextInputService& textInput, files::MillerColumns& miller,
-    MenuController& menus, LocationBarController& locationBar, StatusBarController& status
+    PageContext& page, TextInputService& textInput, files::MillerColumns& miller, MenuController& menus,
+    LocationBarController& locationBar, StatusBarController& status
 )
-    : m_page(page), m_dispatcher(dispatcher), m_textInput(textInput), m_miller(miller), m_menus(menus),
-      m_locationBar(locationBar), m_status(status) {}
+    : m_page(page), m_textInput(textInput), m_miller(miller), m_menus(menus), m_locationBar(locationBar),
+      m_status(status) {}
 
 bool FileKeyboardController::listFocused() const {
-  return m_page.fileList() != nullptr && m_dispatcher.focusedArea() == m_page.fileList()->focusArea();
+  return m_page.fileList() != nullptr && m_page.dispatcher().focusedArea() == m_page.fileList()->focusArea();
 }
 
 void FileKeyboardController::syncContext() {
@@ -68,7 +68,7 @@ bool FileKeyboardController::preeditKey(const KeyboardEvent& event) {
 
 bool FileKeyboardController::commandKey(const KeyboardEvent& event) {
   if (m_page.fileList() != nullptr
-      && m_dispatcher.focusedArea() == m_page.fileList()->focusArea()
+      && m_page.dispatcher().focusedArea() == m_page.fileList()->focusArea()
       && (event.sym == XKB_KEY_Menu || (event.sym == XKB_KEY_F10 && event.modifiers == KeyMod::Shift))) {
     auto id = m_page.browser().model().selection().focused;
     float x = 240, y = 100;
@@ -88,7 +88,9 @@ bool FileKeyboardController::commandKey(const KeyboardEvent& event) {
     m_menus.openFileMenu(id, x, y);
     return true;
   }
-  if (m_page.fileList() != nullptr && m_dispatcher.focusedArea() == m_page.fileList()->focusArea() && !event.repeat) {
+  if (m_page.fileList() != nullptr
+      && m_page.dispatcher().focusedArea() == m_page.fileList()->focusArea()
+      && !event.repeat) {
     if (event.sym == XKB_KEY_Delete && (event.modifiers == 0 || event.modifiers == KeyMod::Shift)) {
       const auto& folder = m_page.browser().model().snapshot().location;
       if (folder && folder->isTrash()) {
@@ -111,7 +113,7 @@ bool FileKeyboardController::typeKey(const KeyboardEvent& event) {
       && !event.preedit
       && m_typingMode == files::TypingMode::Typeahead
       && m_page.fileList() != nullptr
-      && m_dispatcher.focusedArea() == m_page.fileList()->focusArea()
+      && m_page.dispatcher().focusedArea() == m_page.fileList()->focusArea()
       && (event.modifiers & (KeyMod::Ctrl | KeyMod::Alt | KeyMod::Super)) == 0) {
     if (g_unichar_isprint(event.utf32)) {
       char text[8]{};
@@ -133,7 +135,7 @@ bool FileKeyboardController::typeKey(const KeyboardEvent& event) {
       && !event.preedit
       && m_typingMode == files::TypingMode::Search
       && m_page.fileList() != nullptr
-      && m_dispatcher.focusedArea() == m_page.fileList()->focusArea()
+      && m_page.dispatcher().focusedArea() == m_page.fileList()->focusArea()
       && (event.modifiers & (KeyMod::Ctrl | KeyMod::Alt | KeyMod::Super)) == 0
       && (g_unichar_isprint(event.utf32) || (m_locationBar.filterOpen() && event.sym == XKB_KEY_BackSpace))) {
     m_locationBar.openFilter(false);
@@ -168,7 +170,7 @@ void FileKeyboardController::typeaheadChanged(std::optional<files::EntryId> matc
 }
 
 void FileKeyboardController::applyTypeahead(const std::string& text, TextInputChangeCause cause, bool composing) {
-  m_dispatcher.cancelPointerCapture();
+  m_page.dispatcher().cancelPointerCapture();
   m_page.fileList()->cancelPointerGesture();
   typeaheadChanged(
       m_typeahead.append(m_page.browser().model(), text, files::TypeaheadSelection::Clock::now(), composing), cause

@@ -5,13 +5,7 @@
 #include "ui/style.h"
 
 namespace files {
-  // Workspace cards (file panes, docked preview) share one frame.
-  inline void applyCardStyle(Flex& card) {
-    card.setFill(colorSpecFromRole(ColorRole::Surface));
-    card.setBorder(colorSpecFromRole(ColorRole::OutlineVariant), Style::borderWidth);
-    card.setRadius(Style::radiusXl);
-  }
-  // Side lists (places sidebar, settings navigation): a recessed SurfaceContainer panel without an outline.
+  // Settings navigation: a SurfaceContainer panel (the window chrome colour) inside the Surface dialog.
   inline void applySideListStyle(Flex& panel) {
     panel.setFill(colorSpecFromRole(ColorRole::SurfaceContainer));
     panel.setRadius(Style::radiusXl);

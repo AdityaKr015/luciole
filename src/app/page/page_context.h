@@ -79,9 +79,11 @@ public:
   virtual void cancelDrag() = 0;
   virtual files::WaylandTextClipboard& clipboard() = 0;
   virtual files::WindowSurface& surface() = 0;
-  // Gives keyboard focus back to the file list, if there is one.
+  // Input of the window the page is bound to; shared by every page and the tab strip on that surface.
+  virtual InputDispatcher& dispatcher() = 0;
+  // Gives keyboard focus back to the file list, if there is one and the page is the active pane.
   virtual void focusFileList() = 0;
-  // Focuses the sidebar entry for `location` once no popup or overlay is open.
+  // Focuses the sidebar entry for `location` once the page is active and no popup or overlay is open.
   virtual void restorePlaceFocus(files::Location location) = 0;
   // Closes the active dialog, drags and location editing before a full-page overlay opens.
   virtual void prepareOverlay() = 0;

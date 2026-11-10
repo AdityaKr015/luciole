@@ -24,12 +24,11 @@
 #include <string>
 
 SidebarController::SidebarController(
-    PageContext& page, InputDispatcher& dispatcher, files::PinService& pins, files::DriveMonitor& drives,
-    files::ViewPreferenceWriter& preferences, AnimationManager& animations, MenuController& menus,
-    RenameController& renamer, DragDropController& drags
+    PageContext& page, files::PinService& pins, files::DriveMonitor& drives, files::ViewPreferenceWriter& preferences,
+    AnimationManager& animations, MenuController& menus, RenameController& renamer, DragDropController& drags
 )
-    : m_page(page), m_dispatcher(dispatcher), m_pins(pins), m_drives(drives), m_preferences(preferences),
-      m_animations(animations), m_menus(menus), m_renamer(renamer), m_drags(drags) {}
+    : m_page(page), m_pins(pins), m_drives(drives), m_preferences(preferences), m_animations(animations),
+      m_menus(menus), m_renamer(renamer), m_drags(drags) {}
 
 void SidebarController::load(const files::BrowserSettings& settings) {
   m_sidebarWidth = settings.sidebarWidth;
@@ -65,7 +64,7 @@ void SidebarController::setVisible(bool visible, bool persist) {
   if (visible == m_showSidebar) {
     return;
   }
-  m_dispatcher.cancelPointerCapture();
+  m_page.dispatcher().cancelPointerCapture();
   if (m_drags.dragging()) {
     m_drags.cancelDrag();
   }
@@ -73,9 +72,9 @@ void SidebarController::setVisible(bool visible, bool persist) {
   m_showSidebar = visible;
   if (!visible) {
     m_restorePlaceFocus.reset();
-    for (const Node* node = m_dispatcher.focusedArea(); node != nullptr; node = node->parent()) {
+    for (const Node* node = m_page.dispatcher().focusedArea(); node != nullptr; node = node->parent()) {
       if (node == m_places || node == m_sidebarResize) {
-        m_dispatcher.setFocus(m_page.fileList()->focusArea());
+        m_page.dispatcher().setFocus(m_page.fileList()->focusArea());
         break;
       }
     }
@@ -146,7 +145,7 @@ void SidebarController::configureCallbacks() {
   m_places->setOpenCallback([this](const files::Location& location) {
     m_page.setActionMessage({});
     m_page.browser().open(location);
-    m_dispatcher.setFocus(m_page.fileList()->focusArea());
+    m_page.dispatcher().setFocus(m_page.fileList()->focusArea());
   });
   m_places->setContextCallback([this](const files::Bookmark& bookmark, float x, float y) {
     m_menus.openPlaceMenu(bookmark, x, y);
@@ -172,7 +171,7 @@ void SidebarController::openDrive(const std::string& key) {
           return;
         }
         m_page.browser().open(*root);
-        m_dispatcher.setFocus(m_page.fileList()->focusArea());
+        m_page.dispatcher().setFocus(m_page.fileList()->focusArea());
       }
   );
 }
@@ -288,8 +287,8 @@ std::unique_ptr<Node> SidebarController::buildResizeHandle() {
              handle.setOnCancel([this] {
                if (std::exchange(m_resizingSidebar, false)) {
                  m_sidebarWidth = m_sidebarStartWidth;
-                 if (m_dispatcher.focusedArea() == m_sidebarResize) {
-                   m_dispatcher.setFocus(nullptr);
+                 if (m_page.dispatcher().focusedArea() == m_sidebarResize) {
+                   m_page.dispatcher().setFocus(nullptr);
                  }
                  m_page.surface().requestLayout();
                }
@@ -346,9 +345,9 @@ void SidebarController::onFrame() {
 std::optional<InputDispatcher::TabFocusSnapshot> SidebarController::invalidate() {
   std::optional<InputDispatcher::TabFocusSnapshot> placesFocus;
   if (m_placesDirty) {
-    for (const Node* node = m_dispatcher.focusedArea(); node != nullptr; node = node->parent()) {
+    for (const Node* node = m_page.dispatcher().focusedArea(); node != nullptr; node = node->parent()) {
       if (node == m_places) {
-        placesFocus = m_dispatcher.captureTabFocus();
+        placesFocus = m_page.dispatcher().captureTabFocus();
         break;
       }
     }
@@ -376,13 +375,13 @@ void SidebarController::layoutResizeLine(Renderer& renderer) {
 
 void SidebarController::restoreFocus(std::optional<InputDispatcher::TabFocusSnapshot> focus, bool covered) {
   if (focus) {
-    m_dispatcher.restoreTabFocus(std::move(*focus));
+    m_page.dispatcher().restoreTabFocus(std::move(*focus));
   }
   if (m_restorePlaceFocus && !covered) {
     const auto location = *std::exchange(m_restorePlaceFocus, std::nullopt);
     if (m_showSidebar) {
       if (auto* area = m_places->focusArea(location)) {
-        m_dispatcher.setFocus(area);
+        m_page.dispatcher().setFocus(area);
       }
     }
   }

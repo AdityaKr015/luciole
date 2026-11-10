@@ -4,9 +4,9 @@
 #include "ui/browser/preview_layout.h"
 #include "ui/builders.h"
 #include "ui/controls/button.h"
-#include "ui/controls/card_style.h"
 #include "ui/controls/file_metadata_view.h"
 #include "ui/controls/label.h"
+#include "ui/palette.h"
 #include "ui/style.h"
 
 #include <algorithm>
@@ -19,7 +19,7 @@ FilePreviewView::FilePreviewView(
   setAlign(FlexAlign::Stretch);
   setPadding(Style::spaceMd);
   setGap(Style::spaceMd);
-  files::applyCardStyle(*this);
+  setFill(colorSpecFromRole(ColorRole::Surface));
   addChild(
       ui::row(
           {.align = FlexAlign::Center, .gap = Style::spaceSm, .minHeight = 24.0F},
@@ -87,6 +87,14 @@ void FilePreviewView::sync(
     const files::PreviewSnapshot& snapshot, float width, float height, std::string_view typeLabel, bool quick
 ) {
   setPadding(Style::spaceMd, Style::spaceMd, quick ? Style::spaceMd : Style::borderWidth, Style::spaceMd);
+  // Docked, the preview is part of the flush content plane; Quick Look floats as a card.
+  if (quick) {
+    setBorder(colorSpecFromRole(ColorRole::OutlineVariant), Style::borderWidth);
+    setRadius(Style::radiusXl);
+  } else {
+    clearBorder();
+    setRadius(0);
+  }
   const float budget = std::max(40.0F, width - Style::spaceMd * 2 - Style::scrollbarWidth - Style::scrollbarGap);
   m_heading->setMaxWidth(std::max(1.0F, width - Style::spaceMd * 2 - Style::controlHeightSm - Style::spaceSm));
   for (auto* button : {m_open, m_openWith}) {

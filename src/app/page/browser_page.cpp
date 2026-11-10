@@ -68,12 +68,13 @@
 BrowserPage::BrowserPage(
     WaylandConnection& connection, RenderContext& renderer, TextInputService& textInput,
     const files::BrowserSettings& settings, files::WaylandTextClipboard& clipboard, files::WindowSurface& surface,
-    AnimationManager& animations, files::PinService& pins, files::DriveMonitor& drives, files::FileIconCache& icons,
-    files::ThumbnailService& thumbnails, files::ViewPreferenceWriter& preferences, OperationHub& hub, files::TabId id
+    InputDispatcher& dispatcher, AnimationManager& animations, files::PinService& pins, files::DriveMonitor& drives,
+    files::FileIconCache& icons, files::ThumbnailService& thumbnails, files::ViewPreferenceWriter& preferences,
+    OperationHub& hub, files::TabId id
 )
     : m_connection(connection), m_renderer(renderer), m_textInput(textInput), m_animations(animations),
-      m_surface(&surface), m_browser(settings.sort, settings.showHidden, settings.showBackups), m_icons(icons),
-      m_thumbnails(thumbnails),
+      m_surface(&surface), m_dispatcher(&dispatcher),
+      m_browser(settings.sort, settings.showHidden, settings.showBackups), m_icons(icons), m_thumbnails(thumbnails),
       m_listAdapter(
           m_browser, m_icons, m_thumbnails, files::ViewMode::List, [this] { return m_connection.keyboardModifiers(); },
           [this] { return m_fileKeys.keyboardFocus() && m_list != nullptr && m_list->focusArea()->focused(); }
@@ -116,15 +117,6 @@ BrowserPage::BrowserPage(
   m_detailsHeader.load(settings);
   m_activationMode = settings.activationMode;
   m_fileKeys.setTypingMode(settings.typingMode);
-  m_dispatcher.setCursorShapeCallback([this](std::uint32_t serial, std::uint32_t shape) {
-    m_connection.extension<files::DesktopIntegration>().setCursorShape(serial, shape);
-  });
-  m_dispatcher.setFocusChangeCallback([this](InputArea*, InputArea* focused) {
-    if (m_list != nullptr && focused != m_list->focusArea()) {
-      m_fileKeys.clearTypeahead();
-    }
-    m_detailsHeader.focusChanged(focused);
-  });
   m_browser.setChangedCallback([this] {
     m_browserDirty = true;
     m_surface->requestUpdate();
@@ -206,7 +198,6 @@ BrowserPage::~BrowserPage() {
   m_preview.clear();
   closeMenu();
   m_archiveController.close();
-  m_dispatcher.setSceneRoot(nullptr);
   unmount();
   m_root = nullptr;
   m_detachedRoot.reset();
@@ -229,9 +220,7 @@ bool BrowserPage::initialize(const std::optional<std::string>& initialLocation) 
 void BrowserPage::revealItems(std::vector<files::Location> items, bool properties) {
   m_revealTargets = std::move(items);
   m_revealProperties = properties;
-  if (m_list != nullptr) {
-    m_dispatcher.setFocus(m_list->focusArea());
-  }
+  focusFileList();
 }
 
 bool BrowserPage::busy() const {
@@ -369,22 +358,14 @@ bool BrowserPage::owns(const Node* node) const {
   return false;
 }
 
-void BrowserPage::focusArea(InputArea* area) { m_dispatcher.setFocus(area); }
-
-void BrowserPage::leavePointer() { m_dispatcher.pointerLeave(); }
-
-InputArea* BrowserPage::cycleFocus(bool reverse) {
-  (void)m_dispatcher.cycleTabFocus(reverse);
-  return m_dispatcher.focusedArea();
+void BrowserPage::focusChanged(InputArea* focused) {
+  if (m_list != nullptr && focused != m_list->focusArea()) {
+    m_fileKeys.clearTypeahead();
+  }
+  m_detailsHeader.focusChanged(focused);
 }
 
 bool BrowserPage::completeLocationOnTab(std::uint32_t modifiers) { return m_locationBar.completeOnTab(modifiers); }
-
-void BrowserPage::nativeFocus() {
-  if (m_active) {
-    m_dispatcher.setTextInputContext(m_surface->wlSurface(), &m_textInput);
-  }
-}
 
 void BrowserPage::stampFocusKeys(Node& node) {
   if (auto* area = dynamic_cast<InputArea*>(&node); area && area->tabFocusKey().empty()) {
@@ -411,7 +392,7 @@ void BrowserPage::configurationChanged() {
     m_menuSurface->requestLayout();
   }
   if (m_sidebar.resizing() || m_detailsHeader.gestureActive() || (m_millerView && m_millerView->resizing())) {
-    m_dispatcher.cancelPointerCapture();
+    dispatcher().cancelPointerCapture();
   }
 }
 
@@ -465,18 +446,17 @@ void BrowserPage::layoutNavigation(Renderer& renderer) {
 
 bool BrowserPage::dragging() const { return m_dragDrop.dragging(); }
 
-bool BrowserPage::pointerCaptured() const { return m_dispatcher.pointerCaptured(); }
-
 bool BrowserPage::contains(float x, float y) const { return m_body && m_body->containsScenePoint(x, y); }
 
 files::WindowSurface* BrowserPage::boundSurface() const { return m_surface; }
 
-void BrowserPage::rebind(files::WindowSurface& surface) {
+void BrowserPage::rebind(files::WindowSurface& surface, InputDispatcher& dispatcher) {
   deactivate();
   m_surface = &surface;
+  m_dispatcher = &dispatcher;
 }
 
-void BrowserPage::prepare(LayoutRect bounds, bool active, Node* host) {
+void BrowserPage::prepare(LayoutRect bounds, bool active, bool roundCorner) {
   m_pageBounds = bounds;
   if (!m_visible) {
     m_visible = true;
@@ -492,20 +472,17 @@ void BrowserPage::prepare(LayoutRect bounds, bool active, Node* host) {
   stampFocusKeys(*m_root);
   stampFocusKeys(*m_toolbar);
   stampFocusKeys(*m_sidebar.bundle());
-  m_body->setBorder(
-      colorSpecFromRole(split && active ? ColorRole::Primary : ColorRole::OutlineVariant),
-      split && active ? Style::focusRingWidth : Style::borderWidth
-  );
-  m_body->setRadius(kWorkspaceRadius);
+  // Panes are part of the flush content plane; the split view marks the active pane with the window's top bar.
+  m_body->clearBorder();
+  m_body->setRadii(roundCorner ? Radii(kWorkspaceRadius, 0, 0, 0) : Radii(0, 0, 0, 0));
   if (active && !m_active) {
     m_active = true;
-    m_dispatcher.setSceneRoot(host);
-    m_dispatcher.setTextInputContext(m_surface->wlSurface(), &m_textInput);
-    if (m_stashedFocus) {
-      m_dispatcher.restoreTabFocus(*m_stashedFocus);
+    // A press or Tab that activated the pane already focused inside it; otherwise bring back its last focus.
+    if (!owns(dispatcher().focusedArea()) && m_stashedFocus) {
+      dispatcher().restoreTabFocus(*m_stashedFocus);
     }
-    if (!m_dispatcher.focusedArea()) {
-      m_dispatcher.setFocus(m_list->focusArea());
+    if (!owns(dispatcher().focusedArea())) {
+      dispatcher().setFocus(m_list->focusArea());
     }
   } else if (!active && m_active) {
     deactivate();
@@ -517,21 +494,18 @@ void BrowserPage::prepare(LayoutRect bounds, bool active, Node* host) {
 void BrowserPage::deactivate() {
   m_dragDrop.clearExternalDrop();
   m_previewController.hidePane();
-  m_active = false;
-  if (m_root) {
-    if (owns(m_dispatcher.focusedArea())) {
-      m_stashedFocus = m_dispatcher.captureTabFocus();
-    } else {
-      m_stashedFocus.reset();
-    }
-    m_dispatcher.setFocus(nullptr);
+  if (m_root && owns(dispatcher().focusedArea())) {
+    m_stashedFocus = dispatcher().captureTabFocus();
+    dispatcher().setFocus(nullptr);
+  } else if (m_active) {
+    // The focus already left for another pane or the window chrome; there is no focus of this page to restore.
+    m_stashedFocus.reset();
   }
+  m_active = false;
   m_transferController.keepConflict();
   closeMenu();
   m_fileKeys.clearTypeahead();
   m_dragDrop.cancelDrag();
-  m_dispatcher.setSceneRoot(m_root);
-  m_dispatcher.setTextInputContext(nullptr, nullptr);
 }
 
 void BrowserPage::hide() {
@@ -643,23 +617,23 @@ void BrowserPage::pointer(const PointerEvent& event) {
             && event.sx < m_menuSurface->width()
             && event.sy < m_menuSurface->height());
     if (!inPopup) {
-      m_dispatcher.cancelPointerCapture();
+      dispatcher().cancelPointerCapture();
       dismissMenu();
       return;
     }
   }
-  auto* dispatcher = event.surface == m_surface->wlSurface()                    ? &m_dispatcher
+  auto* input = event.surface == m_surface->wlSurface()                         ? &dispatcher()
       : m_menuSurface != nullptr && event.surface == m_menuSurface->wlSurface() ? &m_menuDispatcher
       : m_createController.documentOwns(event.surface) ? &m_createController.documentDispatcher()
                                                        : nullptr;
-  if (dispatcher == nullptr) {
+  if (input == nullptr) {
     return;
   }
   const auto x = static_cast<float>(event.sx), y = static_cast<float>(event.sy);
-  if (dispatcher == &m_menuDispatcher) {
+  if (input == &m_menuDispatcher) {
     m_batchRename.pointer(x, y, event.type == PointerEvent::Type::Motion || event.type == PointerEvent::Type::Enter);
   }
-  const bool page = dispatcher == &m_dispatcher;
+  const bool page = input == &dispatcher();
   if (page
       && event.type == PointerEvent::Type::Button
       && event.pressed
@@ -669,7 +643,7 @@ void BrowserPage::pointer(const PointerEvent& event) {
     return;
   }
   if (overlay() && page) {
-    pointerOverlay(*dispatcher, event, x, y);
+    pointerOverlay(*input, event, x, y);
     return;
   }
   m_pointerX = x;
@@ -729,11 +703,11 @@ void BrowserPage::pointer(const PointerEvent& event) {
       return;
     }
   }
-  dispatchPointer(*dispatcher, event, x, y);
-  if (dispatcher == &m_createController.documentDispatcher() && event.type != PointerEvent::Type::Leave) {
+  dispatchPointer(*input, event, x, y);
+  if (input == &m_createController.documentDispatcher() && event.type != PointerEvent::Type::Leave) {
     m_createController.documentPointer();
   }
-  if (dispatcher == &m_menuDispatcher
+  if (input == &m_menuDispatcher
       && (event.type == PointerEvent::Type::Enter || event.type == PointerEvent::Type::Motion)) {
     m_createController.menuHover();
   }
@@ -808,7 +782,7 @@ bool BrowserPage::openInNewTab(float x, float y) {
   return false;
 }
 
-void BrowserPage::pointerOverlay(InputDispatcher& dispatcher, const PointerEvent& event, float x, float y) {
+void BrowserPage::pointerOverlay(InputDispatcher& input, const PointerEvent& event, float x, float y) {
   m_pointerX = x;
   m_pointerY = y;
   if (event.type == PointerEvent::Type::Button && event.pressed) {
@@ -816,19 +790,19 @@ void BrowserPage::pointerOverlay(InputDispatcher& dispatcher, const PointerEvent
   }
   switch (event.type) {
   case PointerEvent::Type::Enter:
-    dispatcher.pointerEnter(x, y, event.serial);
+    input.pointerEnter(x, y, event.serial);
     break;
   case PointerEvent::Type::Leave:
-    dispatcher.pointerLeave();
+    input.pointerLeave();
     break;
   case PointerEvent::Type::Motion:
-    dispatcher.pointerMotion(x, y, event.serial);
+    input.pointerMotion(x, y, event.serial);
     break;
   case PointerEvent::Type::Button:
-    dispatcher.pointerButton(x, y, event.button, event.pressed, event.serial, event.time, event.touch);
+    input.pointerButton(x, y, event.button, event.pressed, event.serial, event.time, event.touch);
     break;
   case PointerEvent::Type::Axis:
-    dispatcher.pointerAxis(
+    input.pointerAxis(
         x, y, event.axis, event.axisSource, event.axisValue, event.axisDiscrete, event.axisValue120, event.axisLines,
         event.axisGestureSerial
     );
@@ -861,29 +835,29 @@ bool BrowserPage::millerPointer(const PointerEvent& event, float x, float y) {
   return false;
 }
 
-void BrowserPage::dispatchPointer(InputDispatcher& dispatcher, const PointerEvent& event, float x, float y) {
-  const bool page = &dispatcher == &m_dispatcher;
+void BrowserPage::dispatchPointer(InputDispatcher& input, const PointerEvent& event, float x, float y) {
+  const bool page = &input == &dispatcher();
   switch (event.type) {
   case PointerEvent::Type::Enter:
-    dispatcher.pointerEnter(x, y, event.serial);
+    input.pointerEnter(x, y, event.serial);
     break;
   case PointerEvent::Type::Leave:
-    dispatcher.pointerLeave();
+    input.pointerLeave();
     if (page) {
       m_dragDrop.cancelLocalDrag();
     }
     break;
   case PointerEvent::Type::Motion:
-    dispatcher.pointerMotion(x, y, event.serial);
+    input.pointerMotion(x, y, event.serial);
     if (page && m_dragDrop.dragging()) {
       m_dragDrop.updateDrag();
     }
     break;
   case PointerEvent::Type::Button:
-    dispatcher.pointerButton(x, y, event.button, event.pressed, event.serial, event.time, event.touch);
+    input.pointerButton(x, y, event.button, event.pressed, event.serial, event.time, event.touch);
     break;
   case PointerEvent::Type::Axis:
-    if (&dispatcher == &m_menuDispatcher) {
+    if (&input == &m_menuDispatcher) {
       m_createController.menuScrolled();
     }
     if (page
@@ -897,7 +871,7 @@ void BrowserPage::dispatchPointer(InputDispatcher& dispatcher, const PointerEven
     if (page && zoomFromScroll(event)) {
       break;
     }
-    dispatcher.pointerAxis(
+    input.pointerAxis(
         x, y, event.axis, event.axisSource, event.axisValue, event.axisDiscrete, event.axisValue120, event.axisLines,
         event.axisGestureSerial
     );
@@ -945,17 +919,17 @@ void BrowserPage::keyboard(const KeyboardEvent& event) {
   if (m_fileKeys.typeKey(event)) {
     return;
   }
-  m_dispatcher.keyEvent(event.sym, event.utf32, event.modifiers, event.pressed, event.preedit);
+  dispatcher().keyEvent(event.sym, event.utf32, event.modifiers, event.pressed, event.preedit);
 }
 
 bool BrowserPage::escapeGesture(const KeyboardEvent& event) {
   if ((m_detailsHeader.gestureActive() || (m_millerView && m_millerView->resizing()))
       && KeySymbol::isEscape(event.sym)) {
-    m_dispatcher.cancelPointerCapture();
+    dispatcher().cancelPointerCapture();
     return true;
   }
   if (m_sidebar.resizing() && KeySymbol::isEscape(event.sym)) {
-    m_dispatcher.cancelPointerCapture();
+    dispatcher().cancelPointerCapture();
     return true;
   }
   if (m_dragDrop.dragging() && KeySymbol::isEscape(event.sym)) {
@@ -983,7 +957,7 @@ bool BrowserPage::shortcutKey(const KeyboardEvent& event) {
   if (!editing
       && !event.repeat
       && files::shortcutMatches(Action::QuickPreview, event.sym, event.modifiers)
-      && m_dispatcher.focusedArea() == m_list->focusArea()) {
+      && dispatcher().focusedArea() == m_list->focusArea()) {
     dispatchAction(Action::QuickPreview);
     return true;
   }
@@ -1006,7 +980,7 @@ bool BrowserPage::shortcutKey(const KeyboardEvent& event) {
     return true;
   }
   if (m_list != nullptr
-      && m_dispatcher.focusedArea() == m_list->focusArea()
+      && dispatcher().focusedArea() == m_list->focusArea()
       && (millerKey(event) || m_fileKeys.listKey(event))) {
     m_fileKeys.setKeyboardFocus(!KeySymbol::isEscape(event.sym));
     m_browserDirty = true;
@@ -1018,7 +992,7 @@ bool BrowserPage::shortcutKey(const KeyboardEvent& event) {
 
 bool BrowserPage::windowKey(const KeyboardEvent& event) {
   if (KeySymbol::isTab(event.sym)) {
-    (void)m_dispatcher.cycleTabFocus((event.modifiers & KeyMod::Shift) != 0);
+    (void)dispatcher().cycleTabFocus((event.modifiers & KeyMod::Shift) != 0);
     m_surface->requestRedraw();
     return true;
   }
@@ -1073,7 +1047,7 @@ bool BrowserPage::millerKey(const KeyboardEvent& event) {
       }
     } else if (m_miller.focused() > 0) {
       focusMiller(m_miller.focused() - 1);
-      m_dispatcher.setFocus(m_list->focusArea());
+      dispatcher().setFocus(m_list->focusArea());
     }
     return true;
   }
@@ -1141,7 +1115,7 @@ void BrowserPage::dispatchAction(Action action, const files::ActionRequest& requ
     if (m_miller.enabled()) {
       m_miller.interact(m_miller.focused());
     }
-    m_dispatcher.cancelPointerCapture();
+    dispatcher().cancelPointerCapture();
     m_list->cancelPointerGesture();
   }
   std::vector<files::DirectoryEntry> targets;
@@ -1152,7 +1126,7 @@ void BrowserPage::dispatchAction(Action action, const files::ActionRequest& requ
   }
   runAction(action, request, targets);
   if (!m_menuSurface && selectionAction) {
-    m_dispatcher.setFocus(m_list->focusArea());
+    dispatcher().setFocus(m_list->focusArea());
   }
   m_browserDirty = true;
   m_surface->requestUpdate();
@@ -1420,7 +1394,7 @@ void BrowserPage::openPatternSelection(const files::ActionRequest& request) {
         }
         m_selectionPattern = std::move(pattern);
         dismissMenu();
-        m_dispatcher.setFocus(m_list->focusArea());
+        dispatcher().setFocus(m_list->focusArea());
       },
       [this] { dismissMenu(); }, "Select", "Selecting…"
   );
@@ -1528,7 +1502,7 @@ void BrowserPage::applySettings(const files::BrowserSettings& settings, bool for
   if (m_list) {
     m_list->cancelPointerGesture();
   }
-  m_dispatcher.cancelPointerCapture();
+  dispatcher().cancelPointerCapture();
   m_listAdapter.onPointerCancel();
   m_gridAdapter.onPointerCancel();
   if (m_menuController.menu()) {
@@ -1641,7 +1615,7 @@ void BrowserPage::changeSort(files::SortOptions options) {
     column->browser->model().setSort(options);
   }
   m_preferences.saveSort(options);
-  m_dispatcher.setFocus(m_list->focusArea());
+  dispatcher().setFocus(m_list->focusArea());
 }
 
 void BrowserPage::setViewMode(files::ViewMode mode) {
@@ -1651,7 +1625,7 @@ void BrowserPage::setViewMode(files::ViewMode mode) {
   m_viewAnchor.reset();
   if (m_list != nullptr) {
     captureViewAnchor();
-    m_dispatcher.setFocus(m_list->focusArea());
+    dispatcher().setFocus(m_list->focusArea());
   }
   m_viewMode = mode;
   m_preferences.save(mode);
@@ -1941,7 +1915,7 @@ void BrowserPage::prepareFrame(bool, bool layout) {
     const bool restoreFocus = m_miller.enabled()
         && m_lastBrowser != &browser()
         && m_list
-        && m_dispatcher.focusedArea() == m_list->focusArea();
+        && dispatcher().focusedArea() == m_list->focusArea();
     UiPhaseScope phase(UiPhase::Layout);
     m_millerView->activationMode = m_activationMode;
     m_millerView->presentation = m_savedSettings.presentation;
@@ -1961,7 +1935,7 @@ void BrowserPage::prepareFrame(bool, bool layout) {
   }
   if (std::exchange(m_millerFocusPending, false)) {
     m_millerView->revealFocused();
-    m_dispatcher.setFocus(m_list->focusArea());
+    focusFileList();
   }
   if (m_miller.enabled() && m_browserDirty) {
     for (const auto& column : m_miller.columns()) {
@@ -2052,7 +2026,7 @@ void BrowserPage::layoutFrame(Renderer& renderer) {
   m_statusBar.arrange(renderer, m_pageBounds.width, m_pageBounds.height);
   const bool columnHoverDirty = m_detailsHeader.takeHoverDirty();
   if (columnOrderChanged || columnHoverDirty) {
-    m_dispatcher.syncPointerHover();
+    dispatcher().syncPointerHover();
   }
   m_detailsHeader.layoutDrag(renderer);
   m_dragDrop.refreshDrop();
@@ -2060,16 +2034,28 @@ void BrowserPage::layoutFrame(Renderer& renderer) {
   m_dragDrop.layout(renderer);
   m_locationBar.layoutCompletions(renderer);
   m_thumbnails.endFrame();
-  m_sidebar.restoreFocus(std::move(placesFocus), m_menuSurface != nullptr || m_archiveController.open());
+  m_sidebar.restoreFocus(std::move(placesFocus), m_menuSurface != nullptr || m_archiveController.open() || !m_active);
   m_fileKeys.notifyStateChanged();
 }
 
 void BrowserPage::buildScene() {
   uiAssertNotRendering("Window::buildScene");
   m_titlebar = nullptr;
-  m_detachedRoot = ui::column(
-      {.align = FlexAlign::Stretch, .fill = clearColorSpec(), .fillWidth = true, .fillHeight = true}, buildTitlebar(),
-      buildToolbar(),
+  // Every page root spans the whole window (pages share one surface and one dispatcher), so the root itself must
+  // not be a hit target: otherwise the active page's root would sit over the other pane and swallow its hover,
+  // presses and tooltips. Only its children are hit-tested.
+  class PageRoot final : public Flex {
+  protected:
+    bool containsLocalPoint(float, float, bool) const override { return false; }
+  };
+  auto root = std::make_unique<PageRoot>();
+  root->setDirection(FlexDirection::Vertical);
+  root->setAlign(FlexAlign::Stretch);
+  root->setFillWidth(true);
+  root->setFillHeight(true);
+  root->addChild(buildTitlebar());
+  root->addChild(buildToolbar());
+  root->addChild(
       ui::column(
           {.out = &m_body,
            .align = FlexAlign::Stretch,
@@ -2123,13 +2109,13 @@ void BrowserPage::buildScene() {
           m_statusBar.build()
       )
   );
+  m_detachedRoot = std::move(root);
   m_root = m_detachedRoot.get();
   m_sidebar.detach();
   m_detailsHeader.attach(*m_root);
   m_dragDrop.buildOverlay(m_animations);
   m_locationBar.buildCompletion(*m_toolbar);
   m_root->setAnimationManager(&m_animations);
-  m_dispatcher.setSceneRoot(m_root);
 }
 
 std::unique_ptr<Flex> BrowserPage::buildTitlebar() {
@@ -2216,7 +2202,9 @@ std::unique_ptr<Flex> BrowserPage::buildToolbar() {
                .onChange =
                    [this](std::size_t index) {
                      dispatchAction(index == 0 ? Action::Grid : index == 1 ? Action::List : Action::Miller);
-                   }}
+                   },
+               // Same pill colour as the address and search fields; the default track is the chrome colour.
+               .configure = [](Segmented& view) { view.setSurfaceRole(ColorRole::SurfaceContainerHigh); }}
           ),
           ui::button(
               {.out = &m_menuButton, .glyph = "dots-vertical", .variant = ButtonVariant::Ghost, .onClick = [this] {
@@ -2321,7 +2309,7 @@ void BrowserPage::closeMenu() {
   m_activeDialog.release();
   m_menuController.menuClosed();
   m_menuSurface.reset();
-  m_dispatcher.setTextInputContext(m_surface->wlSurface(), &m_textInput);
+  dispatcher().setTextInputContext(m_surface->wlSurface(), &m_textInput);
   m_surface->requestLayout();
 }
 
@@ -2344,6 +2332,8 @@ files::WaylandTextClipboard& BrowserPage::clipboard() { return m_clipboard; }
 
 files::WindowSurface& BrowserPage::surface() { return *m_surface; }
 
+InputDispatcher& BrowserPage::dispatcher() { return *m_dispatcher; }
+
 bool BrowserPage::popupAvailable() { return !m_popupAvailable || m_popupAvailable(); }
 
 void BrowserPage::prepareOverlay() {
@@ -2358,8 +2348,9 @@ void BrowserPage::prepareOverlay() {
 Node& BrowserPage::sceneRoot() { return *m_root; }
 
 void BrowserPage::focusFileList() {
-  if (m_list) {
-    m_dispatcher.setFocus(m_list->focusArea());
+  // The window has one focus: an inactive pane must not take it from the active one.
+  if (m_list && m_active) {
+    dispatcher().setFocus(m_list->focusArea());
   }
 }
 

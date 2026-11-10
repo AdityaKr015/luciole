@@ -20,7 +20,6 @@ class ContextMenuControl;
 class FileKeyboardController;
 class Flex;
 class Input;
-class InputDispatcher;
 class MenuController;
 class PageContext;
 class Renderer;
@@ -32,8 +31,7 @@ class WaylandConnection;
 class LocationBarController {
 public:
   LocationBarController(
-      PageContext& page, InputDispatcher& dispatcher, WaylandConnection& connection, FileKeyboardController& keys,
-      MenuController& menus
+      PageContext& page, WaylandConnection& connection, FileKeyboardController& keys, MenuController& menus
   );
 
   // Scene: the breadcrumb and location field, the search field, and the completion dropdown on `toolbar`.
@@ -116,7 +114,6 @@ private:
   void closeFilter();
 
   PageContext& m_page;
-  InputDispatcher& m_dispatcher;
   WaylandConnection& m_connection;
   FileKeyboardController& m_keys;
   MenuController& m_menus;

@@ -28,7 +28,11 @@ class WorkspaceApplication {
     InputArea* divider = nullptr;
     InputArea* previewDivider = nullptr;
     Box* previewResizeLine = nullptr;
+    Box* activePaneBar = nullptr;
+    // The window's only scene input: tab strip, chrome and every mounted page share it.
     InputDispatcher dispatcher;
+    // Page that took the last pointer event outside the tab strip, 0 for the strip; a held button stays with it.
+    files::TabId pointerPage = 0;
     TooltipPresenter* tooltip = nullptr;
     std::vector<std::pair<files::TabId, Button*>> buttons;
     std::map<files::TabId, std::pair<Button*, ColorRole>> closeButtons;
@@ -91,6 +95,8 @@ private:
   static Button::ButtonPalette closeTabPalette(ColorRole foreground);
   void rebuildStrip(Host& host, const files::TabWindow& window);
   void syncTooltip(Host& host);
+  // The window dispatcher's focus moved: the pages hear it and the pane that holds it becomes the active one.
+  void focusChanged(Host& host, InputArea* focused);
   void prepare(Host& host);
   WaylandConnection& m_connection;
   RenderContext& m_renderer;

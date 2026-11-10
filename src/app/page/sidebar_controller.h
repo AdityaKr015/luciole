@@ -36,9 +36,8 @@ public:
   static constexpr float kHandleWidth = 6.0F;
 
   SidebarController(
-      PageContext& page, InputDispatcher& dispatcher, files::PinService& pins, files::DriveMonitor& drives,
-      files::ViewPreferenceWriter& preferences, AnimationManager& animations, MenuController& menus,
-      RenameController& renamer, DragDropController& drags
+      PageContext& page, files::PinService& pins, files::DriveMonitor& drives, files::ViewPreferenceWriter& preferences,
+      AnimationManager& animations, MenuController& menus, RenameController& renamer, DragDropController& drags
   );
 
   // Takes the sidebar settings of a new page.
@@ -102,7 +101,6 @@ private:
   void openDriveMenu(const std::string& key, float x, float y);
 
   PageContext& m_page;
-  InputDispatcher& m_dispatcher;
   files::PinService& m_pins;
   files::DriveMonitor& m_drives;
   files::ViewPreferenceWriter& m_preferences;

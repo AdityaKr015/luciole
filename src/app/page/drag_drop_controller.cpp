@@ -29,13 +29,12 @@
 #include <string>
 
 DragDropController::DragDropController(
-    PageContext& page, InputDispatcher& dispatcher, WaylandConnection& connection, files::PinService& pins,
-    TransferController& transferController, files::ThumbnailService& thumbnails, files::FileIconCache& icons,
-    files::MillerColumns& miller, SidebarController& sidebar, LocationBarController& locationBar
+    PageContext& page, WaylandConnection& connection, files::PinService& pins, TransferController& transferController,
+    files::ThumbnailService& thumbnails, files::FileIconCache& icons, files::MillerColumns& miller,
+    SidebarController& sidebar, LocationBarController& locationBar
 )
-    : m_page(page), m_dispatcher(dispatcher), m_connection(connection), m_pins(pins),
-      m_transferController(transferController), m_thumbnails(thumbnails), m_icons(icons), m_miller(miller),
-      m_sidebar(sidebar), m_locationBar(locationBar) {}
+    : m_page(page), m_connection(connection), m_pins(pins), m_transferController(transferController),
+      m_thumbnails(thumbnails), m_icons(icons), m_miller(miller), m_sidebar(sidebar), m_locationBar(locationBar) {}
 
 void DragDropController::setForeignDrop(
     std::function<std::optional<std::pair<files::Location, LayoutRect>>(float, float)> callback
@@ -469,7 +468,7 @@ void DragDropController::startFileDrag(const std::vector<files::EntryId>& ids) {
       }
   );
   if (m_systemDrag) {
-    m_dispatcher.cancelPointerCapture();
+    m_page.dispatcher().cancelPointerCapture();
     m_connection.extension<files::DesktopIntegration>().setCursorShape(
         cursorSerial, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP
     );
@@ -501,7 +500,7 @@ void DragDropController::cancelDrag() {
   m_dragScroll.stop();
   m_dragScrollDelta = 0;
   m_sidebar.places().cancelDragCandidate();
-  m_dispatcher.cancelPointerCapture();
+  m_page.dispatcher().cancelPointerCapture();
   if (m_dragIcon != nullptr) {
     m_dragIcon->setVisible(false);
     m_dragCount->setVisible(false);

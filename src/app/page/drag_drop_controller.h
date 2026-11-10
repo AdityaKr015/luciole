@@ -27,7 +27,6 @@ struct PointerEvent;
 class AnimationManager;
 class Box;
 class Flex;
-class InputDispatcher;
 class Label;
 class LocationBarController;
 class PageContext;
@@ -42,9 +41,9 @@ class WaylandConnection;
 class DragDropController {
 public:
   DragDropController(
-      PageContext& page, InputDispatcher& dispatcher, WaylandConnection& connection, files::PinService& pins,
-      TransferController& transferController, files::ThumbnailService& thumbnails, files::FileIconCache& icons,
-      files::MillerColumns& miller, SidebarController& sidebar, LocationBarController& locationBar
+      PageContext& page, WaylandConnection& connection, files::PinService& pins, TransferController& transferController,
+      files::ThumbnailService& thumbnails, files::FileIconCache& icons, files::MillerColumns& miller,
+      SidebarController& sidebar, LocationBarController& locationBar
   );
 
   // True while a file or place drag runs.
@@ -113,7 +112,6 @@ private:
   void updateExternalScroll();
 
   PageContext& m_page;
-  InputDispatcher& m_dispatcher;
   WaylandConnection& m_connection;
   files::PinService& m_pins;
   TransferController& m_transferController;

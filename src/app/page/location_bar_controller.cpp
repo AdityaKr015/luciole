@@ -21,10 +21,9 @@
 #include <cmath>
 
 LocationBarController::LocationBarController(
-    PageContext& page, InputDispatcher& dispatcher, WaylandConnection& connection, FileKeyboardController& keys,
-    MenuController& menus
+    PageContext& page, WaylandConnection& connection, FileKeyboardController& keys, MenuController& menus
 )
-    : m_page(page), m_dispatcher(dispatcher), m_connection(connection), m_keys(keys), m_menus(menus) {}
+    : m_page(page), m_connection(connection), m_keys(keys), m_menus(menus) {}
 
 std::unique_ptr<Flex> LocationBarController::buildLocationArea() {
   auto breadcrumbScroll = ui::scrollView(
@@ -44,9 +43,8 @@ std::unique_ptr<Flex> LocationBarController::buildLocationArea() {
   auto locationArea = ui::column(
       {.out = &m_locationArea,
        .align = FlexAlign::Stretch,
-       .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
+       .fill = colorSpecFromRole(ColorRole::SurfaceContainerHigh),
        .radius = Style::radiusMd,
-       .border = colorSpecFromRole(ColorRole::OutlineVariant),
        .minWidth = 80.0F,
        .height = Style::controlHeight,
        .flexGrow = 1.0F},
@@ -86,9 +84,8 @@ std::unique_ptr<Flex> LocationBarController::buildSearchArea() {
        .align = FlexAlign::Center,
        .gap = Style::spaceXs,
        .paddingH = Style::spaceSm,
-       .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
+       .fill = colorSpecFromRole(ColorRole::SurfaceContainerHigh),
        .radius = Style::radiusMd,
-       .border = colorSpecFromRole(ColorRole::OutlineVariant),
        .minWidth = 220.0F,
        .maxWidth = 220.0F,
        .height = Style::controlHeight,
@@ -116,7 +113,7 @@ std::unique_ptr<Flex> LocationBarController::buildSearchArea() {
                  }
                  m_page.browser().submitSearchQuery();
                  if (!m_page.browser().model().rows().empty()) {
-                   m_dispatcher.setFocus(m_page.fileList()->focusArea());
+                   m_page.dispatcher().setFocus(m_page.fileList()->focusArea());
                  }
                },
            .configure =
@@ -157,8 +154,8 @@ void LocationBarController::buildCompletion(Node& toolbar) {
 }
 
 bool LocationBarController::textFocused() const {
-  return (m_location != nullptr && m_dispatcher.focusedArea() == m_location->inputArea())
-      || (m_filterInput != nullptr && m_dispatcher.focusedArea() == m_filterInput->inputArea());
+  return (m_location != nullptr && m_page.dispatcher().focusedArea() == m_location->inputArea())
+      || (m_filterInput != nullptr && m_page.dispatcher().focusedArea() == m_filterInput->inputArea());
 }
 
 bool LocationBarController::breadcrumbsContain(float x, float y) const {
@@ -168,7 +165,7 @@ bool LocationBarController::breadcrumbsContain(float x, float y) const {
 bool LocationBarController::completeOnTab(std::uint32_t modifiers) {
   return m_editingLocation
       && m_location != nullptr
-      && m_dispatcher.focusedArea() == m_location->inputArea()
+      && m_page.dispatcher().focusedArea() == m_location->inputArea()
       && completionKey(XKB_KEY_Tab, modifiers);
 }
 
@@ -256,12 +253,12 @@ bool LocationBarController::menuKey(const KeyboardEvent& event) {
       || (event.sym == XKB_KEY_F10 && event.modifiers == KeyMod::Shift)) {
     if (m_breadcrumbOverflow
         && m_breadcrumbOverflow->visible()
-        && m_dispatcher.focusedArea() == m_breadcrumbOverflow->inputArea()) {
+        && m_page.dispatcher().focusedArea() == m_breadcrumbOverflow->inputArea()) {
       openBreadcrumbOverflow();
       return true;
     }
     for (const auto& [target, button] : m_dropBreadcrumbs) {
-      if (m_dispatcher.focusedArea() == button->inputArea()) {
+      if (m_page.dispatcher().focusedArea() == button->inputArea()) {
         m_menus.openBreadcrumbMenu(target, sceneRect(*button));
         return true;
       }
@@ -296,8 +293,8 @@ bool LocationBarController::syncLocation(const std::optional<files::Location>& l
     m_lastBreadcrumb.reset();
   }
   m_filterOpen = false;
-  if (m_dispatcher.focusedArea() == m_filterInput->inputArea() || m_editingLocation) {
-    m_dispatcher.setFocus(m_page.fileList()->focusArea());
+  if (m_page.dispatcher().focusedArea() == m_filterInput->inputArea() || m_editingLocation) {
+    m_page.dispatcher().setFocus(m_page.fileList()->focusArea());
   }
   m_editingLocation = false;
   m_location->setVisible(false);
@@ -316,14 +313,17 @@ void LocationBarController::sync() {
   if (!m_filterInput->composing() && m_filterInput->value() != m_page.browser().searchQuery()) {
     m_filterInput->setValue(m_page.browser().searchQuery());
   }
-  const bool searchFocused = m_dispatcher.focusedArea() == m_filterInput->inputArea();
-  m_searchArea->setBorder(
-      colorSpecFromRole(searchFocused ? ColorRole::Primary : ColorRole::OutlineVariant),
-      searchFocused ? Style::focusRingWidth : Style::borderWidth
-  );
-  m_locationArea->setBorder(
-      colorSpecFromRole(m_locationInvalid ? ColorRole::Error : ColorRole::OutlineVariant), Style::borderWidth
-  );
+  // Fields are borderless pills on the chrome; only focus and errors draw an outline.
+  if (m_page.dispatcher().focusedArea() == m_filterInput->inputArea()) {
+    m_searchArea->setBorder(colorSpecFromRole(ColorRole::Primary), Style::focusRingWidth);
+  } else {
+    m_searchArea->clearBorder();
+  }
+  if (m_locationInvalid) {
+    m_locationArea->setBorder(colorSpecFromRole(ColorRole::Error), Style::borderWidth);
+  } else {
+    m_locationArea->clearBorder();
+  }
 }
 
 bool LocationBarController::onFrame() {
@@ -399,7 +399,7 @@ void LocationBarController::acceptCompletion(std::size_t index, bool navigate) {
   } else {
     m_location->setValue(suggestion.text);
     m_location->selectRange(suggestion.text.size(), suggestion.text.size());
-    m_dispatcher.setFocus(m_location->inputArea());
+    m_page.dispatcher().setFocus(m_location->inputArea());
   }
 }
 
@@ -507,7 +507,7 @@ void LocationBarController::beginLocationEdit() {
   m_location->setParticipatesInLayout(true);
   m_breadcrumbScroll->setVisible(false);
   m_breadcrumbScroll->setParticipatesInLayout(false);
-  m_dispatcher.setFocus(m_location->inputArea());
+  m_page.dispatcher().setFocus(m_location->inputArea());
   m_location->selectAll();
   m_page.requestSync();
 }
@@ -521,7 +521,7 @@ void LocationBarController::endLocationEdit(bool focusFiles) {
   m_breadcrumbScroll->setVisible(true);
   m_breadcrumbScroll->setParticipatesInLayout(true);
   if (focusFiles) {
-    m_dispatcher.setFocus(m_page.fileList()->focusArea());
+    m_page.dispatcher().setFocus(m_page.fileList()->focusArea());
   }
   m_page.requestSync();
 }
@@ -534,7 +534,7 @@ void LocationBarController::breadcrumbClick(const files::Location& target, const
     m_breadcrumbClickY = pointer->sceneY;
   }
   m_page.browser().open(target);
-  m_dispatcher.setFocus(m_page.fileList()->focusArea());
+  m_page.dispatcher().setFocus(m_page.fileList()->focusArea());
 }
 
 void LocationBarController::openBreadcrumbOverflow() {
@@ -599,11 +599,11 @@ bool LocationBarController::layoutBreadcrumbs(Renderer& renderer) {
       used += widths[first] + separators[first];
     }
   }
-  auto* focus = m_dispatcher.focusedArea();
+  auto* focus = m_page.dispatcher().focusedArea();
   m_breadcrumbOverflow->setVisible(overflow);
   m_breadcrumbOverflow->setParticipatesInLayout(overflow);
   if (!overflow && focus == m_breadcrumbOverflow->inputArea()) {
-    m_dispatcher.setFocus(m_breadcrumbParts.back().button->inputArea());
+    m_page.dispatcher().setFocus(m_breadcrumbParts.back().button->inputArea());
   }
   m_dropBreadcrumbs.clear();
   for (std::size_t index = 0; index < m_breadcrumbParts.size(); ++index) {
@@ -619,7 +619,7 @@ bool LocationBarController::layoutBreadcrumbs(Renderer& renderer) {
     if (visible) {
       m_dropBreadcrumbs.emplace_back(part.location, part.button);
     } else if (focus == part.button->inputArea()) {
-      m_dispatcher.setFocus(m_breadcrumbOverflow->inputArea());
+      m_page.dispatcher().setFocus(m_breadcrumbOverflow->inputArea());
     }
   }
   m_firstBreadcrumb = first;
@@ -632,7 +632,7 @@ bool LocationBarController::layoutBreadcrumbs(Renderer& renderer) {
   m_breadcrumbLayoutWidth = available;
   m_breadcrumbRenderScale = renderer.renderScale();
   m_breadcrumbMetricsGeneration = renderer.textMetricsGeneration();
-  m_dispatcher.syncPointerHover();
+  m_page.dispatcher().syncPointerHover();
   return true;
 }
 
@@ -710,7 +710,7 @@ void LocationBarController::openFilter(bool selectAll, bool preserveTextInput) {
   if (!m_filterInput->composing() && m_filterInput->value() != m_page.browser().searchQuery()) {
     m_filterInput->setValue(m_page.browser().searchQuery());
   }
-  m_dispatcher.setFocus(m_filterInput->inputArea(), preserveTextInput);
+  m_page.dispatcher().setFocus(m_filterInput->inputArea(), preserveTextInput);
   if (selectAll) {
     m_filterInput->selectAll();
   }
@@ -732,6 +732,6 @@ void LocationBarController::closeFilter() {
   changeNameFilter({});
   m_filterOpen = false;
   m_filterInput->setValue({});
-  m_dispatcher.setFocus(m_page.fileList()->focusArea());
+  m_page.dispatcher().setFocus(m_page.fileList()->focusArea());
   m_page.requestSync();
 }

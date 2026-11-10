@@ -27,11 +27,11 @@
 using Action = files::BrowserAction;
 
 DetailsHeaderController::DetailsHeaderController(
-    PageContext& page, InputDispatcher& dispatcher, files::ViewPreferenceWriter& preferences,
-    files::FileViewAdapter& listAdapter, files::FileViewAdapter& gridAdapter, MenuController& menus
+    PageContext& page, files::ViewPreferenceWriter& preferences, files::FileViewAdapter& listAdapter,
+    files::FileViewAdapter& gridAdapter, MenuController& menus
 )
-    : m_page(page), m_dispatcher(dispatcher), m_preferences(preferences), m_listAdapter(listAdapter),
-      m_gridAdapter(gridAdapter), m_menus(menus) {}
+    : m_page(page), m_preferences(preferences), m_listAdapter(listAdapter), m_gridAdapter(gridAdapter), m_menus(menus) {
+}
 
 void DetailsHeaderController::load(const files::BrowserSettings& settings) {
   m_columnVisibility = settings.columns;
@@ -298,7 +298,7 @@ bool DetailsHeaderController::widthKey(const KeyboardEvent& event) {
       && event.modifiers == KeyMod::Ctrl
       && (event.sym == XKB_KEY_Left || event.sym == XKB_KEY_Right)) {
     for (std::size_t index = 0; index < m_columnWidths.size(); ++index) {
-      if (m_dispatcher.focusedArea() == widthHeader(index)->inputArea()) {
+      if (m_page.dispatcher().focusedArea() == widthHeader(index)->inputArea()) {
         auto widths = m_columnWidths;
         const int delta = (event.sym == XKB_KEY_Right ? 16 : -16) * (Style::rtl() ? -1 : 1);
         widths[index] = std::clamp(
@@ -322,7 +322,7 @@ bool DetailsHeaderController::menuKey(const KeyboardEvent& event) {
       || (event.sym == XKB_KEY_F10 && event.modifiers == KeyMod::Shift)) {
     for (std::size_t index = 0; index < m_columnWidths.size(); ++index) {
       auto* header = widthHeader(index);
-      if (m_dispatcher.focusedArea() == header->inputArea()) {
+      if (m_page.dispatcher().focusedArea() == header->inputArea()) {
         std::optional<files::DetailsColumn> column;
         for (const auto candidate : m_columnOrder) {
           if (columnHeader(candidate) == header) {
@@ -347,7 +347,7 @@ void DetailsHeaderController::setDetailsColumnVisibility(files::DetailsColumnVis
     return;
   }
   m_page.captureViewAnchor();
-  m_dispatcher.cancelPointerCapture();
+  m_page.dispatcher().cancelPointerCapture();
   m_listAdapter.onPointerCancel();
   m_gridAdapter.onPointerCancel();
   m_columnVisibility = visibility;
@@ -377,7 +377,7 @@ void DetailsHeaderController::setDetailsColumnWidths(files::DetailsColumnWidths 
     return;
   }
   m_page.captureViewAnchor();
-  m_dispatcher.cancelPointerCapture();
+  m_page.dispatcher().cancelPointerCapture();
   m_page.fileList()->cancelPointerGesture();
   m_columnWidths = widths;
   m_preferences.saveColumnWidths(widths);
@@ -426,8 +426,8 @@ bool DetailsHeaderController::layoutColumns(bool miller) {
     const float allocation = index == 0 ? columns.nameWidth : static_cast<float>(m_columnWidths[index]);
     header->setMinWidth(allocation);
     header->setMaxWidth(allocation);
-    if (!visible && m_dispatcher.focusedArea() == header->inputArea()) {
-      m_dispatcher.setFocus(m_nameHeader->inputArea());
+    if (!visible && m_page.dispatcher().focusedArea() == header->inputArea()) {
+      m_page.dispatcher().setFocus(m_nameHeader->inputArea());
     }
   }
   m_detailsOffset = std::clamp(m_detailsOffset, 0.0F, std::max(0.0F, columns.contentWidth - viewport));
@@ -448,7 +448,7 @@ void DetailsHeaderController::layoutHeader(Renderer& renderer) {
   );
   // Reveal focused headers without moving the user's horizontal position
   // on every frame. Pointer resizing retains its own captured offset.
-  auto* focused = m_dispatcher.focusedArea();
+  auto* focused = m_page.dispatcher().focusedArea();
   Button* reveal = std::exchange(m_revealDetailsHeader, nullptr);
   if (focused != m_lastDetailsFocus && !m_columnResize && !m_columnDrag) {
     for (std::size_t index = 0; index < m_columnWidths.size(); ++index) {
@@ -542,8 +542,8 @@ void DetailsHeaderController::cancelColumnDrag() {
   header->setCursorShape(drag->cursor);
   header->setHoverSuppressed(false);
   header->setOpacity(1.0F);
-  if (m_dispatcher.focusedArea() == header->inputArea()) {
-    m_dispatcher.setFocus(m_page.fileList()->focusArea());
+  if (m_page.dispatcher().focusedArea() == header->inputArea()) {
+    m_page.dispatcher().setFocus(m_page.fileList()->focusArea());
   }
   m_columnHoverDirty = true;
   m_page.surface().requestLayout();
@@ -569,13 +569,13 @@ void DetailsHeaderController::updateColumnDrag() {
 
 void DetailsHeaderController::finishColumnDrag(float x, float y) {
   const auto drop = columnDropAt(x, y);
-  m_dispatcher.cancelPointerCapture();
+  m_page.dispatcher().cancelPointerCapture();
   cancelColumnDrag();
   if (drop) {
     setDetailsColumnOrder(drop->order);
   }
-  m_dispatcher.setFocus(m_page.fileList()->focusArea());
-  m_dispatcher.syncPointerHover();
+  m_page.dispatcher().setFocus(m_page.fileList()->focusArea());
+  m_page.dispatcher().syncPointerHover();
   m_page.surface().requestLayout();
 }
 
@@ -606,7 +606,7 @@ void DetailsHeaderController::setDetailsColumnOrder(files::DetailsColumnOrder or
     return;
   }
   m_page.captureViewAnchor();
-  m_dispatcher.cancelPointerCapture();
+  m_page.dispatcher().cancelPointerCapture();
   m_listAdapter.onPointerCancel();
   m_gridAdapter.onPointerCancel();
   m_columnOrder = order;
@@ -638,6 +638,6 @@ void DetailsHeaderController::sortBy(files::SortField field) {
 
 void DetailsHeaderController::cancelGesture() {
   if (m_columnDrag || m_columnResize) {
-    m_dispatcher.cancelPointerCapture();
+    m_page.dispatcher().cancelPointerCapture();
   }
 }

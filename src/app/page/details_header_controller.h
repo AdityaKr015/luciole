@@ -23,7 +23,6 @@ class Box;
 class Button;
 class Flex;
 class InputArea;
-class InputDispatcher;
 class MenuController;
 class PageContext;
 class Renderer;
@@ -35,8 +34,8 @@ class Separator;
 class DetailsHeaderController {
 public:
   DetailsHeaderController(
-      PageContext& page, InputDispatcher& dispatcher, files::ViewPreferenceWriter& preferences,
-      files::FileViewAdapter& listAdapter, files::FileViewAdapter& gridAdapter, MenuController& menus
+      PageContext& page, files::ViewPreferenceWriter& preferences, files::FileViewAdapter& listAdapter,
+      files::FileViewAdapter& gridAdapter, MenuController& menus
   );
 
   // Takes the column settings of a new page.
@@ -67,7 +66,7 @@ public:
   std::unique_ptr<Box> buildScrollbar();
   void attach(Node& root);
 
-  // Focus hook of the page dispatcher: scrolls a focused header into view.
+  // Focus hook of the window dispatcher (via BrowserPage::focusChanged()): scrolls a focused header into view.
   void focusChanged(InputArea* focused);
   // BrowserPage::syncBrowser(): sort indicators, header visibility and the list adapter's columns.
   void sync(const files::SortOptions& sort);
@@ -129,7 +128,6 @@ private:
   void finishColumnDrag(float x, float y);
 
   PageContext& m_page;
-  InputDispatcher& m_dispatcher;
   files::ViewPreferenceWriter& m_preferences;
   files::FileViewAdapter& m_listAdapter;
   files::FileViewAdapter& m_gridAdapter;

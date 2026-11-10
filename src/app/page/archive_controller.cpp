@@ -26,10 +26,9 @@
 #include <utility>
 
 ArchiveController::ArchiveController(
-    PageContext& page, files::FileLauncher& launcher, files::FileIconCache& icons, WaylandConnection& connection,
-    InputDispatcher& dispatcher
+    PageContext& page, files::FileLauncher& launcher, files::FileIconCache& icons, WaylandConnection& connection
 )
-    : m_page(page), m_launcher(launcher), m_icons(icons), m_connection(connection), m_dispatcher(dispatcher) {}
+    : m_page(page), m_launcher(launcher), m_icons(icons), m_connection(connection) {}
 
 void ArchiveController::compress(const std::vector<files::DirectoryEntry>& targets) {
   std::vector<files::Location> sources;
@@ -264,7 +263,7 @@ void ArchiveController::close() {
     return;
   }
   m_page.closeMenu();
-  m_dispatcher.cancelPointerCapture();
+  m_page.dispatcher().cancelPointerCapture();
   m_page.focusFileList();
   auto* view = std::exchange(m_view, nullptr);
   auto removed = m_page.sceneRoot().removeChild(view);
@@ -302,8 +301,8 @@ void ArchiveController::sync() {
     root->setParticipatesInLayout(false);
     root->setZIndex(1000);
     m_page.sceneRoot().addChild(std::move(root));
-    m_dispatcher.cancelPointerCapture();
-    m_dispatcher.setFocus(m_view->focusArea());
+    m_page.dispatcher().cancelPointerCapture();
+    m_page.dispatcher().setFocus(m_view->focusArea());
   }
   if (const auto* job = shown(); m_view && job) {
     const auto& archives = job->service<files::ArchiveService>();
@@ -324,14 +323,14 @@ bool ArchiveController::key(const KeyboardEvent& event) {
   } else if (event.pressed && event.sym == XKB_KEY_q && event.modifiers == KeyMod::Ctrl) {
     m_page.surface().close();
   } else if (event.pressed && KeySymbol::isTab(event.sym)) {
-    (void)m_dispatcher.cycleTabFocusInSubtree(m_view, (event.modifiers & KeyMod::Shift) != 0);
+    (void)m_page.dispatcher().cycleTabFocusInSubtree(m_view, (event.modifiers & KeyMod::Shift) != 0);
   } else if (
       !event.pressed
       || event.preedit
-      || m_dispatcher.focusedArea() != m_view->focusArea()
+      || m_page.dispatcher().focusedArea() != m_view->focusArea()
       || !m_view->key(event.sym, event.modifiers)
   ) {
-    m_dispatcher.keyEvent(event.sym, event.utf32, event.modifiers, event.pressed, event.preedit);
+    m_page.dispatcher().keyEvent(event.sym, event.utf32, event.modifiers, event.pressed, event.preedit);
   }
   m_page.surface().requestLayout();
   return true;
