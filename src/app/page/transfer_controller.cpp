@@ -456,25 +456,12 @@ void TransferController::syncConflict() {
   }
 }
 
-OperationJob* TransferController::latestTransfer() const {
-  return m_page.jobs().newest([](const OperationJob& job) { return job.kind() == JobKind::Transfer && job.ran(); });
-}
-
-OperationJob* TransferController::cancelTarget() const {
-  return m_page.jobs().newest([](const OperationJob& job) { return job.cancellable(); });
-}
-
-std::string_view TransferController::report() const {
-  const auto* job = latestTransfer();
-  if (!job || job->running()) {
-    return {};
-  }
-  return job->service<files::TransferService>().report();
-}
-
-void TransferController::retry() {
-  auto* job = latestTransfer();
-  if (m_page.operationsBusy() || !job || job->service<files::TransferService>().retryable() == 0) {
+void TransferController::retry(files::JobId target) {
+  auto* job = m_page.jobs().find(target);
+  if (m_page.operationsBusy()
+      || !job
+      || job->kind() != JobKind::Transfer
+      || job->service<files::TransferService>().retryable() == 0) {
     return;
   }
   auto& transfers = job->service<files::TransferService>();
@@ -535,7 +522,8 @@ std::shared_ptr<OperationJob> TransferController::startPayloadTransfer(
 
 void TransferController::updateOperationProgress() {
   if (!m_page.jobs().newest([](const OperationJob& job) {
-        return job.cancellable() || (job.kind() == JobKind::Permission && job.running());
+        return (job.kind() == JobKind::BatchRename && job.service<files::BatchRenameService>().applying())
+            || (job.kind() == JobKind::Permission && job.running());
       })) {
     m_operationProgress.stop();
   } else if (!m_operationProgress.active()) {
@@ -545,60 +533,6 @@ void TransferController::updateOperationProgress() {
       updateOperationProgress();
     });
   }
-}
-
-std::unique_ptr<Button> TransferController::buildRetryButton() {
-  return ui::button(
-      {.out = &m_retryTransfer,
-       .text = "Retry failed",
-       .variant = ButtonVariant::Ghost,
-       .tooltip = "Retry failed items without repeating completed transfers",
-       .visible = false,
-       .participatesInLayout = false,
-       .onClick = [this] { retry(); }}
-  );
-}
-
-std::unique_ptr<Button> TransferController::buildCancelButton() {
-  return ui::button(
-      {.out = &m_cancelOperation,
-       .glyph = "x",
-       .controlHeight = Style::controlHeightSm,
-       .variant = ButtonVariant::Ghost,
-       .tooltip = "Cancel transfer",
-       .visible = false,
-       .participatesInLayout = false,
-       .onClick = [this] {
-         if (auto* job = cancelTarget()) {
-           job->cancel();
-         }
-       }}
-  );
-}
-
-bool TransferController::syncOperationButtons() {
-  const auto* cancel = cancelTarget();
-  const auto* latest = latestTransfer();
-  const bool retryable =
-      latest && latest->service<files::TransferService>().retryable() > 0 && !m_page.operationsBusy();
-  m_retryTransfer->setVisible(retryable);
-  m_retryTransfer->setParticipatesInLayout(retryable);
-  m_cancelOperation->setVisible(cancel != nullptr);
-  m_cancelOperation->setParticipatesInLayout(cancel != nullptr);
-  if (!cancel) {
-    return retryable;
-  }
-  const auto kind = cancel->kind();
-  m_cancelOperation->setTooltip(
-      kind == JobKind::BatchRename   ? "Cancel batch rename"
-          : kind == JobKind::Restore ? "Cancel restoration"
-          : kind == JobKind::EmptyTrash
-          ? (cancel->service<files::EmptyTrashService>().snapshot().selection ? "Cancel deletion"
-                                                                              : "Cancel emptying Trash")
-          : kind == JobKind::Trash ? "Cancel move to Trash"
-                                   : "Cancel transfer"
-  );
-  return true;
 }
 
 void TransferController::stopProgress() { m_operationProgress.stop(); }

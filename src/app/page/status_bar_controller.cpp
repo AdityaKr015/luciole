@@ -1,10 +1,8 @@
 #include "app/page/status_bar_controller.h"
 
-#include "app/operation_hub.h"
 #include "app/page/file_keyboard_controller.h"
 #include "app/page/page_context.h"
 #include "app/page/settings_controller.h"
-#include "app/page/transfer_controller.h"
 #include "app/workspace_layout.h"
 #include "browser/browser_controller.h"
 #include "browser/places.h"
@@ -17,10 +15,9 @@
 #include <utility>
 
 StatusBarController::StatusBarController(
-    PageContext& page, files::PinService& pins, TransferController& transferController, SettingsController& settings,
-    FileKeyboardController& keys
+    PageContext& page, files::PinService& pins, SettingsController& settings, FileKeyboardController& keys
 )
-    : m_page(page), m_pins(pins), m_transferController(transferController), m_settings(settings), m_keys(keys) {}
+    : m_page(page), m_pins(pins), m_settings(settings), m_keys(keys) {}
 
 std::unique_ptr<Flex> StatusBarController::build() {
   auto pill = ui::row(
@@ -48,8 +45,7 @@ std::unique_ptr<Flex> StatusBarController::build() {
            .maxWidth = 160.0F,
            .maxLines = 1,
            .textAlign = TextAlign::End}
-      ),
-      m_transferController.buildRetryButton(), m_transferController.buildCancelButton()
+      )
   );
   pill->setZIndex(5);
   return pill;
@@ -87,85 +83,11 @@ std::unique_ptr<Flex> StatusBarController::buildNotice() {
   );
 }
 
-std::string StatusBarController::operationStatus() const {
-  const auto* job = m_page.jobs().newest([](const OperationJob& candidate) { return candidate.running(); });
-  if (!job) {
-    return {};
-  }
-  switch (job->kind()) {
-  case JobKind::Create: {
-    const auto& snapshot = job->service<files::CreateService>().snapshot();
-    const char* kind = snapshot.kind == files::CreateKind::Folder                                          ? "folder"
-        : snapshot.kind == files::CreateKind::Document                                                     ? "document"
-        : snapshot.kind == files::CreateKind::SymbolicLink || snapshot.kind == files::CreateKind::HardLink ? "link"
-                                                                                                           : "file";
-    return snapshot.status == files::CreateStatus::Creating ? std::format("Creating {}…", kind)
-                                                            : std::format("Preparing {} creation…", kind);
-  }
-  case JobKind::Permission:
-    return job->service<files::PermissionService>().snapshot().phase == files::PermissionPhase::Saving
-        ? "Saving permissions…"
-        : "Reading permissions…";
-  case JobKind::BatchRename: {
-    const auto& renamer = job->service<files::BatchRenameService>();
-    return renamer.applying() ? std::format("Renaming… · {} items", renamer.completed()) : "Checking rename preview…";
-  }
-  case JobKind::Rename:
-    return job->service<files::RenameService>().snapshot().status == files::RenameStatus::Renaming
-        ? "Renaming…"
-        : "Preparing rename…";
-  case JobKind::Restore: {
-    const auto& restore = job->service<files::RestoreService>();
-    return std::format("Restoring… · {} of {} items", restore.completed(), restore.total());
-  }
-  case JobKind::EmptyTrash: {
-    const auto& emptyTrash = job->service<files::EmptyTrashService>();
-    const auto& snapshot = emptyTrash.snapshot();
-    return snapshot.status == files::EmptyTrashStatus::Preparing ? "Reading Trash…"
-        : snapshot.status == files::EmptyTrashStatus::Ready
-        ? "Calculating Trash size…"
-        : std::format(
-              "{}… · {} of {} items", snapshot.selection ? "Deleting from Trash" : "Emptying Trash",
-              emptyTrash.completed(), snapshot.results.size()
-          );
-  }
-  case JobKind::Trash: {
-    const auto& trash = job->service<files::TrashService>();
-    return trash.snapshot().status == files::TrashStatus::Preparing
-        ? "Preparing move to Trash…"
-        : std::format("Moving to Trash… · {} of {} items", trash.completed(), trash.snapshot().results.size());
-  }
-  case JobKind::Archive: {
-    const auto& archives = job->service<files::ArchiveService>();
-    const files::GString size(g_format_size_full(archives.bytes(), G_FORMAT_SIZE_IEC_UNITS));
-    const char* phase = archives.phase() == files::ArchivePhase::Reading ? "Reading archive"
-        : archives.phase() == files::ArchivePhase::WaitingPassword       ? "Waiting for archive password"
-        : archives.phase() == files::ArchivePhase::Compressing           ? "Compressing"
-        : archives.phase() == files::ArchivePhase::Cleaning              ? "Cleaning temporary files"
-        : archives.phase() == files::ArchivePhase::Transferring          ? "Publishing archive output"
-                                                                         : "Extracting archive";
-    return std::format("{}… · {} entries · {}", phase, archives.items(), size.get());
-  }
-  case JobKind::Transfer: {
-    const auto& transfers = job->service<files::TransferService>();
-    const files::GString size(g_format_size(transfers.bytes()));
-    return std::format(
-        "{} {} of {} items · {}",
-        transfers.action() == files::TransferAction::Copy       ? "Copying"
-            : transfers.action() == files::TransferAction::Link ? "Linking"
-                                                                : "Moving",
-        transfers.completed(), transfers.total(), size.get()
-    );
-  }
-  }
-  return {};
-}
-
 void StatusBarController::sync(bool miller) {
   const auto& model = m_page.browser().model();
   const auto& snapshot = model.snapshot();
   const bool loading = snapshot.status == files::DirectoryStatus::Loading;
-  std::string status = operationStatus();
+  std::string status;
   // The idle folder count stays hidden; the pill appears only for something worth reading.
   bool needed = true;
   if (status.empty()) {
@@ -243,7 +165,6 @@ void StatusBarController::sync(bool miller) {
     const files::GString size(g_format_size_full(*freeBytes, G_FORMAT_SIZE_IEC_UNITS));
     m_freeSpace->setText(std::format("{} free", size.get()));
   }
-  m_needed = m_transferController.syncOperationButtons() || m_needed;
   m_pill->setVisible(m_needed);
   // Empty list: a glyph, a short title and, when useful, one explanatory sentence.
   struct Notice {

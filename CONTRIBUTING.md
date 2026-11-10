@@ -73,7 +73,7 @@ Each directory under `src/` builds as one static library in `meson.build` (`ui/b
 - `thumbnails`: thumbnail cache, workers, previews, and the file icon cache; `imaging`, `system`, `fs`, `model`, `lib`.
 - `clipboard` (Wayland clipboard and drag and drop payloads) and `platform` (launchers, desktop integration): `fs`, `lib`.
 - `ui`: views and controls; any module above. `ui/controls` may include `browser/`, never the reverse.
-- `app`: everything.
+- `app`: everything. Its internal `app-jobs` static library contains OperationHub and the activity snapshot adapter, depending only on `browser` and `operations`, so lifecycle tests can link it without window orchestration.
 
 All modules share the `src/` include root, so Meson cannot reject an include of a forbidden `src/` module; review catches those. `model`, `fs`, `config`, `browser`, and `operations` do not depend on `noctalia_ui_dep`, so any `lib/` include there fails to compile; give `browser` that dependency only once it needs `lib/core`.
 

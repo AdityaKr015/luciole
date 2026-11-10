@@ -57,3 +57,7 @@ Show parent folders is enabled by default in Settings → Views. Disable it to s
 The side preview is on by default. Resize its divider to change the saved width; small windows temporarily collapse it when there is insufficient room. F8 toggles it, and Space opens a quick preview for one selected item. Images, video stills, the first PDF page and embedded audio artwork depend on installed providers. Video previews are still images, not playback.
 
 The preview shows essential content facts such as file size, dimensions, format and duration when available. Properties (Alt+Return) includes additional technical and permission information. See [file operations](file-operations.md#properties-and-permissions).
+
+## Background operations
+
+The toolbar's File Operations button shows the number of active jobs. Open it, or use File operations in the main menu, for progress and recent results across the running application's tabs and windows. See [file operations](file-operations.md#file-operations-popover) for cancellation, reports and retry behavior.

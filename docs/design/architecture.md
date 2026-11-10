@@ -25,7 +25,7 @@ The application uses direct Wayland and OpenGL ES with Pango/Cairo. GdkPixbuf/Gl
 
 [BrowserPage](../../src/app/page/browser_page.h) orchestrates feature controllers rather than implementing file jobs or decoder work. Each page has its own browse controller, selection, history, query and viewport. Its [MillerColumns](../../src/browser/miller_columns.h) chain owns additional lazy controllers within the same page. The focused controller supplies action and preview targets. Offscreen/retired branches release resources; at most 16 live columns remain while deeper navigation retires old ancestors.
 
-Page visibility does not confer ownership of running file jobs. Accepted Follow-scope jobs can move to another page when a tab closes; page-scoped preparation is cancelled. The OperationHub also owns one in-memory native rename Undo/Redo record across pages and windows. See [file jobs](file-jobs.md). Current tab/window state is in memory; durable session restoration remains unfinished.
+Page visibility does not confer ownership of running file jobs. Accepted Follow-scope jobs can move to another page when a tab closes; page-scoped preparation is cancelled. The OperationHub also owns bounded recent activity reports and one in-memory native rename Undo/Redo record across pages and windows. Its job ownership/activity adapter is compiled as the internal `files-app-jobs` static library so headless tests exercise the actual application lifecycle without UI wiring. See [file jobs](file-jobs.md). Current tab/window state is in memory; durable session restoration remains unfinished.
 
 ## Asynchronous publication
 

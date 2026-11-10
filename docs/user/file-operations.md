@@ -12,6 +12,14 @@ The background menu provides New Folder (Ctrl+Shift+N) and New Document. New Doc
 
 F2 renames one item. Multiple selected native items from the same containing folder open batch rename. Preview the proposed names before applying them.
 
+## File operations popover
+
+Open File Operations from the toolbar or main menu to see jobs across tabs and windows in this running Files process. It shows preparation, transferred bytes, known item totals, pending decisions and results. Work with no known final total uses a spinner rather than a percentage. Pause is not offered because the current services cannot pause.
+
+Cancel stops remaining work; completed effects remain. Closing the popover does not cancel accepted jobs. It dismisses when the window resizes; open it again from the toolbar at the new size. Review returns to the page handling a pending decision. Details shows a bounded report with Copy report. Retry failed is offered only while that transfer's retry information is available, and rechecks captured inputs without repeating completed items. Retried cut moves preserve the existing clipboard ownership checks.
+
+The most recent 12 results stay in memory until Clear finished or application exit. Clearing results does not cancel running jobs. Older reports can outlive their service, so Retry may no longer be available. This is progress and reporting, not a persistent recovery journal. Separate Files processes have separate job lists.
+
 ## Undo and redo a rename
 
 Undo Rename (Ctrl+Z) reverses the most recent supported single-item native rename. Redo Rename (Ctrl+Shift+Z) reapplies it. Both actions are in the main menu and the folder background menu. The one-operation history is shared by tabs and windows within the same running Files process; it does not survive restart or cross independent processes. Text inputs retain their own text undo/redo.

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/job_activity.h"
 #include "browser/job_routing.h"
 #include "operations/archive_service.h"
 #include "operations/batch_rename_service.h"
@@ -12,6 +13,7 @@
 #include "operations/trash_service.h"
 
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <map>
 #include <memory>
@@ -62,9 +64,10 @@ public:
   // True once the service has run.
   bool ran() const { return m_ran; }
   RenameReplay renameReplay() const { return m_renameReplay; }
+  bool activityStarted() const { return m_activityStarted; }
   // Running, or prepared and waiting to start; a page disables actions that start a job meanwhile.
   bool pending() const;
-  // The status bar's cancel button stops it.
+  // The operation can currently be stopped through the activity controls.
   bool cancellable() const;
   void cancel();
   // The restore, archive or transfer conflict waiting for an answer.
@@ -82,6 +85,7 @@ private:
   Service m_service;
   bool m_running = false, m_ran = false, m_resultTaken = false;
   bool m_mutationStarted = false;
+  bool m_activityStarted = false;
   std::uint64_t m_historyGeneration = 0;
   RenameReplay m_renameReplay = RenameReplay::None;
   std::function<void(OperationJob&)> m_idle;
@@ -99,6 +103,7 @@ public:
     virtual void jobChanged(OperationJob& job) = 0;
     // All pages observe completed transfers, including providers without directory monitors.
     virtual void transfersFinished(const std::vector<files::TransferResult>& results) = 0;
+    virtual void activityChanged() {}
 
   protected:
     Owner() = default;
@@ -156,6 +161,10 @@ public:
   bool canUndoRename() const;
   bool canRedoRename() const;
   bool replayRename(files::TabId page, bool redo);
+  std::vector<files::JobActivity> activities() const;
+  std::shared_ptr<const std::string> activityReport(files::JobId id) const;
+  bool cancelActivity(files::JobId id);
+  void clearFinishedActivities();
 
 private:
   std::shared_ptr<OperationJob> add(files::TabId page, OperationJob::Service service, JobScope scope);
@@ -163,6 +172,7 @@ private:
   void notify(files::TabId page, OperationJob& job);
   bool retained(const OperationJob& job) const;
   void recordRename(const OperationJob& job);
+  void notifyActivity();
 
   const files::TabWorkspace& m_workspace;
   files::JobRouting m_routing;
@@ -172,6 +182,7 @@ private:
   std::shared_ptr<const files::RenameReceipt> m_renameReceipt;
   std::uint64_t m_historyGeneration = 0;
   bool m_renameRedo = false;
+  std::deque<files::JobActivity> m_finishedActivities;
 };
 
 // One page's view of the hub: the jobs it starts and the ones it owns now.

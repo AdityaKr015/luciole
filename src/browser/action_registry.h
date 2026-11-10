@@ -89,6 +89,7 @@ namespace files {
     Scripts,
     UndoRename,
     RedoRename,
+    Operations,
     TargetTerminal
   };
   // TargetTerminal stays the last enumerator.

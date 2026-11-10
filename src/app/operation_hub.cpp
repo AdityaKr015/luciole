@@ -66,6 +66,8 @@ bool OperationJob::cancellable() const {
   case JobKind::Restore:
   case JobKind::EmptyTrash:
     return running();
+  case JobKind::Permission:
+    return running() && service<files::PermissionService>().snapshot().phase == files::PermissionPhase::Saving;
   default:
     return false;
   }
@@ -138,6 +140,7 @@ std::shared_ptr<OperationJob> OperationHub::add(files::TabId page, OperationJob:
 void OperationHub::changed(OperationJob& job) {
   if (!job.m_mutationStarted && mutating(job)) {
     job.m_mutationStarted = true;
+    job.m_activityStarted = true;
     job.m_historyGeneration = ++m_historyGeneration;
     if (job.renameReplay() == RenameReplay::None) {
       m_renameReceipt.reset();
@@ -146,6 +149,7 @@ void OperationHub::changed(OperationJob& job) {
   }
   bool finished = false;
   if (job.running()) {
+    std::erase_if(m_finishedActivities, [&](const auto& item) { return item.id == job.id(); });
     job.m_running = true;
     job.m_ran = true;
     job.m_resultTaken = false;
@@ -155,11 +159,19 @@ void OperationHub::changed(OperationJob& job) {
       recordRename(job);
     }
     job.m_mutationStarted = false;
+    if (auto activity = jobActivity(job, true); activity && activity->finished) {
+      std::erase_if(m_finishedActivities, [&](const auto& item) { return item.id == job.id(); });
+      m_finishedActivities.push_front(std::move(*activity));
+      while (m_finishedActivities.size() > 12) {
+        m_finishedActivities.pop_back();
+      }
+    }
     if (auto idle = std::exchange(job.m_idle, {})) {
       idle(job);
     }
   }
   notify(m_routing.owner(job.id()), job);
+  notifyActivity();
   if (finished && job.kind() == JobKind::Transfer) {
     for (const auto& [page, owner] : m_owners) {
       (void)page;
@@ -208,7 +220,7 @@ void OperationHub::update(std::optional<files::WindowId> preferred) {
   for (const auto& job : prepared) {
     (void)job->service<files::TrashService>().trash();
   }
-  std::erase_if(m_jobs, [this](const auto& item) {
+  const auto removed = std::erase_if(m_jobs, [this](const auto& item) {
     const auto& job = *item.second;
     if (item.second.use_count() > 1 || job.pending() || retained(job)) {
       return false;
@@ -216,6 +228,9 @@ void OperationHub::update(std::optional<files::WindowId> preferred) {
     m_routing.remove(item.first);
     return true;
   });
+  if (removed) {
+    notifyActivity();
+  }
 }
 
 void OperationHub::shutdown() {
@@ -266,5 +281,62 @@ void OperationHub::recordRename(const OperationJob& job) {
           || snapshot.error->kind == files::FileErrorKind::NotDirectory)
   ) {
     m_renameReceipt.reset();
+  }
+}
+
+std::vector<files::JobActivity> OperationHub::activities() const {
+  std::vector<files::JobActivity> result;
+  result.reserve(m_jobs.size() + m_finishedActivities.size());
+  for (const auto& [id, job] : std::views::reverse(m_jobs)) {
+    (void)id;
+    if (auto activity = jobActivity(*job); activity && !activity->finished) {
+      result.push_back(std::move(*activity));
+    }
+  }
+  for (const auto& item : m_finishedActivities) {
+    auto activity = item;
+    const auto* job = find(item.id);
+    activity.canRetry = job
+        && job->kind() == JobKind::Transfer
+        && !job->running()
+        && !renameReplayBusy()
+        && !newest(owner(*job), [](const OperationJob& pending) { return pending.pending(); })
+        && job->service<files::TransferService>().retryable() > 0;
+    result.push_back(std::move(activity));
+  }
+  return result;
+}
+
+std::shared_ptr<const std::string> OperationHub::activityReport(files::JobId id) const {
+  const auto found = std::ranges::find(m_finishedActivities, id, &files::JobActivity::id);
+  if (found != m_finishedActivities.end()) {
+    return found->report;
+  }
+  const auto* job = find(id);
+  const auto activity = job ? jobActivity(*job, true) : std::nullopt;
+  return activity ? activity->report : nullptr;
+}
+
+bool OperationHub::cancelActivity(files::JobId id) {
+  auto* job = find(id);
+  if (!job || !job->cancellable()) {
+    return false;
+  }
+  job->cancel();
+  return true;
+}
+
+void OperationHub::clearFinishedActivities() {
+  m_finishedActivities.clear();
+  notifyActivity();
+}
+
+void OperationHub::notifyActivity() {
+  const std::vector<std::pair<files::TabId, Owner*>> owners(m_owners.begin(), m_owners.end());
+  for (const auto& [page, owner] : owners) {
+    const auto current = m_owners.find(page);
+    if (current != m_owners.end() && current->second == owner) {
+      owner->activityChanged();
+    }
   }
 }

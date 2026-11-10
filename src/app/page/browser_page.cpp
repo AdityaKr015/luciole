@@ -413,7 +413,13 @@ void BrowserPage::setWorkspaceRequest(std::function<void(WorkspaceCommand, std::
   m_workspaceRequest = std::move(callback);
 }
 
+void BrowserPage::reviewOperation(files::JobId id, bool retry) {
+  m_pendingOperation = std::pair(id, retry);
+  requestSync();
+}
+
 void BrowserPage::configurationChanged() {
+  m_operations.parentConfigured();
   m_dragDrop.clearExternalDrop();
   m_locationBar.cancelBlankClick();
   if (m_menuSurface && m_dialogHeight) {
@@ -1319,6 +1325,7 @@ void BrowserPage::runAction(
       }},
       {Action::UndoRename, [](BrowserPage& page, const Call&) { (void)page.m_hub.replayRename(page.m_workspaceId, false); }},
       {Action::RedoRename, [](BrowserPage& page, const Call&) { (void)page.m_hub.replayRename(page.m_workspaceId, true); }},
+      {Action::Operations, [](BrowserPage& page, const Call&) { page.m_operations.open(); }},
       {Action::TargetTerminal,
        [](BrowserPage& page, const Call& call) { page.openTerminal(call.targets.front().location); }},
   });
@@ -1535,7 +1542,6 @@ bool BrowserPage::visible() const { return m_visible; }
 void BrowserPage::operationProgressTick() {
   m_batchRename.progressTick();
   m_propertiesController.progressTick();
-  m_browserDirty = true;
   m_surface->requestUpdate();
 }
 
@@ -1635,6 +1641,7 @@ void BrowserPage::showCenteredDialog(std::unique_ptr<Flex> root, float preferred
   m_dialogHeight = preferredHeight;
   m_dialogWidth = preferredWidth;
   m_menuDispatcher.setFocusChangeCallback([this](InputArea*, InputArea* focused) {
+    m_operations.revealFocus(focused);
     m_aboutController.revealFocus(focused);
     m_applicationChooser.revealFocus(focused);
     if (m_menuSurface) {
@@ -2003,6 +2010,14 @@ void BrowserPage::prepareFrame(bool, bool layout) {
     m_thumbnailContext = browser().contextSerial();
     m_thumbnails.synchronizeSources(thumbnailSnapshot);
   }
+  if (m_visible && active()) {
+    if (const auto pending = std::exchange(m_pendingOperation, {}); pending && m_jobs.find(pending->first)) {
+      if (pending->second) {
+        m_transferController.retry(pending->first);
+      }
+    }
+  }
+  m_operations.onFrame();
   m_settingsController.onFrame();
   m_sidebar.onFrame();
   m_archiveController.onFrame();
@@ -2261,6 +2276,7 @@ std::unique_ptr<Flex> BrowserPage::buildToolbar() {
                // Same pill colour as the address and search fields; the default track is the chrome colour.
                .configure = [](Segmented& view) { view.setSurfaceRole(ColorRole::SurfaceContainerHigh); }}
           ),
+          m_operations.buildButton(),
           ui::button(
               {.out = &m_menuButton, .glyph = "dots-vertical", .variant = ButtonVariant::Ghost, .onClick = [this] {
                  m_menuController.openMenu();
@@ -2494,6 +2510,7 @@ void BrowserPage::showPopup(
         );
       }
     }
+    m_operations.layoutDialog();
     m_trashController.layoutDialog();
     m_activeDialog.root()->arrange(
         m_menuSurface->renderTarget().renderer(),

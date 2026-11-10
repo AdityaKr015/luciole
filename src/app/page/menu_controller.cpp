@@ -725,20 +725,13 @@ void MenuController::openMenu() {
     entries.push_back(actionEntry(action, request));
   }
   entries.push_back({.label = "", .separator = true});
+  entries.push_back(actionEntry(Action::Operations, request));
   entries.push_back(actionEntry(Action::Settings, request));
   entries.push_back(actionEntry(Action::About, request));
-  entries.push_back({.label = "", .separator = true});
-  entries.push_back(
-      {.id = 8998,
-       .label = "Copy transfer report",
-       .enabled = !m_transferController.report().empty() && m_page.clipboard().available()}
-  );
   showContextMenu(
       std::move(entries),
       [this, request](int id) {
-        if (id == 8998) {
-          m_page.clipboard().setClipboardText(std::string(m_transferController.report()));
-        } else if (id >= 9000) {
+        if (id >= 9000) {
           m_page.requestWorkspace(
               id == 9000       ? WorkspaceCommand::NewTab
                   : id == 9001 ? WorkspaceCommand::NewWindow

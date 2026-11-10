@@ -29,6 +29,8 @@ public:
     DropAction,
     ArchivePassword,
     RunProgram,
+    Operations,
+    OperationDetails,
   };
 
   // Takes the popup content. It counts as a plain menu until bind() names it.

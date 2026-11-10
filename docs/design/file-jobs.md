@@ -6,6 +6,18 @@
 
 Keep captured destinations and target identities throughout preparation, conflict decisions and retries. A later pane focus, navigation, selection or row rebind must not redirect an operation. Provider completions also notify other relevant visible pages, including providers without native directory monitoring.
 
+## Activity presentation
+
+[JobActivity](../../src/model/job_activity.h) is a plain presentation snapshot. [job_activity.cpp](../../src/app/job_activity.cpp) adapts the nine existing services without traversing files or querying providers. The OperationHub records at most 12 terminal snapshots with shared immutable reports capped at 64 KiB. It retains the existing newest-transfer-per-page retry policy; compact history does not prolong every job service or its descriptors. Preparation-only permission inspection never becomes an operation result.
+
+The [operations controller](../../src/app/page/operations_controller.h) owns a toolbar indicator, anchored scrollable popover and centered report inspector. The [operations view](../../src/ui/dialogs/operations_view.h) composes actual Noctalia Button, Spinner, ProgressBar and ScrollView controls. It builds one row per job, never per file. Service events update indicators globally. A 200 ms progress timer runs only while the popover is open with active work; row identities remain stable during progress updates. Scene structure changes occur in Layout and cancel stale pointer captures. Closing presentation releases controls/timers without cancelling accepted jobs. A parent size change dismisses the toolbar popover, avoiding repositioning against stale parent/output geometry; reopening measures against the committed window size.
+
+Only genuinely known item totals produce progress fractions. Transfer bytes and archive counters have no reliable final denominator, so those remain indeterminate. No service supports pause. Cancellation is not rollback; terminal summaries distinguish failed, partial, cancelled, skipped and completed effects. Reports use literal UTF-8 text and explicit truncation. Finished reports survive ordinary job pruning; Clear finished removes reports, not jobs.
+
+Actions retain a JobId and revalidate it. Review/Retry route to the job's current owning page through the workspace, including reassignment after tab closure. Existing conflict/password dialogs remain authoritative. Transfer retry stays in TransferController, including its asynchronous clipboard revision claim and finishMove safeguards. Details capture an immutable report; copying it cannot refer to a recycled row.
+
+[Nautilus' progress widget](https://github.com/GNOME/nautilus/blob/main/src/nautilus-progress-info-widget.c) provides determinate/indeterminate progress, status and cancellation. [KIO's job tracker](https://github.com/KDE/kio/blob/master/src/widgets/kdynamicjobtracker.cpp) delegates to desktop job presentation with a widget fallback. Files chooses an in-window popover rather than requiring Plasma job services or a separate progress window. [Operation-activity tests](../../tests/operation_activity_test.cpp) exercise actual service transitions, conflicts, cancellation, retry, rehoming, history pruning and UTF-8 report bounds.
+
 ## Transfers, conflicts and partial outcomes
 
 [TransferService](../../src/operations/transfer_service.h) reports per-source effects, cancellation, conflicts and retries. Native copy/publication helpers and [provider_transfer.cpp](../../src/operations/provider_transfer.cpp) implement different capability sets; do not advertise native guarantees for a provider that cannot supply them.

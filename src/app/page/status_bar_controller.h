@@ -16,19 +16,17 @@ class Label;
 class PageContext;
 class Renderer;
 class SettingsController;
-class TransferController;
 
-// The floating status pill and the empty-folder notice: progress of the newest running job the page owns, the last
+// The floating status pill and the empty-folder notice: the last
 // action message, search and selection summaries, free space, and the notice shown in place of an empty file list.
 // The pill shows only when there is something to report; the idle folder count is not shown.
 class StatusBarController {
 public:
   StatusBarController(
-      PageContext& page, files::PinService& pins, TransferController& transferController, SettingsController& settings,
-      FileKeyboardController& keys
+      PageContext& page, files::PinService& pins, SettingsController& settings, FileKeyboardController& keys
   );
 
-  // The last action message; shown unless an operation runs.
+  // The last action message; shown alongside search/selection information.
   void setMessage(std::string message) { m_actionError = std::move(message); }
   void clearMessage() { m_actionError.clear(); }
 
@@ -36,7 +34,7 @@ public:
   std::unique_ptr<Flex> build();
   std::unique_ptr<Flex> buildNotice();
 
-  // BrowserPage::syncBrowser(): status text, free space, operation buttons and the notice for an empty list.
+  // BrowserPage::syncBrowser(): status text, free space and the notice for an empty list.
   void sync(bool miller);
   // Layout hook in BrowserPage::prepareFrame(): free space shows only in a pane at least that wide.
   void layout(float paneWidth);
@@ -48,11 +46,8 @@ public:
   LayoutRect statusRect() const;
 
 private:
-  std::string operationStatus() const;
-
   PageContext& m_page;
   files::PinService& m_pins;
-  TransferController& m_transferController;
   SettingsController& m_settings;
   FileKeyboardController& m_keys;
   std::string m_actionError;

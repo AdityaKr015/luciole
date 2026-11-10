@@ -792,6 +792,26 @@ files::TabId WorkspaceApplication::createPage(
       defer(*owner, id, command, std::move(destination));
     }
   });
+  page->setOperationRequest([this](files::JobId target, bool retry) {
+    const std::weak_ptr<int> lifetime = m_lifetime;
+    DeferredCall::callLater([this, lifetime, target, retry] {
+      if (lifetime.expired()) {
+        return;
+      }
+      const auto* job = m_hub.find(target);
+      const auto page = job ? m_hub.owner(*job) : 0;
+      const auto window = m_model.owner(page);
+      const auto tab = m_model.tabFor(page);
+      if (!window || !tab || !m_pages.contains(page)) {
+        return;
+      }
+      select(*window, *tab);
+      (void)m_model.focus(*window, page);
+      m_pages.at(page)->reviewOperation(target, retry);
+      m_hosts.at(*window)->surface.requestLayout();
+      m_connection.activateSurface(m_hosts.at(*window)->surface.wlSurface());
+    });
+  });
   page->setPopupAvailable([this, id] {
     const auto page = m_pages.find(id);
     if (page == m_pages.end()) {

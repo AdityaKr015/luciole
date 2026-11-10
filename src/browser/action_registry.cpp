@@ -548,6 +548,7 @@ namespace {
        .rule = [](
                    const C& c, const R&
                ) { return require(c.canRedoRename && !c.operationsBusy, "No rename can be redone right now."); }},
+      {.action = A::Operations, .label = "File operations", .shortcut = ""},
       {.action = A::TargetTerminal,
        .label = "Open in Terminal",
        .shortcut = "",

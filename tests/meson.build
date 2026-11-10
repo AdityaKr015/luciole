@@ -15,6 +15,7 @@ test_table = [
   {'name': 'input-lifetime', 'deps': [noctalia_ui_dep]},
   {'name': 'tab-workspace', 'deps': [browser_dep]},
   {'name': 'job-routing', 'deps': [browser_dep]},
+  {'name': 'operation-activity', 'deps': [app_jobs_dep, event_loop_dep], 'env': gio_env},
   {'name': 'archive-service', 'deps': [operations_dep, event_loop_dep], 'timeout': 90, 'env': gio_env},
   {'name': 'thumbnail', 'deps': [thumbnails_dep, imaging_dep, event_loop_dep, dependency('libwebp')],
     'timeout': 90, 'env': gio_env},

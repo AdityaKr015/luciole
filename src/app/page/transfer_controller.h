@@ -1,6 +1,7 @@
 #pragma once
 
 #include "browser/action_registry.h"
+#include "browser/job_routing.h"
 #include "clipboard/text_clipboard.h"
 #include "core/timer_manager.h"
 #include "fs/transfer_types.h"
@@ -21,11 +22,11 @@ class OperationJob;
 class PageContext;
 
 // Copying and moving files: clipboard paste, drops and transfers to another page, the conflict dialog shared with
-// archive and restore jobs, retrying failed items, and the status bar progress, retry and cancel controls. It works
+// archive and restore jobs, retrying failed items, and the progress tick for operation dialogs. It works
 // on the jobs the page owns, including the ones it took over from a closed page.
 class TransferController {
 public:
-  // `progressTick` runs every 100 ms while any owned operation runs.
+  // `progressTick` runs every 100 ms while an owned batch/permission dialog needs progress.
   TransferController(PageContext& page, std::function<void()> progressTick);
 
   // Pastes the clipboard's files into the request's folder once the clipboard answers.
@@ -51,16 +52,10 @@ public:
   void syncConflict();
   // Keeps the shown conflict pending when its dialog closes, for a page that is deactivated.
   void keepConflict() { m_activeConflict.reset(); }
-  // Runs the progress tick while any owned operation runs. Every owned job change and every tick call this.
+  // Runs the progress tick for owned batch rename and permission work. Every owned job change and every tick call this.
   void updateOperationProgress();
-  // Report of the newest finished transfer the page owns; empty while it runs.
-  std::string_view report() const;
-
-  // Status pill controls, built in BrowserPage::buildScene() and synced in BrowserPage::syncBrowser().
-  std::unique_ptr<Button> buildRetryButton();
-  std::unique_ptr<Button> buildCancelButton();
-  // True while either button is shown.
-  bool syncOperationButtons();
+  // Retries a completed owned transfer, preserving the clipboard move claim workflow.
+  void retry(files::JobId target);
 
   // Page teardown: stop the tick.
   void stopProgress();
@@ -85,15 +80,10 @@ private:
       files::DropCompletion finish
   );
   void finishMove(OperationJob& job, files::ClipboardFiles selection);
-  OperationJob* latestTransfer() const;
-  OperationJob* cancelTarget() const;
-  void retry();
 
   PageContext& m_page;
   std::function<void()> m_progressTick;
   Timer m_operationProgress;
-  Button* m_cancelOperation = nullptr;
-  Button* m_retryTransfer = nullptr;
   bool m_pendingFilePaste = false;
   std::optional<ActiveConflict> m_activeConflict;
   std::shared_ptr<int> m_lifetime = std::make_shared<int>(0);

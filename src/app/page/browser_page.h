@@ -13,6 +13,7 @@
 #include "app/page/file_keyboard_controller.h"
 #include "app/page/location_bar_controller.h"
 #include "app/page/menu_controller.h"
+#include "app/page/operations_controller.h"
 #include "app/page/page_context.h"
 #include "app/page/preview_controller.h"
 #include "app/page/properties_controller.h"
@@ -101,6 +102,11 @@ public:
   void shutdown();
   // OperationHub::Owner: hands the job to the controller of its kind.
   void jobChanged(OperationJob& job) override;
+  void activityChanged() override { m_operations.markDirty(); }
+  void setOperationRequest(std::function<void(files::JobId, bool)> callback) {
+    m_operationRequest = std::move(callback);
+  }
+  void reviewOperation(files::JobId id, bool retry);
   void transfersFinished(const std::vector<files::TransferResult>& results) override;
   // The shared thumbnail service changed.
   void thumbnailsChanged();
@@ -338,6 +344,11 @@ private:
   CreateController m_createController{*this, m_templates, m_submenus};
   ArchiveController m_archiveController{*this, m_launcher, m_icons, m_connection};
   TransferController m_transferController{*this, [this] { operationProgressTick(); }};
+  OperationsController m_operations{*this, m_hub, [this](files::JobId id, bool retry) {
+                                      if (m_operationRequest) {
+                                        m_operationRequest(id, retry);
+                                      }
+                                    }};
   MenuController m_menuController{
       *this,
       m_pins,
@@ -365,7 +376,7 @@ private:
   DragDropController m_dragDrop{*this,   m_connection, m_pins,    m_transferController, m_thumbnails,
                                 m_icons, m_miller,     m_sidebar, m_locationBar};
   FileKeyboardController m_fileKeys{*this, m_textInput, m_miller, m_menuController, m_locationBar, m_statusBar};
-  StatusBarController m_statusBar{*this, m_pins, m_transferController, m_settingsController, m_fileKeys};
+  StatusBarController m_statusBar{*this, m_pins, m_settingsController, m_fileKeys};
   std::size_t m_gridZoom = 1;
   double m_zoomScroll = 0;
   files::ViewMode m_viewMode;
@@ -392,6 +403,8 @@ private:
   std::uint64_t m_nextFocusKey = 0;
   std::function<bool()> m_popupAvailable, m_hasOther;
   std::optional<files::ActionRequest> m_pendingWorkspaceRequest;
+  std::function<void(files::JobId, bool)> m_operationRequest;
+  std::optional<std::pair<files::JobId, bool>> m_pendingOperation;
 
   Flex* m_titlebar = nullptr;
   Flex* m_paneContentFrame = nullptr;
