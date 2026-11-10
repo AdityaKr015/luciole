@@ -124,7 +124,11 @@ void MenuController::openFileMenu(std::optional<files::EntryId> id, float x, flo
       }
     }
     if (request.targets.size() == 1) {
-      add(Action::ContainingFolder);
+      const auto& location = m_page.browser().model().entry(request.targets.front().id)->location;
+      // Only useful when the item lives outside the shown folder (search results); otherwise it reopens this one.
+      if (location.parent() != m_page.browser().model().snapshot().location) {
+        add(Action::ContainingFolder);
+      }
       if (m_page.browser().model().entry(request.targets.front().id)->trash.original) {
         add(Action::OriginalLocation);
       }
