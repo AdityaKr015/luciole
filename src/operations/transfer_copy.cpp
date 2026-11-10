@@ -5,7 +5,9 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <format>
+#include <linux/fs.h>
 #include <memory>
+#include <sys/ioctl.h>
 #include <sys/xattr.h>
 #include <unistd.h>
 
@@ -67,11 +69,93 @@ namespace files::transfer {
         fail("Could not preserve file metadata");
       }
       copyAttributes(input, fd, work);
-      if (::fsync(fd) != 0) {
-        fail("Could not synchronize copied data");
+    }
+
+    // Errors meaning "this kernel copy path does not apply here": fall back to the next one.
+    bool unsupported(int error) {
+      return error == EXDEV
+          || error == EOPNOTSUPP
+          || error == ENOTSUP
+          || error == EINVAL
+          || error == ENOSYS
+          || error == EBADF
+          || error == ETXTBSY
+          || error == ENOTTY
+          || error == EPERM;
+    }
+
+    // Copies the contents of `input` into the empty `output`: a copy-on-write clone (btrfs, XFS, bcachefs), then an
+    // in-kernel copy, then a userspace loop. Each step resumes where the previous one stopped.
+    void copyData(int input, int output, CopyWork& work) {
+      if (!work.cloneUnsupported) {
+        if (::ioctl(output, FICLONE, input) == 0) {
+          work.bytes.fetch_add(static_cast<std::uint64_t>(statFd(output).st_size));
+          return;
+        }
+        if (!unsupported(errno)) {
+          fail("Could not clone source");
+        }
+        work.cloneUnsupported = errno == EOPNOTSUPP || errno == ENOTSUP || errno == ENOSYS || errno == ENOTTY;
+      }
+      // Chunks keep progress and cancellation responsive on large files.
+      constexpr std::size_t kChunk = 8 * 1024 * 1024;
+      while (!work.rangeUnsupported) {
+        work.check();
+        const auto copied = ::copy_file_range(input, nullptr, output, nullptr, kChunk, 0);
+        if (copied > 0) {
+          work.bytes.fetch_add(static_cast<std::uint64_t>(copied));
+          continue;
+        }
+        if (copied == 0) {
+          return;
+        }
+        if (errno == EINTR) {
+          continue;
+        }
+        if (!unsupported(errno)) {
+          fail("Could not copy source");
+        }
+        work.rangeUnsupported = errno == ENOSYS;
+        break;
+      }
+      auto& buffer = work.buffer;
+      for (;;) {
+        work.check();
+        const auto size = ::read(input, buffer.data(), buffer.size());
+        if (size < 0) {
+          if (errno == EINTR) {
+            continue;
+          }
+          fail("Could not read source");
+        }
+        if (size == 0) {
+          return;
+        }
+        std::size_t offset = 0;
+        while (offset < static_cast<std::size_t>(size)) {
+          work.check();
+          const auto written = ::write(output, buffer.data() + offset, static_cast<std::size_t>(size) - offset);
+          if (written < 0) {
+            if (errno == EINTR) {
+              continue;
+            }
+            fail("Could not write destination");
+          }
+          if (written == 0) {
+            throwFileError(FileErrorKind::Other, "The destination stopped accepting data.");
+          }
+          offset += static_cast<std::size_t>(written);
+          work.bytes.fetch_add(static_cast<std::uint64_t>(written));
+        }
       }
     }
   } // namespace
+
+  void synchronize(int fd) {
+    if (::syncfs(fd) != 0) {
+      fail("Could not synchronize copied data");
+    }
+  }
 
   void fail(const char* operation) {
     auto error = errnoError(errno);
@@ -202,36 +286,7 @@ namespace files::transfer {
       auto input = opened(::openat(from, name.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC));
       requireUnchanged(source, statFd(input.get()));
       auto output = opened(::openat(to, target.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600));
-      auto& buffer = work.buffer;
-      for (;;) {
-        work.check();
-        const auto size = ::read(input.get(), buffer.data(), buffer.size());
-        if (size < 0) {
-          if (errno == EINTR) {
-            continue;
-          }
-          fail("Could not read source");
-        }
-        if (size == 0) {
-          break;
-        }
-        std::size_t offset = 0;
-        while (offset < static_cast<std::size_t>(size)) {
-          work.check();
-          const auto written = ::write(output.get(), buffer.data() + offset, static_cast<std::size_t>(size) - offset);
-          if (written < 0) {
-            if (errno == EINTR) {
-              continue;
-            }
-            fail("Could not write destination");
-          }
-          if (written == 0) {
-            throwFileError(FileErrorKind::Other, "The destination stopped accepting data.");
-          }
-          offset += static_cast<std::size_t>(written);
-          work.bytes.fetch_add(static_cast<std::uint64_t>(written));
-        }
-      }
+      copyData(input.get(), output.get(), work);
       requireUnchanged(source, statFd(input.get()));
       preserveMetadata(input.get(), output.get(), source, work);
     } else if (S_ISDIR(source.st_mode)) {

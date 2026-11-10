@@ -213,6 +213,11 @@ namespace files::transfer {
             }
             validateBindings(source, binding);
             verifyTree(source.parent.get(), tree, work);
+            if (replace) {
+              // The exchange retires the old destination: make the copy durable first. Plain copies skip this,
+              // like cp and GIO.
+              synchronize(stage.fd());
+            }
             const auto flags = replace ? RENAME_EXCHANGE : RENAME_NOREPLACE;
             if (::syscall(SYS_renameat2, stage.fd(), "item", destination, target.c_str(), flags) != 0) {
               if (errno == EEXIST || (replace && errno == ENOENT)) {
@@ -240,6 +245,8 @@ namespace files::transfer {
             }
             result.outcome = Copied;
             if (action == TransferAction::Move) {
+              // The sources are about to go: the published copy must survive a crash first.
+              synchronize(destination);
               verifyTree(source.parent.get(), tree, work);
               removeSource(source.parent.get(), tree, work);
               result.outcome = Moved;

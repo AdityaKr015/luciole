@@ -43,6 +43,9 @@ namespace files::transfer {
     std::map<std::pair<dev_t, ino_t>, struct stat> changedLinks;
     std::vector<char> buffer;
     bool metadataIncomplete = false;
+    // Kernel copy paths the destination filesystem rejected; later files skip straight to the next one.
+    bool cloneUnsupported = false;
+    bool rangeUnsupported = false;
     struct stat expected(const struct stat& original) const;
     void note(const struct stat& value);
     void check() const;
@@ -57,4 +60,7 @@ namespace files::transfer {
   void verifyTree(int parent, const Tree& tree, CopyWork& work);
   void removeSource(int parent, const Tree& tree, CopyWork& work);
   void removeTemporary(int parent, const std::string& name, CopyWork& work);
+  // Makes everything written to `fd`'s filesystem durable. Copies skip per-file syncs; this runs once before a
+  // transfer deletes data that the copy replaces (moved sources, replaced destinations).
+  void synchronize(int fd);
 } // namespace files::transfer
