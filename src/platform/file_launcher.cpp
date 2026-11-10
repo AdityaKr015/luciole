@@ -2,8 +2,12 @@
 
 #include "core/log.h"
 #include "fs/gio_interop.h"
+#include "fs/name_matching.h"
 
+#include <algorithm>
 #include <cstdint>
+#include <set>
+#include <utility>
 
 namespace {
   constexpr Logger kLog("file-launch");
@@ -38,14 +42,18 @@ void files::FileLauncher::cancelApplications() {
     g_cancellable_cancel(m_state->queryCancel.get());
   }
 }
-void files::FileLauncher::applications(std::string mime, std::function<void(std::vector<ApplicationChoice>)> callback) {
+void files::FileLauncher::applications(
+    std::string mime, std::function<void(ApplicationList)> callback, bool includeOther, std::string search
+) {
   cancelApplications();
   m_state->queryCancel.reset(g_cancellable_new());
   struct Query {
     std::shared_ptr<State> state;
     std::uint64_t serial;
     std::string mime;
-    std::function<void(std::vector<ApplicationChoice>)> callback;
+    std::function<void(ApplicationList)> callback;
+    bool includeOther;
+    std::string search;
   };
   ++m_state->active;
   const GioPtr<GTask> task(g_task_new(
@@ -53,8 +61,8 @@ void files::FileLauncher::applications(std::string mime, std::function<void(std:
       [](GObject*, GAsyncResult* result, gpointer) {
         auto& query = *static_cast<Query*>(g_task_get_task_data(G_TASK(result)));
         --query.state->active;
-        const std::unique_ptr<std::vector<ApplicationChoice>> choices(
-            static_cast<std::vector<ApplicationChoice>*>(g_task_propagate_pointer(G_TASK(result), nullptr))
+        const std::unique_ptr<ApplicationList> choices(
+            static_cast<ApplicationList*>(g_task_propagate_pointer(G_TASK(result), nullptr))
         );
         if (choices && query.serial == query.state->querySerial) {
           query.callback(std::move(*choices));
@@ -63,30 +71,117 @@ void files::FileLauncher::applications(std::string mime, std::function<void(std:
       nullptr
   ));
   g_task_set_task_data(
-      task.get(), new Query{m_state, m_state->querySerial, std::move(mime), std::move(callback)},
+      task.get(),
+      new Query{m_state, m_state->querySerial, std::move(mime), std::move(callback), includeOther, std::move(search)},
       [](gpointer data) { delete static_cast<Query*>(data); }
   );
   g_task_run_in_thread(task.get(), [](GTask* task, gpointer, gpointer data, GCancellable* cancel) {
-    auto result = std::make_unique<std::vector<ApplicationChoice>>();
-    GList* applications = g_app_info_get_all_for_type(static_cast<Query*>(data)->mime.c_str());
-    for (auto* item = applications; item && result->size() < 128 && !g_cancellable_is_cancelled(cancel);
-         item = item->next) {
-      auto* app = G_APP_INFO(item->data);
-      const char* id = g_app_info_get_id(app);
-      const char* name = g_app_info_get_display_name(app);
-      if (id && name && g_app_info_should_show(app)) {
-        result->push_back(
+    const auto& query = *static_cast<Query*>(data);
+    auto result = std::make_unique<ApplicationList>();
+    const auto search = foldedDisplayText(query.search);
+    const GioPtr<GAppInfo> defaultApp(g_app_info_get_default_for_type(query.mime.c_str(), false));
+    std::set<std::string> seen;
+    const auto append = [&](GList* applications, bool suggested) {
+      for (auto* item = applications; item && !g_cancellable_is_cancelled(cancel); item = item->next) {
+        auto* app = G_APP_INFO(item->data);
+        const char* id = g_app_info_get_id(app);
+        const char* name = g_app_info_get_display_name(app);
+        if (!id
+            || !name
+            || !g_app_info_should_show(app)
+            || (!g_app_info_supports_files(app) && !g_app_info_supports_uris(app))
+            || !seen.emplace(id).second) {
+          continue;
+        }
+        if (!search.empty() && !foldedDisplayText(std::string(name) + " " + id).contains(search)) {
+          continue;
+        }
+        result->choices.push_back(
             {id, name, readIconSource(g_app_info_get_icon(app)),
-             std::shared_ptr<GAppInfo>(G_APP_INFO(g_object_ref(app)), ObjectUnref{})}
+             std::shared_ptr<GAppInfo>(G_APP_INFO(g_object_ref(app)), ObjectUnref{}), suggested,
+             defaultApp && g_app_info_equal(app, defaultApp.get())}
         );
       }
+      g_list_free_full(applications, g_object_unref);
+    };
+    append(g_app_info_get_all_for_type(query.mime.c_str()), true);
+    if (query.includeOther && !g_cancellable_is_cancelled(cancel)) {
+      append(g_app_info_get_all(), false);
     }
-    g_list_free_full(applications, g_object_unref);
-    g_task_return_pointer(task, result.release(), [](gpointer p) {
-      delete static_cast<std::vector<ApplicationChoice>*>(p);
+    std::ranges::sort(result->choices, [](const auto& left, const auto& right) {
+      if (left.isDefault != right.isDefault) {
+        return left.isDefault;
+      }
+      if (left.suggested != right.suggested) {
+        return left.suggested;
+      }
+      const auto compared = g_utf8_collate(left.name.c_str(), right.name.c_str());
+      return compared == 0 ? left.id < right.id : compared < 0;
     });
+    // Search is applied before this UI bound, so every installed application remains discoverable.
+    if (result->choices.size() > 128) {
+      result->truncated = true;
+      result->choices.resize(128);
+    }
+    g_task_return_pointer(task, result.release(), [](gpointer p) { delete static_cast<ApplicationList*>(p); });
   });
 }
+
+void files::FileLauncher::setDefault(
+    std::string mime, ApplicationChoice application, std::function<void(std::string)> callback
+) {
+  struct Change {
+    std::shared_ptr<State> state;
+    ApplicationChoice application;
+    std::string mime;
+    std::function<void(std::string)> callback;
+  };
+  ++m_state->active;
+  const GioPtr<GTask> task(g_task_new(
+      nullptr, m_state->cancellable.get(),
+      [](GObject*, GAsyncResult* result, gpointer) {
+        auto& change = *static_cast<Change*>(g_task_get_task_data(G_TASK(result)));
+        --change.state->active;
+        GError* error = nullptr;
+        const bool success = g_task_propagate_boolean(G_TASK(result), &error);
+        std::string message = error ? error->message : success ? "" : "Could not change the default application.";
+        g_clear_error(&error);
+        if (!g_cancellable_is_cancelled(change.state->cancellable.get())) {
+          change.callback(std::move(message));
+        }
+      },
+      nullptr
+  ));
+  g_task_set_task_data(
+      task.get(), new Change{m_state, std::move(application), std::move(mime), std::move(callback)},
+      [](gpointer data) { delete static_cast<Change*>(data); }
+  );
+  g_task_run_in_thread(task.get(), [](GTask* task, gpointer, gpointer data, GCancellable*) {
+    const auto& change = *static_cast<Change*>(data);
+    if (g_task_return_error_if_cancelled(task)) {
+      return;
+    }
+    if (!change.application.app
+        || change.mime.empty()
+        || change.mime.contains('\0')
+        || !g_utf8_validate(change.mime.c_str(), -1, nullptr)
+        || g_content_type_is_unknown(change.mime.c_str())) {
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "This file type has no editable default.");
+      return;
+    }
+    GError* error = nullptr;
+    if (!g_app_info_set_as_default_for_type(change.application.app.get(), change.mime.c_str(), &error)) {
+      if (error) {
+        g_task_return_error(task, error);
+      } else {
+        g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "Could not change the default application.");
+      }
+      return;
+    }
+    g_task_return_boolean(task, true);
+  });
+}
+
 void files::FileLauncher::openWith(const Location& location, const ApplicationChoice& application) {
   if (!application.app) {
     return;

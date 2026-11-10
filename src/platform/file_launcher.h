@@ -14,6 +14,11 @@ namespace files {
     std::string id, name;
     FileIconSource icon;
     std::shared_ptr<GAppInfo> app;
+    bool suggested = false, isDefault = false;
+  };
+  struct ApplicationList {
+    std::vector<ApplicationChoice> choices;
+    bool truncated = false;
   };
   class FileLauncher {
   public:
@@ -22,7 +27,12 @@ namespace files {
     FileLauncher(const FileLauncher&) = delete;
     FileLauncher& operator=(const FileLauncher&) = delete;
     void open(const Location& location);
-    void applications(std::string mime, std::function<void(std::vector<ApplicationChoice>)> callback);
+    void applications(
+        std::string mime, std::function<void(ApplicationList)> callback, bool includeOther = false,
+        std::string search = {}
+    );
+    // Explicit system MIME association change; does not launch a file.
+    void setDefault(std::string mime, ApplicationChoice application, std::function<void(std::string)> callback);
     void cancelApplications();
     void openWith(const Location& location, const ApplicationChoice& application);
     void setChangedCallback(std::function<void(const std::string&)> callback);

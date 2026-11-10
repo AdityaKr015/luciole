@@ -1,5 +1,6 @@
 """Exercise real desktop dispatch with private associations and a recording handler."""
 
+import configparser
 import json
 import os
 from pathlib import Path
@@ -33,12 +34,31 @@ def run_case(binary, mode, names):
         desktop.write_text(
             "[Desktop Entry]\nType=Application\nName=Private launch fixture\n"
             f"Exec={sys.executable} {handler} %U\n"
-            "MimeType=text/plain;\n" + ("NoDisplay=false\n" if mode == "with" else "NoDisplay=true\n")
+            "MimeType=text/plain;\n" + ("NoDisplay=false\n" if mode in ("with", "other", "default", "default-error", "catalog") else "NoDisplay=true\n")
         )
         (root / "config/mimeapps.list").write_text(
             "[Default Applications]\ntext/plain=fixture.desktop;\n"
         )
         (root / "data/applications/mimeinfo.cache").write_text("[MIME Cache]\ntext/plain=fixture.desktop;\n")
+        if mode in ("other", "default", "default-error", "catalog"):
+            for filename, title, arguments, extra in (
+                ("other.desktop", "Noctalia launch fixture Café", "%U", "MimeType=image/png;"),
+                ("hidden.desktop", "Hidden Café", "%U", "NoDisplay=true"),
+                ("no-files.desktop", "No document arguments", "", ""),
+            ):
+                (root / "data/applications" / filename).write_text(
+                    "[Desktop Entry]\nType=Application\n" + f"Name={title}\nExec={sys.executable} {handler} {arguments}\n{extra}\n"
+                )
+            if mode == "catalog":
+                for index in range(150):
+                    title = "Lastneedle" if index == 149 else f"Bulk {index:03}"
+                    (root / "data/applications" / f"bulk-{index:03}.desktop").write_text(
+                        f"[Desktop Entry]\nType=Application\nName={title}\nExec={sys.executable} {handler} %U\n"
+                    )
+        if mode == "default-error":
+            (root / "config/mimeapps.list").unlink()
+            (root / "config").rmdir()
+            (root / "config").write_text("not a directory")
         guard = root / "exec-guard.py"
         refused = root / "unexpected-exec"
         guard.write_text(
@@ -73,6 +93,7 @@ def run_case(binary, mode, names):
             DBUS_SYSTEM_BUS_ADDRESS="unix:path=" + str(root / "no-system-bus"),
             GIO_LAUNCH_DESKTOP=str(guard),
             GIO_USE_VFS="local",
+            GIO_EXTRA_MODULES="",
             GIO_USE_PORTALS="0",
             NOCTALIA_FILES_LOG_LEVEL="debug",
             G_DEBUG="fatal-warnings",
@@ -82,7 +103,7 @@ def run_case(binary, mode, names):
         )
         if result.returncode != 0:
             raise AssertionError((result.returncode, result.stdout.decode(errors="replace"), result.stderr.decode(errors="replace")))
-        if mode in ("open", "sequential", "with"):
+        if mode in ("open", "sequential", "with", "other", "default"):
             deadline = time.monotonic() + 5
             expected = sorted(path.hex() for path in paths)
             while True:
@@ -99,13 +120,21 @@ def run_case(binary, mode, names):
                 if time.monotonic() >= deadline:
                     raise AssertionError((actual, expected, result.stderr))
                 time.sleep(0.01)
+        if mode in ("catalog", "default-error") and log.exists():
+            raise AssertionError("application discovery/default change launched a handler")
+        if mode in ("default", "other"):
+            associations = configparser.ConfigParser(interpolation=None)
+            associations.read(root / "config/mimeapps.list")
+            expected_default = "other.desktop" if mode == "default" else "fixture.desktop"
+            if associations["Default Applications"].get("text/plain", "").rstrip(";") != expected_default:
+                raise AssertionError("unexpected persisted default application")
         if mode == "error" and log.exists():
             raise AssertionError("a missing file launched an application")
         if refused.exists():
             raise AssertionError("desktop dispatch escaped its fixture")
         # Debug diagnostics identify stages and requests, without recording file payloads.
         diagnostics = result.stderr.decode(errors="replace")
-        if "GIO completion" not in diagnostics:
+        if mode not in ("catalog", "default-error") and "GIO completion" not in diagnostics:
             raise AssertionError("missing launch timing diagnostics")
         if mode in ("open", "sequential") and ("handler=fixture.desktop" not in diagnostics or "desktop handoff" not in diagnostics):
             raise AssertionError("missing desktop handoff timing")
@@ -118,6 +147,10 @@ def main():
     run_case(binary, "open", [b"plain.txt", "space ' $() <literal> café\n.txt".encode(), b"raw-\xff.txt"])
     run_case(binary, "sequential", [b"first.txt", b"second.txt", b"third.txt"])
     run_case(binary, "with", [b"explicit.txt", "space ' $() café\n.txt".encode(), b"raw-\xff.txt"])
+    run_case(binary, "other", ["other space café.txt".encode(), b"other-raw-\xff.txt"])
+    run_case(binary, "default", [b"new-default.txt"])
+    run_case(binary, "default-error", [b"never-launched.txt"])
+    run_case(binary, "catalog", [b"unused.txt"])
     run_case(binary, "error", [b"missing.txt"])
     run_case(binary, "destroy", [b"cancelled.txt"])
     print("file launcher desktop integration checks passed")
