@@ -76,7 +76,8 @@ std::expected<LoadedImageFile, std::string> files::renderThumbnailProvider(
     }
     arguments.insert(
         arguments.end(),
-        {"-i", "/proc/self/fd/3", "-map", video ? "0:V:0" : "0:v:0", "-frames:v", "1", "-an", "-sn", "-vf",
+        {"-i", "/proc/self/fd/3", "-map", video ? "0:V:0" : "0:v:0", "-frames:v", "1", "-an", "-sn", "-threads", "1",
+         "-vf",
          std::string(video ? "scale=" : "thumbnail=4,scale=")
              + std::to_string(side)
              + ':'
