@@ -5,10 +5,10 @@ on:
     branches: [main, master]
   pull_request:
 
-# Cancel in-progress runs for the same branch/PR when new commits land.
+# Cancel superseded pull request runs; every push to main runs to completion.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   format:
@@ -62,7 +62,8 @@ jobs:
           echo "CCACHE_DIR=$GITHUB_WORKSPACE/.ccache" >> "$GITHUB_ENV"
           echo "CCACHE_MAXSIZE=1G" >> "$GITHUB_ENV"
 
-      - name: Restore ccache
+      - &ccache-restore
+        name: Restore ccache
         uses: actions/cache/restore@v4
         with:
           path: .ccache
@@ -91,6 +92,10 @@ jobs:
       - *arch-deps
 
       - uses: actions/checkout@v6
+
+      - *ccache-env
+
+      - *ccache-restore
 
       - name: Check clang-tidy version
         run: |

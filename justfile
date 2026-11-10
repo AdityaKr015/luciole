@@ -162,7 +162,7 @@ format-nix-check:
 [arg("m", pattern="debug|release|asan")]
 _clang_tidy m=mode: (_ensure-configured m)
     meson compile -C "build-$1" noctalia-files
-    run-clang-tidy -quiet -p "build-$1" -j "$(nproc)" -warnings-as-errors='*' -header-filter="$(realpath .)/(src|lib)/.*|^\.\./(src|lib)/.*" "$(realpath .)/(src|lib)/.*"
+    run-clang-tidy -quiet -p "build-$1" -j "$(nproc)" -warnings-as-errors='*' -header-filter="$(realpath .)/src/.*|^\.\./src/.*" "$(realpath .)/src/.*"
 
 [arg("m", pattern="debug|release|asan")]
 lint m=mode: (_clang_tidy m) lint-python lint-prose
