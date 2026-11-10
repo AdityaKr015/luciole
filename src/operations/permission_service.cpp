@@ -11,7 +11,7 @@
 #include <set>
 
 namespace {
-  using namespace files;
+  using namespace luciole;
   using Reply = PermissionReply;
 
   void summarize(PermissionSnapshot& snapshot, const std::vector<PermissionResult>& rows) {
@@ -53,7 +53,7 @@ namespace {
   }
 } // namespace
 
-struct files::PermissionService::State {
+struct luciole::PermissionService::State {
   PermissionSnapshot snapshot;
   std::shared_ptr<PermissionTarget> target;
   std::shared_ptr<PermissionBatch> bulk;
@@ -117,20 +117,20 @@ struct files::PermissionService::State {
   }
 };
 
-files::PermissionService::PermissionService() : m_state(std::make_shared<State>()) {}
-files::PermissionService::~PermissionService() {
+luciole::PermissionService::PermissionService() : m_state(std::make_shared<State>()) {}
+luciole::PermissionService::~PermissionService() {
   m_state->changed = {};
   cancel();
 }
-bool files::PermissionService::busy() const { return m_state->active; }
-std::size_t files::PermissionService::completed() const { return m_state->completed.load(); }
-bool files::PermissionService::collecting() const { return m_state->collecting.load(); }
-std::size_t files::PermissionService::total() const { return m_state->total.load(); }
-const files::PermissionSnapshot& files::PermissionService::snapshot() const { return m_state->snapshot; }
-void files::PermissionService::setChangedCallback(std::function<void()> callback) {
+bool luciole::PermissionService::busy() const { return m_state->active; }
+std::size_t luciole::PermissionService::completed() const { return m_state->completed.load(); }
+bool luciole::PermissionService::collecting() const { return m_state->collecting.load(); }
+std::size_t luciole::PermissionService::total() const { return m_state->total.load(); }
+const luciole::PermissionSnapshot& luciole::PermissionService::snapshot() const { return m_state->snapshot; }
+void luciole::PermissionService::setChangedCallback(std::function<void()> callback) {
   m_state->changed = std::move(callback);
 }
-void files::PermissionService::cancel() {
+void luciole::PermissionService::cancel() {
   m_state->token.cancel();
   if (!busy()) {
     m_state->target.reset();
@@ -140,8 +140,8 @@ void files::PermissionService::cancel() {
     m_state->notify();
   }
 }
-bool files::PermissionService::prepare(DirectoryEntry entry) { return prepareEntry(std::move(entry), false); }
-bool files::PermissionService::prepare(const Location& location) {
+bool luciole::PermissionService::prepare(DirectoryEntry entry) { return prepareEntry(std::move(entry), false); }
+bool luciole::PermissionService::prepare(const Location& location) {
   return prepareEntry(
       {.location = location,
        .name = {},
@@ -153,7 +153,7 @@ bool files::PermissionService::prepare(const Location& location) {
       true
   );
 }
-bool files::PermissionService::prepare(std::vector<DirectoryEntry> entries) {
+bool luciole::PermissionService::prepare(std::vector<DirectoryEntry> entries) {
   if (busy() || entries.size() < 2 || entries.size() > 4096) {
     return false;
   }
@@ -205,7 +205,7 @@ bool files::PermissionService::prepare(std::vector<DirectoryEntry> entries) {
   );
   return true;
 }
-bool files::PermissionService::prepareEntry(DirectoryEntry entry, bool captureCurrentLocation) {
+bool luciole::PermissionService::prepareEntry(DirectoryEntry entry, bool captureCurrentLocation) {
   if (busy()) {
     return false;
   }
@@ -232,7 +232,7 @@ bool files::PermissionService::prepareEntry(DirectoryEntry entry, bool captureCu
   );
   return true;
 }
-bool files::PermissionService::apply(PermissionEdit edit) {
+bool luciole::PermissionService::apply(PermissionEdit edit) {
   if (busy()
       || (!m_state->target && !m_state->bulk)
       || m_state->snapshot.phase != PermissionPhase::Ready
@@ -268,7 +268,7 @@ bool files::PermissionService::apply(PermissionEdit edit) {
   );
   return true;
 }
-bool files::PermissionService::applyRecursive(RecursivePermissionEdit edit) {
+bool luciole::PermissionService::applyRecursive(RecursivePermissionEdit edit) {
   if (busy()
       || m_state->snapshot.phase != PermissionPhase::Ready
       || (m_state->snapshot.recursive && m_state->snapshot.finished)
@@ -306,7 +306,7 @@ bool files::PermissionService::applyRecursive(RecursivePermissionEdit edit) {
   );
   return true;
 }
-bool files::PermissionService::applyAcl(AclEdit edit) {
+bool luciole::PermissionService::applyAcl(AclEdit edit) {
   if (busy() || m_state->snapshot.phase != PermissionPhase::Ready || !m_state->target || m_state->bulk) {
     return false;
   }
@@ -322,7 +322,7 @@ bool files::PermissionService::applyAcl(AclEdit edit) {
   );
   return true;
 }
-bool files::PermissionService::applyAclPatch(AclPatchEdit edit) {
+bool luciole::PermissionService::applyAclPatch(AclPatchEdit edit) {
   if (busy()
       || m_state->snapshot.phase != PermissionPhase::Ready
       || !m_state->bulk

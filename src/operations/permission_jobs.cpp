@@ -14,7 +14,7 @@
 #include <unistd.h>
 
 namespace {
-  using namespace files;
+  using namespace luciole;
   using O = PermissionOutcome;
   using Reply = PermissionReply;
   FileError withPrefix(std::string_view prefix, FileError error) {
@@ -58,7 +58,7 @@ namespace {
   }
 } // namespace
 
-files::PermissionReply files::applyPermissionEdit(
+luciole::PermissionReply luciole::applyPermissionEdit(
     const std::shared_ptr<PermissionTarget>& target, const PermissionEdit& edit, const CancelToken& token, bool names
 ) {
   Reply reply{.target = target};
@@ -138,8 +138,8 @@ files::PermissionReply files::applyPermissionEdit(
   return reply;
 }
 
-files::PermissionReply
-files::applyAclEdit(const std::shared_ptr<PermissionTarget>& target, AclEdit edit, const CancelToken& token) {
+luciole::PermissionReply
+luciole::applyAclEdit(const std::shared_ptr<PermissionTarget>& target, AclEdit edit, const CancelToken& token) {
   Reply reply{.target = target};
   bool mutated = false;
   try {
@@ -198,7 +198,7 @@ files::applyAclEdit(const std::shared_ptr<PermissionTarget>& target, AclEdit edi
   return reply;
 }
 
-std::string files::permissionReport(const std::vector<PermissionResult>& rows) {
+std::string luciole::permissionReport(const std::vector<PermissionResult>& rows) {
   constexpr std::array labels{"Ready", "Changed", "Unchanged", "Failed", "Partially changed", "Cancelled", "Skipped"};
   std::string text = "Permission results\n";
   for (const auto& row : rows) {
@@ -587,7 +587,7 @@ namespace {
   };
 } // namespace
 
-files::PermissionReply files::applyBulkPermissionEdit(
+luciole::PermissionReply luciole::applyBulkPermissionEdit(
     const std::shared_ptr<PermissionBatch>& bulk, PermissionEdit edit, const CancelToken& token,
     std::atomic<std::size_t>& completed
 ) {
@@ -595,7 +595,7 @@ files::PermissionReply files::applyBulkPermissionEdit(
   return runBulk(bulk, action, token, completed);
 }
 
-files::PermissionReply files::applyBulkAclPatch(
+luciole::PermissionReply luciole::applyBulkAclPatch(
     const std::shared_ptr<PermissionBatch>& bulk, AclPatchEdit edit, const CancelToken& token,
     std::atomic<std::size_t>& completed
 ) {
@@ -603,7 +603,7 @@ files::PermissionReply files::applyBulkAclPatch(
   return runBulk(bulk, action, token, completed);
 }
 
-files::PermissionReply files::applyRecursivePermissionEdit(
+luciole::PermissionReply luciole::applyRecursivePermissionEdit(
     const std::shared_ptr<PermissionBatch>& roots, RecursivePermissionEdit edit, const CancelToken& token,
     std::atomic<std::size_t>& completed, std::atomic<std::size_t>& total, std::atomic<bool>& collecting
 ) {

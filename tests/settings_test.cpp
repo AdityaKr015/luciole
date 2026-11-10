@@ -18,7 +18,7 @@ namespace {
   struct Fixture {
     std::filesystem::path directory;
     Fixture() {
-      const files::GString name(g_dir_make_tmp("noctalia-settings-test-XXXXXX", nullptr));
+      const luciole::GString name(g_dir_make_tmp("luciole-settings-test-XXXXXX", nullptr));
       TEST_CHECK(name != nullptr);
       directory = name.get();
     }
@@ -34,7 +34,7 @@ namespace {
       file << text;
       TEST_CHECK(file.good());
     }
-    files::ConfigPaths paths() const {
+    luciole::ConfigPaths paths() const {
       return {.base = directory / "config.toml", .overrides = directory / "settings.toml"};
     }
   };
@@ -46,21 +46,21 @@ namespace {
 
   void testBackupPreference() {
     Fixture fixture;
-    files::ConfigService service(fixture.paths());
+    luciole::ConfigService service(fixture.paths());
     TEST_CHECK(service.reload());
     TEST_CHECK(service.settings().browser.showBackups && !service.settings().browser.showHidden);
     fixture.write("config.toml", "[browser]\nshow_backups = false\nshow_hidden = true\n");
     TEST_CHECK(service.reload() && !service.settings().browser.showBackups && service.settings().browser.showHidden);
-    const std::array on{files::OverrideEdit{files::BrowserPreference::ShowBackups, true}};
-    TEST_CHECK(service.saveOverrides(on) == files::AtomicWriteState::Durable);
-    files::ConfigService restored(fixture.paths());
+    const std::array on{luciole::OverrideEdit{luciole::BrowserPreference::ShowBackups, true}};
+    TEST_CHECK(service.saveOverrides(on) == luciole::AtomicWriteState::Durable);
+    luciole::ConfigService restored(fixture.paths());
     TEST_CHECK(restored.reload());
     TEST_CHECK(restored.settings().browser.showBackups && restored.settings().browser.showHidden);
-    const std::array off{files::OverrideEdit{files::BrowserPreference::ShowBackups, false}};
-    TEST_CHECK(restored.saveOverrides(off) == files::AtomicWriteState::Durable);
+    const std::array off{luciole::OverrideEdit{luciole::BrowserPreference::ShowBackups, false}};
+    TEST_CHECK(restored.saveOverrides(off) == luciole::AtomicWriteState::Durable);
     TEST_CHECK(!restored.settings().browser.showBackups && restored.settings().browser.showHidden);
-    const std::array reset{files::OverrideEdit{files::BrowserPreference::ShowBackups, std::nullopt}};
-    TEST_CHECK(restored.saveOverrides(reset) == files::AtomicWriteState::Durable);
+    const std::array reset{luciole::OverrideEdit{luciole::BrowserPreference::ShowBackups, std::nullopt}};
+    TEST_CHECK(restored.saveOverrides(reset) == luciole::AtomicWriteState::Durable);
     TEST_CHECK(!restored.settings().browser.showBackups && restored.settings().browser.showHidden);
     TEST_CHECK(!read(fixture.paths().overrides).contains("show_backups"));
     for (const auto* value : {"'false'", "0", "[]"}) {
@@ -70,46 +70,46 @@ namespace {
   }
 
   void testPresentationSettings() {
-    using P = files::BrowserPreference;
-    using State = files::AtomicWriteState;
+    using P = luciole::BrowserPreference;
+    using State = luciole::AtomicWriteState;
     Fixture fixture;
-    files::ConfigService settings(fixture.paths());
+    luciole::ConfigService settings(fixture.paths());
     TEST_CHECK(settings.reload());
-    TEST_CHECK(settings.settings().browser.presentation == files::BrowsePresentation{});
+    TEST_CHECK(settings.settings().browser.presentation == luciole::BrowsePresentation{});
     fixture.write(
         "config.toml",
         "[browser]\ndensity = 'comfortable'\nshow_type_caption = true\nshow_emblems = false\nshow_hidden = true\n"
     );
     TEST_CHECK(settings.reload());
-    TEST_CHECK(settings.settings().browser.presentation.density == files::ViewDensity::Comfortable);
+    TEST_CHECK(settings.settings().browser.presentation.density == luciole::ViewDensity::Comfortable);
     TEST_CHECK(settings.settings().browser.presentation.captions.type);
     const std::array edits{
-        files::OverrideEdit{P::Density, files::ViewDensity::Compact}, files::OverrideEdit{P::ShowSizeCaption, true},
-        files::OverrideEdit{P::ShowTypeCaption, false}, files::OverrideEdit{P::ShowModifiedCaption, true},
-        files::OverrideEdit{P::ShowEmblems, true}
+        luciole::OverrideEdit{P::Density, luciole::ViewDensity::Compact},
+        luciole::OverrideEdit{P::ShowSizeCaption, true}, luciole::OverrideEdit{P::ShowTypeCaption, false},
+        luciole::OverrideEdit{P::ShowModifiedCaption, true}, luciole::OverrideEdit{P::ShowEmblems, true}
     };
     TEST_CHECK(settings.saveOverrides(edits) == State::Durable);
-    files::ConfigService restored(fixture.paths());
+    luciole::ConfigService restored(fixture.paths());
     TEST_CHECK(restored.reload());
-    const files::BrowsePresentation expected{files::ViewDensity::Compact, {true, false, true}, true};
+    const luciole::BrowsePresentation expected{luciole::ViewDensity::Compact, {true, false, true}, true};
     TEST_CHECK(restored.settings().browser.presentation == expected && restored.settings().browser.showHidden);
     const auto before = read(fixture.paths().overrides);
-    const std::array invalid{files::OverrideEdit{P::Density, static_cast<files::ViewDensity>(255)}};
+    const std::array invalid{luciole::OverrideEdit{P::Density, static_cast<luciole::ViewDensity>(255)}};
     TEST_CHECK(restored.saveOverrides(invalid) == State::NotCommitted);
     TEST_CHECK(read(fixture.paths().overrides) == before);
     const std::array reset{
-        files::OverrideEdit{P::Density, std::nullopt}, files::OverrideEdit{P::ShowSizeCaption, std::nullopt},
-        files::OverrideEdit{P::ShowTypeCaption, std::nullopt},
-        files::OverrideEdit{P::ShowModifiedCaption, std::nullopt}, files::OverrideEdit{P::ShowEmblems, std::nullopt}
+        luciole::OverrideEdit{P::Density, std::nullopt}, luciole::OverrideEdit{P::ShowSizeCaption, std::nullopt},
+        luciole::OverrideEdit{P::ShowTypeCaption, std::nullopt},
+        luciole::OverrideEdit{P::ShowModifiedCaption, std::nullopt}, luciole::OverrideEdit{P::ShowEmblems, std::nullopt}
     };
     TEST_CHECK(restored.saveOverrides(reset) == State::Durable);
-    const files::BrowsePresentation inherited{files::ViewDensity::Comfortable, {false, true, false}, false};
+    const luciole::BrowsePresentation inherited{luciole::ViewDensity::Comfortable, {false, true, false}, false};
     TEST_CHECK(restored.settings().browser.presentation == inherited && restored.settings().browser.showHidden);
     for (const auto* invalidValue :
          {"density = 'large'", "density = true", "show_size_caption = 'true'", "show_type_caption = 1",
           "show_modified_caption = []", "show_emblems = 'false'"}) {
       fixture.write("config.toml", std::format("[browser]\n{}\n", invalidValue));
-      TEST_CHECK(!files::validateConfigFile(fixture.paths().base).empty());
+      TEST_CHECK(!luciole::validateConfigFile(fixture.paths().base).empty());
       TEST_CHECK(!restored.reload() && restored.settings().browser.presentation == inherited);
     }
   }
@@ -117,62 +117,63 @@ namespace {
   void testMillerSettings() {
     Fixture fixture;
     fixture.write("config.toml", "[browser]\nview_mode = 'miller'\nmiller_column_width = 300\n");
-    files::ConfigService settings(fixture.paths());
+    luciole::ConfigService settings(fixture.paths());
     TEST_CHECK(
         settings.reload()
-        && settings.settings().browser.viewMode == files::ViewMode::Miller
+        && settings.settings().browser.viewMode == luciole::ViewMode::Miller
         && settings.settings().browser.millerColumnWidth == 300
     );
-    using P = files::BrowserPreference;
+    using P = luciole::BrowserPreference;
     const std::array edits{
-        files::OverrideEdit{P::ViewMode, files::ViewMode::Miller}, files::OverrideEdit{P::MillerColumnWidth, 417}
+        luciole::OverrideEdit{P::ViewMode, luciole::ViewMode::Miller}, luciole::OverrideEdit{P::MillerColumnWidth, 417}
     };
-    TEST_CHECK(settings.saveOverrides(edits) == files::AtomicWriteState::Durable);
-    files::ConfigService restored(fixture.paths());
+    TEST_CHECK(settings.saveOverrides(edits) == luciole::AtomicWriteState::Durable);
+    luciole::ConfigService restored(fixture.paths());
     TEST_CHECK(
         restored.reload()
         && restored.settings().browser.millerColumnWidth == 417
-        && restored.settings().browser.viewMode == files::ViewMode::Miller
+        && restored.settings().browser.viewMode == luciole::ViewMode::Miller
     );
     const auto before = read(fixture.paths().overrides);
     for (const int width : {179, 801}) {
-      const std::array invalid{files::OverrideEdit{P::MillerColumnWidth, width}};
+      const std::array invalid{luciole::OverrideEdit{P::MillerColumnWidth, width}};
       TEST_CHECK(
-          restored.saveOverrides(invalid) == files::AtomicWriteState::NotCommitted
+          restored.saveOverrides(invalid) == luciole::AtomicWriteState::NotCommitted
           && read(fixture.paths().overrides) == before
       );
       fixture.write("config.toml", std::format("[browser]\nmiller_column_width = {}\n", width));
-      TEST_CHECK(!files::validateConfigFile(fixture.paths().base).empty());
+      TEST_CHECK(!luciole::validateConfigFile(fixture.paths().base).empty());
     }
     fixture.write("config.toml", "[browser]\nview_mode = 'miller'\nmiller_column_width = 300\n");
-    const std::array reset{files::OverrideEdit{P::MillerColumnWidth, std::nullopt}};
+    const std::array reset{luciole::OverrideEdit{P::MillerColumnWidth, std::nullopt}};
     TEST_CHECK(
-        restored.saveOverrides(reset) == files::AtomicWriteState::Durable
+        restored.saveOverrides(reset) == luciole::AtomicWriteState::Durable
         && restored.settings().browser.millerColumnWidth == 300
     );
   }
 
   void testMillerParents() {
     Fixture fixture;
-    files::ConfigService settings(fixture.paths());
+    luciole::ConfigService settings(fixture.paths());
     TEST_CHECK(settings.reload() && settings.settings().browser.millerShowParents);
-    using P = files::BrowserPreference;
-    const std::array off{files::OverrideEdit{P::MillerShowParents, false}};
-    TEST_CHECK(settings.saveOverrides(off) == files::AtomicWriteState::Durable);
-    files::ConfigService restored(fixture.paths());
+    using P = luciole::BrowserPreference;
+    const std::array off{luciole::OverrideEdit{P::MillerShowParents, false}};
+    TEST_CHECK(settings.saveOverrides(off) == luciole::AtomicWriteState::Durable);
+    luciole::ConfigService restored(fixture.paths());
     TEST_CHECK(restored.reload() && !restored.settings().browser.millerShowParents);
     fixture.write("config.toml", "[browser]\nmiller_show_parents = false\n");
-    const std::array on{files::OverrideEdit{P::MillerShowParents, true}};
+    const std::array on{luciole::OverrideEdit{P::MillerShowParents, true}};
     TEST_CHECK(
-        restored.saveOverrides(on) == files::AtomicWriteState::Durable && restored.settings().browser.millerShowParents
+        restored.saveOverrides(on) == luciole::AtomicWriteState::Durable
+        && restored.settings().browser.millerShowParents
     );
-    const std::array reset{files::OverrideEdit{P::MillerShowParents, std::nullopt}};
+    const std::array reset{luciole::OverrideEdit{P::MillerShowParents, std::nullopt}};
     TEST_CHECK(
-        restored.saveOverrides(reset) == files::AtomicWriteState::Durable
+        restored.saveOverrides(reset) == luciole::AtomicWriteState::Durable
         && !restored.settings().browser.millerShowParents
     );
     fixture.write("config.toml", "[browser]\nmiller_show_parents = 'true'\n");
-    TEST_CHECK(!files::validateConfigFile(fixture.paths().base).empty());
+    TEST_CHECK(!luciole::validateConfigFile(fixture.paths().base).empty());
   }
 
   void testSchemaAndDiagnostics() {
@@ -182,11 +183,11 @@ namespace {
         "schema_version = 1\n[browser]\nshow_hidden = true\nsort_by = 'modified'\n"
         "sort_descending = true\ndirectories_first = false\nview_mode = 'grid'\n"
     );
-    TEST_CHECK(files::validateConfigFile(fixture.paths().base).empty());
+    TEST_CHECK(luciole::validateConfigFile(fixture.paths().base).empty());
     fixture.write("settings.toml", "invalid adjacent override");
-    TEST_CHECK(files::validateConfigFile(fixture.paths().base).empty());
+    TEST_CHECK(luciole::validateConfigFile(fixture.paths().base).empty());
     fixture.write("config.toml", "unexpected = 1\n[browser]\nshow_hidden = 1\nsort_by = 'date'\nunknown = false\n");
-    const auto errors = files::validateConfigFile(fixture.paths().base);
+    const auto errors = luciole::validateConfigFile(fixture.paths().base);
     TEST_CHECK(errors.size() == 4);
     bool foundLine = false;
     for (const auto& error : errors) {
@@ -202,33 +203,33 @@ namespace {
           "[browser]\nview_mode = 'icons'", "[browser]\nshow_hidden = true\nshow_hidden = false", "broken = [",
           "theme = {}"}) {
       fixture.write("config.toml", invalid);
-      TEST_CHECK(!files::validateConfigFile(fixture.paths().base).empty());
+      TEST_CHECK(!luciole::validateConfigFile(fixture.paths().base).empty());
     }
     fixture.write("config.toml", "");
-    TEST_CHECK(files::validateConfigFile(fixture.paths().base).empty());
+    TEST_CHECK(luciole::validateConfigFile(fixture.paths().base).empty());
     fixture.write("config.toml", "[browser]\nsort_by = 'type'\n");
     std::filesystem::remove(fixture.paths().overrides);
-    const auto typed = files::loadSettings(fixture.paths());
-    TEST_CHECK(typed && typed->browser.sort.field == files::SortField::Type);
+    const auto typed = luciole::loadSettings(fixture.paths());
+    TEST_CHECK(typed && typed->browser.sort.field == luciole::SortField::Type);
   }
 
   void testLayersAndReload() {
     Fixture fixture;
-    files::ConfigService config(fixture.paths());
-    TEST_CHECK(config.reload() && config.settings() == files::Settings{});
+    luciole::ConfigService config(fixture.paths());
+    TEST_CHECK(config.reload() && config.settings() == luciole::Settings{});
     fixture.write(
         "config.toml", "[browser]\nshow_hidden = true\nsort_by = 'size'\nsort_descending = true\nview_mode = 'grid'\n"
     );
-    TEST_CHECK(config.reload() && config.settings().browser.viewMode == files::ViewMode::Grid);
+    TEST_CHECK(config.reload() && config.settings().browser.viewMode == luciole::ViewMode::Grid);
     fixture.write("settings.toml", "[browser]\nshow_hidden = false\ndirectories_first = false\nview_mode = 'list'\n");
     TEST_CHECK(config.reload());
     const auto& browser = config.settings().browser;
     TEST_CHECK(
         !browser.showHidden
-        && browser.sort.field == files::SortField::Size
+        && browser.sort.field == luciole::SortField::Size
         && browser.sort.descending
         && !browser.sort.directoriesFirst
-        && browser.viewMode == files::ViewMode::List
+        && browser.viewMode == luciole::ViewMode::List
     );
     const auto lastGood = config.settings();
     fixture.write("settings.toml", "[browser]\nview_mode = 'unknown'\n");
@@ -238,17 +239,17 @@ namespace {
     TEST_CHECK(!config.reload() && config.settings() == lastGood);
     std::filesystem::remove(fixture.paths().base);
     std::filesystem::remove(fixture.paths().overrides);
-    TEST_CHECK(config.reload() && config.issues().empty() && config.settings() == files::Settings{});
+    TEST_CHECK(config.reload() && config.issues().empty() && config.settings() == luciole::Settings{});
   }
 
   void testFilesAndLimits() {
     Fixture fixture;
-    TEST_CHECK(!files::validateConfigFile(fixture.paths().base).empty());
+    TEST_CHECK(!luciole::validateConfigFile(fixture.paths().base).empty());
     fixture.write("target.toml", "[browser]\nshow_hidden = true\n");
     const auto target = fixture.directory / "target.toml";
     std::filesystem::create_symlink(target, fixture.paths().base);
     TEST_CHECK(::chmod(target.c_str(), 0444) == 0);
-    files::ConfigService config(fixture.paths());
+    luciole::ConfigService config(fixture.paths());
     const auto original = read(target);
     TEST_CHECK(config.reload() && config.settings().browser.showHidden);
     TEST_CHECK(read(target) == original && std::filesystem::is_symlink(fixture.paths().base));
@@ -280,23 +281,23 @@ namespace {
   void testEnvironmentPaths() {
     const char* previous = std::getenv("XDG_CONFIG_HOME");
     const std::optional<std::string> saved = previous != nullptr ? std::optional<std::string>(previous) : std::nullopt;
-    ::setenv("XDG_CONFIG_HOME", "/tmp/noctalia-settings-path-test", 1);
-    const auto paths = files::ConfigPaths::fromEnvironment();
+    ::setenv("XDG_CONFIG_HOME", "/tmp/luciole-settings-path-test", 1);
+    const auto paths = luciole::ConfigPaths::fromEnvironment();
     TEST_CHECK(
-        paths.base == "/tmp/noctalia-settings-path-test/noctalia-files/config.toml"
-        && paths.overrides == "/tmp/noctalia-settings-path-test/noctalia-files/settings.toml"
+        paths.base == "/tmp/luciole-settings-path-test/luciole/config.toml"
+        && paths.overrides == "/tmp/luciole-settings-path-test/luciole/settings.toml"
     );
     ::setenv("XDG_CONFIG_HOME", "relative-invalid-path", 1);
     bool rejected = false;
     try {
-      (void)files::ConfigPaths::fromEnvironment();
+      (void)luciole::ConfigPaths::fromEnvironment();
     } catch (const std::invalid_argument&) {
       rejected = true;
     }
     TEST_CHECK(rejected);
     ::unsetenv("XDG_CONFIG_HOME");
-    const auto fallback = files::ConfigPaths::fromEnvironment();
-    TEST_CHECK(fallback.base == std::filesystem::path(std::getenv("HOME")) / ".config/noctalia-files/config.toml");
+    const auto fallback = luciole::ConfigPaths::fromEnvironment();
+    TEST_CHECK(fallback.base == std::filesystem::path(std::getenv("HOME")) / ".config/luciole/config.toml");
     if (saved) {
       ::setenv("XDG_CONFIG_HOME", saved->c_str(), 1);
     }
@@ -309,18 +310,18 @@ namespace {
         "[browser]\nshow_hidden = true\nsort_by = 'size'\nsort_descending = true\n"
         "directories_first = false\n"
     );
-    const auto loaded = files::loadSettings(fixture.paths());
+    const auto loaded = luciole::loadSettings(fixture.paths());
     TEST_CHECK(loaded.has_value());
-    files::DirectoryModel model;
+    luciole::DirectoryModel model;
     model.setSort(loaded->browser.sort);
     model.setFilter({.showHidden = loaded->browser.showHidden, .text = {}});
-    files::DirectorySnapshot data;
-    data.location = files::Location::fromPath(fixture.directory.native());
+    luciole::DirectorySnapshot data;
+    data.location = luciole::Location::fromPath(fixture.directory.native());
     data.generation = 1;
-    data.status = files::DirectoryStatus::Ready;
+    data.status = luciole::DirectoryStatus::Ready;
     data.entries = {
         {.id = 1,
-         .location = files::Location::fromPath((fixture.directory / ".hidden").native()),
+         .location = luciole::Location::fromPath((fixture.directory / ".hidden").native()),
          .name = ".hidden",
          .displayName = ".hidden",
          .hidden = true,
@@ -329,7 +330,7 @@ namespace {
          .etag = std::nullopt,
          .parentDisplayName = {}},
         {.id = 2,
-         .location = files::Location::fromPath((fixture.directory / "visible").native()),
+         .location = luciole::Location::fromPath((fixture.directory / "visible").native()),
          .name = "visible",
          .displayName = "visible",
          .size = 5,
@@ -338,36 +339,36 @@ namespace {
          .parentDisplayName = {}},
     };
     model.applySnapshot(std::move(data));
-    TEST_CHECK((model.rows() == std::vector<files::EntryId>{1, 2}));
+    TEST_CHECK((model.rows() == std::vector<luciole::EntryId>{1, 2}));
   }
 
   void testGridIconSize() {
     Fixture fixture;
-    using Preference = files::BrowserPreference;
-    using State = files::AtomicWriteState;
-    for (const int size : files::kGridIconSizes) {
+    using Preference = luciole::BrowserPreference;
+    using State = luciole::AtomicWriteState;
+    for (const int size : luciole::kGridIconSizes) {
       fixture.write("config.toml", "[browser]\ngrid_icon_size = " + std::to_string(size) + "\n");
-      const auto loaded = files::loadSettings(fixture.paths());
+      const auto loaded = luciole::loadSettings(fixture.paths());
       TEST_CHECK(loaded && loaded->browser.gridIconSize == size);
     }
     for (const auto* value : {"0", "31", "49", "129", "257", "-32", "64.0", "true", "'64'", "9223372036854775807"}) {
       fixture.write("config.toml", std::string("[browser]\ngrid_icon_size = ") + value + "\n");
-      TEST_CHECK(!files::validateConfigFile(fixture.paths().base).empty());
+      TEST_CHECK(!luciole::validateConfigFile(fixture.paths().base).empty());
     }
     fixture.write("config.toml", "[browser]\ngrid_icon_size = 64\n");
     fixture.write("settings.toml", "[browser]\ngrid_icon_size = 96\nshow_hidden = true\n");
-    files::ConfigService config(fixture.paths());
+    luciole::ConfigService config(fixture.paths());
     TEST_CHECK(config.reload() && config.settings().browser.gridIconSize == 96);
     for (const int size : {32, 256}) {
-      const std::array zoom{files::OverrideEdit{Preference::GridIconSize, size}};
+      const std::array zoom{luciole::OverrideEdit{Preference::GridIconSize, size}};
       TEST_CHECK(config.saveOverrides(zoom) == State::Durable);
-      const auto loaded = files::loadSettings(fixture.paths());
+      const auto loaded = luciole::loadSettings(fixture.paths());
       TEST_CHECK(loaded && loaded->browser.gridIconSize == size && loaded->browser.showHidden);
     }
     const auto previous = read(fixture.paths().overrides);
-    const std::array invalid{files::OverrideEdit{Preference::GridIconSize, 33}};
+    const std::array invalid{luciole::OverrideEdit{Preference::GridIconSize, 33}};
     TEST_CHECK(config.saveOverrides(invalid) == State::NotCommitted && read(fixture.paths().overrides) == previous);
-    const std::array reset{files::OverrideEdit{Preference::GridIconSize, std::nullopt}};
+    const std::array reset{luciole::OverrideEdit{Preference::GridIconSize, std::nullopt}};
     TEST_CHECK(
         config.saveOverrides(reset) == State::Durable
         && config.settings().browser.gridIconSize == 64
@@ -376,10 +377,10 @@ namespace {
   }
 
   void testSidebarWidth() {
-    using Preference = files::BrowserPreference;
-    using State = files::AtomicWriteState;
+    using Preference = luciole::BrowserPreference;
+    using State = luciole::AtomicWriteState;
     Fixture fixture;
-    files::ConfigService config(fixture.paths());
+    luciole::ConfigService config(fixture.paths());
     TEST_CHECK(config.reload() && config.settings().browser.sidebarWidth == 206);
     fixture.write("config.toml", "[browser]\nsidebar_width = 280\nshow_hidden = true\n");
     fixture.write("settings.toml", "[browser]\nsidebar_width = 160\nview_mode = 'grid'\n");
@@ -390,22 +391,22 @@ namespace {
       TEST_CHECK(config.issues().front().key == "browser.sidebar_width");
     }
     fixture.write("settings.toml", "[browser]\nview_mode = 'grid'\n");
-    const std::array width{files::OverrideEdit{Preference::SidebarWidth, 400}};
+    const std::array width{luciole::OverrideEdit{Preference::SidebarWidth, 400}};
     TEST_CHECK(config.saveOverrides(width) == State::Durable);
-    files::ConfigService reloaded(fixture.paths());
+    luciole::ConfigService reloaded(fixture.paths());
     TEST_CHECK(
         reloaded.reload()
         && reloaded.settings().browser.sidebarWidth == 400
-        && reloaded.settings().browser.viewMode == files::ViewMode::Grid
+        && reloaded.settings().browser.viewMode == luciole::ViewMode::Grid
         && reloaded.settings().browser.showHidden
     );
     const auto before = read(fixture.paths().overrides);
     for (const auto& value :
-         {files::OverrideEdit{Preference::SidebarWidth, 159}, files::OverrideEdit{Preference::SidebarWidth, 401}}) {
+         {luciole::OverrideEdit{Preference::SidebarWidth, 159}, luciole::OverrideEdit{Preference::SidebarWidth, 401}}) {
       const std::array invalid{value};
       TEST_CHECK(config.saveOverrides(invalid) == State::NotCommitted && read(fixture.paths().overrides) == before);
     }
-    const std::array inherit{files::OverrideEdit{Preference::SidebarWidth, std::nullopt}};
+    const std::array inherit{luciole::OverrideEdit{Preference::SidebarWidth, std::nullopt}};
     TEST_CHECK(
         config.saveOverrides(inherit) == State::Durable
         && config.settings().browser.sidebarWidth == 280
@@ -415,70 +416,72 @@ namespace {
   }
 
   void testPreviewVisibility() {
-    using P = files::BrowserPreference;
+    using P = luciole::BrowserPreference;
     Fixture fixture;
-    files::ConfigService config(fixture.paths());
+    luciole::ConfigService config(fixture.paths());
     TEST_CHECK(config.reload() && config.settings().browser.showPreview);
     fixture.write("config.toml", "[browser]\nshow_preview = true\nshow_hidden = true\n");
     TEST_CHECK(config.reload() && config.settings().browser.showPreview);
     TEST_CHECK(
-        config.saveOverrides(std::array{files::OverrideEdit{P::ShowPreview, false}}) == files::AtomicWriteState::Durable
+        config.saveOverrides(std::array{luciole::OverrideEdit{P::ShowPreview, false}})
+        == luciole::AtomicWriteState::Durable
     );
-    const auto loaded = files::loadSettings(fixture.paths());
+    const auto loaded = luciole::loadSettings(fixture.paths());
     TEST_CHECK(loaded && !loaded->browser.showPreview && loaded->browser.showHidden);
     TEST_CHECK(
-        config.saveOverrides(std::array{files::OverrideEdit{P::ShowPreview, std::nullopt}})
-            == files::AtomicWriteState::Durable
+        config.saveOverrides(std::array{luciole::OverrideEdit{P::ShowPreview, std::nullopt}})
+            == luciole::AtomicWriteState::Durable
         && config.settings().browser.showPreview
     );
     fixture.write("config.toml", "[browser]\nshow_preview = 'true'\n");
-    TEST_CHECK(!files::validateConfigFile(fixture.paths().base).empty());
+    TEST_CHECK(!luciole::validateConfigFile(fixture.paths().base).empty());
     fixture.write("config.toml", "[browser]\npreview_width = 444\nshow_preview = true\n");
     TEST_CHECK(config.reload() && config.settings().browser.previewWidth == 444);
     TEST_CHECK(
-        config.saveOverrides(std::array{files::OverrideEdit{P::PreviewWidth, 555}}) == files::AtomicWriteState::Durable
+        config.saveOverrides(std::array{luciole::OverrideEdit{P::PreviewWidth, 555}})
+        == luciole::AtomicWriteState::Durable
     );
-    TEST_CHECK(files::loadSettings(fixture.paths())->browser.previewWidth == 555);
+    TEST_CHECK(luciole::loadSettings(fixture.paths())->browser.previewWidth == 555);
     const auto before = read(fixture.paths().overrides);
     for (int width : {207, 801}) {
       TEST_CHECK(
-          config.saveOverrides(std::array{files::OverrideEdit{P::PreviewWidth, width}})
-              == files::AtomicWriteState::NotCommitted
+          config.saveOverrides(std::array{luciole::OverrideEdit{P::PreviewWidth, width}})
+              == luciole::AtomicWriteState::NotCommitted
           && read(fixture.paths().overrides) == before
       );
     }
     TEST_CHECK(
-        config.saveOverrides(std::array{files::OverrideEdit{P::PreviewWidth, std::nullopt}})
-            == files::AtomicWriteState::Durable
+        config.saveOverrides(std::array{luciole::OverrideEdit{P::PreviewWidth, std::nullopt}})
+            == luciole::AtomicWriteState::Durable
         && config.settings().browser.previewWidth == 444
     );
     for (const auto* value : {"207", "801", "true", "'320'", "320.0"}) {
       fixture.write("config.toml", std::string("[browser]\npreview_width = ") + value + "\n");
-      TEST_CHECK(!files::validateConfigFile(fixture.paths().base).empty());
+      TEST_CHECK(!luciole::validateConfigFile(fixture.paths().base).empty());
     }
   }
   void testSidebarVisibility() {
-    using Preference = files::BrowserPreference;
-    using State = files::AtomicWriteState;
+    using Preference = luciole::BrowserPreference;
+    using State = luciole::AtomicWriteState;
     Fixture fixture;
-    files::ConfigService config(fixture.paths());
+    luciole::ConfigService config(fixture.paths());
     TEST_CHECK(config.reload() && config.settings().browser.showSidebar);
     const std::string base = "[browser]\nshow_sidebar = false\nsidebar_width = 280\n";
     fixture.write("config.toml", base);
     fixture.write("settings.toml", "[browser]\nshow_sidebar = true\ngrid_icon_size = 64\n");
     TEST_CHECK(config.reload() && config.settings().browser.showSidebar);
-    const std::array hide{files::OverrideEdit{Preference::ShowSidebar, false}};
+    const std::array hide{luciole::OverrideEdit{Preference::ShowSidebar, false}};
     TEST_CHECK(config.saveOverrides(hide) == State::Durable);
-    const auto loaded = files::loadSettings(fixture.paths());
+    const auto loaded = luciole::loadSettings(fixture.paths());
     TEST_CHECK(
         loaded
         && !loaded->browser.showSidebar
         && loaded->browser.sidebarWidth == 280
         && loaded->browser.gridIconSize == 64
     );
-    const std::array show{files::OverrideEdit{Preference::ShowSidebar, true}};
+    const std::array show{luciole::OverrideEdit{Preference::ShowSidebar, true}};
     TEST_CHECK(config.saveOverrides(show) == State::Durable && config.settings().browser.showSidebar);
-    const std::array inherit{files::OverrideEdit{Preference::ShowSidebar, std::nullopt}};
+    const std::array inherit{luciole::OverrideEdit{Preference::ShowSidebar, std::nullopt}};
     TEST_CHECK(
         config.saveOverrides(inherit) == State::Durable
         && !config.settings().browser.showSidebar
@@ -487,65 +490,65 @@ namespace {
     TEST_CHECK(read(fixture.paths().base) == base);
     for (const auto* value : {"0", "'false'", "1.0"}) {
       fixture.write("config.toml", std::string("[browser]\nshow_sidebar = ") + value + "\n");
-      const auto issues = files::validateConfigFile(fixture.paths().base);
+      const auto issues = luciole::validateConfigFile(fixture.paths().base);
       TEST_CHECK(issues.size() == 1 && issues.front().key == "browser.show_sidebar");
     }
   }
 
   void testDetailsColumnVisibility() {
-    using Preference = files::BrowserPreference;
-    using State = files::AtomicWriteState;
+    using Preference = luciole::BrowserPreference;
+    using State = luciole::AtomicWriteState;
     struct Column {
       const char* key;
-      files::PreferenceKey<bool> preference;
-      bool files::DetailsColumnVisibility::* member;
+      luciole::PreferenceKey<bool> preference;
+      bool luciole::DetailsColumnVisibility::* member;
     };
     const std::array columns{
-        Column{"show_type_column", Preference::ShowTypeColumn, &files::DetailsColumnVisibility::type},
-        Column{"show_size_column", Preference::ShowSizeColumn, &files::DetailsColumnVisibility::size},
-        Column{"show_modified_column", Preference::ShowModifiedColumn, &files::DetailsColumnVisibility::modified},
+        Column{"show_type_column", Preference::ShowTypeColumn, &luciole::DetailsColumnVisibility::type},
+        Column{"show_size_column", Preference::ShowSizeColumn, &luciole::DetailsColumnVisibility::size},
+        Column{"show_modified_column", Preference::ShowModifiedColumn, &luciole::DetailsColumnVisibility::modified},
     };
     for (const auto& column : columns) {
       Fixture fixture;
-      files::ConfigService config(fixture.paths());
-      TEST_CHECK(config.reload() && config.settings().browser.columns == files::DetailsColumnVisibility{});
+      luciole::ConfigService config(fixture.paths());
+      TEST_CHECK(config.reload() && config.settings().browser.columns == luciole::DetailsColumnVisibility{});
       const auto base = std::string("[browser]\n") + column.key + " = false\nshow_hidden = true\n";
       fixture.write("config.toml", base);
       fixture.write("settings.toml", std::string("[browser]\n") + column.key + " = true\ngrid_icon_size = 64\n");
       TEST_CHECK(config.reload() && config.settings().browser.columns.*column.member);
-      const std::array hide{files::OverrideEdit{column.preference, false}};
+      const std::array hide{luciole::OverrideEdit{column.preference, false}};
       TEST_CHECK(config.saveOverrides(hide) == State::Durable);
-      const auto loaded = files::loadSettings(fixture.paths());
+      const auto loaded = luciole::loadSettings(fixture.paths());
       TEST_CHECK(
           loaded
           && !(loaded->browser.columns.*column.member)
           && loaded->browser.showHidden
           && loaded->browser.gridIconSize == 64
       );
-      const std::array inherit{files::OverrideEdit{column.preference, std::nullopt}};
+      const std::array inherit{luciole::OverrideEdit{column.preference, std::nullopt}};
       TEST_CHECK(
           config.saveOverrides(inherit) == State::Durable
           && !(config.settings().browser.columns.*column.member)
           && !read(fixture.paths().overrides).contains(column.key)
       );
-      const std::array show{files::OverrideEdit{column.preference, true}};
+      const std::array show{luciole::OverrideEdit{column.preference, true}};
       TEST_CHECK(config.saveOverrides(show) == State::Durable && config.settings().browser.columns.*column.member);
       TEST_CHECK(read(fixture.paths().base) == base);
       for (const auto* value : {"0", "'false'", "[]"}) {
         fixture.write("config.toml", std::string("[browser]\n") + column.key + " = " + value + "\n");
-        const auto issues = files::validateConfigFile(fixture.paths().base);
+        const auto issues = luciole::validateConfigFile(fixture.paths().base);
         TEST_CHECK(issues.size() == 1 && issues.front().key == std::string("browser.") + column.key);
       }
     }
   }
 
   void testInteractionModes() {
-    using A = files::ActivationMode;
-    using T = files::TypingMode;
-    using P = files::BrowserPreference;
-    using S = files::AtomicWriteState;
+    using A = luciole::ActivationMode;
+    using T = luciole::TypingMode;
+    using P = luciole::BrowserPreference;
+    using S = luciole::AtomicWriteState;
     Fixture fixture;
-    files::ConfigService config(fixture.paths());
+    luciole::ConfigService config(fixture.paths());
     TEST_CHECK(
         config.reload()
         && config.settings().browser.activationMode == A::DoubleClick
@@ -558,10 +561,10 @@ namespace {
     for (const auto activation : {A::SingleClick, A::DoubleClick}) {
       for (const auto typing : {T::Search, T::Typeahead}) {
         const std::array edits{
-            files::OverrideEdit{P::ActivationMode, activation}, files::OverrideEdit{P::TypingMode, typing}
+            luciole::OverrideEdit{P::ActivationMode, activation}, luciole::OverrideEdit{P::TypingMode, typing}
         };
         TEST_CHECK(config.saveOverrides(edits) == S::Durable);
-        const auto loaded = files::loadSettings(fixture.paths());
+        const auto loaded = luciole::loadSettings(fixture.paths());
         TEST_CHECK(
             loaded
             && loaded->browser.activationMode == activation
@@ -573,15 +576,15 @@ namespace {
     }
     const auto saved = read(fixture.paths().overrides);
     for (const auto& bad : std::array{
-             files::OverrideEdit{P::ActivationMode, static_cast<A>(99)},
-             files::OverrideEdit{P::TypingMode, static_cast<T>(99)}
+             luciole::OverrideEdit{P::ActivationMode, static_cast<A>(99)},
+             luciole::OverrideEdit{P::TypingMode, static_cast<T>(99)}
          }) {
       TEST_CHECK(
           config.saveOverrides(std::span(&bad, 1)) == S::NotCommitted && read(fixture.paths().overrides) == saved
       );
     }
     const std::array inherit{
-        files::OverrideEdit{P::ActivationMode, std::nullopt}, files::OverrideEdit{P::TypingMode, std::nullopt}
+        luciole::OverrideEdit{P::ActivationMode, std::nullopt}, luciole::OverrideEdit{P::TypingMode, std::nullopt}
     };
     TEST_CHECK(
         config.saveOverrides(inherit) == S::Durable
@@ -593,7 +596,7 @@ namespace {
     for (const auto* key : {"activation_mode", "typing_mode"}) {
       for (const auto* bad : {"true", "1", "[]", "'single'", "'Search'", "'double-click'"}) {
         fixture.write("config.toml", std::string("[browser]\n") + key + " = " + bad + "\n");
-        const auto issues = files::validateConfigFile(fixture.paths().base);
+        const auto issues = luciole::validateConfigFile(fixture.paths().base);
         TEST_CHECK(
             issues.size() == 1
             && issues.front().key == std::string("browser.") + key
@@ -605,27 +608,27 @@ namespace {
   }
 
   void testDetailsColumnWidths() {
-    using P = files::BrowserPreference;
-    using S = files::AtomicWriteState;
+    using P = luciole::BrowserPreference;
+    using S = luciole::AtomicWriteState;
     constexpr std::array preferences{P::NameColumnWidth,     P::TypeColumnWidth,     P::SizeColumnWidth,
                                      P::ModifiedColumnWidth, P::AccessedColumnWidth, P::CreatedColumnWidth,
                                      P::OwnerColumnWidth,    P::GroupColumnWidth,    P::PermissionsColumnWidth,
                                      P::LocationColumnWidth};
     Fixture fixture;
-    files::ConfigService config(fixture.paths());
-    TEST_CHECK(config.reload() && config.settings().browser.columnWidths == files::kDefaultDetailsColumnWidths);
+    luciole::ConfigService config(fixture.paths());
+    TEST_CHECK(config.reload() && config.settings().browser.columnWidths == luciole::kDefaultDetailsColumnWidths);
     for (std::size_t index = 0; index < preferences.size(); ++index) {
-      const std::string key(files::kDetailsColumnWidthKeys[index]);
+      const std::string key(luciole::kDetailsColumnWidthKeys[index]);
       const std::string base = "[browser]\n" + key + " = 300\nshow_hidden = true\n";
       fixture.write("config.toml", base);
       fixture.write("settings.toml", "[browser]\ngrid_icon_size = 64\n");
       TEST_CHECK(config.reload() && config.settings().browser.columnWidths[index] == 300);
       for (const int width :
-           {files::minimumDetailsColumnWidth(index), files::maximumDetailsColumnWidth(index),
-            files::kDefaultDetailsColumnWidths[index]}) {
-        const std::array edit{files::OverrideEdit{preferences[index], width}};
+           {luciole::minimumDetailsColumnWidth(index), luciole::maximumDetailsColumnWidth(index),
+            luciole::kDefaultDetailsColumnWidths[index]}) {
+        const std::array edit{luciole::OverrideEdit{preferences[index], width}};
         TEST_CHECK(config.saveOverrides(edit) == S::Durable);
-        const auto loaded = files::loadSettings(fixture.paths());
+        const auto loaded = luciole::loadSettings(fixture.paths());
         TEST_CHECK(
             loaded
             && loaded->browser.columnWidths[index] == width
@@ -635,14 +638,14 @@ namespace {
       }
       const auto saved = read(fixture.paths().overrides);
       for (const auto& bad : std::array{
-               files::OverrideEdit{preferences[index], -1},
-               files::OverrideEdit{preferences[index], files::maximumDetailsColumnWidth(index) + 1}
+               luciole::OverrideEdit{preferences[index], -1},
+               luciole::OverrideEdit{preferences[index], luciole::maximumDetailsColumnWidth(index) + 1}
            }) {
         TEST_CHECK(
             config.saveOverrides(std::span(&bad, 1)) == S::NotCommitted && read(fixture.paths().overrides) == saved
         );
       }
-      const std::array inherit{files::OverrideEdit{preferences[index], std::nullopt}};
+      const std::array inherit{luciole::OverrideEdit{preferences[index], std::nullopt}};
       TEST_CHECK(
           config.saveOverrides(inherit) == S::Durable
           && config.settings().browser.columnWidths[index] == 300
@@ -652,7 +655,7 @@ namespace {
       const auto lastGood = config.settings();
       for (const auto* invalid : {"-1", "1", "63", "16385", "9223372036854775807", "true", "160.0", "'160'", "[]"}) {
         fixture.write("config.toml", "[browser]\n" + key + " = " + invalid + "\n");
-        const auto issues = files::validateConfigFile(fixture.paths().base);
+        const auto issues = luciole::validateConfigFile(fixture.paths().base);
         TEST_CHECK(
             issues.size() == 1
             && issues.front().key == "browser." + key
@@ -662,72 +665,72 @@ namespace {
       }
       if (index != 0) {
         fixture.write("config.toml", "[browser]\n" + key + " = 0\n");
-        TEST_CHECK(!files::validateConfigFile(fixture.paths().base).empty());
+        TEST_CHECK(!luciole::validateConfigFile(fixture.paths().base).empty());
       }
     }
   }
 
   void testExtendedColumns() {
-    using P = files::BrowserPreference;
+    using P = luciole::BrowserPreference;
     const std::array keys{P::ShowAccessedColumn, P::ShowCreatedColumn,     P::ShowOwnerColumn,
                           P::ShowGroupColumn,    P::ShowPermissionsColumn, P::ShowLocationColumn};
     Fixture fixture;
-    files::ConfigService config(fixture.paths());
+    luciole::ConfigService config(fixture.paths());
     TEST_CHECK(config.reload());
     for (std::size_t i = 0; i < keys.size(); ++i) {
-      TEST_CHECK(!files::preferenceValue(config.settings().browser, keys[i]));
-      const auto column = static_cast<files::DetailsColumn>(i + 3);
-      const auto key = "show_" + std::string(files::detailsColumnName(column)) + "_column";
+      TEST_CHECK(!luciole::preferenceValue(config.settings().browser, keys[i]));
+      const auto column = static_cast<luciole::DetailsColumn>(i + 3);
+      const auto key = "show_" + std::string(luciole::detailsColumnName(column)) + "_column";
       fixture.write("config.toml", "[browser]\n" + key + "=true\nshow_hidden=true\n");
       TEST_CHECK(config.reload());
-      TEST_CHECK(files::preferenceValue(config.settings().browser, keys[i]));
-      const std::array off{files::OverrideEdit{keys[i], false}};
-      TEST_CHECK(config.saveOverrides(off) == files::AtomicWriteState::Durable);
-      auto loaded = files::loadSettings(fixture.paths());
-      TEST_CHECK(loaded && !files::preferenceValue(loaded->browser, keys[i]) && loaded->browser.showHidden);
-      const std::array reset{files::OverrideEdit{keys[i], std::nullopt}};
-      TEST_CHECK(config.saveOverrides(reset) == files::AtomicWriteState::Durable);
-      TEST_CHECK(files::preferenceValue(config.settings().browser, keys[i]));
+      TEST_CHECK(luciole::preferenceValue(config.settings().browser, keys[i]));
+      const std::array off{luciole::OverrideEdit{keys[i], false}};
+      TEST_CHECK(config.saveOverrides(off) == luciole::AtomicWriteState::Durable);
+      auto loaded = luciole::loadSettings(fixture.paths());
+      TEST_CHECK(loaded && !luciole::preferenceValue(loaded->browser, keys[i]) && loaded->browser.showHidden);
+      const std::array reset{luciole::OverrideEdit{keys[i], std::nullopt}};
+      TEST_CHECK(config.saveOverrides(reset) == luciole::AtomicWriteState::Durable);
+      TEST_CHECK(luciole::preferenceValue(config.settings().browser, keys[i]));
       fixture.write("config.toml", "[browser]\n" + key + "='true'\n");
-      TEST_CHECK(!files::validateConfigFile(fixture.paths().base).empty());
+      TEST_CHECK(!luciole::validateConfigFile(fixture.paths().base).empty());
     }
     fixture.write("config.toml", "[browser]\ncolumn_order=['owner','type','size','modified']\n");
     TEST_CHECK(config.reload());
-    TEST_CHECK(config.settings().browser.columnOrder.front() == files::DetailsColumn::Owner);
-    TEST_CHECK(files::validDetailsColumnOrder(config.settings().browser.columnOrder));
-    auto order = files::kDefaultDetailsColumnOrder;
+    TEST_CHECK(config.settings().browser.columnOrder.front() == luciole::DetailsColumn::Owner);
+    TEST_CHECK(luciole::validDetailsColumnOrder(config.settings().browser.columnOrder));
+    auto order = luciole::kDefaultDetailsColumnOrder;
     std::ranges::reverse(order);
-    const std::array edit{files::OverrideEdit{P::ColumnOrder, order}};
-    TEST_CHECK(config.saveOverrides(edit) == files::AtomicWriteState::Durable);
-    TEST_CHECK(files::loadSettings(fixture.paths())->browser.columnOrder == order);
+    const std::array edit{luciole::OverrideEdit{P::ColumnOrder, order}};
+    TEST_CHECK(config.saveOverrides(edit) == luciole::AtomicWriteState::Durable);
+    TEST_CHECK(luciole::loadSettings(fixture.paths())->browser.columnOrder == order);
     for (const auto field :
-         {files::SortField::Accessed, files::SortField::Created, files::SortField::Owner, files::SortField::Group,
-          files::SortField::Permissions, files::SortField::Location}) {
-      const std::array sort{files::OverrideEdit{P::SortBy, field}};
-      TEST_CHECK(config.saveOverrides(sort) == files::AtomicWriteState::Durable);
-      TEST_CHECK(files::loadSettings(fixture.paths())->browser.sort.field == field);
+         {luciole::SortField::Accessed, luciole::SortField::Created, luciole::SortField::Owner,
+          luciole::SortField::Group, luciole::SortField::Permissions, luciole::SortField::Location}) {
+      const std::array sort{luciole::OverrideEdit{P::SortBy, field}};
+      TEST_CHECK(config.saveOverrides(sort) == luciole::AtomicWriteState::Durable);
+      TEST_CHECK(luciole::loadSettings(fixture.paths())->browser.sort.field == field);
     }
   }
 
   void testDetailsColumnOrder() {
-    using Column = files::DetailsColumn;
-    using Preference = files::BrowserPreference;
-    using State = files::AtomicWriteState;
+    using Column = luciole::DetailsColumn;
+    using Preference = luciole::BrowserPreference;
+    using State = luciole::AtomicWriteState;
     Fixture fixture;
-    files::ConfigService config(fixture.paths());
-    TEST_CHECK(config.reload() && config.settings().browser.columnOrder == files::kDefaultDetailsColumnOrder);
-    const files::DetailsColumnOrder baseOrder{Column::Modified, Column::Type,        Column::Size,
-                                              Column::Accessed, Column::Created,     Column::Owner,
-                                              Column::Group,    Column::Permissions, Column::Location};
+    luciole::ConfigService config(fixture.paths());
+    TEST_CHECK(config.reload() && config.settings().browser.columnOrder == luciole::kDefaultDetailsColumnOrder);
+    const luciole::DetailsColumnOrder baseOrder{Column::Modified, Column::Type,        Column::Size,
+                                                Column::Accessed, Column::Created,     Column::Owner,
+                                                Column::Group,    Column::Permissions, Column::Location};
     const std::string base = "[browser]\ncolumn_order = ['modified', 'type', 'size']\nshow_size_column = false\n";
     fixture.write("config.toml", base);
     fixture.write("settings.toml", "[browser]\ngrid_icon_size = 64\n");
     TEST_CHECK(config.reload() && config.settings().browser.columnOrder == baseOrder);
-    auto order = files::kDefaultDetailsColumnOrder;
+    auto order = luciole::kDefaultDetailsColumnOrder;
     do {
-      const std::array edit{files::OverrideEdit{Preference::ColumnOrder, order}};
+      const std::array edit{luciole::OverrideEdit{Preference::ColumnOrder, order}};
       TEST_CHECK(config.saveOverrides(edit) == State::Durable);
-      const auto loaded = files::loadSettings(fixture.paths());
+      const auto loaded = luciole::loadSettings(fixture.paths());
       TEST_CHECK(
           loaded
           && loaded->browser.columnOrder == order
@@ -737,22 +740,23 @@ namespace {
     } while (std::ranges::next_permutation(order.begin(), order.begin() + 3).found);
     const auto saved = read(fixture.paths().overrides);
     for (const auto& edit : std::array{
-             files::OverrideEdit{
+             luciole::OverrideEdit{
                  Preference::ColumnOrder,
-                 files::DetailsColumnOrder{
+                 luciole::DetailsColumnOrder{
                      Column::Type, Column::Type, Column::Size, Column::Accessed, Column::Created, Column::Owner,
                      Column::Group, Column::Permissions, Column::Location
                  }
              },
-             files::OverrideEdit{
-                 Preference::ColumnOrder, files::DetailsColumnOrder{Column::Type, Column::Size, static_cast<Column>(99)}
+             luciole::OverrideEdit{
+                 Preference::ColumnOrder,
+                 luciole::DetailsColumnOrder{Column::Type, Column::Size, static_cast<Column>(99)}
              }
          }) {
       TEST_CHECK(
           config.saveOverrides(std::span(&edit, 1)) == State::NotCommitted && read(fixture.paths().overrides) == saved
       );
     }
-    const std::array inherit{files::OverrideEdit{Preference::ColumnOrder, std::nullopt}};
+    const std::array inherit{luciole::OverrideEdit{Preference::ColumnOrder, std::nullopt}};
     TEST_CHECK(
         config.saveOverrides(inherit) == State::Durable
         && config.settings().browser.columnOrder == baseOrder
@@ -764,7 +768,7 @@ namespace {
          {"true", "'type'", "[]", "['type', 'size']", "['type', 'size', 'size']", "['name', 'type', 'size']",
           "['Type', 'size', 'modified']", "['type', 'size', 1]", "['type', 'size', 'modified', 'name']"}) {
       fixture.write("config.toml", std::string("[browser]\ncolumn_order = ") + invalid + "\n");
-      const auto issues = files::validateConfigFile(fixture.paths().base);
+      const auto issues = luciole::validateConfigFile(fixture.paths().base);
       TEST_CHECK(
           issues.size() == 1
           && issues.front().key == "browser.column_order"
@@ -775,66 +779,68 @@ namespace {
   }
 
   void testThumbnailSettings() {
-    using P = files::BrowserPreference;
+    using P = luciole::BrowserPreference;
     Fixture fixture;
     fixture.write(
         "config.toml",
         "[browser]\nthumbnail_policy = 'all'\nthumbnail_max_file_mib = 128\nthumbnail_max_megapixels = "
         "24\nthumbnail_cache_mib = 256\n"
     );
-    files::ConfigService config(fixture.paths());
+    luciole::ConfigService config(fixture.paths());
     TEST_CHECK(
         (config.reload()
-         && config.settings().browser.thumbnails == files::ThumbnailOptions{files::ThumbnailPolicy::All, 128, 24, 256})
+         && config.settings().browser.thumbnails
+             == luciole::ThumbnailOptions{luciole::ThumbnailPolicy::All, 128, 24, 256})
     );
     const std::array edits{
-        files::OverrideEdit{P::ThumbnailPolicy, files::ThumbnailPolicy::Never},
-        files::OverrideEdit{P::ThumbnailMaxFileMib, 512}, files::OverrideEdit{P::ThumbnailMaxMegapixels, 48},
-        files::OverrideEdit{P::ThumbnailCacheMib, 512}
+        luciole::OverrideEdit{P::ThumbnailPolicy, luciole::ThumbnailPolicy::Never},
+        luciole::OverrideEdit{P::ThumbnailMaxFileMib, 512}, luciole::OverrideEdit{P::ThumbnailMaxMegapixels, 48},
+        luciole::OverrideEdit{P::ThumbnailCacheMib, 512}
     };
-    TEST_CHECK(config.saveOverrides(edits) == files::AtomicWriteState::Durable);
-    const auto loaded = files::loadSettings(fixture.paths());
-    TEST_CHECK(
-        (loaded && loaded->browser.thumbnails == files::ThumbnailOptions{files::ThumbnailPolicy::Never, 512, 48, 512})
-    );
+    TEST_CHECK(config.saveOverrides(edits) == luciole::AtomicWriteState::Durable);
+    const auto loaded = luciole::loadSettings(fixture.paths());
+    TEST_CHECK((
+        loaded && loaded->browser.thumbnails == luciole::ThumbnailOptions{luciole::ThumbnailPolicy::Never, 512, 48, 512}
+    ));
     const std::array reset{
-        files::OverrideEdit{P::ThumbnailPolicy, std::nullopt},
-        files::OverrideEdit{P::ThumbnailMaxFileMib, std::nullopt},
-        files::OverrideEdit{P::ThumbnailMaxMegapixels, std::nullopt},
-        files::OverrideEdit{P::ThumbnailCacheMib, std::nullopt}
+        luciole::OverrideEdit{P::ThumbnailPolicy, std::nullopt},
+        luciole::OverrideEdit{P::ThumbnailMaxFileMib, std::nullopt},
+        luciole::OverrideEdit{P::ThumbnailMaxMegapixels, std::nullopt},
+        luciole::OverrideEdit{P::ThumbnailCacheMib, std::nullopt}
     };
     TEST_CHECK(
-        (config.saveOverrides(reset) == files::AtomicWriteState::Durable
-         && config.settings().browser.thumbnails == files::ThumbnailOptions{files::ThumbnailPolicy::All, 128, 24, 256})
+        (config.saveOverrides(reset) == luciole::AtomicWriteState::Durable
+         && config.settings().browser.thumbnails
+             == luciole::ThumbnailOptions{luciole::ThumbnailPolicy::All, 128, 24, 256})
     );
     for (const auto* invalid :
          {"thumbnail_policy = true", "thumbnail_policy = 'remote'", "thumbnail_max_file_mib = 0",
           "thumbnail_max_file_mib = 1025", "thumbnail_max_megapixels = 0", "thumbnail_max_megapixels = 65",
           "thumbnail_cache_mib = 15", "thumbnail_cache_mib = 1025", "thumbnail_max_file_mib = 1.5"}) {
       fixture.write("config.toml", std::string("[browser]\n") + invalid + "\n");
-      TEST_CHECK(!files::validateConfigFile(fixture.paths().base).empty());
+      TEST_CHECK(!luciole::validateConfigFile(fixture.paths().base).empty());
     }
     fixture.write("config.toml", "");
     for (const auto preference : {P::ThumbnailMaxFileMib, P::ThumbnailMaxMegapixels, P::ThumbnailCacheMib}) {
-      const std::array invalid{files::OverrideEdit{preference, -1}};
-      TEST_CHECK(config.saveOverrides(invalid) == files::AtomicWriteState::NotCommitted);
+      const std::array invalid{luciole::OverrideEdit{preference, -1}};
+      TEST_CHECK(config.saveOverrides(invalid) == luciole::AtomicWriteState::NotCommitted);
     }
   }
 
   void testOverrideSaving() {
-    using Preference = files::BrowserPreference;
-    using State = files::AtomicWriteState;
+    using Preference = luciole::BrowserPreference;
+    using State = luciole::AtomicWriteState;
     Fixture fixture;
     fixture.write("base-target.toml", "[browser]\nshow_hidden = false\nsort_by = 'size'\n");
     const auto baseTarget = fixture.directory / "base-target.toml";
     std::filesystem::create_symlink(baseTarget, fixture.paths().base);
     TEST_CHECK(::chmod(baseTarget.c_str(), 0444) == 0);
     const auto baseContent = read(baseTarget);
-    files::ConfigService first(fixture.paths());
-    files::ConfigService second(fixture.paths());
+    luciole::ConfigService first(fixture.paths());
+    luciole::ConfigService second(fixture.paths());
     TEST_CHECK(first.reload() && second.reload());
-    const std::array show{files::OverrideEdit{Preference::ShowHidden, true}};
-    const std::array descending{files::OverrideEdit{Preference::SortDescending, true}};
+    const std::array show{luciole::OverrideEdit{Preference::ShowHidden, true}};
+    const std::array descending{luciole::OverrideEdit{Preference::SortDescending, true}};
     TEST_CHECK(first.saveOverrides(show) == State::Durable && first.settings().browser.showHidden);
     // The second instance still has its earlier cache. Saving another key must
     // reread the sidecar under the lock rather than overwrite the first edit.
@@ -842,14 +848,14 @@ namespace {
     TEST_CHECK(
         second.settings().browser.showHidden
         && second.settings().browser.sort.descending
-        && second.settings().browser.sort.field == files::SortField::Size
+        && second.settings().browser.sort.field == luciole::SortField::Size
     );
-    TEST_CHECK(files::validateConfigFile(fixture.paths().overrides).empty());
+    TEST_CHECK(luciole::validateConfigFile(fixture.paths().overrides).empty());
     const auto saved = read(fixture.paths().overrides);
     TEST_CHECK(second.saveOverrides(descending) == State::Unchanged && read(fixture.paths().overrides) == saved);
     const std::array disable{
-        files::OverrideEdit{Preference::DirectoriesFirst, false},
-        files::OverrideEdit{Preference::SortDescending, false},
+        luciole::OverrideEdit{Preference::DirectoriesFirst, false},
+        luciole::OverrideEdit{Preference::SortDescending, false},
     };
     TEST_CHECK(
         second.saveOverrides(disable) == State::Durable
@@ -857,7 +863,7 @@ namespace {
         && !second.settings().browser.sort.directoriesFirst
         && !second.settings().browser.sort.descending
     );
-    const std::array inherit{files::OverrideEdit{Preference::ShowHidden, std::nullopt}};
+    const std::array inherit{luciole::OverrideEdit{Preference::ShowHidden, std::nullopt}};
     TEST_CHECK(second.saveOverrides(inherit) == State::Durable && !second.settings().browser.showHidden);
     TEST_CHECK(!read(fixture.paths().overrides).contains("show_hidden"));
     TEST_CHECK(read(baseTarget) == baseContent && std::filesystem::is_symlink(fixture.paths().base));
@@ -875,47 +881,47 @@ namespace {
     std::filesystem::create_symlink(baseTarget, fixture.paths().overrides);
     TEST_CHECK(second.saveOverrides(show) == State::NotCommitted && read(baseTarget) == baseContent);
     std::filesystem::remove(fixture.paths().overrides);
-    const std::array invalidEdits{files::OverrideEdit{Preference::SortBy, static_cast<files::SortField>(99)}};
+    const std::array invalidEdits{luciole::OverrideEdit{Preference::SortBy, static_cast<luciole::SortField>(99)}};
     TEST_CHECK(
         second.saveOverrides(invalidEdits) == State::NotCommitted && !std::filesystem::exists(fixture.paths().overrides)
     );
-    const std::array sort{files::OverrideEdit{Preference::SortBy, files::SortField::Type}};
+    const std::array sort{luciole::OverrideEdit{Preference::SortBy, luciole::SortField::Type}};
     TEST_CHECK(
-        second.saveOverrides(sort) == State::Durable && second.settings().browser.sort.field == files::SortField::Type
+        second.saveOverrides(sort) == State::Durable && second.settings().browser.sort.field == luciole::SortField::Type
     );
-    const std::array grid{files::OverrideEdit{Preference::ViewMode, files::ViewMode::Grid}};
+    const std::array grid{luciole::OverrideEdit{Preference::ViewMode, luciole::ViewMode::Grid}};
     TEST_CHECK(second.saveOverrides(grid) == State::Durable);
-    files::ConfigService reloaded(fixture.paths());
+    luciole::ConfigService reloaded(fixture.paths());
     TEST_CHECK(
         reloaded.reload()
-        && reloaded.settings().browser.viewMode == files::ViewMode::Grid
-        && reloaded.settings().browser.sort.field == files::SortField::Type
+        && reloaded.settings().browser.viewMode == luciole::ViewMode::Grid
+        && reloaded.settings().browser.sort.field == luciole::SortField::Type
     );
     const auto gridBytes = read(fixture.paths().overrides);
-    const std::array invalidMode{files::OverrideEdit{Preference::ViewMode, static_cast<files::ViewMode>(99)}};
+    const std::array invalidMode{luciole::OverrideEdit{Preference::ViewMode, static_cast<luciole::ViewMode>(99)}};
     TEST_CHECK(
         second.saveOverrides(invalidMode) == State::NotCommitted && read(fixture.paths().overrides) == gridBytes
     );
-    const std::array resetView{files::OverrideEdit{Preference::ViewMode, std::nullopt}};
+    const std::array resetView{luciole::OverrideEdit{Preference::ViewMode, std::nullopt}};
     TEST_CHECK(
         second.saveOverrides(resetView) == State::Durable
-        && second.settings().browser.viewMode == files::ViewMode::List
+        && second.settings().browser.viewMode == luciole::ViewMode::List
         && !read(fixture.paths().overrides).contains("view_mode")
     );
-    files::ConfigService aliased({.base = fixture.paths().base, .overrides = fixture.paths().base});
+    luciole::ConfigService aliased({.base = fixture.paths().base, .overrides = fixture.paths().base});
     TEST_CHECK(aliased.saveOverrides(show) == State::NotCommitted && read(baseTarget) == baseContent);
     Fixture reverseAlias;
     reverseAlias.write("settings.toml", "[browser]\nshow_hidden = false\n");
     const auto aliasedContent = read(reverseAlias.paths().overrides);
     std::filesystem::create_symlink(reverseAlias.paths().overrides, reverseAlias.paths().base);
-    files::ConfigService sameFile(reverseAlias.paths());
+    luciole::ConfigService sameFile(reverseAlias.paths());
     TEST_CHECK(
         sameFile.saveOverrides(show) == State::NotCommitted && read(reverseAlias.paths().overrides) == aliasedContent
     );
 
     Fixture invalidBase;
     invalidBase.write("config.toml", "[browser]\nshow_hidden = true\n");
-    files::ConfigService protectedConfig(invalidBase.paths());
+    luciole::ConfigService protectedConfig(invalidBase.paths());
     TEST_CHECK(protectedConfig.saveOverrides(descending) == State::Durable);
     const auto before = read(invalidBase.paths().overrides);
     const auto beforeSettings = protectedConfig.settings();

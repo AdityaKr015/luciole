@@ -7,11 +7,11 @@
 #include <initializer_list>
 #include <optional>
 
-namespace files {
+namespace luciole {
   // The key chord parsed from the action's shortcut string, or nullopt when it has none.
   const std::optional<KeyChord>& actionChord(BrowserAction action);
   bool shortcutMatches(BrowserAction action, std::uint32_t sym, std::uint32_t modifiers);
   // The first of `actions` whose shortcut matches the key.
   std::optional<BrowserAction>
   shortcutAction(std::initializer_list<BrowserAction> actions, std::uint32_t sym, std::uint32_t modifiers);
-} // namespace files
+} // namespace luciole

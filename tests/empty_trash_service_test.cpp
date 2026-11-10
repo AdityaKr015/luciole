@@ -13,8 +13,8 @@
 
 namespace {
   namespace fs = std::filesystem;
-  using Outcome = files::EmptyTrashOutcome;
-  using Status = files::EmptyTrashStatus;
+  using Outcome = luciole::EmptyTrashOutcome;
+  using Status = luciole::EmptyTrashStatus;
   void write(const fs::path& path, const std::string& value) { std::ofstream(path) << value; }
   std::string read(const fs::path& path) {
     std::ifstream input(path);
@@ -23,7 +23,7 @@ namespace {
   struct Fixture {
     fs::path root;
     Fixture() {
-      const files::GString path(g_dir_make_tmp("noctalia-empty-trash-XXXXXX", nullptr));
+      const luciole::GString path(g_dir_make_tmp("luciole-empty-trash-XXXXXX", nullptr));
       TEST_CHECK(path != nullptr);
       root = path.get();
     }
@@ -44,12 +44,12 @@ namespace {
         m_source.dispatch(fds, start);
       }
     }
-    void prepare(files::EmptyTrashService& service) {
+    void prepare(luciole::EmptyTrashService& service) {
       TEST_CHECK(service.prepare());
       until([&] { return !service.busy(); });
       TEST_CHECK(service.snapshot().status == Status::Ready);
     }
-    void empty(files::EmptyTrashService& service) {
+    void empty(luciole::EmptyTrashService& service) {
       TEST_CHECK(service.empty());
       until([&] { return !service.busy(); });
       TEST_CHECK(service.snapshot().status == Status::Finished);
@@ -60,7 +60,7 @@ namespace {
   };
   void trash(const fs::path& path) {
     GError* error = nullptr;
-    const bool ok = g_file_trash(files::gioFile(files::Location::fromPath(path.native())).get(), nullptr, &error);
+    const bool ok = g_file_trash(luciole::gioFile(luciole::Location::fromPath(path.native())).get(), nullptr, &error);
     g_clear_error(&error);
     TEST_CHECK(ok);
   }
@@ -69,7 +69,7 @@ namespace {
   void unavailableAndLifetime(Pump& pump) {
     Fixture fixture;
     write(fixture.root / "keep", "native content");
-    files::EmptyTrashService service;
+    luciole::EmptyTrashService service;
     TEST_CHECK(!service.empty());
     TEST_CHECK(service.prepare());
     TEST_CHECK(!service.prepare() && !service.empty());
@@ -83,7 +83,7 @@ namespace {
     service.cancel();
     pump.until([&] { return !service.busy(); });
     TEST_CHECK(service.snapshot().status == Status::Cancelled && !service.empty());
-    auto destroyed = std::make_unique<files::EmptyTrashService>();
+    auto destroyed = std::make_unique<luciole::EmptyTrashService>();
     bool notified = false;
     destroyed->setChangedCallback([&] { notified = true; });
     TEST_CHECK(destroyed->prepare());
@@ -95,7 +95,7 @@ namespace {
   }
   void successfulEmptyAndNewArrivals(Pump& pump) {
     Fixture fixture;
-    files::EmptyTrashService service;
+    luciole::EmptyTrashService service;
     pump.prepare(service);
     TEST_CHECK(service.snapshot().results.empty() && !service.canEmpty() && !service.empty());
     fs::create_directories(fixture.root / "first/Folder 文");
@@ -154,17 +154,17 @@ namespace {
       trash(fixture.root / name);
     }
     const auto selected = [&] {
-      files::DirectorySession session;
-      session.open(files::Location::trash());
-      pump.until([&] { return session.snapshot().status != files::DirectoryStatus::Loading; });
-      TEST_CHECK(session.snapshot().status == files::DirectoryStatus::Ready);
+      luciole::DirectorySession session;
+      session.open(luciole::Location::trash());
+      pump.until([&] { return session.snapshot().status != luciole::DirectoryStatus::Loading; });
+      TEST_CHECK(session.snapshot().status == luciole::DirectoryStatus::Ready);
       const auto found = std::ranges::find_if(session.snapshot().entries, [&](const auto& entry) {
-        return entry.trash.original == files::Location::fromPath((fixture.root / "delete-selected-test").native());
+        return entry.trash.original == luciole::Location::fromPath((fixture.root / "delete-selected-test").native());
       });
       TEST_CHECK(found != session.snapshot().entries.end());
       return *found;
     };
-    files::EmptyTrashService service;
+    luciole::EmptyTrashService service;
     TEST_CHECK(!service.prepareSelection({}));
     auto entry = selected();
     TEST_CHECK(service.prepareSelection({entry}));
@@ -190,7 +190,7 @@ namespace {
         !fs::exists(trashFiles() / "delete-selected-test")
         && read(trashFiles() / "keep-selected-test") == "keep unrelated"
     );
-    entry.location = files::Location::trash();
+    entry.location = luciole::Location::trash();
     TEST_CHECK(service.prepareSelection({entry}));
     pump.until([&] { return !service.busy(); });
     TEST_CHECK(service.snapshot().status == Status::Error && !service.empty());
@@ -205,7 +205,7 @@ namespace {
     for (const auto* name : {"replaced", "good", "restored"}) {
       trash(fixture.root / name);
     }
-    files::EmptyTrashService service;
+    luciole::EmptyTrashService service;
     pump.prepare(service);
     fs::rename(trashFiles() / "replaced", fixture.root / "held-original");
     write(trashFiles() / "replaced", "replacement");
@@ -213,9 +213,9 @@ namespace {
     fs::remove(trashInfo() / "restored.trashinfo");
     pump.empty(service);
     TEST_CHECK(
-        std::ranges::count(service.snapshot().results, Outcome::Deleted, &files::EmptyTrashResult::outcome) == 1
-        && std::ranges::count(service.snapshot().results, Outcome::Failed, &files::EmptyTrashResult::outcome) == 1
-        && std::ranges::count(service.snapshot().results, Outcome::Skipped, &files::EmptyTrashResult::outcome) == 1
+        std::ranges::count(service.snapshot().results, Outcome::Deleted, &luciole::EmptyTrashResult::outcome) == 1
+        && std::ranges::count(service.snapshot().results, Outcome::Failed, &luciole::EmptyTrashResult::outcome) == 1
+        && std::ranges::count(service.snapshot().results, Outcome::Skipped, &luciole::EmptyTrashResult::outcome) == 1
     );
     TEST_CHECK(
         read(trashFiles() / "replaced") == "replacement"
@@ -232,7 +232,7 @@ namespace {
       write(path, "content");
       trash(path);
     }
-    files::EmptyTrashService service;
+    luciole::EmptyTrashService service;
     pump.prepare(service);
     TEST_CHECK(service.empty());
     pump.until([&] { return service.completed() != 0 || !service.busy(); });
@@ -261,7 +261,7 @@ namespace {
       write(fixture.root / "large-folder" / std::to_string(index), "data");
     }
     trash(fixture.root / "large-folder");
-    files::EmptyTrashService service;
+    luciole::EmptyTrashService service;
     bool requested = false, accepted = false, measuring = false;
     service.setChangedCallback([&] {
       if (!requested && service.snapshot().status == Status::Ready) {
@@ -292,7 +292,7 @@ namespace {
     write(fixture.root / "unreadable/content", "retain");
     trash(fixture.root / "unreadable");
     fs::permissions(trashFiles() / "unreadable", fs::perms::none);
-    files::EmptyTrashService service;
+    luciole::EmptyTrashService service;
     pump.prepare(service);
     TEST_CHECK(service.snapshot().sizeIncomplete);
     fs::permissions(trashFiles() / "unreadable", fs::perms::owner_all);

@@ -5,7 +5,7 @@
 
 #include <glib.h>
 
-namespace files {
+namespace luciole {
   class DirectoryTree;
   struct TreeRowInfo;
   struct BrowseViewport {
@@ -132,4 +132,4 @@ namespace files {
     std::function<void()> m_changed;
     std::function<void(const Location&)> m_fileActivated;
   };
-} // namespace files
+} // namespace luciole

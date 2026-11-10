@@ -2,7 +2,7 @@
 
 ## Copy, move and create
 
-Use Ctrl+C or Ctrl+X for the selection and Ctrl+V in the destination folder. Paste is also available from context menus, including List view. Clipboard transfers and drag/drop work between Files windows; the same transport supports other file managers.
+Use Ctrl+C or Ctrl+X for the selection and Ctrl+V in the destination folder. Paste is also available from context menus, including List view. Clipboard transfers and drag/drop work between Luciole windows; the same transport supports other file managers.
 
 Drop files on a folder or the destination pane. Ctrl requests Copy, Shift requests Move and Alt offers an action chooser. Symbolic-link drops are supported for native locations. Dragging a folder into Places pins it instead of transferring its contents.
 
@@ -14,15 +14,15 @@ F2 renames one item. Multiple selected native items from the same containing fol
 
 ## File operations popover
 
-Open File Operations from the toolbar or main menu to see jobs across tabs and windows in this running Files process. It shows preparation, transferred bytes, known item totals, pending decisions and results. Work with no known final total uses a spinner rather than a percentage. Pause is not offered because the current services cannot pause.
+Open File Operations from the toolbar or main menu to see jobs across tabs and windows in this running Luciole process. It shows preparation, transferred bytes, known item totals, pending decisions and results. Work with no known final total uses a spinner rather than a percentage. Pause is not offered because the current services cannot pause.
 
 Cancel stops remaining work; completed effects remain. Closing the popover does not cancel accepted jobs. It dismisses when the window resizes; open it again from the toolbar at the new size. Review returns to the page handling a pending decision. Details shows a bounded report with Copy report. Retry failed is offered only while that transfer's retry information is available, and rechecks captured inputs without repeating completed items. Retried cut moves preserve the existing clipboard ownership checks.
 
-The most recent 12 results stay in memory until Clear finished or application exit. Clearing results does not cancel running jobs. Older reports can outlive their service, so Retry may no longer be available. This is progress and reporting, not a persistent recovery journal. Separate Files processes have separate job lists.
+The most recent 12 results stay in memory until Clear finished or application exit. Clearing results does not cancel running jobs. Older reports can outlive their service, so Retry may no longer be available. This is progress and reporting, not a persistent recovery journal. Separate Luciole processes have separate job lists.
 
 ## Undo and redo a rename
 
-Undo Rename (Ctrl+Z) reverses the most recent supported single-item native rename. Redo Rename (Ctrl+Shift+Z) reapplies it. Both actions are in the main menu and the folder background menu. The one-operation history is shared by tabs and windows within the same running Files process; it does not survive restart or cross independent processes. Text inputs retain their own text undo/redo.
+Undo Rename (Ctrl+Z) reverses the most recent supported single-item native rename. Redo Rename (Ctrl+Shift+Z) reapplies it. Both actions are in the main menu and the folder background menu. The one-operation history is shared by tabs and windows within the same running Luciole process; it does not survive restart or cross independent processes. Text inputs retain their own text undo/redo.
 
 Reversal checks the containing folder and the renamed item's identity/revision, then renames without replacing anything. Changed, replaced or missing items are refused. An occupied original name is a conflict, never permission to overwrite; remove the conflict before retrying. Reading a file does not invalidate the record. Folder reversal checks the folder itself without traversing its contents.
 
@@ -40,7 +40,7 @@ Compress creates ZIP, TAR and 7z archives for native selections. Supported compr
 
 ZIP/TAR/7z/RAR input depends on available archive capabilities. Encrypted 7z input additionally uses a system 7-Zip executable. Passwords are requested when needed and are not stored in settings. Encrypted RAR is not supported. Numbered byte-split ZIP sets use `name.zip.001`, `.002` and so on; select `.001`, with all contiguous parts beside it. Spanned `.z01` sets and split-archive creation are not supported.
 
-Opening and extracting archives validate members and enforce resource limits. An archive rejected as unsafe or unsupported is reported; Files does not silently disable these checks. Native archives are the current scope.
+Opening and extracting archives validate members and enforce resource limits. An archive rejected as unsafe or unsupported is reported; Luciole does not silently disable these checks. Native archives are the current scope.
 
 ## Properties and permissions
 
@@ -48,10 +48,10 @@ Properties (Alt+Return) shows available file/media facts. Images can include pix
 
 For folders, Properties starts a separate cancellable recursive count/size calculation. Ordinary selection and the side preview do not traverse folders to calculate totals. Recursive totals are currently unavailable for non-native locations and Trash.
 
-Native permission and ownership editing is available in Properties. Multiple selections support bulk changes; recursive changes are explicit operations. Advanced permissions opens the POSIX ACL editor on supported native filesystems. Merely selecting a folder does not apply anything recursively. Files reports unsupported or denied changes rather than claiming they succeeded.
+Native permission and ownership editing is available in Properties. Multiple selections support bulk changes; recursive changes are explicit operations. Advanced permissions opens the POSIX ACL editor on supported native filesystems. Merely selecting a folder does not apply anything recursively. Luciole reports unsupported or denied changes rather than claiming they succeeded.
 
 ## Network locations
 
-Mounted, authenticated SFTP, SMB and WebDAV locations support the verified copy/move paths through installed GIO/GVfs backends. Some providers cannot preserve native symlinks, raw filename bytes or every metadata field. Read-only targets, conflicts, disconnects and partial moves remain explicit outcomes. Files does not provide its own server connection or credentials dialog yet.
+Mounted, authenticated SFTP, SMB and WebDAV locations support the verified copy/move paths through installed GIO/GVfs backends. Some providers cannot preserve native symlinks, raw filename bytes or every metadata field. Read-only targets, conflicts, disconnects and partial moves remain explicit outcomes. Luciole does not provide its own server connection or credentials dialog yet.
 
 See [runtime providers](../../PACKAGING.md#gvfs-providers-across-distributions) for distribution package requirements and [the remaining plan](../../PLAN.md) for unfinished device/network integration.

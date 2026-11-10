@@ -21,14 +21,14 @@ public:
   void dismiss();
   void sync(
       Renderer& renderer, Node& root, float pointerX, float pointerY, LayoutSize bounds,
-      std::optional<files::FileTooltipTarget> file = std::nullopt
+      std::optional<luciole::FileTooltipTarget> file = std::nullopt
   );
 
 private:
   std::function<void()> m_requestUpdate;
   Timer m_delay;
   Timer m_refresh;
-  files::FileTooltipData m_fileData;
+  luciole::FileTooltipData m_fileData;
   Label* m_label = nullptr;
   Flex* m_table = nullptr;
   struct Row {
@@ -38,7 +38,7 @@ private:
   };
   std::vector<Row> m_rows;
   const InputArea* m_identity = nullptr; // Compared only; resolved afresh from the live tree each frame.
-  std::optional<files::FileTooltipTarget> m_file;
+  std::optional<luciole::FileTooltipTarget> m_file;
   TooltipContent m_controlContent;
   LayoutRect m_anchor{};
   TooltipPlacement m_placement = TooltipPlacement::Default;

@@ -9,13 +9,13 @@
 
 LinkDialog::LinkDialog(
     float width, std::string source, std::string name, std::string destination, bool hardAllowed,
-    std::function<void(std::string, std::string, files::CreateKind)> submit, std::function<void()> cancel
+    std::function<void(std::string, std::string, luciole::CreateKind)> submit, std::function<void()> cancel
 )
     : m_submit(std::move(submit)) {
   setDirection(FlexDirection::Vertical);
   setAlign(FlexAlign::Stretch);
-  files::applyDialogStyle(*this);
-  addChild(files::dialogHeader("Create link", "link", cancel));
+  luciole::applyDialogStyle(*this);
+  addChild(luciole::dialogHeader("Create link", "link", cancel));
   auto scroll =
       ui::scrollView({.out = &m_scroll, .viewportPaddingH = 0.0F, .viewportPaddingV = 0.0F, .flexGrow = 1.0F});
   scroll->setReserveScrollbarGutter(true);
@@ -110,14 +110,14 @@ void LinkDialog::submit() {
   if (m_saving) {
     return;
   }
-  if (const auto error = files::filenameProblem(m_name->value())) {
+  if (const auto error = luciole::filenameProblem(m_name->value())) {
     showError(*error);
   } else if (m_destination->value().empty()) {
     showError("Enter a destination folder.");
   } else {
     m_submit(
         m_name->value(), m_destination->value(),
-        m_kind && m_kind->selectedIndex() == 1 ? files::CreateKind::HardLink : files::CreateKind::SymbolicLink
+        m_kind && m_kind->selectedIndex() == 1 ? luciole::CreateKind::HardLink : luciole::CreateKind::SymbolicLink
     );
   }
 }

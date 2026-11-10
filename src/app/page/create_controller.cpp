@@ -26,25 +26,25 @@
 #include <vector>
 
 namespace {
-  std::string createErrorText(const std::optional<files::FileError>& error) {
-    return error ? files::nameErrorText(*error, "The destination folder is no longer available.") : std::string{};
+  std::string createErrorText(const std::optional<luciole::FileError>& error) {
+    return error ? luciole::nameErrorText(*error, "The destination folder is no longer available.") : std::string{};
   }
 } // namespace
 
-CreateController::CreateController(PageContext& page, files::TemplateCatalog& templates, SubmenuController& submenus)
+CreateController::CreateController(PageContext& page, luciole::TemplateCatalog& templates, SubmenuController& submenus)
     : m_page(page), m_templates(templates), m_submenus(submenus) {}
 
 bool CreateController::canCreateItem() const {
-  return m_page.actionState(files::BrowserAction::CreateFolder, m_page.requestFor({})).enabled;
+  return m_page.actionState(luciole::BrowserAction::CreateFolder, m_page.requestFor({})).enabled;
 }
 
 void CreateController::showDocumentMenu(
-    const files::ActionRequest& request, files::TemplateListing listing, bool loading
+    const luciole::ActionRequest& request, luciole::TemplateListing listing, bool loading
 ) {
-  if (!m_page.actionState(files::BrowserAction::NewDocument, request).enabled) {
+  if (!m_page.actionState(luciole::BrowserAction::NewDocument, request).enabled) {
     return;
   }
-  auto items = std::make_shared<std::vector<files::DocumentTemplate>>(std::move(listing.items));
+  auto items = std::make_shared<std::vector<luciole::DocumentTemplate>>(std::move(listing.items));
   std::vector<ContextMenuControlEntry> entries{{.id = -1, .label = "Empty File…"}, {.label = "", .separator = true}};
   for (std::size_t index = 0; index < items->size(); ++index) {
     entries.push_back({.id = static_cast<int>(index), .label = (*items)[index].label});
@@ -52,7 +52,7 @@ void CreateController::showDocumentMenu(
   if (loading || items->empty() || listing.error) {
     entries.push_back(
         {.label = loading    ? "Loading templates…"
-             : listing.error ? files::fileErrorText(*listing.error)
+             : listing.error ? luciole::fileErrorText(*listing.error)
                              : "No document templates",
          .enabled = false}
     );
@@ -63,26 +63,26 @@ void CreateController::showDocumentMenu(
   m_submenus.show(
       std::move(entries),
       [this, request, items](int id) {
-        if (!m_page.actionState(files::BrowserAction::NewDocument, request).enabled) {
+        if (!m_page.actionState(luciole::BrowserAction::NewDocument, request).enabled) {
           return;
         }
         if (id == -1) {
-          openCreateItem(*request.folder, files::CreateKind::EmptyFile);
+          openCreateItem(*request.folder, luciole::CreateKind::EmptyFile);
         } else if (id >= 0 && static_cast<std::size_t>(id) < items->size()) {
-          openCreateItem(*request.folder, files::CreateKind::Document, (*items)[static_cast<std::size_t>(id)]);
+          openCreateItem(*request.folder, luciole::CreateKind::Document, (*items)[static_cast<std::size_t>(id)]);
         }
       },
       300.0F
   );
 }
 
-void CreateController::openDocumentMenu(const files::ActionRequest& request) {
-  if (!m_page.actionState(files::BrowserAction::NewDocument, request).enabled) {
+void CreateController::openDocumentMenu(const luciole::ActionRequest& request) {
+  if (!m_page.actionState(luciole::BrowserAction::NewDocument, request).enabled) {
     return;
   }
   showDocumentMenu(request, {}, true);
   const auto generation = m_submenus.generation();
-  m_templates.load([this, request, generation](files::TemplateListing listing) {
+  m_templates.load([this, request, generation](luciole::TemplateListing listing) {
     if (generation == m_submenus.generation()) {
       showDocumentMenu(request, std::move(listing));
     }
@@ -90,7 +90,7 @@ void CreateController::openDocumentMenu(const files::ActionRequest& request) {
 }
 
 void CreateController::openCreateItem(
-    files::Location parent, files::CreateKind kind, std::optional<files::DocumentTemplate> source
+    luciole::Location parent, luciole::CreateKind kind, std::optional<luciole::DocumentTemplate> source
 ) {
   if (!canCreateItem() || m_page.browser().model().snapshot().location != parent) {
     m_page.actionError("Open an available writable folder to create a file or folder.");
@@ -98,18 +98,18 @@ void CreateController::openCreateItem(
   }
   auto& surface = m_page.surface();
   const float width = std::min(420.0F, static_cast<float>(surface.width()) - 32.0F);
-  const bool document = kind == files::CreateKind::Document;
-  const auto display = source ? files::filenameDisplayText(source->name) : std::string{};
+  const bool document = kind == luciole::CreateKind::Document;
+  const auto display = source ? luciole::filenameDisplayText(source->name) : std::string{};
   auto editor = std::make_unique<NameDialog>(
       width,
-      kind == files::CreateKind::Folder ? "New folder"
-          : document                    ? "New document"
-                                        : "New file",
-      kind == files::CreateKind::Folder ? "folder-plus" : "file-plus",
-      source                                  ? display
-          : kind == files::CreateKind::Folder ? "New Folder"
-                                              : "New File",
-      source ? "From " + source->label : "", files::filenameProblem,
+      kind == luciole::CreateKind::Folder ? "New folder"
+          : document                      ? "New document"
+                                          : "New file",
+      kind == luciole::CreateKind::Folder ? "folder-plus" : "file-plus",
+      source                                    ? display
+          : kind == luciole::CreateKind::Folder ? "New Folder"
+                                                : "New File",
+      source ? "From " + source->label : "", luciole::filenameProblem,
       [this](std::string name) { submitCreateItem(std::move(name)); }, [this] { m_page.dismissMenu(); }, "Create",
       "Creating…"
   );
@@ -128,8 +128,8 @@ void CreateController::openCreateItem(
     m_createParent = std::move(parent);
     m_creationPreparing = true;
     control->setSaving(true);
-    m_job = m_page.jobs().create<files::CreateService>(JobScope::Page);
-    auto& creator = m_job->service<files::CreateService>();
+    m_job = m_page.jobs().create<luciole::CreateService>(JobScope::Page);
+    auto& creator = m_job->service<luciole::CreateService>();
     if (!(source ? creator.prepareTemplate(*m_createParent, std::move(*source))
                  : creator.prepare(*m_createParent, kind))) {
       control->showError("Another creation is still finishing.");
@@ -146,7 +146,7 @@ void CreateController::submitCreateItem(std::string name) {
     m_createEditor->showError("The destination changed. Close this dialog and try again.");
     return;
   }
-  auto& creator = m_job->service<files::CreateService>();
+  auto& creator = m_job->service<luciole::CreateService>();
   if (creator.create(std::move(name))) {
     m_page.jobs().follow(*m_job);
     m_createEditor->setSaving(true);
@@ -158,8 +158,8 @@ void CreateController::submitCreateItem(std::string name) {
   }
 }
 
-void CreateController::openLinkDialog(const files::DirectoryEntry& target) {
-  if (!m_page.actionState(files::BrowserAction::CreateLink, m_page.requestFor({target})).enabled
+void CreateController::openLinkDialog(const luciole::DirectoryEntry& target) {
+  if (!m_page.actionState(luciole::BrowserAction::CreateLink, m_page.requestFor({target})).enabled
       || !m_page.targetsCurrent({target})) {
     m_page.actionError("This item cannot be linked right now.");
     return;
@@ -173,15 +173,15 @@ void CreateController::openLinkDialog(const files::DirectoryEntry& target) {
   auto& surface = m_page.surface();
   const float width = std::min(480.0F, static_cast<float>(surface.width()) - 32.0F);
   auto root = std::make_unique<LinkDialog>(
-      width, files::locationEditText(target.location), "Link to " + target.displayName, files::locationEditText(base),
-      target.type == files::FileType::Regular && !target.symlink,
-      [this, base](std::string name, const std::string& path, files::CreateKind kind) {
+      width, luciole::locationEditText(target.location), "Link to " + target.displayName,
+      luciole::locationEditText(base), target.type == luciole::FileType::Regular && !target.symlink,
+      [this, base](std::string name, const std::string& path, luciole::CreateKind kind) {
         if (!m_linkDialog || !m_job) {
           return;
         }
         try {
-          const auto parent = files::resolveLocationText(path, base);
-          auto& creator = m_job->service<files::CreateService>();
+          const auto parent = luciole::resolveLocationText(path, base);
+          auto& creator = m_job->service<luciole::CreateService>();
           if (creator.createLink(parent, std::move(name), kind)) {
             m_page.jobs().follow(*m_job);
             m_linkDialog->setSaving(true);
@@ -221,8 +221,8 @@ void CreateController::openLinkDialog(const files::DirectoryEntry& target) {
       }
     });
     dialog->setSaving(true);
-    m_job = m_page.jobs().create<files::CreateService>(JobScope::Page);
-    if (!m_job->service<files::CreateService>().prepareLink(target)) {
+    m_job = m_page.jobs().create<luciole::CreateService>(JobScope::Page);
+    if (!m_job->service<luciole::CreateService>().prepareLink(target)) {
       dialog->setSaving(false);
       dialog->showError("Another creation is still finishing.");
     }
@@ -245,7 +245,7 @@ void CreateController::onFrame() {
 }
 
 void CreateController::sync(const OperationJob& job) {
-  const auto& creator = job.service<files::CreateService>();
+  const auto& creator = job.service<luciole::CreateService>();
   if (creator.busy()) {
     return;
   }
@@ -253,15 +253,15 @@ void CreateController::sync(const OperationJob& job) {
   auto* createEditor = dialog ? m_createEditor : nullptr;
   auto* linkDialog = dialog ? m_linkDialog : nullptr;
   const auto& snapshot = creator.snapshot();
-  if (snapshot.status == files::CreateStatus::Succeeded || snapshot.status == files::CreateStatus::Partial) {
+  if (snapshot.status == luciole::CreateStatus::Succeeded || snapshot.status == luciole::CreateStatus::Partial) {
     auto message = createErrorText(snapshot.error);
     if (linkDialog && !snapshot.error && snapshot.parent) {
-      message = "Link created in " + files::locationEditText(*snapshot.parent);
+      message = "Link created in " + luciole::locationEditText(*snapshot.parent);
     }
     m_page.setActionMessage(std::move(message));
     auto& browser = m_page.browser();
     if (browser.model().snapshot().location == snapshot.parent) {
-      std::vector<files::Location> reveal;
+      std::vector<luciole::Location> reveal;
       if (snapshot.destination) {
         reveal.push_back(*snapshot.destination);
       }
@@ -281,17 +281,17 @@ void CreateController::sync(const OperationJob& job) {
     }
     m_page.menuSurface()->requestLayout();
   } else if (createEditor == nullptr) {
-    if (snapshot.status == files::CreateStatus::Error) {
+    if (snapshot.status == luciole::CreateStatus::Error) {
       m_page.actionError("Could not create: " + createErrorText(snapshot.error));
     }
-  } else if (snapshot.status == files::CreateStatus::Ready || snapshot.status == files::CreateStatus::Error) {
+  } else if (snapshot.status == luciole::CreateStatus::Ready || snapshot.status == luciole::CreateStatus::Error) {
     createEditor->setSaving(false);
     createEditor->showError(createErrorText(snapshot.error));
     if (std::exchange(m_creationPreparing, false)) {
       m_page.menuDispatcher().setFocus(createEditor->input()->inputArea());
-      if (snapshot.kind == files::CreateKind::Document) {
+      if (snapshot.kind == luciole::CreateKind::Document) {
         const auto& value = createEditor->input()->value();
-        createEditor->input()->selectRange(0, files::filenameStemLength(value, false));
+        createEditor->input()->selectRange(0, luciole::filenameStemLength(value, false));
       } else {
         createEditor->input()->selectAll();
       }

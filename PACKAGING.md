@@ -1,4 +1,4 @@
-# Packaging Noctalia Files
+# Packaging Luciole
 
 Notes for distribution packagers.
 The dependency and install declarations in [meson.build](meson.build), [lib/meson.build](lib/meson.build) and [nix/package.nix](nix/package.nix) are the source of truth. This guide describes the current implementation; planned features are not packaging requirements.
@@ -15,21 +15,23 @@ Use the description from the Nix package metadata:
 
 | Field                  | Value                                                                 |
 | ---------------------- | --------------------------------------------------------------------- |
-| Package / binary       | `noctalia-files`                                                      |
-| Application name       | Noctalia Files                                                        |
-| Wayland application ID | `dev.noctalia.Files`                                                  |
-| Homepage               | <https://github.com/noctalia-dev/noctalia-files>                      |
+| Package / binary       | `luciole`                                                             |
+| Application name       | Luciole                                                               |
+| Wayland application ID | `dev.noctalia.luciole`                                                |
+| Homepage               | <https://github.com/noctalia-dev/luciole>                             |
 | Version                | [VERSION](VERSION), read by Meson                                     |
 | License                | MIT ([LICENSE](LICENSE)); preserve the bundled Tabler font notice too |
 | D-Bus interface / name | `org.freedesktop.FileManager1`                                        |
 
-Files is a Linux Wayland application. It uses OpenGL ES and Pango/Cairo directly, without a Qt or GTK widget layer. GdkPixbuf and Glycin are image-decoding dependencies.
+Use **Luciole** as the display name and lowercase `luciole` for the command/package and application-owned paths. Nix modules expose `programs.luciole`; environment overrides use the `LUCIOLE_` prefix. There are no legacy-name aliases or automatic configuration/state migrations.
 
-The Nix flake declares `x86_64-linux` and `aarch64-linux`. Builds and runtime checks have been performed on x86_64; ARM outputs have only been evaluated. Other architectures and musl are not currently verified. Do not copy Noctalia's architecture or libc support claims into Files package metadata.
+Luciole is a Linux Wayland application. It uses OpenGL ES and Pango/Cairo directly, without a Qt or GTK widget layer. GdkPixbuf and Glycin are image-decoding dependencies.
+
+The Nix flake declares `x86_64-linux` and `aarch64-linux`. Builds and runtime checks have been performed on x86_64; ARM outputs have only been evaluated. Other architectures and musl are not currently verified. Do not copy Noctalia's architecture or libc support claims into Luciole package metadata.
 
 ## Build
 
-Required tools are Meson 1.1 or newer, Ninja, pkg-config, wayland-scanner, a C compiler and a C++23 compiler with a compatible standard library. Files uses library facilities including `std::print`, `std::expected` and `std::move_only_function`; accepting `-std=c++23` alone is insufficient. GCC/libstdc++ 16.2 is verified. An older compiler minimum and Clang/libc++ compatibility have not been established for Files. Meson adds the experimental-library arguments when it detects libc++.
+Required tools are Meson 1.1 or newer, Ninja, pkg-config, wayland-scanner, a C compiler and a C++23 compiler with a compatible standard library. Luciole uses library facilities including `std::print`, `std::expected` and `std::move_only_function`; accepting `-std=c++23` alone is insufficient. GCC/libstdc++ 16.2 is verified. An older compiler minimum and Clang/libc++ compatibility have not been established for Luciole. Meson adds the experimental-library arguments when it detects libc++.
 
 Use the intended final prefix at configuration time and a separate staging directory for installation:
 
@@ -42,7 +44,7 @@ DESTDIR="$PWD/pkgroot" meson install --no-rebuild -C build-package
 
 `just` is a development convenience, not a package build dependency. The build works from a complete source archive without repository metadata. Include `lib/`, its assets/protocols and the application `assets/` tree in that archive. Do not fetch or sync Noctalia during configuration or compilation.
 
-Files builds its copied Noctalia UI library as static internal archives. It does not use an installed Noctalia shared library, a sibling checkout, a submodule or a running Noctalia shell. Files supplies its own GdkPixbuf/Glycin decoder; the library's optional Wuffs codec pack is not enabled. Its JPEG XL/WebP codec-pack dependencies and third-party source tree are not Files build requirements.
+Luciole builds its copied Noctalia UI library as static internal archives. It does not use an installed Noctalia shared library, a sibling checkout, a submodule or a running Noctalia shell. Luciole supplies its own GdkPixbuf/Glycin decoder; the library's optional Wuffs codec pack is not enabled. Its JPEG XL/WebP codec-pack dependencies and third-party source tree are not Luciole build requirements.
 
 ### Meson options
 
@@ -67,7 +69,7 @@ Names below are pkg-config modules or header paths, not universal distribution p
 | `wayland-protocols`                               | 1.49 or newer; build-time protocol definitions                                                 |
 | `wayland-client`, `wayland-egl`, `wayland-cursor` | Wayland connection, EGL surfaces and cursor fallback                                           |
 | `egl`, `glesv2`                                   | EGL and OpenGL ES; the shared library also has fallback detection through wayland-egl/libepoxy |
-| `gio-2.0`, `gio-unix-2.0`                        | 2.76 or newer; filesystem integration and Unix desktop launchers, from GLib development files |
+| `gio-2.0`, `gio-unix-2.0`                         | 2.76 or newer; filesystem integration and Unix desktop launchers, from GLib development files  |
 | `glib-2.0`                                        | GLib core services                                                                             |
 | `freetype2`, `fontconfig`                         | Font discovery and rendering                                                                   |
 | `cairo`, `cairo-ft`                               | Cairo rendering with FreeType integration                                                      |
@@ -89,28 +91,28 @@ Use mutually compatible GdkPixbuf, Glycin and loader packages. Meson's minimum c
 
 The linked libraries need their ordinary runtime packages. The following data, providers and executables supply additional features:
 
-| Runtime component                             | Role                                                                              |
-| --------------------------------------------- | --------------------------------------------------------------------------------- |
-| Wayland compositor with EGL/OpenGL ES support | Graphical window; Noctalia and Umbriel are not required                           |
-| Fontconfig and usable text fonts              | Application text; the bundled glyph font does not replace ordinary fonts          |
-| Shared MIME database                          | Type descriptions, application associations and provider format detection         |
-| Icon theme                                    | File, folder and application artwork; the Nix wrapper supplies Adwaita            |
-| Glycin loaders                                | Raster images in thumbnails, previews and metadata                                |
-| Session D-Bus and GVfs                        | Trash and supported mounted remote locations                                      |
-| `glib-networking`                             | GIO TLS implementation for secure WebDAV                                          |
-| `ffmpeg`, `ffprobe`                           | Video/audio artwork and media metadata                                            |
-| `pdftoppm`, `pdfinfo`                         | PDF thumbnails and metadata, normally supplied by Poppler utilities               |
-| `7zz`, `7z` or `7za`                          | System 7-Zip CLI for encrypted 7z input, searched in that order                   |
+| Runtime component                             | Role                                                                               |
+| --------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Wayland compositor with EGL/OpenGL ES support | Graphical window; Noctalia and Umbriel are not required                            |
+| Fontconfig and usable text fonts              | Application text; the bundled glyph font does not replace ordinary fonts           |
+| Shared MIME database                          | Type descriptions, application associations and provider format detection          |
+| Icon theme                                    | File, folder and application artwork; the Nix wrapper supplies Adwaita             |
+| Glycin loaders                                | Raster images in thumbnails, previews and metadata                                 |
+| Session D-Bus and GVfs                        | Trash and supported mounted remote locations                                       |
+| `glib-networking`                             | GIO TLS implementation for secure WebDAV                                           |
+| `ffmpeg`, `ffprobe`                           | Video/audio artwork and media metadata                                             |
+| `pdftoppm`, `pdfinfo`                         | PDF thumbnails and metadata, normally supplied by Poppler utilities                |
+| `7zz`, `7z` or `7za`                          | System 7-Zip CLI for encrypted 7z input, searched in that order                    |
 | `xdg-terminal-exec`                           | Open Terminal Here and Run in Terminal; require the helper and a suitable terminal |
-| Associated applications                       | Opening files through the user's GIO MIME associations                            |
+| Associated applications                       | Opening files through the user's GIO MIME associations                             |
 
 Missing optional helpers make their associated feature unavailable; they do not prevent ordinary native directory browsing. Recommend or depend on them according to the features the package advertises. The Nix wrapper exposes FFmpeg, Poppler utilities, 7-Zip and xdg-terminal-exec on `PATH`.
 
-Archive support uses the system libarchive and its enabled formats/filters. Unencrypted RAR input depends on that build's capabilities; encrypted RAR is outside the implemented scope. Encrypted 7z input uses the system CLI through the bounded worker transport. There is no py7zr requirement, 7-Zip SDK build dependency, `7z.so` path or private C++ ABI contract. `NOCTALIA_FILES_7Z` can select an absolute executable path for an unusual installation. File Roller, Ark, unrar and a Samba server are not required by Files.
+Archive support uses the system libarchive and its enabled formats/filters. Unencrypted RAR input depends on that build's capabilities; encrypted RAR is outside the implemented scope. Encrypted 7z input uses the system CLI through the bounded worker transport. There is no py7zr requirement, 7-Zip SDK build dependency, `7z.so` path or private C++ ABI contract. `LUCIOLE_7Z` can select an absolute executable path for an unusual installation. File Roller, Ark, unrar and a Samba server are not required by Luciole.
 
 ### GVfs providers across distributions
 
-Files uses GIO directly, so these transfers do not require exposing remote mounts through FUSE. `gvfs-fuse` is useful when other applications need POSIX paths into those mounts. A session D-Bus connection and the corresponding backend must be available. The current Files UI uses locations already mounted/authenticated through another GIO client; its own connect-to-server and credential dialogs are pending.
+Luciole uses GIO directly, so these transfers do not require exposing remote mounts through FUSE. `gvfs-fuse` is useful when other applications need POSIX paths into those mounts. A session D-Bus connection and the corresponding backend must be available. The current Luciole UI uses locations already mounted/authenticated through another GIO client; its own connect-to-server and credential dialogs are pending.
 
 The following provider packages were checked in official catalogs on 2026-11-10. These are runtime feature dependencies, not additional C++ headers. Their package managers supply the supporting client libraries.
 
@@ -121,9 +123,9 @@ The following provider packages were checked in official catalogs on 2026-11-10.
 | Debian 13              | `gvfs` and [`gvfs-backends`](https://packages.debian.org/trixie/gvfs-backends)                                                                                                                 | [`glib-networking`](https://packages.debian.org/trixie/glib-networking)                          |
 | Ubuntu 26.04 LTS       | `gvfs` and [`gvfs-backends`](https://packages.ubuntu.com/resolute/gvfs-backends)                                                                                                               | [`glib-networking`](https://packages.ubuntu.com/resolute/glib-networking)                        |
 | Alpine 3.22 community  | `gvfs`, [`gvfs-smb`](https://pkgs.alpinelinux.org/package/v3.22/community/x86_64/gvfs-smb) and [`gvfs-dav`](https://pkgs.alpinelinux.org/package/v3.22/community/x86_64/gvfs-dav)              | [`glib-networking`](https://pkgs.alpinelinux.org/package/v3.22/community/x86_64/glib-networking) |
-| Pinned Nixpkgs         | `gvfs` supplies both backends; private real-server checks pass                                                                                                                                 | `glib-networking` in the Files wrapper/dev shell                                                 |
+| Pinned Nixpkgs         | `gvfs` supplies both backends; private real-server checks pass                                                                                                                                 | `glib-networking` in the Luciole wrapper/dev shell                                               |
 
-Catalog availability does not establish that a distribution release satisfies all the other build requirements or that Files has been tested on that distro. openSUSE catalog/spec access was blocked during the audit, so its full package split is not marked verified here.
+Catalog availability does not establish that a distribution release satisfies all the other build requirements or that Luciole has been tested on that distro. openSUSE catalog/spec access was blocked during the audit, so its full package split is not marked verified here.
 
 Normal native packages use the distribution's GIO module search paths. Do not copy Nix store paths or require users to export `GIO_EXTRA_MODULES`. The Nix wrapper and dev shell set it because those modules live in separate store outputs. The assignment inside `flake.nix`'s `preCheck` is scoped to that test derivation. TLS validation remains with the provider and system trust configuration.
 
@@ -132,16 +134,16 @@ Normal native packages use the distribution's GIO module search paths. Do not co
 With the default relative `datadir=share`, Meson installs:
 
 ```text
-<prefix>/bin/noctalia-files
-<prefix>/share/noctalia-files/assets/fonts/noctalia-tabler.ttf
-<prefix>/share/noctalia-files/assets/fonts/tabler.json
-<prefix>/share/noctalia-files/assets/fonts/tabler-icons-license.txt
-<prefix>/share/noctalia-files/templates/colors.toml
+<prefix>/bin/luciole
+<prefix>/share/luciole/assets/fonts/noctalia-tabler.ttf
+<prefix>/share/luciole/assets/fonts/tabler.json
+<prefix>/share/luciole/assets/fonts/tabler-icons-license.txt
+<prefix>/share/luciole/templates/colors.toml
 <prefix>/share/dbus-1/services/org.freedesktop.FileManager1.service
-<prefix>/share/bash-completion/completions/noctalia-files
-<prefix>/share/zsh/site-functions/_noctalia-files
-<prefix>/share/fish/vendor_completions.d/noctalia-files.fish
-<prefix>/share/licenses/noctalia-files/LICENSE
+<prefix>/share/bash-completion/completions/luciole
+<prefix>/share/zsh/site-functions/_luciole
+<prefix>/share/fish/vendor_completions.d/luciole.fish
+<prefix>/share/licenses/luciole/LICENSE
 ```
 
 The fonts directory is required at runtime. Keep the Tabler license alongside its font/metadata and preserve applicable source notices. The palette template is a Noctalia integration resource, not an automatically installed user configuration.
@@ -150,10 +152,10 @@ Current Meson rules do not install a desktop entry, application icon, AppStream/
 
 ### Asset lookup and staging
 
-The configured `<prefix>/<datadir>/noctalia-files/assets` path is compiled into the binary. `NOCTALIA_FILES_ASSETS_DIR` explicitly overrides it; an invalid override is an error. Files does not use the shell's portable-bundle asset discovery chain. A source build can run with:
+The configured `<prefix>/<datadir>/luciole/assets` path is compiled into the binary. `LUCIOLE_ASSETS_DIR` explicitly overrides it; an invalid override is an error. Luciole does not use the shell's portable-bundle asset discovery chain. A source build can run with:
 
 ```sh
-NOCTALIA_FILES_ASSETS_DIR="$PWD/lib/assets" ./build-package/noctalia-files
+LUCIOLE_ASSETS_DIR="$PWD/lib/assets" ./build-package/luciole
 ```
 
 Do not leave that development override in an installed launcher. `DESTDIR` stages files without changing the compiled runtime paths. A packaging smoke test that starts the staged binary before publication must supply its staged assets explicitly; the final installed binary should work without the override.
@@ -172,29 +174,29 @@ Meson installs the static Bash, Zsh and Fish scripts listed above. The binary al
 
 The application loads internal defaults, then the user's base configuration and GUI overrides:
 
-| Path                                            | Ownership                                            |
-| ----------------------------------------------- | ---------------------------------------------------- |
-| `$XDG_CONFIG_HOME/noctalia-files/config.toml`   | User/declarative base configuration                  |
-| `$XDG_CONFIG_HOME/noctalia-files/settings.toml` | Writable GUI preference overrides                    |
-| `$XDG_CONFIG_HOME/noctalia-files/colors.toml`   | Optional palette handoff                             |
-| `$XDG_STATE_HOME/noctalia-files/state.toml`     | Application-owned persistent state, including Places |
-| `$XDG_CACHE_HOME/thumbnails/`                   | Regenerable freedesktop thumbnail cache              |
-| `$XDG_DATA_HOME/noctalia-files/scripts/`       | User-installed executable context-menu scripts      |
+| Path                                     | Ownership                                            |
+| ---------------------------------------- | ---------------------------------------------------- |
+| `$XDG_CONFIG_HOME/luciole/config.toml`   | User/declarative base configuration                  |
+| `$XDG_CONFIG_HOME/luciole/settings.toml` | Writable GUI preference overrides                    |
+| `$XDG_CONFIG_HOME/luciole/colors.toml`   | Optional palette handoff                             |
+| `$XDG_STATE_HOME/luciole/state.toml`     | Application-owned persistent state, including Places |
+| `$XDG_CACHE_HOME/thumbnails/`            | Regenerable freedesktop thumbnail cache              |
+| `$XDG_DATA_HOME/luciole/scripts/`        | User-installed executable context-menu scripts       |
 
-Unset XDG config/state/cache roots use `~/.config`, `~/.local/state` and `~/.cache`. Files does not currently search `/etc/xdg` or a packaged default config. Do not install per-user `settings.toml`, state or caches from a system package. Keep the GUI override file writable even when `config.toml` is an immutable declarative file. Valid external configuration changes apply automatically.
+Unset XDG config/state/cache roots use `~/.config`, `~/.local/state` and `~/.cache`. Luciole does not currently search `/etc/xdg` or a packaged default config. Do not install per-user `settings.toml`, state or caches from a system package. Keep the GUI override file writable even when `config.toml` is an immutable declarative file. Valid external configuration changes apply automatically.
 
 ### Programs and custom scripts
 
-Ordinary Open uses the user's associated application. The separate Run as a Program and Run in Terminal actions execute native ELF programs or executable scripts with an interpreter line. Files does not grant executable permissions automatically. Application `.desktop` files require an explicit Launch Once confirmation showing their captured name and command; Files does not save trust or change their permissions. Supported launchers have `Type=Application` and an `Exec` command. GIO handles their argument fields, declared working directory and terminal behavior. Standalone `%k` receives the original launcher URI; quoted or embedded `%k` is rejected. Successful launching means handoff, not that an application has become ready or exited successfully.
+Ordinary Open uses the user's associated application. The separate Run as a Program and Run in Terminal actions execute native ELF programs or executable scripts with an interpreter line. Luciole does not grant executable permissions automatically. Application `.desktop` files require an explicit Launch Once confirmation showing their captured name and command; Luciole does not save trust or change their permissions. Supported launchers have `Type=Application` and an `Exec` command. GIO handles their argument fields, declared working directory and terminal behavior. Standalone `%k` receives the original launcher URI; quoted or embedded `%k` is rejected. Successful launching means handoff, not that an application has become ready or exited successfully.
 
-The Scripts submenu lists executable files from `$XDG_DATA_HOME/noctalia-files/scripts`, defaulting to `~/.local/share/noctalia-files/scripts`. Open Scripts Folder creates it on demand. Packages should not populate a user's directory. No scripting language is required by Files itself; each user script needs its own declared interpreter. The script receives selected native paths as separate arguments, with the current native browse folder as its working directory. A background-menu invocation supplies no selected paths. Filenames are never interpolated into a shell command. Remote and Trash locations are outside this script increment.
+The Scripts submenu lists executable files from `$XDG_DATA_HOME/luciole/scripts`, defaulting to `~/.local/share/luciole/scripts`. Open Scripts Folder creates it on demand. Packages should not populate a user's directory. No scripting language is required by Luciole itself; each user script needs its own declared interpreter. The script receives selected native paths as separate arguments, with the current native browse folder as its working directory. A background-menu invocation supplies no selected paths. Filenames are never interpolated into a shell command. Remote and Trash locations are outside this script increment.
 
-The application/scripts directories and script targets must be owned by the user or root and not writable by group or others. Symlinks to qualifying executable targets are accepted, including declaratively managed read-only files. Hidden files, `.desktop` entries and non-executable files do not become script actions. Listing is flat and bounded to 64 actions and 1024 inspected children; launch arguments are limited to 4096 paths and 1 MiB. Changed files are refused on revalidation, but native execution uses the original pathname and does not promise atomic protection against a concurrent hostile writer. Launched programs continue independently of Files.
+The application/scripts directories and script targets must be owned by the user or root and not writable by group or others. Symlinks to qualifying executable targets are accepted, including declaratively managed read-only files. Hidden files, `.desktop` entries and non-executable files do not become script actions. Listing is flat and bounded to 64 actions and 1024 inspected children; launch arguments are limited to 4096 paths and 1 MiB. Changed files are refused on revalidation, but native execution uses the original pathname and does not promise atomic protection against a concurrent hostile writer. Launched programs continue independently of Luciole.
 
 Validate a candidate base configuration without a compositor:
 
 ```sh
-noctalia-files config validate /path/to/config.toml
+luciole config validate /path/to/config.toml
 ```
 
 ## Nix integration
@@ -207,7 +209,7 @@ nix develop path:. -c just build debug
 nix flake check path:.
 ```
 
-The wrapper supplies runtime helper paths, GVfs/TLS modules, Glycin loader data, the shared MIME database and Adwaita icons without requiring the Noctalia shell. Assets use the package's own compiled store path. Home Manager and hjem can generate `config.toml` from an attribute set, TOML string or file path and validate it at build time when a package is selected. Their empty default settings leave the base file absent. GUI overrides stay separate. The NixOS module installs the selected package; none of these modules installs an always-running Files service or changes the default file manager.
+The wrapper supplies runtime helper paths, GVfs/TLS modules, Glycin loader data, the shared MIME database and Adwaita icons without requiring the Noctalia shell. Assets use the package's own compiled store path. Home Manager and hjem can generate `config.toml` from an attribute set, TOML string or file path and validate it at build time when a package is selected. Their empty default settings leave the base file absent. GUI overrides stay separate. The NixOS module installs the selected package; none of these modules installs an always-running Luciole service or changes the default file manager.
 
 ## Verification
 
@@ -225,5 +227,5 @@ Before publishing, check `--help`, `--version`, configuration validation, instal
 
 ## Contact
 
-- Issues: <https://github.com/noctalia-dev/noctalia-files/issues>
+- Issues: <https://github.com/noctalia-dev/luciole/issues>
 - Discord: <https://discord.noctalia.dev>

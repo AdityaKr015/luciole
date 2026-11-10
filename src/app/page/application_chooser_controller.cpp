@@ -22,15 +22,15 @@
 
 struct ApplicationChooserController::Session {
   std::vector<std::string> types;
-  std::vector<files::Location> locations;
-  files::ActionRequest request;
+  std::vector<luciole::Location> locations;
+  luciole::ActionRequest request;
   std::uint64_t generation = 0;
   std::string query;
   bool other = false, useDefault = false, submitting = false, canSetDefault = false;
 };
 
 ApplicationChooserController::ApplicationChooserController(
-    PageContext& page, files::FileLauncher& launcher, files::FileIconCache& icons
+    PageContext& page, luciole::FileLauncher& launcher, luciole::FileIconCache& icons
 )
     : m_page(page), m_launcher(launcher), m_icons(icons) {}
 
@@ -42,9 +42,9 @@ bool ApplicationChooserController::current(const std::shared_ptr<Session>& sessi
       && session->generation == m_page.activeDialog().generation();
 }
 
-void ApplicationChooserController::show(const files::DirectoryEntry& entry) { show(std::vector{entry}); }
+void ApplicationChooserController::show(const luciole::DirectoryEntry& entry) { show(std::vector{entry}); }
 
-void ApplicationChooserController::show(const std::vector<files::DirectoryEntry>& entries) {
+void ApplicationChooserController::show(const std::vector<luciole::DirectoryEntry>& entries) {
   if (entries.empty()) {
     return;
   }
@@ -78,7 +78,7 @@ void ApplicationChooserController::show(const std::vector<files::DirectoryEntry>
   );
   auto root = ui::column(
       {.align = FlexAlign::Stretch},
-      files::dialogHeader(
+      luciole::dialogHeader(
           entries.size() == 1 ? "Open With" : std::format("Open {} Files With", entries.size()), "apps",
           [this] { m_page.dismissMenu(); }
       ),
@@ -133,7 +133,7 @@ void ApplicationChooserController::show(const std::vector<files::DirectoryEntry>
            .configure = [](Label& label) { label.setUseMarkup(false); }}
       )
   );
-  files::applyDialogStyle(*root);
+  luciole::applyDialogStyle(*root);
   m_page.showCenteredDialog(std::move(root), 480.0F);
   if (!m_page.menuSurface()) {
     return;
@@ -177,7 +177,7 @@ void ApplicationChooserController::load() {
   const std::weak_ptr<int> lifetime = m_lifetime;
   m_launcher.applications(
       m_session->types,
-      [this, lifetime, session = m_session](files::ApplicationList apps) {
+      [this, lifetime, session = m_session](luciole::ApplicationList apps) {
         if (!lifetime.expired() && current(session)) {
           populate(session, std::move(apps));
         }
@@ -186,12 +186,12 @@ void ApplicationChooserController::load() {
   );
 }
 
-void ApplicationChooserController::populate(const std::shared_ptr<Session>& session, files::ApplicationList apps) {
+void ApplicationChooserController::populate(const std::shared_ptr<Session>& session, luciole::ApplicationList apps) {
   m_choices.clear();
   while (!m_container->children().empty()) {
     (void)m_container->removeChild(m_container->children().back().get());
   }
-  if (!m_page.actionState(files::BrowserAction::OpenWith, session->request).enabled) {
+  if (!m_page.actionState(luciole::BrowserAction::OpenWith, session->request).enabled) {
     showError("The item changed. Select it again.");
     apps.choices.clear();
   }
@@ -219,7 +219,7 @@ void ApplicationChooserController::populate(const std::shared_ptr<Session>& sess
     button->setFillWidth(true);
     auto source = app.icon;
     source.names.emplace_back("application-x-executable");
-    auto icon = std::make_unique<files::FileIcon>(m_icons, 24.0F);
+    auto icon = std::make_unique<luciole::FileIcon>(m_icons, 24.0F);
     icon->bind(source, colorSpecFromRole(ColorRole::OnSurface));
     button->insertChildAt(0, std::move(icon));
     if (app.isDefault) {
@@ -243,12 +243,12 @@ void ApplicationChooserController::showError(const std::string& message) {
 }
 
 void ApplicationChooserController::choose(
-    const std::shared_ptr<Session>& session, const files::ApplicationChoice& app
+    const std::shared_ptr<Session>& session, const luciole::ApplicationChoice& app
 ) {
   if (!current(session) || session->submitting) {
     return;
   }
-  if (!m_page.actionState(files::BrowserAction::OpenWith, session->request).enabled) {
+  if (!m_page.actionState(luciole::BrowserAction::OpenWith, session->request).enabled) {
     showError("The item changed. Select it again.");
     return;
   }
@@ -268,7 +268,7 @@ void ApplicationChooserController::choose(
     if (lifetime.expired() || !current(session)) {
       return;
     }
-    if (error.empty() && m_page.actionState(files::BrowserAction::OpenWith, session->request).enabled) {
+    if (error.empty() && m_page.actionState(luciole::BrowserAction::OpenWith, session->request).enabled) {
       m_launcher.openWith(session->locations, app);
       m_page.dismissMenu();
       return;

@@ -11,7 +11,7 @@ class Label;
 class TextInputClient;
 class MillerView final : public Flex {
 public:
-  MillerView(files::MillerColumns& columns, files::FileIconCache& icons, files::ThumbnailService& thumbnails);
+  MillerView(luciole::MillerColumns& columns, luciole::FileIconCache& icons, luciole::ThumbnailService& thumbnails);
   ~MillerView() override;
   void synchronize();
   void loadVisible();
@@ -24,27 +24,27 @@ public:
   VirtualGridView* view(std::size_t index) const;
   std::function<std::uint32_t()> modifiers;
   std::function<bool()> keyboardFocus;
-  std::function<bool(const files::Location&)> cut;
+  std::function<bool(const luciole::Location&)> cut;
   std::function<void(std::size_t)> focus;
-  std::function<void(files::EntryId)> activate;
-  std::function<void(std::optional<files::EntryId>, float, float)> context;
-  std::function<void(const std::vector<files::EntryId>&)> drag;
+  std::function<void(luciole::EntryId)> activate;
+  std::function<void(std::optional<luciole::EntryId>, float, float)> context;
+  std::function<void(const std::vector<luciole::EntryId>&)> drag;
   std::function<void()> cancelDrag;
   std::function<void(int)> resized;
   std::function<void()> requestUpdate;
   TextInputClient* textInputClient = nullptr;
-  files::BrowsePresentation presentation;
-  files::ActivationMode activationMode = files::ActivationMode::DoubleClick;
+  luciole::BrowsePresentation presentation;
+  luciole::ActivationMode activationMode = luciole::ActivationMode::DoubleClick;
 
 private:
   struct ColumnView {
-    std::unique_ptr<files::FileViewAdapter> adapter;
+    std::unique_ptr<luciole::FileViewAdapter> adapter;
     Flex* root;
     VirtualGridView* grid;
     Label* notice;
     InputArea* divider;
     Box* line;
-    std::optional<files::EntryId> path = std::nullopt;
+    std::optional<luciole::EntryId> path = std::nullopt;
     float rowHeight = 36.0F;
   };
   void doLayout(Renderer& renderer) override;
@@ -52,9 +52,9 @@ private:
   void doArrange(Renderer& renderer, const LayoutRect& rect) override;
   void scroll(float offset);
   std::size_t indexOf(std::uint64_t id) const;
-  files::MillerColumns& m_columns;
-  files::FileIconCache& m_icons;
-  files::ThumbnailService& m_thumbnails;
+  luciole::MillerColumns& m_columns;
+  luciole::FileIconCache& m_icons;
+  luciole::ThumbnailService& m_thumbnails;
   Box* m_viewport;
   InputArea* m_wheel;
   Scrollbar* m_scrollbar;

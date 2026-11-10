@@ -5,11 +5,11 @@
 #include <memory>
 #include <optional>
 
-namespace files {
+namespace luciole {
   class FileIconCache;
   class PreviewService;
   class ThumbnailService;
-} // namespace files
+} // namespace luciole
 
 struct KeyboardEvent;
 class ApplicationChooserController;
@@ -21,8 +21,8 @@ class RenderContext;
 class PreviewController {
 public:
   PreviewController(
-      PageContext& page, files::PreviewService& preview, files::ThumbnailService& thumbnails,
-      files::FileIconCache& icons, RenderContext& renderer, ApplicationChooserController& applications
+      PageContext& page, luciole::PreviewService& preview, luciole::ThumbnailService& thumbnails,
+      luciole::FileIconCache& icons, RenderContext& renderer, ApplicationChooserController& applications
   );
 
   // Asks the preview service for the selected item at the size the pane or popup shows it.
@@ -46,9 +46,9 @@ private:
   std::unique_ptr<FilePreviewView> makeView(bool quick);
 
   PageContext& m_page;
-  files::PreviewService& m_preview;
-  files::ThumbnailService& m_thumbnails;
-  files::FileIconCache& m_icons;
+  luciole::PreviewService& m_preview;
+  luciole::ThumbnailService& m_thumbnails;
+  luciole::FileIconCache& m_icons;
   RenderContext& m_renderer;
   ApplicationChooserController& m_applications;
   FilePreviewView* m_view = nullptr;

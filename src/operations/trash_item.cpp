@@ -10,7 +10,7 @@ namespace {
       "standard::name,standard::display-name,standard::type,standard::is-symlink,standard::size,"
       "time::modified,id::file,id::filesystem,etag::value,trash::orig-path,trash::deletion-date";
 
-  files::TrashItemInfo readInfo(GFileInfo* info) {
+  luciole::TrashItemInfo readInfo(GFileInfo* info) {
     const auto attribute = [info](const char* name, bool bytes = false) -> std::optional<std::string> {
       if (g_file_info_get_attribute_type(info, name)
           != (bytes ? G_FILE_ATTRIBUTE_TYPE_BYTE_STRING : G_FILE_ATTRIBUTE_TYPE_STRING)) {
@@ -25,8 +25,8 @@ namespace {
                                                    : std::nullopt;
     };
     return {
-        .id = files::readFileIdentity(info),
-        .type = files::fileType(g_file_info_get_file_type(info)),
+        .id = luciole::readFileIdentity(info),
+        .type = luciole::fileType(g_file_info_get_file_type(info)),
         .symlink = g_file_info_get_is_symlink(info) != FALSE,
         .size = number(G_FILE_ATTRIBUTE_STANDARD_SIZE),
         .modified = number(G_FILE_ATTRIBUTE_TIME_MODIFIED),
@@ -36,26 +36,26 @@ namespace {
     };
   }
 
-  [[noreturn]] void throwGio(const files::GErrorPtr& error, const char* fallback) {
+  [[noreturn]] void throwGio(const luciole::GErrorPtr& error, const char* fallback) {
     if (error) {
-      throw files::FileErrorException(files::fileError(*error));
+      throw luciole::FileErrorException(luciole::fileError(*error));
     }
-    files::throwFileError(files::FileErrorKind::Other, fallback);
+    luciole::throwFileError(luciole::FileErrorKind::Other, fallback);
   }
 } // namespace
 
-files::TrashItemIdentity files::TrashItemInfo::identity() const {
+luciole::TrashItemIdentity luciole::TrashItemInfo::identity() const {
   if (!id || type == FileType::Unknown) {
     throwFileError(FileErrorKind::Unsupported, "The trash service cannot identify these items safely.");
   }
   return {.id = *id, .type = type, .symlink = symlink, .etag = etag, .original = original, .deleted = deleted};
 }
 
-bool files::isTopLevelTrashItem(const Location& location) {
+bool luciole::isTopLevelTrashItem(const Location& location) {
   return location.isTrash() && location.parent() == Location::trash();
 }
 
-files::TrashItemIdentity files::readTrashItemIdentity(const DirectoryEntry& entry) {
+luciole::TrashItemIdentity luciole::readTrashItemIdentity(const DirectoryEntry& entry) {
   if (!entry.identity || entry.type == FileType::Unknown) {
     throwFileError(FileErrorKind::Unsupported, "The trash service cannot identify these items safely.");
   }
@@ -69,7 +69,7 @@ files::TrashItemIdentity files::readTrashItemIdentity(const DirectoryEntry& entr
   };
 }
 
-files::TrashItemInfo files::queryTrashItem(const Location& location, const CancelToken& token, bool follow) {
+luciole::TrashItemInfo luciole::queryTrashItem(const Location& location, const CancelToken& token, bool follow) {
   GError* raw = nullptr;
   const GioPtr<GFileInfo> info(g_file_query_info(
       gioFile(location).get(), attributes, follow ? G_FILE_QUERY_INFO_NONE : G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS,
@@ -82,7 +82,7 @@ files::TrashItemInfo files::queryTrashItem(const Location& location, const Cance
   return readInfo(info.get());
 }
 
-std::vector<files::TrashItem> files::listTrashItems(const CancelToken& token) {
+std::vector<luciole::TrashItem> luciole::listTrashItems(const CancelToken& token) {
   const auto trash = Location::trash();
   const auto root = gioFile(trash);
   GError* raw = nullptr;

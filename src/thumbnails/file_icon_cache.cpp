@@ -40,11 +40,11 @@ namespace {
     if (!g_key_file_load_from_data(file.get(), bytes.data(), count, G_KEY_FILE_NONE, nullptr)) {
       return {};
     }
-    const files::GString icon(g_key_file_get_string(file.get(), "Desktop Entry", "Icon", nullptr));
+    const luciole::GString icon(g_key_file_get_string(file.get(), "Desktop Entry", "Icon", nullptr));
     return icon ? icon.get() : "";
   }
 
-  files::FileIconImage load(const files::FileIconSource& source, int size) {
+  luciole::FileIconImage load(const luciole::FileIconSource& source, int size) {
     IconResolver resolver(true);
     std::vector<std::string> candidates;
     if (const auto icon = desktopIcon(source.desktopFile); !icon.empty()) {
@@ -73,7 +73,7 @@ namespace {
     return {.pixels = {}, .path = {}, .symbolic = false, .ready = true, .sourceKey = {}, .revision = {}};
   }
 
-  std::string keyFor(const files::FileIconSource& source, int size) {
+  std::string keyFor(const luciole::FileIconSource& source, int size) {
     std::string key = std::to_string(size);
     const auto append = [&](const std::string& part) { key += ':' + std::to_string(part.size()) + ':' + part; };
     append(source.filePath);
@@ -85,7 +85,7 @@ namespace {
   }
 } // namespace
 
-struct files::FileIconCache::State : std::enable_shared_from_this<State> {
+struct luciole::FileIconCache::State : std::enable_shared_from_this<State> {
   struct Item {
     std::shared_ptr<FileIconImage> image;
     std::uint64_t used = 0;
@@ -172,21 +172,22 @@ struct files::FileIconCache::State : std::enable_shared_from_this<State> {
   }
 };
 
-files::FileIconCache::FileIconCache() : m_state(std::make_shared<State>()) {}
-files::FileIconCache::~FileIconCache() {
+luciole::FileIconCache::FileIconCache() : m_state(std::make_shared<State>()) {}
+luciole::FileIconCache::~FileIconCache() {
   m_state->alive = false;
   m_state->changed = {};
   m_state->pending.clear();
 }
-void files::FileIconCache::setChangedCallback(std::function<void()> callback) {
+void luciole::FileIconCache::setChangedCallback(std::function<void()> callback) {
   m_state->changed = std::move(callback);
 }
-void files::FileIconCache::invalidate() {
+void luciole::FileIconCache::invalidate() {
   ++m_state->generation;
   m_state->pending.clear();
   m_state->cache.clear();
 }
-std::shared_ptr<const files::FileIconImage> files::FileIconCache::request(const FileIconSource& source, int pixels) {
+std::shared_ptr<const luciole::FileIconImage>
+luciole::FileIconCache::request(const FileIconSource& source, int pixels) {
   m_state->trim(false);
   pixels = std::clamp(pixels, 1, 512);
   const auto key = keyFor(source, pixels);
@@ -205,7 +206,7 @@ std::shared_ptr<const files::FileIconImage> files::FileIconCache::request(const 
   return image;
 }
 
-void files::FileIconCache::imageChanged() {
+void luciole::FileIconCache::imageChanged() {
   if (m_state->alive && m_state->changed) {
     m_state->changed();
   }

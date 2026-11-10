@@ -4,8 +4,8 @@
 #include <format>
 #include <utility>
 
-std::expected<toml::table, files::ConfigIssues>
-files::parseToml(std::string_view text, const std::filesystem::path& file) {
+std::expected<toml::table, luciole::ConfigIssues>
+luciole::parseToml(std::string_view text, const std::filesystem::path& file) {
   try {
     return toml::parse(text, file.string());
   } catch (const toml::parse_error& error) {
@@ -22,9 +22,9 @@ files::parseToml(std::string_view text, const std::filesystem::path& file) {
   }
 }
 
-bool files::isSchemaVersion(const toml::node& node) { return node.value_exact<std::int64_t>() == kSchemaVersion; }
+bool luciole::isSchemaVersion(const toml::node& node) { return node.value_exact<std::int64_t>() == kSchemaVersion; }
 
-void files::TomlDecoder::issue(const toml::node& node, std::string key, std::string message) {
+void luciole::TomlDecoder::issue(const toml::node& node, std::string key, std::string message) {
   const auto& position = node.source().begin;
   issues.push_back(
       {.file = m_file,
@@ -35,7 +35,7 @@ void files::TomlDecoder::issue(const toml::node& node, std::string key, std::str
   );
 }
 
-void files::TomlDecoder::unknownKeys(
+void luciole::TomlDecoder::unknownKeys(
     const toml::table& table, const std::string& prefix, std::initializer_list<std::string_view> allowed,
     std::string_view message
 ) {
@@ -46,7 +46,7 @@ void files::TomlDecoder::unknownKeys(
   }
 }
 
-const toml::array* files::TomlDecoder::array(
+const toml::array* luciole::TomlDecoder::array(
     const toml::table& table, std::string_view field, const std::string& key, std::size_t max, bool required
 ) {
   const auto* value = table.get(field);
@@ -61,7 +61,7 @@ const toml::array* files::TomlDecoder::array(
 }
 
 std::optional<std::string>
-files::TomlDecoder::text(const toml::table& table, std::string_view field, const std::string& key) {
+luciole::TomlDecoder::text(const toml::table& table, std::string_view field, const std::string& key) {
   const auto* node = table.get(field);
   if (node == nullptr || !node->is_string()) {
     issue(node != nullptr ? *node : table, key, "expected a string");

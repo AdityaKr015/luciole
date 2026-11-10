@@ -9,7 +9,7 @@
 #include <optional>
 #include <utility>
 
-namespace files {
+namespace luciole {
   namespace detail {
     void runInThread(std::move_only_function<void()> work, std::move_only_function<void()> done);
   }
@@ -49,4 +49,4 @@ namespace files {
         std::move(done)
     );
   }
-} // namespace files
+} // namespace luciole

@@ -2,7 +2,7 @@
 
 #include <sys/stat.h>
 
-namespace files {
+namespace luciole {
   // Owned POSIX descriptor; -1 is empty.
   class Fd {
   public:
@@ -29,4 +29,4 @@ namespace files {
   struct stat statFd(int fd);
   // Same inode and file type.
   bool sameIdentity(const struct stat& a, const struct stat& b);
-} // namespace files
+} // namespace luciole

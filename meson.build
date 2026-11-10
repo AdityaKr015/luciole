@@ -1,4 +1,4 @@
-project('noctalia-files', ['c', 'cpp'],
+project('luciole', ['c', 'cpp'],
   version: files('VERSION'),
   meson_version: '>=1.1',
   default_options: [
@@ -69,24 +69,24 @@ endif
 subdir('lib')
 
 build_config = configuration_data()
-build_config.set_quoted('NOCTALIA_FILES_VERSION', meson.project_version())
-build_config.set_quoted('NOCTALIA_FILES_BUILD_REVISION', get_option('build_revision'))
-build_config.set_quoted('NOCTALIA_FILES_BUILD_TYPE', get_option('buildtype'))
-build_config.set_quoted('NOCTALIA_FILES_COMPILER', cpp.get_id() + ' ' + cpp.version())
-build_config.set_quoted('NOCTALIA_FILES_INSTALL_ASSETSDIR', get_option('prefix') / get_option('datadir') / 'noctalia-files/assets')
+build_config.set_quoted('LUCIOLE_VERSION', meson.project_version())
+build_config.set_quoted('LUCIOLE_BUILD_REVISION', get_option('build_revision'))
+build_config.set_quoted('LUCIOLE_BUILD_TYPE', get_option('buildtype'))
+build_config.set_quoted('LUCIOLE_COMPILER', cpp.get_id() + ' ' + cpp.version())
+build_config.set_quoted('LUCIOLE_INSTALL_ASSETSDIR', get_option('prefix') / get_option('datadir') / 'luciole/assets')
 build_info = configure_file(
   input: 'src/app/build_info.h.in',
-  output: 'noctalia_files_build_info.h',
+  output: 'luciole_build_info.h',
   configuration: build_config,
 )
 fs = import('fs')
 completion_config = configuration_data()
-completion_config.set('BASH_COMPLETIONS', fs.read('assets/completions/noctalia-files.bash'))
-completion_config.set('ZSH_COMPLETIONS', fs.read('assets/completions/_noctalia-files'))
-completion_config.set('FISH_COMPLETIONS', fs.read('assets/completions/noctalia-files.fish'))
+completion_config.set('BASH_COMPLETIONS', fs.read('assets/completions/luciole.bash'))
+completion_config.set('ZSH_COMPLETIONS', fs.read('assets/completions/_luciole'))
+completion_config.set('FISH_COMPLETIONS', fs.read('assets/completions/luciole.fish'))
 completions = configure_file(
   input: 'src/app/completion_scripts.h.in',
-  output: 'noctalia_files_completions.h',
+  output: 'luciole_completions.h',
   configuration: completion_config,
 )
 src_inc = include_directories('src')
@@ -97,7 +97,7 @@ src_inc = include_directories('src')
 # noctalia_ui_dep, so including a lib/ header from them fails to compile.
 model_dep = declare_dependency(include_directories: src_inc)
 
-event_loop_lib = static_library('files-event-loop',
+event_loop_lib = static_library('luciole-event-loop',
   files('src/event_loop/glib_poll_source.cpp'),
   include_directories: src_inc,
   dependencies: [gio, noctalia_ui_dep],
@@ -108,7 +108,7 @@ event_loop_dep = declare_dependency(link_with: event_loop_lib, include_directori
 
 libarchive = dependency('libarchive')
 liblzma = dependency('liblzma')
-fs_lib = static_library('files-fs',
+fs_lib = static_library('luciole-fs',
   files(
     'src/fs/archive_type.cpp',
     'src/fs/atomic_file.cpp',
@@ -137,7 +137,7 @@ fs_lib = static_library('files-fs',
 )
 fs_dep = declare_dependency(link_with: fs_lib, include_directories: src_inc, dependencies: [gio, libarchive, liblzma])
 
-config_lib = static_library('files-config',
+config_lib = static_library('luciole-config',
   files(
     'src/config/diagnostic.cpp',
     'src/config/settings.cpp',
@@ -152,7 +152,7 @@ config_dep = declare_dependency(link_with: config_lib, include_directories: src_
   dependencies: [model_dep, fs_dep],
 )
 
-browser_lib = static_library('files-browser',
+browser_lib = static_library('luciole-browser',
   files(
     'src/browser/action_registry.cpp',
     'src/browser/browser_controller.cpp',
@@ -176,7 +176,7 @@ browser_dep = declare_dependency(link_with: browser_lib, include_directories: sr
 )
 
 libacl = dependency('libacl')
-operations_lib = static_library('files-operations',
+operations_lib = static_library('luciole-operations',
   files(
     'src/operations/archive_icons.cpp',
     'src/operations/archive_input.cpp',
@@ -216,7 +216,7 @@ operations_dep = declare_dependency(link_with: operations_lib, include_directori
 )
 
 libpng = dependency('libpng')
-imaging_lib = static_library('files-imaging',
+imaging_lib = static_library('luciole-imaging',
   files(
     'src/imaging/pixbuf_image_decoder.cpp',
     'src/imaging/png_decoder.cpp',
@@ -230,7 +230,7 @@ imaging_dep = declare_dependency(link_with: imaging_lib, include_directories: sr
   dependencies: [fs_dep, noctalia_ui_dep, gdk_pixbuf],
 )
 
-system_lib = static_library('files-system',
+system_lib = static_library('luciole-system',
   files(
     'src/system/freedesktop_key_file.cpp',
     'src/system/icon_resolver.cpp',
@@ -243,7 +243,7 @@ system_dep = declare_dependency(link_with: system_lib, include_directories: src_
   dependencies: [gio, noctalia_ui_dep],
 )
 
-thumbnails_lib = static_library('files-thumbnails',
+thumbnails_lib = static_library('luciole-thumbnails',
   files(
     'src/thumbnails/file_icon_cache.cpp',
     'src/thumbnails/preview_service.cpp',
@@ -266,7 +266,7 @@ thumbnails_dep = declare_dependency(link_with: thumbnails_lib, include_directori
 )
 
 wayland_client = dependency('wayland-client')
-clipboard_lib = static_library('files-clipboard',
+clipboard_lib = static_library('luciole-clipboard',
   files(
     'src/clipboard/file_payload.cpp',
     'src/clipboard/text_clipboard.cpp',
@@ -278,7 +278,7 @@ clipboard_dep = declare_dependency(link_with: clipboard_lib, include_directories
   dependencies: [fs_dep, noctalia_ui_dep, wayland_client],
 )
 
-platform_lib = static_library('files-platform',
+platform_lib = static_library('luciole-platform',
   files(
     'src/platform/desktop_integration.cpp',
     'src/platform/file_launcher.cpp',
@@ -297,7 +297,7 @@ platform_dep = declare_dependency(link_with: platform_lib, include_directories: 
   sources: protocol_headers,
 )
 
-ui_lib = static_library('files-ui',
+ui_lib = static_library('luciole-ui',
   files(
     'src/ui/browser/action_shortcuts.cpp',
     'src/ui/browser/file_icon.cpp',
@@ -334,7 +334,7 @@ ui_dep = declare_dependency(link_with: ui_lib, include_directories: src_inc,
   dependencies: [model_dep, browser_dep, config_dep, operations_dep, thumbnails_dep, noctalia_ui_dep],
 )
 
-app_jobs_lib = static_library('files-app-jobs',
+app_jobs_lib = static_library('luciole-app-jobs',
   files('src/app/operation_hub.cpp', 'src/app/job_activity.cpp'),
   include_directories: src_inc,
   dependencies: [browser_dep, operations_dep],
@@ -343,7 +343,7 @@ app_jobs_dep = declare_dependency(link_with: app_jobs_lib, include_directories: 
   dependencies: [browser_dep, operations_dep],
 )
 
-app = executable('noctalia-files',
+app = executable('luciole',
   files(
     'src/app/application.cpp',
     'src/app/cli.cpp',
@@ -400,12 +400,12 @@ if build_tests
   subdir('tests')
 endif
 
-install_data('LICENSE', install_dir: get_option('datadir') / 'licenses/noctalia-files')
-install_subdir(noctalia_ui_assets_dir / 'fonts', install_dir: get_option('datadir') / 'noctalia-files/assets')
-install_data('assets/noctalia/colors.toml', install_dir: get_option('datadir') / 'noctalia-files/templates')
-install_data('assets/completions/noctalia-files.bash',
+install_data('LICENSE', install_dir: get_option('datadir') / 'licenses/luciole')
+install_subdir(noctalia_ui_assets_dir / 'fonts', install_dir: get_option('datadir') / 'luciole/assets')
+install_data('assets/noctalia/colors.toml', install_dir: get_option('datadir') / 'luciole/templates')
+install_data('assets/completions/luciole.bash',
   install_dir: get_option('datadir') / 'bash-completion/completions',
-  rename: 'noctalia-files',
+  rename: 'luciole',
 )
-install_data('assets/completions/_noctalia-files', install_dir: get_option('datadir') / 'zsh/site-functions')
-install_data('assets/completions/noctalia-files.fish', install_dir: get_option('datadir') / 'fish/vendor_completions.d')
+install_data('assets/completions/_luciole', install_dir: get_option('datadir') / 'zsh/site-functions')
+install_data('assets/completions/luciole.fish', install_dir: get_option('datadir') / 'fish/vendor_completions.d')

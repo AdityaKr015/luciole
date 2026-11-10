@@ -2,7 +2,7 @@
 
 #include "model/directory_options.h"
 
-namespace files {
+namespace luciole {
   struct DetailsColumns {
     bool showType = true;
     bool showSize = true;
@@ -53,4 +53,4 @@ namespace files {
     }
     bool operator==(const DetailsColumns&) const = default;
   };
-} // namespace files
+} // namespace luciole

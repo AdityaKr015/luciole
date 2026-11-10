@@ -4,7 +4,7 @@
 
 #include <vector>
 
-namespace files {
+namespace luciole {
   struct Breadcrumb {
     Location location;
     std::string label;
@@ -14,4 +14,4 @@ namespace files {
   std::vector<Breadcrumb> locationBreadcrumbs(const Location& location);
   std::string locationEditText(const Location& location);
   Location resolveLocationText(const std::string& text, const Location& base);
-} // namespace files
+} // namespace luciole

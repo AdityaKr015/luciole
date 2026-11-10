@@ -5,7 +5,7 @@
 #include <span>
 #include <utility>
 
-namespace files {
+namespace luciole {
   using SelectionFacts = std::vector<std::pair<std::string, std::string>>;
   // Reads selected entries only, with one worker and one replaceable latest request.
   // Large selections explicitly report the 4096-item inspection limit. No folder traversal.
@@ -25,4 +25,4 @@ namespace files {
     struct State;
     std::shared_ptr<State> m_state;
   };
-} // namespace files
+} // namespace luciole

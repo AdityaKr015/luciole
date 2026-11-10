@@ -17,7 +17,7 @@
 struct archive;
 
 // Helpers shared by the archive reader and writer.
-namespace files::archive_work {
+namespace luciole::archive_work {
   using Clock = std::chrono::steady_clock;
   class ArchiveLocale {
   public:
@@ -41,7 +41,7 @@ namespace files::archive_work {
   struct Work {
     ArchiveLimits limits;
     CancelToken cancel;
-    files::archive_work::Progress& progress;
+    luciole::archive_work::Progress& progress;
     Clock::time_point deadline;
     std::exception_ptr failure;
     std::uint64_t expanded = 0;
@@ -72,7 +72,7 @@ namespace files::archive_work {
     std::string path;
     Stage() {
       std::error_code ignored;
-      auto pattern = (std::filesystem::temp_directory_path(ignored) / "noctalia-files-archive-XXXXXX").native();
+      auto pattern = (std::filesystem::temp_directory_path(ignored) / "luciole-archive-XXXXXX").native();
       if (ignored || !::mkdtemp(pattern.data())) {
         throwFileError(FileErrorKind::Other, "Could not create private archive staging storage.");
       }
@@ -104,4 +104,4 @@ namespace files::archive_work {
   std::pair<std::string, std::string> destinationParts(const Location& destination);
   [[noreturn]] void archiveError(struct archive* value, Work& work);
   void requireArchive(int status, struct archive* value, Work& work);
-} // namespace files::archive_work
+} // namespace luciole::archive_work

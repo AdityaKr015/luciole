@@ -13,7 +13,7 @@
 #include <unistd.h>
 #include <utility>
 
-namespace files::transfer {
+namespace luciole::transfer {
   namespace {
     // Appends text to an item's error, creating one of kind when none is set.
     void appendError(std::optional<FileError>& error, FileErrorKind kind, const std::string& text) {
@@ -446,7 +446,7 @@ namespace files::transfer {
 
   Stage::Stage(int parent, CopyWork& work) : m_parent(parent), m_work(work) {
     const GString id(g_uuid_string_random());
-    m_name = ".noctalia-files-transfer-" + std::string(id.get());
+    m_name = ".luciole-transfer-" + std::string(id.get());
     if (::mkdirat(parent, m_name.c_str(), 0700) != 0) {
       fail("Could not prepare destination");
     }
@@ -557,4 +557,4 @@ namespace files::transfer {
     node.source.parent = Fd{};
     node.attempted = true;
   }
-} // namespace files::transfer
+} // namespace luciole::transfer

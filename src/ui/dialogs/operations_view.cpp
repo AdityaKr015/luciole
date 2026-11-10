@@ -44,21 +44,21 @@ public:
     m_title->setUseMarkup(false);
     m_summary->setUseMarkup(false);
   }
-  void bind(const files::JobActivity& activity) {
+  void bind(const luciole::JobActivity& activity) {
     m_title->setText(activity.title);
     m_summary->setText(activity.summary);
     m_summary->setColor(colorSpecFromRole(activity.failed() ? ColorRole::Error : ColorRole::OnSurfaceVariant));
     m_glyph->setGlyph(
-        activity.failed()                                       ? "alert-circle"
-            : activity.state == files::ActivityState::Cancelled ? "x"
-            : activity.finished                                 ? "check"
-            : activity.state == files::ActivityState::Waiting   ? "clock"
-                                                                : "progress"
+        activity.failed()                                         ? "alert-circle"
+            : activity.state == luciole::ActivityState::Cancelled ? "x"
+            : activity.finished                                   ? "check"
+            : activity.state == luciole::ActivityState::Waiting   ? "clock"
+                                                                  : "progress"
     );
     m_glyph->setColor(colorSpecFromRole(activity.failed() ? ColorRole::Error : ColorRole::Primary));
     const bool spinning = !activity.finished
         && !activity.progress
-        && (activity.state == files::ActivityState::Preparing || activity.state == files::ActivityState::Working);
+        && (activity.state == luciole::ActivityState::Preparing || activity.state == luciole::ActivityState::Working);
     m_spinner->setVisible(spinning);
     m_spinner->setParticipatesInLayout(spinning);
     if (spinning) {
@@ -120,9 +120,9 @@ OperationsView::OperationsView(Action action) : m_action(std::move(action)) {
 }
 OperationsView::~OperationsView() = default;
 
-bool OperationsView::sync(std::vector<files::JobActivity> activities) {
+bool OperationsView::sync(std::vector<luciole::JobActivity> activities) {
   const bool structural = activities.size() != m_activities.size()
-      || !std::ranges::equal(activities, m_activities, {}, &files::JobActivity::id, &files::JobActivity::id);
+      || !std::ranges::equal(activities, m_activities, {}, &luciole::JobActivity::id, &luciole::JobActivity::id);
   m_structureDirty |= structural;
   m_activities = std::move(activities);
   return structural;

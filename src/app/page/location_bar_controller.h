@@ -49,14 +49,14 @@ public:
   bool hasLocationInput() const { return m_location != nullptr; }
   bool hasFilterInput() const { return m_filterInput != nullptr; }
   // Shown breadcrumbs, for drops and middle clicks.
-  const std::vector<std::pair<files::Location, Button*>>& breadcrumbs() const { return m_dropBreadcrumbs; }
+  const std::vector<std::pair<luciole::Location, Button*>>& breadcrumbs() const { return m_dropBreadcrumbs; }
   // True while the breadcrumbs are shown and contain the scene point.
   bool breadcrumbsContain(float x, float y) const;
 
   void beginLocationEdit();
   void endLocationEdit(bool focusFiles);
   // Opens `target` from a breadcrumb and focuses the file list.
-  void openBreadcrumb(const files::Location& target) { breadcrumbClick(target); }
+  void openBreadcrumb(const luciole::Location& target) { breadcrumbClick(target); }
   void openFilter(bool selectAll = true, bool preserveTextInput = false);
   void clearCompletions();
   // Completes the edited location for a Tab press with `modifiers` that the window handles.
@@ -80,7 +80,7 @@ public:
   bool escapeKey(const KeyboardEvent& event);
 
   // BrowserPage::syncBrowser(): resets the bar for a new location; true when `location` changed.
-  bool syncLocation(const std::optional<files::Location>& location);
+  bool syncLocation(const std::optional<luciole::Location>& location);
   // BrowserPage::syncBrowser(): field values and borders.
   void sync();
   // Frame slot in BrowserPage::prepareFrame(): starts editing after a double click; true when it did.
@@ -93,12 +93,12 @@ public:
 
 private:
   struct BreadcrumbPart {
-    files::Location location;
+    luciole::Location location;
     Button* button;
     Node* separator;
   };
   struct LocationBlankClick {
-    files::Location location;
+    luciole::Location location;
     std::uint64_t context;
     std::chrono::steady_clock::time_point time;
     float x, y;
@@ -107,7 +107,7 @@ private:
   void requestCompletions(const std::string& text);
   void acceptCompletion(std::size_t index, bool navigate);
   bool completionKey(std::uint32_t key, std::uint32_t modifiers);
-  void breadcrumbClick(const files::Location& target, const InputArea::PointerData* pointer = nullptr);
+  void breadcrumbClick(const luciole::Location& target, const InputArea::PointerData* pointer = nullptr);
   void openBreadcrumbOverflow();
   void rebuildBreadcrumbs();
   void changeNameFilter(const std::string& text);
@@ -124,15 +124,15 @@ private:
   ScrollView* m_breadcrumbScroll = nullptr;
   Flex* m_breadcrumbs = nullptr;
   std::vector<BreadcrumbPart> m_breadcrumbParts;
-  std::vector<std::pair<files::Location, Button*>> m_dropBreadcrumbs;
+  std::vector<std::pair<luciole::Location, Button*>> m_dropBreadcrumbs;
   Button* m_breadcrumbOverflow = nullptr;
   std::size_t m_firstBreadcrumb = 0;
   float m_breadcrumbLayoutWidth = -1;
   float m_breadcrumbRenderScale = 0;
   std::uint64_t m_breadcrumbMetricsGeneration = 0;
   std::optional<LocationBlankClick> m_blankLocationClick;
-  std::optional<files::Location> m_lastBreadcrumb;
-  std::optional<files::Location> m_breadcrumbEditTarget;
+  std::optional<luciole::Location> m_lastBreadcrumb;
+  std::optional<luciole::Location> m_breadcrumbEditTarget;
   std::chrono::steady_clock::time_point m_breadcrumbClickTime;
   float m_breadcrumbClickX = 0;
   float m_breadcrumbClickY = 0;
@@ -141,8 +141,8 @@ private:
   bool m_filterOpen = false;
   bool m_locationInvalid = false;
   std::string m_displayedLocation;
-  files::PathCompletion m_pathCompletion;
-  files::PathSuggestions m_completionItems;
+  luciole::PathCompletion m_pathCompletion;
+  luciole::PathSuggestions m_completionItems;
   std::string m_completionText;
   std::uint64_t m_completionContext = 0;
   std::optional<std::size_t> m_completionIndex;

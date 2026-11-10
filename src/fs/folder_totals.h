@@ -4,7 +4,7 @@
 
 #include <span>
 
-namespace files {
+namespace luciole {
   enum class FolderTotalsPhase : std::uint8_t { Idle, Running, Complete, Cancelled };
   struct FolderTotalsSnapshot {
     FolderTotalsPhase phase = FolderTotalsPhase::Idle;
@@ -36,4 +36,4 @@ namespace files {
     struct State;
     std::shared_ptr<State> m_state;
   };
-} // namespace files
+} // namespace luciole

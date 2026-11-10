@@ -9,7 +9,7 @@
 #include <memory>
 #include <wayland-client.h>
 
-namespace files {
+namespace luciole {
   struct ClipboardFiles {
     FilePayload payload;
     std::uint64_t revision;
@@ -67,4 +67,4 @@ namespace files {
     struct State;
     std::shared_ptr<State> m_state;
   };
-} // namespace files
+} // namespace luciole

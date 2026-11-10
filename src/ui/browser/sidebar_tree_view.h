@@ -7,7 +7,7 @@
 
 class VirtualGridView;
 class InputArea;
-namespace files {
+namespace luciole {
   // The optional virtualized folder hierarchy, rooted in the existing Places destinations.
   class SidebarTreeView final : public Flex {
   public:
@@ -47,4 +47,4 @@ namespace files {
     std::size_t m_pinCount = 0;
     bool m_dirty = true, m_reveal = false;
   };
-} // namespace files
+} // namespace luciole

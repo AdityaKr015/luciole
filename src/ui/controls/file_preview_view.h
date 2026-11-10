@@ -11,17 +11,17 @@ class FileMetadataView;
 class FilePreviewView final : public Flex {
 public:
   FilePreviewView(
-      files::FileIconCache& icons, std::function<void()> close, std::function<void()> open,
+      luciole::FileIconCache& icons, std::function<void()> close, std::function<void()> open,
       std::function<void()> openWith
   );
   void sync(
-      const files::PreviewSnapshot& snapshot, float width, float height, std::string_view typeLabel = {},
+      const luciole::PreviewSnapshot& snapshot, float width, float height, std::string_view typeLabel = {},
       bool quick = false
   );
   void clear(Renderer& renderer);
 
 private:
-  files::FileIcon* m_image;
+  luciole::FileIcon* m_image;
   Label *m_heading, *m_name, *m_status, *m_text;
   FileMetadataView* m_metadata;
   Button *m_open, *m_openWith;

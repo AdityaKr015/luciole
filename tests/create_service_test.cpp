@@ -15,11 +15,11 @@
 
 namespace {
   namespace fs = std::filesystem;
-  files::Location location(const fs::path& path) { return files::Location::fromPath(path.native()); }
+  luciole::Location location(const fs::path& path) { return luciole::Location::fromPath(path.native()); }
   struct Fixture {
     fs::path root;
     Fixture() {
-      std::string path = "/tmp/noctalia-create-XXXXXX";
+      std::string path = "/tmp/luciole-create-XXXXXX";
       TEST_CHECK(::mkdtemp(path.data()) != nullptr);
       root = path;
     }
@@ -41,18 +41,19 @@ namespace {
         m_source.dispatch(fds, first);
       }
     }
-    void
-    prepare(files::CreateService& service, const fs::path& path, files::CreateKind kind = files::CreateKind::Folder) {
+    void prepare(
+        luciole::CreateService& service, const fs::path& path, luciole::CreateKind kind = luciole::CreateKind::Folder
+    ) {
       TEST_CHECK(service.prepare(location(path), kind));
       until([&] { return !service.busy(); });
       TEST_CHECK(service.canCreate());
     }
-    void create(files::CreateService& service, const std::string& name) {
+    void create(luciole::CreateService& service, const std::string& name) {
       TEST_CHECK(service.create(name));
       until([&] { return !service.busy(); });
     }
-    files::TemplateListing templates(files::TemplateCatalog& catalog) {
-      std::optional<files::TemplateListing> result;
+    luciole::TemplateListing templates(luciole::TemplateCatalog& catalog) {
+      std::optional<luciole::TemplateListing> result;
       catalog.load([&](auto listing) { result = std::move(listing); });
       until([&] { return result.has_value(); });
       return std::move(*result);
@@ -65,52 +66,52 @@ namespace {
     std::ifstream input(path, std::ios::binary);
     return {std::istreambuf_iterator<char>(input), {}};
   }
-  files::DirectoryEntry linkEntry(const fs::path& path) {
-    const files::GioPtr<GFileInfo> info(g_file_query_info(
-        files::gioFile(location(path)).get(), "id::file,id::filesystem,standard::type,standard::is-symlink",
+  luciole::DirectoryEntry linkEntry(const fs::path& path) {
+    const luciole::GioPtr<GFileInfo> info(g_file_query_info(
+        luciole::gioFile(location(path)).get(), "id::file,id::filesystem,standard::type,standard::is-symlink",
         G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, nullptr
     ));
     TEST_CHECK(info);
-    const files::GString display(g_filename_display_name(path.filename().c_str()));
+    const luciole::GString display(g_filename_display_name(path.filename().c_str()));
     return {
         .id = 1,
         .location = location(path),
         .name = path.filename().native(),
         .displayName = display.get(),
-        .type = files::fileType(g_file_info_get_file_type(info.get())),
+        .type = luciole::fileType(g_file_info_get_file_type(info.get())),
         .symlink = g_file_info_get_is_symlink(info.get()) != FALSE,
         .size = {},
         .modifiedSeconds = {},
         .etag = {},
         .parentDisplayName = {},
-        .identity = files::readFileIdentity(info.get())
+        .identity = luciole::readFileIdentity(info.get())
     };
   }
-  void prepareLink(Pump& pump, files::CreateService& service, const fs::path& path) {
+  void prepareLink(Pump& pump, luciole::CreateService& service, const fs::path& path) {
     TEST_CHECK(service.prepareLink(linkEntry(path)));
     pump.until([&] { return !service.busy(); });
     TEST_CHECK(service.canCreate());
   }
   void createLink(
-      Pump& pump, files::CreateService& service, const fs::path& parent, const std::string& name,
-      files::CreateKind kind = files::CreateKind::SymbolicLink
+      Pump& pump, luciole::CreateService& service, const fs::path& parent, const std::string& name,
+      luciole::CreateKind kind = luciole::CreateKind::SymbolicLink
   ) {
     TEST_CHECK(service.createLink(location(parent), name, kind));
     pump.until([&] { return !service.busy(); });
   }
   void createsLinks(Pump& pump) {
-    using K = files::CreateKind;
+    using K = luciole::CreateKind;
     Fixture fixture;
     const auto source = fixture.root / (std::string("source #%-") + static_cast<char>(0xff));
     std::ofstream(source) << "original";
     fs::create_directory(fixture.root / "output");
     const auto output = fixture.root / "output";
-    files::CreateService service;
+    luciole::CreateService service;
     prepareLink(pump, service, source);
     TEST_CHECK(!service.create("wrong API") && !service.createLink(location(output), "bad", K::Folder));
     createLink(pump, service, output, "Symbolic 文");
     TEST_CHECK(
-        service.snapshot().status == files::CreateStatus::Succeeded
+        service.snapshot().status == luciole::CreateStatus::Succeeded
         && service.snapshot().destination == location(output / "Symbolic 文")
     );
     TEST_CHECK(fs::read_symlink(output / "Symbolic 文") == source && contents(output / "Symbolic 文") == "original");
@@ -118,7 +119,7 @@ namespace {
     std::ofstream(source) << "edited while choosing";
     createLink(pump, service, output, "Hard 文", K::HardLink);
     TEST_CHECK(
-        service.snapshot().status == files::CreateStatus::Succeeded && fs::equivalent(source, output / "Hard 文")
+        service.snapshot().status == luciole::CreateStatus::Succeeded && fs::equivalent(source, output / "Hard 文")
     );
     std::ofstream(output / "Hard 文") << "shared contents";
     TEST_CHECK(contents(source) == "shared contents");
@@ -131,23 +132,25 @@ namespace {
     fs::create_directory(fixture.root / "folder");
     prepareLink(pump, service, fixture.root / "folder");
     createLink(pump, service, output, "refuse folder", K::HardLink);
-    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && !fs::exists(output / "refuse folder"));
+    TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Error && !fs::exists(output / "refuse folder"));
     createLink(pump, service, output, "folder link");
-    TEST_CHECK(service.snapshot().status == files::CreateStatus::Succeeded && fs::is_directory(output / "folder link"));
+    TEST_CHECK(
+        service.snapshot().status == luciole::CreateStatus::Succeeded && fs::is_directory(output / "folder link")
+    );
     fs::create_symlink("missing", fixture.root / "broken");
     prepareLink(pump, service, fixture.root / "broken");
     createLink(pump, service, output, "refuse symlink", K::HardLink);
-    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && !fs::is_symlink(output / "refuse symlink"));
+    TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Error && !fs::is_symlink(output / "refuse symlink"));
     createLink(pump, service, output, "link to broken");
     TEST_CHECK(
-        service.snapshot().status == files::CreateStatus::Succeeded
+        service.snapshot().status == luciole::CreateStatus::Succeeded
         && fs::read_symlink(output / "link to broken") == fixture.root / "broken"
     );
     TEST_CHECK(::mkfifo((fixture.root / "pipe").c_str(), 0600) == 0);
     TEST_CHECK(!service.prepareLink(linkEntry(fixture.root / "pipe")));
   }
   void linkCollisionsAndErrors(Pump& pump) {
-    using K = files::CreateKind;
+    using K = luciole::CreateKind;
     Fixture fixture;
     const auto source = fixture.root / "source";
     std::ofstream(source) << "keep source";
@@ -157,16 +160,16 @@ namespace {
     fs::create_directory(output / "folder");
     fs::create_symlink("missing", output / "link");
     TEST_CHECK(::mkfifo((output / "pipe").c_str(), 0600) == 0);
-    files::CreateService service;
+    luciole::CreateService service;
     prepareLink(pump, service, source);
     for (const auto kind : {K::SymbolicLink, K::HardLink}) {
       for (const auto* name : {"file", "folder", "link", "pipe"}) {
         createLink(pump, service, output, name, kind);
-        TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && service.canCreate());
+        TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Error && service.canCreate());
       }
       for (const auto& destination : {fixture.root / "missing", output / "file"}) {
         createLink(pump, service, destination, "no effect", kind);
-        TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && service.canCreate());
+        TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Error && service.canCreate());
       }
     }
     TEST_CHECK(
@@ -178,24 +181,26 @@ namespace {
     );
     TEST_CHECK(!service.createLink(location(output), "../escape", K::SymbolicLink));
     createLink(pump, service, output, std::string(10000, 'x'));
-    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error);
+    TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Error);
     TEST_CHECK(service.createLink(
-        files::Location::fromUri("sftp://example.invalid/destination"), "native only", K::SymbolicLink
+        luciole::Location::fromUri("sftp://example.invalid/destination"), "native only", K::SymbolicLink
     ));
     pump.until([&] { return !service.busy(); });
-    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error);
+    TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Error);
     createLink(pump, service, output, "retry", K::HardLink);
-    TEST_CHECK(service.snapshot().status == files::CreateStatus::Succeeded && fs::equivalent(source, output / "retry"));
+    TEST_CHECK(
+        service.snapshot().status == luciole::CreateStatus::Succeeded && fs::equivalent(source, output / "retry")
+    );
     if (::geteuid() != 0) {
       prepareLink(pump, service, source);
       fs::permissions(output, fs::perms::owner_read | fs::perms::owner_exec);
       createLink(pump, service, output, "denied");
       fs::permissions(output, fs::perms::owner_all);
-      TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && !fs::exists(output / "denied"));
+      TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Error && !fs::exists(output / "denied"));
     }
   }
   void staleLinksAndCancellation(Pump& pump) {
-    using K = files::CreateKind;
+    using K = luciole::CreateKind;
     Fixture fixture;
     fs::create_directory(fixture.root / "parent");
     fs::create_directory(fixture.root / "output");
@@ -205,16 +210,16 @@ namespace {
     const auto captured = linkEntry(path);
     fs::rename(path, fixture.root / "held");
     std::ofstream(path) << "replacement";
-    files::CreateService service;
+    luciole::CreateService service;
     TEST_CHECK(service.prepareLink(captured));
     pump.until([&] { return !service.busy(); });
-    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && !service.canCreate());
+    TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Error && !service.canCreate());
     for (const auto kind : {K::SymbolicLink, K::HardLink}) {
       prepareLink(pump, service, path);
       fs::rename(path, fixture.root / "saved");
       std::ofstream(path) << "changed again";
       createLink(pump, service, output, "refused", kind);
-      TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && fs::is_empty(output));
+      TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Error && fs::is_empty(output));
       fs::remove(fixture.root / "saved");
     }
     prepareLink(pump, service, path);
@@ -222,23 +227,23 @@ namespace {
     fs::create_directory(fixture.root / "parent");
     std::ofstream(path) << "new parent";
     createLink(pump, service, output, "refused parent");
-    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && fs::is_empty(output));
+    TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Error && fs::is_empty(output));
     auto entry = linkEntry(path);
     TEST_CHECK(service.prepareLink(entry));
     TEST_CHECK(!service.prepareLink(entry));
     service.cancel();
     pump.until([&] { return !service.busy(); });
-    TEST_CHECK(service.snapshot().status == files::CreateStatus::Cancelled && !service.canCreate());
+    TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Cancelled && !service.canCreate());
     prepareLink(pump, service, path);
     TEST_CHECK(service.createLink(location(output), "maybe", K::HardLink));
     service.cancel();
     pump.until([&] { return !service.busy(); });
-    const bool committed = service.snapshot().status == files::CreateStatus::Succeeded;
+    const bool committed = service.snapshot().status == luciole::CreateStatus::Succeeded;
     TEST_CHECK(
-        (committed || service.snapshot().status == files::CreateStatus::Cancelled)
+        (committed || service.snapshot().status == luciole::CreateStatus::Cancelled)
         && fs::exists(output / "maybe") == committed
     );
-    auto dying = std::make_unique<files::CreateService>();
+    auto dying = std::make_unique<luciole::CreateService>();
     bool notified = false;
     dying->setChangedCallback([&] { notified = true; });
     TEST_CHECK(dying->prepareLink(entry));
@@ -251,7 +256,7 @@ namespace {
     Fixture fixture;
     const auto source = fixture.root / "source";
     std::ofstream(source) << "cross filesystem";
-    std::string temporary = "/dev/shm/noctalia-link-XXXXXX";
+    std::string temporary = "/dev/shm/luciole-link-XXXXXX";
     if (!::mkdtemp(temporary.data())) {
       std::println("cross-filesystem link fixture unavailable");
       return;
@@ -268,22 +273,22 @@ namespace {
     if (from.st_dev == to.st_dev) {
       return;
     }
-    files::CreateService service;
+    luciole::CreateService service;
     prepareLink(pump, service, source);
-    createLink(pump, service, temporary, "hard", files::CreateKind::HardLink);
-    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && fs::is_empty(temporary));
+    createLink(pump, service, temporary, "hard", luciole::CreateKind::HardLink);
+    TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Error && fs::is_empty(temporary));
     createLink(pump, service, temporary, "symbolic");
     TEST_CHECK(
-        service.snapshot().status == files::CreateStatus::Succeeded
+        service.snapshot().status == luciole::CreateStatus::Succeeded
         && contents(fs::path(temporary) / "symbolic") == "cross filesystem"
     );
   }
-  files::DocumentTemplate documentTemplate(const fs::path& path) {
+  luciole::DocumentTemplate documentTemplate(const fs::path& path) {
     struct stat info{};
     TEST_CHECK(::lstat(path.c_str(), &info) == 0);
-    return {location(path), path.filename().native(), path.filename().native(), files::templateRevision(info)};
+    return {location(path), path.filename().native(), path.filename().native(), luciole::templateRevision(info)};
   }
-  void prepareDocument(Pump& pump, files::CreateService& service, const fs::path& parent, const fs::path& source) {
+  void prepareDocument(Pump& pump, luciole::CreateService& service, const fs::path& parent, const fs::path& source) {
     TEST_CHECK(service.prepareTemplate(location(parent), documentTemplate(source)));
     pump.until([&] { return !service.busy(); });
     TEST_CHECK(service.canCreate());
@@ -301,12 +306,12 @@ namespace {
     TEST_CHECK(::mkfifo((root / "pipe").c_str(), 0600) == 0);
     const std::string raw = std::string("raw-") + static_cast<char>(0xff);
     std::ofstream(root / raw) << "raw";
-    files::TemplateCatalog catalog;
+    luciole::TemplateCatalog catalog;
     auto listing = pump.templates(catalog);
     TEST_CHECK(!listing.error && !listing.truncated && listing.items.size() == 3);
-    const auto report = std::ranges::find(listing.items, "Work/report.txt", &files::DocumentTemplate::label);
+    const auto report = std::ranges::find(listing.items, "Work/report.txt", &luciole::DocumentTemplate::label);
     TEST_CHECK(report != listing.items.end() && report->location == location(root / "Work/report.txt"));
-    TEST_CHECK(std::ranges::find(listing.items, raw, &files::DocumentTemplate::name) != listing.items.end());
+    TEST_CHECK(std::ranges::find(listing.items, raw, &luciole::DocumentTemplate::name) != listing.items.end());
     std::ofstream(root / "added.txt") << "new";
     TEST_CHECK(pump.templates(catalog).items.size() == 4);
     bool obsolete = false;
@@ -332,37 +337,37 @@ namespace {
     const auto source = fixture.root / (std::string("template-") + static_cast<char>(0xff) + ".bin");
     const std::string binary("contents\0with bytes\xff", 20);
     std::ofstream(source, std::ios::binary).write(binary.data(), static_cast<std::streamsize>(binary.size()));
-    files::CreateService service;
+    luciole::CreateService service;
     prepareDocument(pump, service, fixture.root / "output", source);
     pump.create(service, "Document 文.bin");
-    TEST_CHECK(service.snapshot().status == files::CreateStatus::Succeeded);
+    TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Succeeded);
     TEST_CHECK(contents(source) == binary && contents(fixture.root / "output/Document 文.bin") == binary);
     TEST_CHECK(std::distance(fs::directory_iterator(fixture.root / "output"), fs::directory_iterator{}) == 1);
     prepareDocument(pump, service, fixture.root / "output", source);
     pump.create(service, "Document 文.bin");
-    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && service.canCreate());
+    TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Error && service.canCreate());
     TEST_CHECK(contents(fixture.root / "output/Document 文.bin") == binary);
     fs::create_symlink("missing", fixture.root / "output/link");
     fs::create_directory(fixture.root / "output/folder");
     TEST_CHECK(::mkfifo((fixture.root / "output/pipe").c_str(), 0600) == 0);
     for (const auto* name : {"link", "folder", "pipe"}) {
       pump.create(service, name);
-      TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && service.canCreate());
+      TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Error && service.canCreate());
     }
     TEST_CHECK(fs::is_symlink(fixture.root / "output/link") && fs::is_fifo(fixture.root / "output/pipe"));
     TEST_CHECK(!service.create("../escaped"));
     pump.create(service, "retry.bin");
-    TEST_CHECK(service.snapshot().status == files::CreateStatus::Succeeded);
+    TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Succeeded);
     TEST_CHECK(contents(fixture.root / "output/retry.bin") == binary);
     std::ofstream(source, std::ios::trunc);
     prepareDocument(pump, service, fixture.root / "output", source);
     pump.create(service, "empty.txt");
     TEST_CHECK(
-        service.snapshot().status == files::CreateStatus::Succeeded
+        service.snapshot().status == luciole::CreateStatus::Succeeded
         && fs::file_size(fixture.root / "output/empty.txt") == 0
     );
     for (const auto& entry : fs::directory_iterator(fixture.root / "output")) {
-      TEST_CHECK(!entry.path().filename().native().starts_with(".noctalia-document-"));
+      TEST_CHECK(!entry.path().filename().native().starts_with(".luciole-document-"));
     }
   }
   void staleTemplatesAndCancellation(Pump& pump) {
@@ -372,52 +377,52 @@ namespace {
     std::ofstream(source) << "original";
     const auto selected = documentTemplate(source);
     std::ofstream(source) << "changed";
-    files::CreateService service;
+    luciole::CreateService service;
     TEST_CHECK(service.prepareTemplate(location(fixture.root / "output"), selected));
     pump.until([&] { return !service.busy(); });
-    TEST_CHECK(!service.canCreate() && service.snapshot().status == files::CreateStatus::Error);
+    TEST_CHECK(!service.canCreate() && service.snapshot().status == luciole::CreateStatus::Error);
     prepareDocument(pump, service, fixture.root / "output", source);
     fs::rename(source, fixture.root / "held");
     fs::create_symlink("held", source);
     pump.create(service, "refuse-link.txt");
-    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && fs::is_empty(fixture.root / "output"));
+    TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Error && fs::is_empty(fixture.root / "output"));
     fs::remove(source);
     fs::rename(fixture.root / "held", source);
     prepareDocument(pump, service, fixture.root / "output", source);
     fs::rename(source, fixture.root / "held");
     TEST_CHECK(::mkfifo(source.c_str(), 0600) == 0);
     pump.create(service, "refuse-pipe.txt");
-    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && fs::is_empty(fixture.root / "output"));
+    TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Error && fs::is_empty(fixture.root / "output"));
     fs::remove(source);
     fs::rename(fixture.root / "held", source);
     prepareDocument(pump, service, fixture.root / "output", source);
     std::ofstream(source) << "modified after preparation";
     pump.create(service, "refuse-change.txt");
-    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && fs::is_empty(fixture.root / "output"));
+    TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Error && fs::is_empty(fixture.root / "output"));
     prepareDocument(pump, service, fixture.root / "output", source);
     fs::rename(fixture.root / "output", fixture.root / "previous");
     fs::create_directory(fixture.root / "output");
     pump.create(service, "refuse-parent.txt");
-    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && fs::is_empty(fixture.root / "previous"));
+    TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Error && fs::is_empty(fixture.root / "previous"));
     prepareDocument(pump, service, fixture.root / "output", source);
     TEST_CHECK(service.create("maybe.txt"));
     service.cancel();
     pump.until([&] { return !service.busy(); });
-    const bool published = service.snapshot().status == files::CreateStatus::Succeeded;
-    TEST_CHECK(published || service.snapshot().status == files::CreateStatus::Cancelled);
+    const bool published = service.snapshot().status == luciole::CreateStatus::Succeeded;
+    TEST_CHECK(published || service.snapshot().status == luciole::CreateStatus::Cancelled);
     TEST_CHECK(fs::exists(fixture.root / "output/maybe.txt") == published);
     TEST_CHECK(
         std::distance(fs::directory_iterator(fixture.root / "output"), fs::directory_iterator{}) == (published ? 1 : 0)
     );
-    TEST_CHECK(!service.prepare(location(fixture.root), files::CreateKind::Document));
+    TEST_CHECK(!service.prepare(location(fixture.root), luciole::CreateKind::Document));
   }
   void createsFolders(Pump& pump) {
     Fixture fixture;
-    files::CreateService service;
+    luciole::CreateService service;
     pump.prepare(service, fixture.root);
     pump.create(service, "Documents 文");
     TEST_CHECK(
-        service.snapshot().status == files::CreateStatus::Succeeded && fs::is_empty(fixture.root / "Documents 文")
+        service.snapshot().status == luciole::CreateStatus::Succeeded && fs::is_empty(fixture.root / "Documents 文")
     );
     TEST_CHECK(service.snapshot().destination == location(fixture.root / "Documents 文"));
     pump.prepare(service, fixture.root);
@@ -439,11 +444,11 @@ namespace {
     std::ofstream(fixture.root / "folder/marker") << "preserve";
     std::ofstream(fixture.root / "file") << "data";
     fs::create_symlink("missing", fixture.root / "link");
-    files::CreateService service;
+    luciole::CreateService service;
     pump.prepare(service, fixture.root);
     for (const auto* name : {"folder", "file", "link"}) {
       pump.create(service, name);
-      TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && service.canCreate());
+      TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Error && service.canCreate());
     }
     TEST_CHECK(
         fs::exists(fixture.root / "folder/marker")
@@ -451,26 +456,26 @@ namespace {
         && fs::read_symlink(fixture.root / "link") == "missing"
     );
     pump.create(service, "available");
-    TEST_CHECK(service.snapshot().status == files::CreateStatus::Succeeded);
-    files::CreateService other;
+    TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Succeeded);
+    luciole::CreateService other;
     pump.prepare(service, fixture.root);
     pump.prepare(other, fixture.root);
     TEST_CHECK(service.create("racing") && other.create("racing"));
     pump.until([&] { return !service.busy() && !other.busy(); });
-    const bool first = service.snapshot().status == files::CreateStatus::Succeeded;
-    const bool second = other.snapshot().status == files::CreateStatus::Succeeded;
+    const bool first = service.snapshot().status == luciole::CreateStatus::Succeeded;
+    const bool second = other.snapshot().status == luciole::CreateStatus::Succeeded;
     TEST_CHECK(first != second && fs::is_directory(fixture.root / "racing"));
   }
-  void staleDestinations(Pump& pump, files::CreateKind kind) {
+  void staleDestinations(Pump& pump, luciole::CreateKind kind) {
     Fixture fixture;
     fs::create_directory(fixture.root / "parent");
-    files::CreateService service;
+    luciole::CreateService service;
     pump.prepare(service, fixture.root / "parent", kind);
     fs::rename(fixture.root / "parent", fixture.root / "original");
     fs::create_directory(fixture.root / "parent");
     pump.create(service, "blocked");
     TEST_CHECK(
-        service.snapshot().status == files::CreateStatus::Error
+        service.snapshot().status == luciole::CreateStatus::Error
         && !fs::exists(fixture.root / "parent/blocked")
         && !fs::exists(fixture.root / "original/blocked")
     );
@@ -479,11 +484,11 @@ namespace {
     fs::remove(fixture.root / "alias");
     fs::create_directory_symlink(fixture.root / "original", fixture.root / "alias");
     pump.create(service, "blocked");
-    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && fs::is_empty(fixture.root / "original"));
+    TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Error && fs::is_empty(fixture.root / "original"));
   }
   void validationCancellationAndPermissions(Pump& pump) {
     Fixture fixture;
-    files::CreateService service;
+    luciole::CreateService service;
     pump.prepare(service, fixture.root);
     for (const auto& name : std::vector<std::string>{
              "", ".", "..", "nested/name", std::string("a\0b", 3), std::string(1, static_cast<char>(0xff))
@@ -491,35 +496,35 @@ namespace {
       TEST_CHECK(!service.create(name) && fs::is_empty(fixture.root));
     }
     pump.create(service, std::string(10000, 'a'));
-    TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && fs::is_empty(fixture.root));
+    TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Error && fs::is_empty(fixture.root));
     service.cancel();
     TEST_CHECK(!service.canCreate() && fs::is_empty(fixture.root));
-    TEST_CHECK(service.prepare(location(fixture.root), files::CreateKind::Folder));
-    TEST_CHECK(!service.prepare(location(fixture.root), files::CreateKind::Folder) && !service.create("busy"));
+    TEST_CHECK(service.prepare(location(fixture.root), luciole::CreateKind::Folder));
+    TEST_CHECK(!service.prepare(location(fixture.root), luciole::CreateKind::Folder) && !service.create("busy"));
     service.cancel();
     pump.until([&] { return !service.busy(); });
-    TEST_CHECK(service.snapshot().status == files::CreateStatus::Cancelled && fs::is_empty(fixture.root));
+    TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Cancelled && fs::is_empty(fixture.root));
     pump.prepare(service, fixture.root);
     TEST_CHECK(service.create("maybe-created"));
     service.cancel();
     pump.until([&] { return !service.busy(); });
-    const bool committed = service.snapshot().status == files::CreateStatus::Succeeded;
+    const bool committed = service.snapshot().status == luciole::CreateStatus::Succeeded;
     TEST_CHECK(
-        (committed || service.snapshot().status == files::CreateStatus::Cancelled)
+        (committed || service.snapshot().status == luciole::CreateStatus::Cancelled)
         && fs::exists(fixture.root / "maybe-created") == committed
     );
     for (const auto& parent :
-         {location(fixture.root / "missing"), files::Location::fromUri("sftp://example.invalid/folder")}) {
-      TEST_CHECK(service.prepare(parent, files::CreateKind::Folder));
+         {location(fixture.root / "missing"), luciole::Location::fromUri("sftp://example.invalid/folder")}) {
+      TEST_CHECK(service.prepare(parent, luciole::CreateKind::Folder));
       pump.until([&] { return !service.busy(); });
-      TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && !service.canCreate());
+      TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Error && !service.canCreate());
     }
     if (::geteuid() != 0) {
       pump.prepare(service, fixture.root);
       fs::permissions(fixture.root, fs::perms::owner_read | fs::perms::owner_exec);
       pump.create(service, "denied");
       fs::permissions(fixture.root, fs::perms::owner_all);
-      TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && !fs::exists(fixture.root / "denied"));
+      TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Error && !fs::exists(fixture.root / "denied"));
     }
     struct MaskGuard {
       mode_t previous = ::umask(0027);
@@ -532,12 +537,12 @@ namespace {
   }
   void createsEmptyFiles(Pump& pump) {
     Fixture fixture;
-    files::CreateService service;
-    pump.prepare(service, fixture.root, files::CreateKind::EmptyFile);
+    luciole::CreateService service;
+    pump.prepare(service, fixture.root, luciole::CreateKind::EmptyFile);
     pump.create(service, "Document 文.txt");
     TEST_CHECK(
-        service.snapshot().status == files::CreateStatus::Succeeded
-        && service.snapshot().kind == files::CreateKind::EmptyFile
+        service.snapshot().status == luciole::CreateStatus::Succeeded
+        && service.snapshot().kind == luciole::CreateKind::EmptyFile
         && service.snapshot().destination == location(fixture.root / "Document 文.txt")
         && fs::is_regular_file(fixture.root / "Document 文.txt")
         && fs::file_size(fixture.root / "Document 文.txt") == 0
@@ -548,10 +553,10 @@ namespace {
     fs::create_symlink("missing-target", fixture.root / "broken-link");
     fs::create_symlink("protected.txt", fixture.root / "link");
     TEST_CHECK(::mkfifo((fixture.root / "pipe").c_str(), 0600) == 0);
-    pump.prepare(service, fixture.root, files::CreateKind::EmptyFile);
+    pump.prepare(service, fixture.root, luciole::CreateKind::EmptyFile);
     for (const auto* name : {"protected.txt", "directory", "broken-link", "link", "pipe"}) {
       pump.create(service, name);
-      TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && service.canCreate());
+      TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Error && service.canCreate());
     }
     std::ifstream content(fixture.root / "protected.txt");
     const std::string bytes{std::istreambuf_iterator<char>(content), {}};
@@ -566,66 +571,66 @@ namespace {
     TEST_CHECK(!service.create("../escaped"));
     pump.create(service, "retry.txt");
     TEST_CHECK(
-        service.snapshot().status == files::CreateStatus::Succeeded && fs::file_size(fixture.root / "retry.txt") == 0
+        service.snapshot().status == luciole::CreateStatus::Succeeded && fs::file_size(fixture.root / "retry.txt") == 0
     );
-    files::CreateService other;
-    pump.prepare(service, fixture.root, files::CreateKind::EmptyFile);
-    pump.prepare(other, fixture.root, files::CreateKind::EmptyFile);
+    luciole::CreateService other;
+    pump.prepare(service, fixture.root, luciole::CreateKind::EmptyFile);
+    pump.prepare(other, fixture.root, luciole::CreateKind::EmptyFile);
     TEST_CHECK(service.create("racing.txt") && other.create("racing.txt"));
     pump.until([&] { return !service.busy() && !other.busy(); });
     TEST_CHECK(
-        (service.snapshot().status == files::CreateStatus::Succeeded)
-            != (other.snapshot().status == files::CreateStatus::Succeeded)
+        (service.snapshot().status == luciole::CreateStatus::Succeeded)
+            != (other.snapshot().status == luciole::CreateStatus::Succeeded)
         && fs::file_size(fixture.root / "racing.txt") == 0
     );
-    pump.prepare(service, fixture.root, files::CreateKind::EmptyFile);
+    pump.prepare(service, fixture.root, luciole::CreateKind::EmptyFile);
     TEST_CHECK(service.create("cancelled.txt"));
     service.cancel();
     pump.until([&] { return !service.busy(); });
-    const bool committed = service.snapshot().status == files::CreateStatus::Succeeded;
+    const bool committed = service.snapshot().status == luciole::CreateStatus::Succeeded;
     TEST_CHECK(
-        (committed || service.snapshot().status == files::CreateStatus::Cancelled)
+        (committed || service.snapshot().status == luciole::CreateStatus::Cancelled)
         && fs::exists(fixture.root / "cancelled.txt") == committed
     );
     const auto raw = std::string("raw-") + static_cast<char>(0xff);
     fs::create_directory(fixture.root / raw);
-    pump.prepare(service, fixture.root / raw, files::CreateKind::EmptyFile);
+    pump.prepare(service, fixture.root / raw, luciole::CreateKind::EmptyFile);
     pump.create(service, "child.txt");
     TEST_CHECK(fs::is_regular_file(fixture.root / raw / "child.txt"));
     struct MaskGuard {
       mode_t previous = ::umask(0027);
       ~MaskGuard() { ::umask(previous); }
     } guard;
-    pump.prepare(service, fixture.root, files::CreateKind::EmptyFile);
+    pump.prepare(service, fixture.root, luciole::CreateKind::EmptyFile);
     pump.create(service, "mode.txt");
     struct stat info{};
     TEST_CHECK(::stat((fixture.root / "mode.txt").c_str(), &info) == 0 && (info.st_mode & 0777) == 0640);
     if (::geteuid() != 0) {
-      pump.prepare(service, fixture.root, files::CreateKind::EmptyFile);
+      pump.prepare(service, fixture.root, luciole::CreateKind::EmptyFile);
       fs::permissions(fixture.root, fs::perms::owner_read | fs::perms::owner_exec);
       pump.create(service, "denied.txt");
       fs::permissions(fixture.root, fs::perms::owner_all);
-      TEST_CHECK(service.snapshot().status == files::CreateStatus::Error && !fs::exists(fixture.root / "denied.txt"));
+      TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Error && !fs::exists(fixture.root / "denied.txt"));
     }
   }
   void monitoredCreation(Pump& pump) {
     Fixture fixture;
-    files::DirectoryModel model;
-    files::DirectorySession session;
+    luciole::DirectoryModel model;
+    luciole::DirectorySession session;
     session.setChangedCallback([&] { model.applySnapshot(session.snapshot()); });
     session.open(location(fixture.root));
-    pump.until([&] { return model.snapshot().status == files::DirectoryStatus::Ready; });
-    files::CreateService service;
+    pump.until([&] { return model.snapshot().status == luciole::DirectoryStatus::Ready; });
+    luciole::CreateService service;
     pump.prepare(service, fixture.root);
     pump.create(service, "created");
     pump.until([&] { return model.rows().size() == 1; });
     const auto id = model.rows().front();
     TEST_CHECK(
         model.entry(id)->location == service.snapshot().destination
-        && model.entry(id)->type == files::FileType::Directory
+        && model.entry(id)->type == luciole::FileType::Directory
         && model.select(id)
     );
-    pump.prepare(service, fixture.root, files::CreateKind::EmptyFile);
+    pump.prepare(service, fixture.root, luciole::CreateKind::EmptyFile);
     pump.create(service, "created.txt");
     pump.until([&] { return model.rows().size() == 2; });
     const auto file = std::ranges::find_if(model.rows(), [&](auto id) {
@@ -633,7 +638,7 @@ namespace {
     });
     TEST_CHECK(
         file != model.rows().end()
-        && model.entry(*file)->type == files::FileType::Regular
+        && model.entry(*file)->type == luciole::FileType::Regular
         && model.entry(*file)->size == 0
         && model.select(*file)
     );
@@ -657,8 +662,8 @@ int main() {
     createsFolders(pump);
     createsEmptyFiles(pump);
     collisionsAndRetry(pump);
-    staleDestinations(pump, files::CreateKind::Folder);
-    staleDestinations(pump, files::CreateKind::EmptyFile);
+    staleDestinations(pump, luciole::CreateKind::Folder);
+    staleDestinations(pump, luciole::CreateKind::EmptyFile);
     validationCancellationAndPermissions(pump);
     monitoredCreation(pump);
     std::println("create-service tests passed");

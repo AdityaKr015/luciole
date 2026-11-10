@@ -1,10 +1,10 @@
 # Contributing
 
-noctalia-files shares its conventions with [noctalia](https://github.com/noctalia-dev/noctalia) and umbriel: same team, same style. If in doubt, match what noctalia does.
+luciole shares its conventions with [noctalia](https://github.com/noctalia-dev/noctalia) and umbriel: same team, same style. If in doubt, match what noctalia does.
 
 ## Documentation
 
-[docs/user/](docs/user/index.md) contains guides for using Files. [docs/design/](docs/design/README.md) documents subsystem ownership and implementation contracts. Update relevant user guides with behavior, configuration and shortcut changes; update design notes with architectural or contract changes in the same increment. Keep code references and index links accurate.
+[docs/user/](docs/user/index.md) contains guides for using Luciole. [docs/design/](docs/design/README.md) documents subsystem ownership and implementation contracts. Update relevant user guides with behavior, configuration and shortcut changes; update design notes with architectural or contract changes in the same increment. Keep code references and index links accurate.
 
 [PACKAGING.md](PACKAGING.md) remains the dependency/install guide and must change with packaging requirements. [PLAN.md](PLAN.md) contains unfinished work, not descriptions of delivered features. Documentation is ordinary Markdown checked by `just lint-prose`; no site generator or documentation formatter is needed.
 

@@ -86,7 +86,7 @@ let
   svgWithGlycin = librsvg.override { gdk-pixbuf = pixbufWithGlycin; };
 in
 stdenv.mkDerivation (finalAttrs: {
-  pname = "noctalia-files";
+  pname = "luciole";
   version = lib.fileContents ../VERSION;
 
   src = lib.cleanSourceWith {
@@ -160,7 +160,7 @@ stdenv.mkDerivation (finalAttrs: {
 
   mesonBuildType = "release";
   postFixup = ''
-    wrapProgram "$out/bin/noctalia-files" \
+    wrapProgram "$out/bin/luciole" \
       --prefix PATH : "${
         lib.makeBinPath [
           xdg-terminal-exec
@@ -190,8 +190,8 @@ stdenv.mkDerivation (finalAttrs: {
   passthru.glycinLoaders = glycin-loaders;
 
   meta = {
-    description = "A native Wayland file manager using Noctalia rendering and controls (in development)";
-    homepage = "https://github.com/noctalia-dev/noctalia-files";
+    description = "Luciole, a native Wayland file manager using Noctalia rendering and controls (in development)";
+    homepage = "https://github.com/noctalia-dev/luciole";
     license = lib.licenses.mit;
     platforms = lib.platforms.linux;
     mainProgram = finalAttrs.pname;

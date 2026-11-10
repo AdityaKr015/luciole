@@ -78,7 +78,7 @@ namespace {
 
 } // namespace
 
-int files::runApplication(const std::optional<std::string>& initialLocation, bool fileManagerActivation) {
+int luciole::runApplication(const std::optional<std::string>& initialLocation, bool fileManagerActivation) {
   initLogLevelFromEnvironment();
   initializeKeys();
   Input::setValidateKeyMatcher([](std::uint32_t sym, std::uint32_t modifiers) {
@@ -93,7 +93,7 @@ int files::runApplication(const std::optional<std::string>& initialLocation, boo
     if (!config.reload()) {
       throw std::runtime_error(config.issues().front().format());
     }
-    files::initializeLibrary();
+    luciole::initializeLibrary();
     GlibPollSource glib;
     TextInputService textInput;
     WaylandConnection connection;
@@ -101,7 +101,7 @@ int files::runApplication(const std::optional<std::string>& initialLocation, boo
       throw std::runtime_error("could not connect to Wayland: " + connection.describeDisplayError());
     }
     connection.setTextInputService(&textInput);
-    auto& desktop = connection.extension<files::DesktopIntegration>();
+    auto& desktop = connection.extension<luciole::DesktopIntegration>();
     WaylandTextClipboard clipboard(
         connection.display(), desktop.dataDeviceManager(), connection.seat(),
         [&connection] { return connection.lastKeyboardSurface() ? connection.lastInputSerial() : 0; },
@@ -120,8 +120,8 @@ int files::runApplication(const std::optional<std::string>& initialLocation, boo
     if (!fileManagerActivation) {
       application.start(initialLocation);
     }
-    files::FileManagerService fileManager(
-        [&application](const files::FileManagerRequest& request) { application.show(request); }, fileManagerActivation
+    luciole::FileManagerService fileManager(
+        [&application](const luciole::FileManagerRequest& request) { application.show(request); }, fileManagerActivation
     );
     connection.setPointerEventCallback([&application, &desktop](const PointerEvent& event) {
       desktop.pointer(event);
@@ -165,7 +165,7 @@ int files::runApplication(const std::optional<std::string>& initialLocation, boo
     textInput.cleanup();
     connection.setTextInputService(nullptr);
   } catch (const std::exception& error) {
-    std::println(stderr, "noctalia-files: {}", error.what());
+    std::println(stderr, "luciole: {}", error.what());
     result = EXIT_FAILURE;
   }
   std::signal(SIGTERM, previousTerm);

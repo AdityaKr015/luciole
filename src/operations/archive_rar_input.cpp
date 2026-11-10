@@ -5,7 +5,7 @@
 #include <cstdio>
 
 namespace {
-  using namespace files;
+  using namespace luciole;
   [[noreturn]] void invalid() {
     throwFileError(FileErrorKind::InvalidArgument, "RAR archive has an invalid or truncated header.");
   }
@@ -63,7 +63,7 @@ namespace {
   }
 } // namespace
 
-files::archive_work::RarInput files::archive_work::validateRarInput(Input& input) {
+luciole::archive_work::RarInput luciole::archive_work::validateRarInput(Input& input) {
   if (input.split()) {
     return RarInput::None;
   }
@@ -116,7 +116,7 @@ namespace {
     }
     return value ^ 0xFFFFFFFFU;
   }
-  std::vector<unsigned char> rar5Header(files::archive_work::Input& input, std::size_t budget) {
+  std::vector<unsigned char> rar5Header(luciole::archive_work::Input& input, std::size_t budget) {
     std::array<unsigned char, 14> prefix{};
     if (input.read(std::span(reinterpret_cast<char*>(prefix.data()), 4)) != 4) {
       invalid();
@@ -155,7 +155,7 @@ namespace {
   }
 } // namespace
 
-void files::archive_work::validateRar5End(Input& input, std::int64_t offset, Work& work) {
+void luciole::archive_work::validateRar5End(Input& input, std::int64_t offset, Work& work) {
   input.seek(offset, SEEK_SET);
   std::size_t metadata = 0;
   for (std::size_t count = 0; count < work.limits.maxEntries; ++count) {
@@ -189,7 +189,7 @@ void files::archive_work::validateRar5End(Input& input, std::int64_t offset, Wor
   throwFileError(FileErrorKind::Unsupported, "RAR has too many trailing headers.");
 }
 
-void files::archive_work::verifyRar4Stored(Input& input, std::int64_t offset, Work& work) {
+void luciole::archive_work::verifyRar4Stored(Input& input, std::int64_t offset, Work& work) {
   const auto saved = input.seek(0, SEEK_CUR);
   input.seek(offset, SEEK_SET);
   std::size_t metadata = 0;

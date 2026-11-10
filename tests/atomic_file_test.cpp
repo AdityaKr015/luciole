@@ -16,12 +16,12 @@
 
 namespace {
   namespace fs = std::filesystem;
-  using files::AtomicWriteState;
+  using luciole::AtomicWriteState;
 
   struct Fixture {
     fs::path directory;
     Fixture() {
-      auto pattern = (fs::temp_directory_path() / "noctalia-atomic-test-XXXXXX").native();
+      auto pattern = (fs::temp_directory_path() / "luciole-atomic-test-XXXXXX").native();
       const char* created = ::mkdtemp(pattern.data());
       TEST_CHECK(created != nullptr);
       directory = created;
@@ -45,8 +45,8 @@ namespace {
     TEST_CHECK(output.good());
   }
 
-  files::AtomicWriteResult save(const fs::path& path, const std::string& text) {
-    return files::updateTextFileAtomic(
+  luciole::AtomicWriteResult save(const fs::path& path, const std::string& text) {
+    return luciole::updateTextFileAtomic(
         path, [&](const auto&) -> std::expected<std::optional<std::string>, std::string> { return text; }
     );
   }
@@ -111,7 +111,7 @@ namespace {
     TEST_CHECK(::chmod(path.c_str(), 0444) == 0);
     TEST_CHECK(save(path, "candidate").state == AtomicWriteState::NotCommitted && read(path) == "old");
     ::chmod(path.c_str(), 0600);
-    const auto conflict = files::updateTextFileAtomic(
+    const auto conflict = luciole::updateTextFileAtomic(
         path, [&](const auto& current) -> std::expected<std::optional<std::string>, std::string> {
           TEST_CHECK(current == "old");
           plainWrite(path, "external edit");
@@ -120,7 +120,7 @@ namespace {
     );
     TEST_CHECK(conflict.state == AtomicWriteState::NotCommitted && read(path) == "external edit");
     fs::remove(path);
-    const auto appeared = files::updateTextFileAtomic(
+    const auto appeared = luciole::updateTextFileAtomic(
         path, [&](const auto& current) -> std::expected<std::optional<std::string>, std::string> {
           TEST_CHECK(!current);
           plainWrite(path, "external new file");

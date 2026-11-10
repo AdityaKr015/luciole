@@ -16,7 +16,7 @@ namespace {
   }
 } // namespace
 
-files::GioPtr<GFile> files::gioFile(const Location& location) {
+luciole::GioPtr<GFile> luciole::gioFile(const Location& location) {
   const auto& uri = location.uri();
   if (trashUri(uri)) {
     // Keep GVfs's interned Trash mount alive across UI/worker handle churn.
@@ -28,14 +28,14 @@ files::GioPtr<GFile> files::gioFile(const Location& location) {
   return GioPtr<GFile>(g_file_new_for_uri(uri.c_str()));
 }
 
-files::Location files::locationFromFile(GFile* file) {
+luciole::Location luciole::locationFromFile(GFile* file) {
   const GString uri(g_file_get_uri(file));
   return Location::fromUri(uri.get());
 }
 
-files::Location::Location(std::string uri) : m_uri(std::move(uri)) {}
+luciole::Location::Location(std::string uri) : m_uri(std::move(uri)) {}
 
-files::Location files::Location::fromUri(const std::string& uri) {
+luciole::Location luciole::Location::fromUri(const std::string& uri) {
   rejectNul(uri);
   const GString scheme(g_uri_parse_scheme(uri.c_str()));
   if (!scheme || !g_uri_is_valid(uri.c_str(), G_URI_FLAGS_ENCODED, nullptr)) {
@@ -46,7 +46,7 @@ files::Location files::Location::fromUri(const std::string& uri) {
   return Location(canonical.get());
 }
 
-files::Location files::Location::fromPath(const std::string& absolutePath) {
+luciole::Location luciole::Location::fromPath(const std::string& absolutePath) {
   rejectNul(absolutePath);
   if (!g_path_is_absolute(absolutePath.c_str())) {
     throw std::invalid_argument("expected an absolute native path");
@@ -56,7 +56,7 @@ files::Location files::Location::fromPath(const std::string& absolutePath) {
   return Location(uri.get());
 }
 
-std::optional<std::string> files::Location::nativePath() const {
+std::optional<std::string> luciole::Location::nativePath() const {
   if (isTrash()) {
     return std::nullopt;
   }
@@ -64,37 +64,37 @@ std::optional<std::string> files::Location::nativePath() const {
   return path ? std::optional<std::string>(path.get()) : std::nullopt;
 }
 
-files::Location files::Location::trash() { return Location("trash:///"); }
-bool files::Location::isTrash() const { return trashUri(m_uri); }
-bool files::Location::isNative() const { return g_file_is_native(gioFile(*this).get()) != FALSE; }
+luciole::Location luciole::Location::trash() { return Location("trash:///"); }
+bool luciole::Location::isTrash() const { return trashUri(m_uri); }
+bool luciole::Location::isNative() const { return g_file_is_native(gioFile(*this).get()) != FALSE; }
 
-std::optional<files::Location> files::Location::parent() const {
+std::optional<luciole::Location> luciole::Location::parent() const {
   const GioPtr<GFile> parent(g_file_get_parent(gioFile(*this).get()));
   return parent ? std::optional(locationFromFile(parent.get())) : std::nullopt;
 }
 
-files::Location files::Location::child(const std::string& name) const {
+luciole::Location luciole::Location::child(const std::string& name) const {
   rejectNul(name);
   const GioPtr<GFile> child(g_file_get_child(gioFile(*this).get(), name.c_str()));
   return locationFromFile(child.get());
 }
 
-files::Location files::Location::resolve(const std::string& relativePath) const {
+luciole::Location luciole::Location::resolve(const std::string& relativePath) const {
   rejectNul(relativePath);
   const GioPtr<GFile> file(g_file_resolve_relative_path(gioFile(*this).get(), relativePath.c_str()));
   return locationFromFile(file.get());
 }
 
-std::optional<std::string> files::Location::basename() const {
+std::optional<std::string> luciole::Location::basename() const {
   const GString name(g_file_get_basename(gioFile(*this).get()));
   return name ? std::optional<std::string>(name.get()) : std::nullopt;
 }
 
-std::optional<std::string> files::Location::displayName() const {
+std::optional<std::string> luciole::Location::displayName() const {
   const auto name = basename();
   return name ? std::optional(filenameDisplayText(*name)) : std::nullopt;
 }
 
-bool files::Location::isInside(const Location& ancestor) const {
+bool luciole::Location::isInside(const Location& ancestor) const {
   return g_file_has_prefix(gioFile(*this).get(), gioFile(ancestor).get()) != FALSE;
 }

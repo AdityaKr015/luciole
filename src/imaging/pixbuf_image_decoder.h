@@ -1,5 +1,5 @@
 #pragma once
 
-namespace files {
+namespace luciole {
   void installPixbufImageDecoder();
 }

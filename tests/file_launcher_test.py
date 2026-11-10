@@ -11,7 +11,7 @@ import time
 
 
 def run_case(binary, mode, names):
-    with tempfile.TemporaryDirectory(prefix="noctalia-launch-test-") as directory:
+    with tempfile.TemporaryDirectory(prefix="luciole-launch-test-") as directory:
         root = Path(directory)
         for name in ("home", "config", "data/applications", "cache", "state", "runtime"):
             (root / name).mkdir(parents=True)
@@ -114,7 +114,7 @@ def run_case(binary, mode, names):
             GIO_USE_VFS="local",
             GIO_EXTRA_MODULES="",
             GIO_USE_PORTALS="0",
-            NOCTALIA_FILES_LOG_LEVEL="debug",
+            LUCIOLE_LOG_LEVEL="debug",
             G_DEBUG="fatal-warnings",
             XDG_ACTIVATION_TOKEN="inherited-stale",
             DESKTOP_STARTUP_ID="inherited-startup",

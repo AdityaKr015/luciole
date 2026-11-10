@@ -11,11 +11,11 @@
 #include <optional>
 #include <utility>
 
-namespace files {
+namespace luciole {
   class FileViewAdapter;
   class ViewPreferenceWriter;
   struct BrowserSettings;
-} // namespace files
+} // namespace luciole
 
 struct KeyboardEvent;
 struct PointerEvent;
@@ -34,23 +34,23 @@ class Separator;
 class DetailsHeaderController {
 public:
   DetailsHeaderController(
-      PageContext& page, files::ViewPreferenceWriter& preferences, files::FileViewAdapter& listAdapter,
-      files::FileViewAdapter& gridAdapter, MenuController& menus
+      PageContext& page, luciole::ViewPreferenceWriter& preferences, luciole::FileViewAdapter& listAdapter,
+      luciole::FileViewAdapter& gridAdapter, MenuController& menus
   );
 
   // Takes the column settings of a new page.
-  void load(const files::BrowserSettings& settings);
+  void load(const luciole::BrowserSettings& settings);
   // Takes the column settings that changed; `force` takes them all.
-  void applySettings(const files::BrowserSettings& before, const files::BrowserSettings& settings, bool force);
+  void applySettings(const luciole::BrowserSettings& before, const luciole::BrowserSettings& settings, bool force);
 
-  const files::DetailsColumnVisibility& columnVisibility() const { return m_columnVisibility; }
-  const files::DetailsColumnOrder& columnOrder() const { return m_columnOrder; }
-  const files::DetailsColumnWidths& columnWidths() const { return m_columnWidths; }
+  const luciole::DetailsColumnVisibility& columnVisibility() const { return m_columnVisibility; }
+  const luciole::DetailsColumnOrder& columnOrder() const { return m_columnOrder; }
+  const luciole::DetailsColumnWidths& columnWidths() const { return m_columnWidths; }
   // The column order with `column` moved one place in `direction`; empty when it cannot move.
-  std::optional<files::DetailsColumnOrder> movedColumnOrder(files::DetailsColumn column, int direction) const;
-  void setDetailsColumnVisibility(files::DetailsColumnVisibility visibility);
-  void setDetailsColumnOrder(files::DetailsColumnOrder order);
-  void setDetailsColumnWidths(files::DetailsColumnWidths widths);
+  std::optional<luciole::DetailsColumnOrder> movedColumnOrder(luciole::DetailsColumn column, int direction) const;
+  void setDetailsColumnVisibility(luciole::DetailsColumnVisibility visibility);
+  void setDetailsColumnOrder(luciole::DetailsColumnOrder order);
+  void setDetailsColumnWidths(luciole::DetailsColumnWidths widths);
 
   // Horizontal scroll offset of the details columns.
   float offset() const { return m_detailsOffset; }
@@ -69,7 +69,7 @@ public:
   // Focus hook of the window dispatcher (via BrowserPage::focusChanged()): scrolls a focused header into view.
   void focusChanged(InputArea* focused);
   // BrowserPage::syncBrowser(): sort indicators, header visibility and the list adapter's columns.
-  void sync(const files::SortOptions& sort);
+  void sync(const luciole::SortOptions& sort);
   // Layout hooks in BrowserPage::prepareFrame(), in this order.
   // Moves the header buttons into the saved order; true when it changed.
   bool applyOrder();
@@ -100,26 +100,26 @@ private:
     std::size_t index;
     float pressX;
     float width;
-    files::DetailsColumnWidths before;
+    luciole::DetailsColumnWidths before;
     float offset;
     int nameWidth;
   };
   struct ColumnDrag {
-    files::DetailsColumn source;
+    luciole::DetailsColumn source;
     float pressX;
     float pressY;
     std::uint32_t cursor;
     bool active = false;
   };
   struct ColumnDrop {
-    files::DetailsColumnOrder order;
+    luciole::DetailsColumnOrder order;
     LayoutRect marker;
   };
 
   Button* widthHeader(std::size_t index) const;
   float headerWidth(std::size_t index) const;
-  Button* columnHeader(files::DetailsColumn column) const;
-  void sortBy(files::SortField field);
+  Button* columnHeader(luciole::DetailsColumn column) const;
+  void sortBy(luciole::SortField field);
   void cancelColumnResize();
   void scrollDetails(float offset);
   std::optional<ColumnDrop> columnDropAt(float x, float y) const;
@@ -128,18 +128,18 @@ private:
   void finishColumnDrag(float x, float y);
 
   PageContext& m_page;
-  files::ViewPreferenceWriter& m_preferences;
-  files::FileViewAdapter& m_listAdapter;
-  files::FileViewAdapter& m_gridAdapter;
+  luciole::ViewPreferenceWriter& m_preferences;
+  luciole::FileViewAdapter& m_listAdapter;
+  luciole::FileViewAdapter& m_gridAdapter;
   MenuController& m_menus;
   Flex* m_listHeader = nullptr;
   Button* m_nameHeader = nullptr;
-  std::array<Button*, files::kDetailsColumnCount> m_headers{};
-  files::DetailsColumns m_detailsColumns;
-  files::DetailsColumnWidths m_columnWidths = files::kDefaultDetailsColumnWidths;
+  std::array<Button*, luciole::kDetailsColumnCount> m_headers{};
+  luciole::DetailsColumns m_detailsColumns;
+  luciole::DetailsColumnWidths m_columnWidths = luciole::kDefaultDetailsColumnWidths;
   std::optional<ColumnResize> m_columnResize;
-  std::array<InputArea*, files::kDetailsColumnCount + 1> m_columnResizeHandles{};
-  std::array<Separator*, files::kDetailsColumnCount + 1> m_columnResizeLines{};
+  std::array<InputArea*, luciole::kDetailsColumnCount + 1> m_columnResizeHandles{};
+  std::array<Separator*, luciole::kDetailsColumnCount + 1> m_columnResizeLines{};
   Flex* m_detailsHeaderViewport = nullptr;
   Box* m_detailsScrollHost = nullptr;
   Scrollbar* m_detailsScrollbar = nullptr;
@@ -147,9 +147,9 @@ private:
   float m_viewport = 0.0F;
   Button* m_revealDetailsHeader = nullptr;
   InputArea* m_lastDetailsFocus = nullptr;
-  files::DetailsColumnVisibility m_columnVisibility;
-  files::DetailsColumnOrder m_columnOrder = files::kDefaultDetailsColumnOrder;
-  files::DetailsColumnOrder m_appliedColumnOrder = files::kDefaultDetailsColumnOrder;
+  luciole::DetailsColumnVisibility m_columnVisibility;
+  luciole::DetailsColumnOrder m_columnOrder = luciole::kDefaultDetailsColumnOrder;
+  luciole::DetailsColumnOrder m_appliedColumnOrder = luciole::kDefaultDetailsColumnOrder;
   std::optional<ColumnDrag> m_columnDrag;
   bool m_columnHoverDirty = false;
   Box* m_columnDropLine = nullptr;

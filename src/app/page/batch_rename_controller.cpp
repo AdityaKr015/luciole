@@ -24,26 +24,26 @@
 
 BatchRenameController::BatchRenameController(PageContext& page) : m_page(page) {}
 
-void BatchRenameController::open(const std::vector<files::DirectoryEntry>& targets) {
-  if (!m_page.actionState(files::BrowserAction::Rename, m_page.requestFor(targets)).enabled
+void BatchRenameController::open(const std::vector<luciole::DirectoryEntry>& targets) {
+  if (!m_page.actionState(luciole::BrowserAction::Rename, m_page.requestFor(targets)).enabled
       || !m_page.targetsCurrent(targets)) {
     m_page.actionError("This selection cannot be renamed right now.");
     return;
   }
   auto root = std::make_unique<BatchRenameDialog>(
       targets.size(),
-      [this](files::BatchRenameOptions options) {
+      [this](luciole::BatchRenameOptions options) {
         if (m_job) {
-          (void)m_job->service<files::BatchRenameService>().preview(std::move(options));
+          (void)m_job->service<luciole::BatchRenameService>().preview(std::move(options));
         }
       },
       [this] {
-        if (m_job && m_job->service<files::BatchRenameService>().apply()) {
+        if (m_job && m_job->service<luciole::BatchRenameService>().apply()) {
           m_page.jobs().follow(*m_job);
         }
       },
       [this] {
-        if (m_job && m_job->service<files::BatchRenameService>().applying()) {
+        if (m_job && m_job->service<luciole::BatchRenameService>().applying()) {
           m_job->cancel();
         } else {
           m_page.dismissMenu();
@@ -52,7 +52,7 @@ void BatchRenameController::open(const std::vector<files::DirectoryEntry>& targe
       [this] { m_page.dismissMenu(); },
       [this] {
         if (m_job) {
-          m_page.clipboard().setClipboardText(m_job->service<files::BatchRenameService>().snapshot().report);
+          m_page.clipboard().setClipboardText(m_job->service<luciole::BatchRenameService>().snapshot().report);
         }
       },
       [this] {
@@ -75,7 +75,7 @@ void BatchRenameController::open(const std::vector<files::DirectoryEntry>& targe
     m_page.activeDialog().bind(ActiveDialog::Kind::BatchRename, [this] {
       if (m_dialog) {
         // Renaming goes on for the page that takes the job over once this page left its window.
-        if (m_page.jobs().attached() || !m_job->service<files::BatchRenameService>().applying()) {
+        if (m_page.jobs().attached() || !m_job->service<luciole::BatchRenameService>().applying()) {
           m_job->cancel();
         }
         m_dialog = nullptr;
@@ -93,8 +93,8 @@ void BatchRenameController::open(const std::vector<files::DirectoryEntry>& targe
     });
     m_page.menuDispatcher().setFocus(dialog->firstInput()->inputArea());
     dialog->firstInput()->selectAll();
-    m_job = m_page.jobs().create<files::BatchRenameService>(JobScope::Page);
-    if (!m_job->service<files::BatchRenameService>().prepare(targets)) {
+    m_job = m_page.jobs().create<luciole::BatchRenameService>(JobScope::Page);
+    if (!m_job->service<luciole::BatchRenameService>().prepare(targets)) {
       m_page.actionError("Another rename is still finishing.");
       m_page.dismissMenu();
     }
@@ -102,7 +102,7 @@ void BatchRenameController::open(const std::vector<files::DirectoryEntry>& targe
 }
 
 void BatchRenameController::progressTick() {
-  m_dirty = m_job && m_job->service<files::BatchRenameService>().applying();
+  m_dirty = m_job && m_job->service<luciole::BatchRenameService>().applying();
 }
 
 void BatchRenameController::changed(OperationJob& job) {
@@ -110,7 +110,7 @@ void BatchRenameController::changed(OperationJob& job) {
     m_dirty = true;
   } else if (!job.running() && job.takeResult()) {
     // A job whose dialog closed.
-    report(job.service<files::BatchRenameService>().snapshot());
+    report(job.service<luciole::BatchRenameService>().snapshot());
   }
 }
 
@@ -121,26 +121,27 @@ void BatchRenameController::onFrame() {
 }
 
 void BatchRenameController::sync() {
-  const auto& service = m_job->service<files::BatchRenameService>();
+  const auto& service = m_job->service<luciole::BatchRenameService>();
   const auto& snapshot = service.snapshot();
   if (m_dialog) {
     m_dialog->sync(snapshot, service.completed(), m_page.clipboard().available());
     m_page.menuSurface()->requestLayout();
   }
-  if (snapshot.phase == files::BatchRenamePhase::Finished && !std::exchange(m_reported, true)) {
+  if (snapshot.phase == luciole::BatchRenamePhase::Finished && !std::exchange(m_reported, true)) {
     report(snapshot);
   }
 }
 
-void BatchRenameController::report(const files::BatchRenameSnapshot& snapshot) {
-  if (snapshot.phase == files::BatchRenamePhase::Finished) {
-    const auto count =
-        std::ranges::count(*snapshot.results, files::BatchRenameOutcome::Renamed, &files::BatchRenameResult::outcome);
+void BatchRenameController::report(const luciole::BatchRenameSnapshot& snapshot) {
+  if (snapshot.phase == luciole::BatchRenamePhase::Finished) {
+    const auto count = std::ranges::count(
+        *snapshot.results, luciole::BatchRenameOutcome::Renamed, &luciole::BatchRenameResult::outcome
+    );
     std::string message = std::format("{} items renamed.", count);
     const auto problem =
         std::ranges::find_if(*snapshot.results, [](const auto& result) { return result.error.has_value(); });
     if (problem != snapshot.results->end()) {
-      message += " " + files::fileErrorText(problem->error);
+      message += " " + luciole::fileErrorText(problem->error);
     }
     m_page.actionError(std::move(message));
     auto& browser = m_page.browser();
@@ -154,8 +155,8 @@ void BatchRenameController::report(const files::BatchRenameSnapshot& snapshot) {
       browser.refresh();
       m_revealContext = browser.contextSerial();
     }
-  } else if (snapshot.phase == files::BatchRenamePhase::Error) {
-    m_page.actionError("Could not rename: " + files::fileErrorText(snapshot.error));
+  } else if (snapshot.phase == luciole::BatchRenamePhase::Error) {
+    m_page.actionError("Could not rename: " + luciole::fileErrorText(snapshot.error));
   }
 }
 
@@ -180,13 +181,13 @@ void BatchRenameController::syncTooltip(Renderer& renderer) {
 void BatchRenameController::revealRenamed(VirtualGridView& list) {
   auto& browser = m_page.browser();
   const auto& model = browser.model();
-  if (!m_reveal.empty() && model.snapshot().status != files::DirectoryStatus::Loading) {
+  if (!m_reveal.empty() && model.snapshot().status != luciole::DirectoryStatus::Loading) {
     if (m_revealContext == browser.contextSerial()) {
       std::unordered_set<std::string> uris;
       for (const auto& target : m_reveal) {
         uris.insert(target.uri());
       }
-      std::vector<files::EntryId> ids;
+      std::vector<luciole::EntryId> ids;
       for (const auto id : model.rows()) {
         if (const auto* entry = model.entry(id); entry && uris.contains(entry->location.uri())) {
           ids.push_back(id);

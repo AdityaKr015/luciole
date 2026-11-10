@@ -4,7 +4,7 @@
 
 #include <span>
 
-namespace files::archive_work {
+namespace luciole::archive_work {
   // One seekable compressed input, optionally assembled from numbered ZIP parts.
   // Descriptors and all discovery/validation stay on the archive worker.
   class Input {
@@ -31,4 +31,4 @@ namespace files::archive_work {
     std::vector<Part> m_parts;
     std::uint64_t m_size = 0, m_position = 0, m_readBytes = 0;
   };
-} // namespace files::archive_work
+} // namespace luciole::archive_work

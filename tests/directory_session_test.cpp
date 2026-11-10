@@ -16,16 +16,16 @@
 
 namespace {
   using namespace std::chrono_literals;
-  using files::DirectorySession;
-  using files::DirectoryStatus;
-  using files::Location;
+  using luciole::DirectorySession;
+  using luciole::DirectoryStatus;
+  using luciole::Location;
   namespace fs = std::filesystem;
 
   struct Fixture {
     fs::path path;
     Fixture() {
       GError* error = nullptr;
-      const files::GString directory(g_dir_make_tmp("noctalia-files-test-XXXXXX", &error));
+      const luciole::GString directory(g_dir_make_tmp("luciole-test-XXXXXX", &error));
       if (!directory) {
         const std::string message(error->message);
         g_error_free(error);
@@ -71,15 +71,15 @@ namespace {
     GlibPollSource m_source;
   };
 
-  const files::DirectoryEntry& entry(const DirectorySession& session, const std::string& name) {
+  const luciole::DirectoryEntry& entry(const DirectorySession& session, const std::string& name) {
     const auto& entries = session.snapshot().entries;
-    const auto it = std::ranges::find(entries, name, &files::DirectoryEntry::name);
+    const auto it = std::ranges::find(entries, name, &luciole::DirectoryEntry::name);
     TEST_CHECK(it != entries.end());
     return *it;
   }
 
   bool hasEntry(const DirectorySession& session, const std::string& name) {
-    return std::ranges::find(session.snapshot().entries, name, &files::DirectoryEntry::name)
+    return std::ranges::find(session.snapshot().entries, name, &luciole::DirectoryEntry::name)
         != session.snapshot().entries.end();
   }
 
@@ -130,7 +130,7 @@ namespace {
     TEST_CHECK(g_utf8_validate(entry(session, unusual).displayName.c_str(), -1, nullptr));
     TEST_CHECK(entry(session, ".hidden").hidden);
     TEST_CHECK(entry(session, "broken-link").symlink);
-    TEST_CHECK(entry(session, "folder").type == files::FileType::Directory);
+    TEST_CHECK(entry(session, "folder").type == luciole::FileType::Directory);
     TEST_CHECK(entry(session, "0").id != entry(session, "hard-link").id);
     const auto id = entry(session, unusual).id;
     TEST_CHECK(entry(session, "folder").contentType == "inode/directory");
@@ -241,7 +241,7 @@ namespace {
     session.setChangedCallback({});
     fs::remove_all(fixture.path);
     pump.until([&session] { return session.snapshot().status == DirectoryStatus::Error; });
-    TEST_CHECK(session.snapshot().error->kind == files::FileErrorKind::Missing);
+    TEST_CHECK(session.snapshot().error->kind == luciole::FileErrorKind::Missing);
     TEST_CHECK(session.snapshot().entries.empty());
   }
 
@@ -253,33 +253,33 @@ namespace {
     TEST_CHECK(session.snapshot().entries.empty());
     session.open(Location::fromPath((fixture.path / "missing").native()));
     pump.until([&session] { return session.snapshot().status == DirectoryStatus::Error; });
-    TEST_CHECK(session.snapshot().error->kind == files::FileErrorKind::Missing);
+    TEST_CHECK(session.snapshot().error->kind == luciole::FileErrorKind::Missing);
     fixture.write("plain-file");
     session.open(Location::fromPath((fixture.path / "plain-file").native()));
     pump.until([&session] { return session.snapshot().status == DirectoryStatus::Error; });
-    TEST_CHECK(session.snapshot().error->kind == files::FileErrorKind::NotDirectory);
+    TEST_CHECK(session.snapshot().error->kind == luciole::FileErrorKind::NotDirectory);
   }
 
-  bool unknown(const files::FileAccess& access) {
+  bool unknown(const luciole::FileAccess& access) {
     const auto values = {access.read, access.write, access.execute, access.rename, access.trash, access.remove};
     return std::ranges::all_of(values, [](const auto value) { return !value.has_value(); });
   }
 
   void testMetadataAbsenceAndTypes() {
-    const files::GioPtr<GFileInfo> info(g_file_info_new());
-    TEST_CHECK(!files::readFastContentType(info.get()));
+    const luciole::GioPtr<GFileInfo> info(g_file_info_new());
+    TEST_CHECK(!luciole::readFastContentType(info.get()));
     g_file_info_set_attribute_boolean(info.get(), G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE, true);
-    TEST_CHECK(!files::readFastContentType(info.get()));
+    TEST_CHECK(!luciole::readFastContentType(info.get()));
     g_file_info_set_attribute_string(info.get(), G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE, "");
-    TEST_CHECK(!files::readFastContentType(info.get()));
+    TEST_CHECK(!luciole::readFastContentType(info.get()));
     g_file_info_set_attribute_string(info.get(), G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE, "\xff");
-    TEST_CHECK(!files::readFastContentType(info.get()));
+    TEST_CHECK(!luciole::readFastContentType(info.get()));
     g_file_info_set_attribute_string(info.get(), G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE, "text/plain");
-    TEST_CHECK(files::readFastContentType(info.get()) == "text/plain");
+    TEST_CHECK(luciole::readFastContentType(info.get()) == "text/plain");
     TEST_CHECK(
-        unknown(files::readFileAccess(info.get()))
-        && !files::readFilesystemInfo(info.get()).readOnly.has_value()
-        && !files::readFilesystemInfo(info.get()).freeBytes.has_value()
+        unknown(luciole::readFileAccess(info.get()))
+        && !luciole::readFilesystemInfo(info.get()).readOnly.has_value()
+        && !luciole::readFilesystemInfo(info.get()).freeBytes.has_value()
     );
     g_file_info_set_attribute_boolean(info.get(), G_FILE_ATTRIBUTE_ACCESS_CAN_READ, true);
     g_file_info_set_attribute_boolean(info.get(), G_FILE_ATTRIBUTE_ACCESS_CAN_DELETE, false);
@@ -287,8 +287,8 @@ namespace {
     g_file_info_set_attribute_boolean(info.get(), G_FILE_ATTRIBUTE_FILESYSTEM_READONLY, false);
     g_file_info_set_attribute_uint32(info.get(), G_FILE_ATTRIBUTE_FILESYSTEM_TYPE, 1);
     g_file_info_set_attribute_string(info.get(), G_FILE_ATTRIBUTE_FILESYSTEM_FREE, "1024");
-    const auto access = files::readFileAccess(info.get());
-    const auto filesystem = files::readFilesystemInfo(info.get());
+    const auto access = luciole::readFileAccess(info.get());
+    const auto filesystem = luciole::readFilesystemInfo(info.get());
     TEST_CHECK(access.read == true && access.remove == false && !access.write.has_value());
     TEST_CHECK(
         filesystem.readOnly == false
@@ -297,9 +297,9 @@ namespace {
         && !filesystem.freeBytes.has_value()
     );
     g_file_info_set_attribute_uint64(info.get(), G_FILE_ATTRIBUTE_FILESYSTEM_FREE, 0);
-    TEST_CHECK(files::readFilesystemInfo(info.get()).freeBytes == 0);
+    TEST_CHECK(luciole::readFilesystemInfo(info.get()).freeBytes == 0);
     g_file_info_set_attribute_uint64(info.get(), G_FILE_ATTRIBUTE_FILESYSTEM_FREE, G_MAXUINT64);
-    TEST_CHECK(files::readFilesystemInfo(info.get()).freeBytes == G_MAXUINT64);
+    TEST_CHECK(luciole::readFilesystemInfo(info.get()).freeBytes == G_MAXUINT64);
   }
 
   void testCapabilityLifecycle(Pump& pump) {

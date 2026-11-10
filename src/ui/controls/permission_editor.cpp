@@ -15,8 +15,8 @@ namespace {
                                                0004, 0002, 0001, 04000, 02000, 01000};
   constexpr float labelWidth = 88.0F, columnWidth = 100.0F;
 } // namespace
-std::string permissionStatusText(const files::PermissionSnapshot& snapshot) {
-  return snapshot.error ? files::fileErrorText(*snapshot.error) : snapshot.message;
+std::string permissionStatusText(const luciole::PermissionSnapshot& snapshot) {
+  return snapshot.error ? luciole::fileErrorText(*snapshot.error) : snapshot.message;
 }
 PermissionEditor::PermissionEditor(std::function<void()> edited, bool multiple, bool folders)
     : m_multiple(multiple), m_edited(std::move(edited)) {
@@ -157,8 +157,8 @@ std::uint32_t PermissionEditor::mode() const {
   }
   return value;
 }
-files::PermissionEdit PermissionEditor::edit() const {
-  files::PermissionEdit edit;
+luciole::PermissionEdit PermissionEditor::edit() const {
+  luciole::PermissionEdit edit;
   if (!m_snapshot.info) {
     return edit;
   }
@@ -195,7 +195,7 @@ bool PermissionEditor::canApply() const {
   }
   const auto value = edit();
   return !(m_snapshot.recursive && m_snapshot.finished)
-      && m_snapshot.phase == files::PermissionPhase::Ready
+      && m_snapshot.phase == luciole::PermissionPhase::Ready
       && (value.mode || value.owner || value.group);
 }
 void PermissionEditor::changed() {
@@ -206,7 +206,7 @@ void PermissionEditor::changed() {
     m_edited();
   }
 }
-void PermissionEditor::sync(const files::PermissionSnapshot& snapshot) {
+void PermissionEditor::sync(const luciole::PermissionSnapshot& snapshot) {
   m_syncing = true;
   const bool sameValues = snapshot.info
       && m_snapshot.info
@@ -214,10 +214,10 @@ void PermissionEditor::sync(const files::PermissionSnapshot& snapshot) {
       && snapshot.info->owner == m_snapshot.info->owner
       && snapshot.info->group == m_snapshot.info->group;
   const bool keepDraft = sameValues
-      && (snapshot.phase == files::PermissionPhase::Saving
-          || (snapshot.phase == files::PermissionPhase::Ready && snapshot.failed() && !snapshot.applied));
+      && (snapshot.phase == luciole::PermissionPhase::Saving
+          || (snapshot.phase == luciole::PermissionPhase::Ready && snapshot.failed() && !snapshot.applied));
   m_snapshot = snapshot;
-  const bool ready = snapshot.phase == files::PermissionPhase::Ready
+  const bool ready = snapshot.phase == luciole::PermissionPhase::Ready
       && snapshot.info.has_value()
       && !(snapshot.recursive && snapshot.finished);
   if (m_tree) {
@@ -297,16 +297,16 @@ void PermissionEditor::sync(const files::PermissionSnapshot& snapshot) {
       && snapshot.info->acl
       && snapshot.info->acl->supported
       && std::ranges::any_of(snapshot.info->acl->access, [](const auto& entry) {
-           return entry.tag == files::AclTag::Mask;
+           return entry.tag == luciole::AclTag::Mask;
          })) {
     reason += " Group mode bits control the ACL mask. Use ACL to see effective rights.";
   }
   m_reason->setText(reason);
   m_reason->setVisible(!reason.empty());
   m_reason->setParticipatesInLayout(!reason.empty());
-  const std::string message = snapshot.phase == files::PermissionPhase::Loading ? "Reading permissions…"
-      : snapshot.phase == files::PermissionPhase::Saving                        ? "Saving changes…"
-                                                                                : permissionStatusText(snapshot);
+  const std::string message = snapshot.phase == luciole::PermissionPhase::Loading ? "Reading permissions…"
+      : snapshot.phase == luciole::PermissionPhase::Saving                        ? "Saving changes…"
+                                                                                  : permissionStatusText(snapshot);
   m_message->setText(message);
   m_message->setVisible(!m_multiple && !message.empty());
   m_message->setParticipatesInLayout(!m_multiple && !message.empty());
@@ -316,7 +316,7 @@ void PermissionEditor::sync(const files::PermissionSnapshot& snapshot) {
   m_syncing = false;
 }
 bool PermissionEditor::recursive() const { return m_recursive && m_recursive->checked(); }
-files::RecursivePermissionEdit PermissionEditor::recursiveEdit() const { return m_tree->edit(); }
+luciole::RecursivePermissionEdit PermissionEditor::recursiveEdit() const { return m_tree->edit(); }
 const Node* PermissionEditor::messageNode() const {
   return recursive() ? m_tree->messageNode() : m_multiple ? static_cast<const Node*>(m_group) : m_message;
 }

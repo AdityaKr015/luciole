@@ -9,8 +9,8 @@
 #include <stdexcept>
 
 namespace {
-  void invariant(const files::TabWorkspace& workspace) {
-    std::set<files::TabId> ids;
+  void invariant(const luciole::TabWorkspace& workspace) {
+    std::set<luciole::TabId> ids;
     std::size_t tabCount = 0;
     for (const auto& [id, window] : workspace.windows()) {
       tabCount += window.tabs.size();
@@ -41,7 +41,7 @@ namespace {
     TEST_CHECK(workspace.closed().size() <= 16);
   }
   void workflows() {
-    files::TabWorkspace workspace;
+    luciole::TabWorkspace workspace;
     const auto left = workspace.addWindow(), right = workspace.addWindow();
     const auto a = workspace.addTab(left);
     const auto auxiliary = workspace.addPane(left);
@@ -68,7 +68,7 @@ namespace {
     invariant(workspace);
   }
   void closeEitherPane() {
-    files::TabWorkspace workspace;
+    luciole::TabWorkspace workspace;
     const auto window = workspace.addWindow();
     const auto original = workspace.addTab(window);
     const auto right = workspace.addPane(window);
@@ -88,7 +88,7 @@ namespace {
     invariant(workspace);
   }
   void transitions() {
-    files::TabWorkspace workspace;
+    luciole::TabWorkspace workspace;
     std::mt19937 random(42);
     for (int i = 0; i < 4; ++i) {
       workspace.addWindow();

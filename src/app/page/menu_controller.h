@@ -13,12 +13,12 @@
 #include <optional>
 #include <vector>
 
-namespace files {
+namespace luciole {
   class PathCompletion;
   class PinService;
   class TerminalLauncher;
   struct Bookmark;
-} // namespace files
+} // namespace luciole
 
 struct KeyboardEvent;
 class CreateController;
@@ -37,8 +37,8 @@ class ScrollView;
 class MenuController {
 public:
   MenuController(
-      PageContext& page, files::PinService& pins, TransferController& transferController,
-      files::TerminalLauncher& terminal, files::PathCompletion& siblingCompletion, CreateController& creator,
+      PageContext& page, luciole::PinService& pins, TransferController& transferController,
+      luciole::TerminalLauncher& terminal, luciole::PathCompletion& siblingCompletion, CreateController& creator,
       SubmenuController& submenus, RenameController& renamer, PropertiesController& properties,
       DetailsHeaderController& columns, LocationBarController& locationBar, ExecutionController& execution
   );
@@ -48,10 +48,10 @@ public:
       std::vector<ContextMenuControlEntry> entries, std::function<void(int)> action, LayoutRect anchor,
       bool alignLeft = false, float preferredWidth = 264.0F
   );
-  void openFileMenu(std::optional<files::EntryId> id, float x, float y);
-  void openPlaceMenu(const files::Bookmark& bookmark, float x, float y);
-  void openColumnsMenu(const LayoutRect& anchor, std::optional<files::DetailsColumn> column = std::nullopt);
-  void openBreadcrumbMenu(const files::Location& target, LayoutRect anchor);
+  void openFileMenu(std::optional<luciole::EntryId> id, float x, float y);
+  void openPlaceMenu(const luciole::Bookmark& bookmark, float x, float y);
+  void openColumnsMenu(const LayoutRect& anchor, std::optional<luciole::DetailsColumn> column = std::nullopt);
+  void openBreadcrumbMenu(const luciole::Location& target, LayoutRect anchor);
   void openMenu();
   void openSortMenu(std::optional<LayoutRect> anchor = std::nullopt, bool alignLeft = true);
   void openSelectionMenu();
@@ -69,23 +69,23 @@ public:
 
 private:
   ContextMenuControlEntry
-  actionEntry(files::BrowserAction action, const files::ActionRequest& request, bool radio = false) const;
+  actionEntry(luciole::BrowserAction action, const luciole::ActionRequest& request, bool radio = false) const;
   // The file menu of the empty area, or of the request's targets.
-  std::vector<ContextMenuControlEntry> folderMenuEntries(const files::ActionRequest& request) const;
-  std::vector<ContextMenuControlEntry> itemMenuEntries(const files::ActionRequest& request) const;
-  void showOpenInMenu(const files::ActionRequest& request);
+  std::vector<ContextMenuControlEntry> folderMenuEntries(const luciole::ActionRequest& request) const;
+  std::vector<ContextMenuControlEntry> itemMenuEntries(const luciole::ActionRequest& request) const;
+  void showOpenInMenu(const luciole::ActionRequest& request);
   // Path and URI of the request's targets, or of its folder when `targets` is false.
-  void showCopyLocationMenu(const files::ActionRequest& request, bool targets);
+  void showCopyLocationMenu(const luciole::ActionRequest& request, bool targets);
   void showActionMenu(
-      std::initializer_list<std::optional<files::BrowserAction>> actions, bool radio = false, bool back = false,
+      std::initializer_list<std::optional<luciole::BrowserAction>> actions, bool radio = false, bool back = false,
       std::optional<LayoutRect> anchor = std::nullopt, bool alignLeft = true
   );
 
   PageContext& m_page;
-  files::PinService& m_pins;
+  luciole::PinService& m_pins;
   TransferController& m_transferController;
-  files::TerminalLauncher& m_terminal;
-  files::PathCompletion& m_siblingCompletion;
+  luciole::TerminalLauncher& m_terminal;
+  luciole::PathCompletion& m_siblingCompletion;
   CreateController& m_creator;
   SubmenuController& m_submenus;
   RenameController& m_renamer;

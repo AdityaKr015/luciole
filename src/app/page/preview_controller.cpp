@@ -21,11 +21,11 @@
 #include <algorithm>
 #include <utility>
 
-using Action = files::BrowserAction;
+using Action = luciole::BrowserAction;
 
 PreviewController::PreviewController(
-    PageContext& page, files::PreviewService& preview, files::ThumbnailService& thumbnails, files::FileIconCache& icons,
-    RenderContext& renderer, ApplicationChooserController& applications
+    PageContext& page, luciole::PreviewService& preview, luciole::ThumbnailService& thumbnails,
+    luciole::FileIconCache& icons, RenderContext& renderer, ApplicationChooserController& applications
 )
     : m_page(page), m_preview(preview), m_thumbnails(thumbnails), m_icons(icons), m_renderer(renderer),
       m_applications(applications) {}
@@ -54,7 +54,7 @@ void PreviewController::sync() {
   const float width = quick ? static_cast<float>(surface->width()) : m_bounds->width;
   const float height = quick ? static_cast<float>(surface->height()) : m_bounds->height;
   const auto& renderer = quick ? surface->renderTarget().renderer() : m_page.surface().renderTarget().renderer();
-  const auto layout = files::previewImageLayout(
+  const auto layout = luciole::previewImageLayout(
       pixels ? pixels->width : 0, pixels ? pixels->height : 0, width, height, renderer.renderScale(), quick
   );
   m_preview.show(entry ? std::optional(*entry) : std::nullopt, layout.pixels, m_page.settings().thumbnails, prepared);
@@ -121,7 +121,7 @@ bool PreviewController::quickKey(const KeyboardEvent& event) {
   if (!m_quick || !event.pressed || event.preedit || event.modifiers != 0) {
     return false;
   }
-  if (files::shortcutMatches(Action::QuickPreview, event.sym, event.modifiers) || KeySymbol::isEscape(event.sym)) {
+  if (luciole::shortcutMatches(Action::QuickPreview, event.sym, event.modifiers) || KeySymbol::isEscape(event.sym)) {
     m_page.dismissMenu();
     return true;
   }

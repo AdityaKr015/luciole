@@ -35,6 +35,10 @@ _ensure-configured m=mode:
         just configure "$1"
         exit
     fi
+    configured_project="$(meson introspect --projectinfo "build-$1" | python3 -c 'import json, sys; print(json.load(sys.stdin)["descriptive_name"])')"
+    if [[ "$configured_project" != luciole ]]; then
+        just configure "$1"
+    fi
     configured_pkg_path="$(just _option "$1" pkg_config_path)"
     if [[ "$configured_pkg_path" != "${PKG_CONFIG_PATH-}" ]]; then
         meson configure "build-$1" -Dpkg_config_path={{ quote(pkg-config-path) }}
@@ -47,11 +51,11 @@ _option m name:
 
 [arg("m", pattern="debug|release|asan")]
 build m=mode: (_ensure-configured m)
-    meson compile -C "build-$1" noctalia-files
+    meson compile -C "build-$1" luciole
 
 [arg("m", pattern="debug|release|asan")]
 run m=mode: (build m)
-    NOCTALIA_FILES_ASSETS_DIR="$PWD/lib/assets" ./build-$1/noctalia-files
+    LUCIOLE_ASSETS_DIR="$PWD/lib/assets" ./build-$1/luciole
 
 [arg("m", pattern="debug|release|asan")]
 test m=mode *args: (_ensure-configured m)
@@ -62,8 +66,8 @@ test m=mode *args: (_ensure-configured m)
 install m:
     #!/usr/bin/env bash
     set -euo pipefail
-    if [[ ! -x "build-$1/noctalia-files" ]]; then
-        echo "error: build-$1/noctalia-files is missing; build it before installing" >&2
+    if [[ ! -x "build-$1/luciole" ]]; then
+        echo "error: build-$1/luciole is missing; build it before installing" >&2
         exit 1
     fi
     meson install --no-rebuild -C "build-$1"
@@ -122,7 +126,7 @@ _files kind:
                     continue
                 if path.suffix in EXTENSIONS[kind] or (
                     kind == "text"
-                    and name in ("justfile", "VERSION", "LICENSE", ".clang-format", ".clang-tidy", "_noctalia-files")
+                    and name in ("justfile", "VERSION", "LICENSE", ".clang-format", ".clang-tidy", "_luciole")
                 ):
                     yield path
 
@@ -161,7 +165,7 @@ format-nix-check:
 
 [arg("m", pattern="debug|release|asan")]
 _clang_tidy m=mode: (_ensure-configured m)
-    meson compile -C "build-$1" noctalia-files
+    meson compile -C "build-$1" luciole
     run-clang-tidy -quiet -p "build-$1" -j "$(nproc)" -warnings-as-errors='*' -header-filter="$(realpath .)/src/.*|^\.\./src/.*" "$(realpath .)/src/.*"
 
 [arg("m", pattern="debug|release|asan")]
@@ -237,7 +241,7 @@ lint-python:
 
 [arg("m", pattern="debug|release|asan")]
 fix m=mode: (_ensure-configured m)
-    meson compile -C "build-$1" noctalia-files
+    meson compile -C "build-$1" luciole
     run-clang-tidy -quiet -p "build-$1" -j "$(nproc)" -fix -header-filter='(\.\./)?src/.*' "$(realpath src)/.*"
     just format-code
 

@@ -11,9 +11,9 @@ class Segmented;
 class RecursivePermissionEditor final : public Flex {
 public:
   explicit RecursivePermissionEditor(const std::function<void()>& changed);
-  files::RecursivePermissionEdit edit() const;
+  luciole::RecursivePermissionEdit edit() const;
   bool canApply() const;
-  void sync(const files::PermissionSnapshot& snapshot);
+  void sync(const luciole::PermissionSnapshot& snapshot);
   const Node* messageNode() const;
 
 private:

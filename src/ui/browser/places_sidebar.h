@@ -5,7 +5,7 @@
 #include "ui/controls/button.h"
 #include "ui/controls/scroll_view.h"
 
-namespace files {
+namespace luciole {
   class SidebarTreeView;
   class PlacesSidebar final : public Flex {
   public:
@@ -76,4 +76,4 @@ namespace files {
     std::function<void(const std::string&)> m_driveRemove;
     std::function<void(const std::string&, float, float)> m_driveContext;
   };
-} // namespace files
+} // namespace luciole

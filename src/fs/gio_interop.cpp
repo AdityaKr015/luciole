@@ -1,6 +1,6 @@
 #include "fs/gio_interop.h"
 
-files::FileError files::fileError(const GError& error) {
+luciole::FileError luciole::fileError(const GError& error) {
   using Kind = FileErrorKind;
   auto kind = Kind::Other;
   if (error.domain == G_IO_ERROR) {
@@ -60,7 +60,7 @@ files::FileError files::fileError(const GError& error) {
   return {.kind = kind, .message = error.message};
 }
 
-files::FileType files::fileType(GFileType type) {
+luciole::FileType luciole::fileType(GFileType type) {
   switch (type) {
   case G_FILE_TYPE_REGULAR:
     return FileType::Regular;
@@ -80,7 +80,7 @@ files::FileType files::fileType(GFileType type) {
   return FileType::Unknown;
 }
 
-bool files::readIsSymlink(GFileInfo* info) {
+bool luciole::readIsSymlink(GFileInfo* info) {
   return g_file_info_get_attribute_uint32(info, G_FILE_ATTRIBUTE_STANDARD_TYPE) == G_FILE_TYPE_SYMBOLIC_LINK
       || (g_file_info_has_attribute(info, G_FILE_ATTRIBUTE_STANDARD_IS_SYMLINK)
           && g_file_info_get_attribute_boolean(info, G_FILE_ATTRIBUTE_STANDARD_IS_SYMLINK));

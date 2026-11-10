@@ -17,11 +17,11 @@
 
 namespace {
   struct TemplateSource {
-    files::DocumentTemplate source;
-    files::Fd file;
-    explicit TemplateSource(files::DocumentTemplate source)
+    luciole::DocumentTemplate source;
+    luciole::Fd file;
+    explicit TemplateSource(luciole::DocumentTemplate source)
         : source(std::move(source)), file(
-                                         files::checkedFd(
+                                         luciole::checkedFd(
                                              ::open(
                                                  this->source.location.nativePath().value_or("").c_str(),
                                                  O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK
@@ -31,29 +31,29 @@ namespace {
       requireCurrent();
     }
     void requireCurrent() const {
-      const auto current = files::checkedFd(
+      const auto current = luciole::checkedFd(
           ::open(source.location.nativePath().value_or("").c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)
       );
-      if (files::templateRevision(files::statFd(current.get())) != source.revision
-          || files::templateRevision(files::statFd(file.get())) != source.revision) {
-        files::throwFileError(
-            files::FileErrorKind::Changed, "The template changed. Close this dialog and choose it again."
+      if (luciole::templateRevision(luciole::statFd(current.get())) != source.revision
+          || luciole::templateRevision(luciole::statFd(file.get())) != source.revision) {
+        luciole::throwFileError(
+            luciole::FileErrorKind::Changed, "The template changed. Close this dialog and choose it again."
         );
       }
     }
   };
   struct Target {
     std::string path;
-    files::Fd directory;
+    luciole::Fd directory;
     std::unique_ptr<TemplateSource> source;
     explicit Target(std::string path)
         : path(std::move(path)),
-          directory(files::checkedFd(::open(this->path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC))) {}
+          directory(luciole::checkedFd(::open(this->path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC))) {}
     void requireCurrent() const {
-      const auto current = files::checkedFd(::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
-      if (!files::sameIdentity(files::statFd(current.get()), files::statFd(directory.get()))) {
-        files::throwFileError(
-            files::FileErrorKind::Changed, "The destination folder changed. Close this dialog and try again."
+      const auto current = luciole::checkedFd(::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+      if (!luciole::sameIdentity(luciole::statFd(current.get()), luciole::statFd(directory.get()))) {
+        luciole::throwFileError(
+            luciole::FileErrorKind::Changed, "The destination folder changed. Close this dialog and try again."
         );
       }
     }
@@ -61,20 +61,20 @@ namespace {
   struct LinkSource {
     std::string path, name;
     Target parent;
-    files::Fd item;
-    explicit LinkSource(const files::DirectoryEntry& source)
+    luciole::Fd item;
+    explicit LinkSource(const luciole::DirectoryEntry& source)
         : path(source.location.nativePath().value_or("")), name(std::filesystem::path(path).filename().native()),
           parent(std::filesystem::path(path).parent_path().native()),
-          item(files::checkedFd(::openat(parent.directory.get(), name.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC))) {
-      const files::GioPtr<GFileInfo> info(g_file_query_info(
-          files::gioFile(source.location).get(), "id::file,id::filesystem,standard::type,standard::is-symlink",
+          item(luciole::checkedFd(::openat(parent.directory.get(), name.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC))) {
+      const luciole::GioPtr<GFileInfo> info(g_file_query_info(
+          luciole::gioFile(source.location).get(), "id::file,id::filesystem,standard::type,standard::is-symlink",
           G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, nullptr
       ));
       if (!info
-          || files::readFileIdentity(info.get()) != source.identity
-          || files::fileType(g_file_info_get_file_type(info.get())) != source.type
+          || luciole::readFileIdentity(info.get()) != source.identity
+          || luciole::fileType(g_file_info_get_file_type(info.get())) != source.type
           || (g_file_info_get_is_symlink(info.get()) != FALSE) != source.symlink) {
-        files::throwFileError(files::FileErrorKind::Changed, "The selected item changed. Choose it again.");
+        luciole::throwFileError(luciole::FileErrorKind::Changed, "The selected item changed. Choose it again.");
       }
       requireCurrent();
     }
@@ -82,18 +82,18 @@ namespace {
       parent.requireCurrent();
       struct stat current{};
       if (::fstatat(parent.directory.get(), name.c_str(), &current, AT_SYMLINK_NOFOLLOW) != 0
-          || !files::sameIdentity(current, files::statFd(item.get()))) {
-        files::throwFileError(
-            files::FileErrorKind::Changed, "The source was moved or replaced. Close this dialog and choose it again."
+          || !luciole::sameIdentity(current, luciole::statFd(item.get()))) {
+        luciole::throwFileError(
+            luciole::FileErrorKind::Changed, "The source was moved or replaced. Close this dialog and choose it again."
         );
       }
     }
   };
   struct Reply {
     std::shared_ptr<Target> target;
-    std::optional<files::Location> destination;
+    std::optional<luciole::Location> destination;
     // A completed creation whose cleanup or close failed.
-    std::optional<files::FileError> error;
+    std::optional<luciole::FileError> error;
     std::shared_ptr<LinkSource> linkSource;
   };
   constexpr auto crossDeviceLink = "Hard links require a destination on the same filesystem.";
@@ -101,16 +101,16 @@ namespace {
   class DocumentStage {
   public:
     explicit DocumentStage(int parent) : m_parent(parent) {
-      const files::GString uuid(g_uuid_string_random());
-      m_name = ".noctalia-document-" + std::string(uuid.get());
+      const luciole::GString uuid(g_uuid_string_random());
+      m_name = ".luciole-document-" + std::string(uuid.get());
       if (::mkdirat(parent, m_name.c_str(), 0700) != 0) {
-        files::throwErrno(errno);
+        luciole::throwErrno(errno);
       }
-      m_directory = files::Fd(::openat(parent, m_name.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+      m_directory = luciole::Fd(::openat(parent, m_name.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
       if (!m_directory.valid()) {
         const int code = errno;
         ::unlinkat(parent, m_name.c_str(), AT_REMOVEDIR);
-        files::throwErrno(code);
+        luciole::throwErrno(code);
       }
     }
     ~DocumentStage() { (void)clear(); }
@@ -122,7 +122,7 @@ namespace {
       if (::fstat(fd(), &held) != 0 || ::fstatat(m_parent, m_name.c_str(), &current, AT_SYMLINK_NOFOLLOW) != 0) {
         return errno == ENOENT;
       }
-      if (!files::sameIdentity(current, held)) {
+      if (!luciole::sameIdentity(current, held)) {
         return false;
       }
       if (::unlinkat(fd(), "document", 0) != 0 && errno != ENOENT) {
@@ -134,14 +134,15 @@ namespace {
   private:
     int m_parent;
     std::string m_name;
-    files::Fd m_directory;
+    luciole::Fd m_directory;
   };
-  std::optional<bool> copyDocument(const Target& target, const std::string& name, const files::CancelToken& token) {
+  std::optional<bool> copyDocument(const Target& target, const std::string& name, const luciole::CancelToken& token) {
     auto& source = *target.source;
     source.requireCurrent();
     DocumentStage stage(target.directory.get());
-    auto output =
-        files::checkedFd(::openat(stage.fd(), "document", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0666));
+    auto output = luciole::checkedFd(
+        ::openat(stage.fd(), "document", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0666)
+    );
     std::array<char, 65536> buffer{};
     std::uint64_t offset = 0;
     while (offset < source.source.revision.size) {
@@ -156,10 +157,10 @@ namespace {
         continue;
       }
       if (count == 0) {
-        files::throwFileError(files::FileErrorKind::Changed, "The template changed while copying.");
+        luciole::throwFileError(luciole::FileErrorKind::Changed, "The template changed while copying.");
       }
       if (count < 0) {
-        files::throwErrno(errno);
+        luciole::throwErrno(errno);
       }
       std::size_t written = 0;
       while (written < static_cast<std::size_t>(count)) {
@@ -171,17 +172,17 @@ namespace {
           continue;
         }
         if (size == 0) {
-          files::throwFileError(files::FileErrorKind::Other, "Could not write the new document.");
+          luciole::throwFileError(luciole::FileErrorKind::Other, "Could not write the new document.");
         }
         if (size < 0) {
-          files::throwErrno(errno);
+          luciole::throwErrno(errno);
         }
         written += static_cast<std::size_t>(size);
       }
       offset += static_cast<std::uint64_t>(count);
     }
     if (output.close() != 0) {
-      files::throwFileError(files::FileErrorKind::Other, "Could not close the new document cleanly.");
+      luciole::throwFileError(luciole::FileErrorKind::Other, "Could not close the new document cleanly.");
     }
     source.requireCurrent();
     target.requireCurrent();
@@ -189,14 +190,14 @@ namespace {
       return std::nullopt;
     }
     if (::syscall(SYS_renameat2, stage.fd(), "document", target.directory.get(), name.c_str(), RENAME_NOREPLACE) != 0) {
-      files::throwErrno(errno);
+      luciole::throwErrno(errno);
     }
     // Publication is complete; cancellation cannot turn it into an uncommitted result.
     return stage.clear();
   }
 } // namespace
 
-struct files::CreateService::State {
+struct luciole::CreateService::State {
   CreateSnapshot snapshot;
   std::shared_ptr<Target> target;
   std::shared_ptr<LinkSource> linkSource;
@@ -244,20 +245,20 @@ struct files::CreateService::State {
     owner->notify();
   }
 };
-files::CreateService::CreateService() : m_state(std::make_shared<State>()) {}
-files::CreateService::~CreateService() {
+luciole::CreateService::CreateService() : m_state(std::make_shared<State>()) {}
+luciole::CreateService::~CreateService() {
   m_state->changed = {};
   cancel();
 }
-void files::CreateService::setChangedCallback(std::function<void()> callback) {
+void luciole::CreateService::setChangedCallback(std::function<void()> callback) {
   m_state->changed = std::move(callback);
 }
-bool files::CreateService::busy() const { return m_state->active; }
-bool files::CreateService::canCreate() const {
+bool luciole::CreateService::busy() const { return m_state->active; }
+bool luciole::CreateService::canCreate() const {
   return !busy() && (m_state->target != nullptr || m_state->linkSource != nullptr);
 }
-const files::CreateSnapshot& files::CreateService::snapshot() const { return m_state->snapshot; }
-void files::CreateService::cancel() {
+const luciole::CreateSnapshot& luciole::CreateService::snapshot() const { return m_state->snapshot; }
+void luciole::CreateService::cancel() {
   m_state->token.cancel();
   m_state->target.reset();
   m_state->linkSource.reset();
@@ -267,16 +268,16 @@ void files::CreateService::cancel() {
     m_state->snapshot.status = CreateStatus::Cancelled;
   }
 }
-bool files::CreateService::prepare(const Location& parent, CreateKind kind) {
+bool luciole::CreateService::prepare(const Location& parent, CreateKind kind) {
   if (kind != CreateKind::Folder && kind != CreateKind::EmptyFile) {
     return false;
   }
   return prepareTarget(parent, kind, std::nullopt);
 }
-bool files::CreateService::prepareTemplate(const Location& parent, DocumentTemplate source) {
+bool luciole::CreateService::prepareTemplate(const Location& parent, DocumentTemplate source) {
   return prepareTarget(parent, CreateKind::Document, std::move(source));
 }
-bool files::CreateService::prepareLink(const DirectoryEntry& source) {
+bool luciole::CreateService::prepareLink(const DirectoryEntry& source) {
   if (busy()
       || !source.location.nativePath()
       || !source.identity
@@ -299,7 +300,7 @@ bool files::CreateService::prepareLink(const DirectoryEntry& source) {
   });
   return true;
 }
-bool files::CreateService::createLink(const Location& parent, std::string name, CreateKind kind) {
+bool luciole::CreateService::createLink(const Location& parent, std::string name, CreateKind kind) {
   if (!canCreate() || !m_state->linkSource || (kind != CreateKind::SymbolicLink && kind != CreateKind::HardLink)) {
     return false;
   }
@@ -361,7 +362,7 @@ bool files::CreateService::createLink(const Location& parent, std::string name, 
   );
   return true;
 }
-bool files::CreateService::prepareTarget(
+bool luciole::CreateService::prepareTarget(
     const Location& parent, CreateKind kind, std::optional<DocumentTemplate> source
 ) {
   if (busy()) {
@@ -385,7 +386,7 @@ bool files::CreateService::prepareTarget(
   });
   return true;
 }
-bool files::CreateService::create(std::string name) {
+bool luciole::CreateService::create(std::string name) {
   if (!canCreate() || !m_state->target) {
     return false;
   }

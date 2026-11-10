@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-files::WindowId files::TabWorkspace::addWindow() {
+luciole::WindowId luciole::TabWorkspace::addWindow() {
   if (m_windows.size() >= 8) {
     return 0;
   }
@@ -11,16 +11,16 @@ files::WindowId files::TabWorkspace::addWindow() {
   m_windows.emplace(id, TabWindow{});
   return id;
 }
-void files::TabWorkspace::save(TabWindow& window) {
+void luciole::TabWorkspace::save(TabWindow& window) {
   if (window.selected) {
     m_layouts.at(window.selected) = static_cast<const TabLayout&>(window);
   }
 }
-void files::TabWorkspace::load(TabWindow& window, TabId tab) {
+void luciole::TabWorkspace::load(TabWindow& window, TabId tab) {
   window.selected = tab;
   static_cast<TabLayout&>(window) = tab ? m_layouts.at(tab) : TabLayout{};
 }
-files::TabId files::TabWorkspace::addTab(WindowId id) {
+luciole::TabId luciole::TabWorkspace::addTab(WindowId id) {
   auto found = m_windows.find(id);
   if (found == m_windows.end()) {
     return 0;
@@ -41,7 +41,7 @@ files::TabId files::TabWorkspace::addTab(WindowId id) {
   load(window, tab);
   return tab;
 }
-std::optional<files::TabId> files::TabWorkspace::tabFor(TabId page) const {
+std::optional<luciole::TabId> luciole::TabWorkspace::tabFor(TabId page) const {
   for (const auto& [id, layout] : m_layouts) {
     if (page == id || page == layout.primary || page == layout.secondary) {
       return id;
@@ -49,7 +49,7 @@ std::optional<files::TabId> files::TabWorkspace::tabFor(TabId page) const {
   }
   return std::nullopt;
 }
-std::vector<files::TabId> files::TabWorkspace::pages(TabId page) const {
+std::vector<luciole::TabId> luciole::TabWorkspace::pages(TabId page) const {
   const auto tab = tabFor(page);
   if (!tab) {
     return {};
@@ -61,7 +61,7 @@ std::vector<files::TabId> files::TabWorkspace::pages(TabId page) const {
   }
   return result;
 }
-std::optional<files::WindowId> files::TabWorkspace::owner(TabId page) const {
+std::optional<luciole::WindowId> luciole::TabWorkspace::owner(TabId page) const {
   const auto tab = tabFor(page);
   if (!tab) {
     return std::nullopt;
@@ -73,7 +73,7 @@ std::optional<files::WindowId> files::TabWorkspace::owner(TabId page) const {
   }
   return std::nullopt;
 }
-bool files::TabWorkspace::select(WindowId id, TabId tab) {
+bool luciole::TabWorkspace::select(WindowId id, TabId tab) {
   const auto found = m_windows.find(id);
   if (found == m_windows.end() || !std::ranges::contains(found->second.tabs, tab)) {
     return false;
@@ -82,7 +82,7 @@ bool files::TabWorkspace::select(WindowId id, TabId tab) {
   load(found->second, tab);
   return true;
 }
-bool files::TabWorkspace::focus(WindowId id, TabId page) {
+bool luciole::TabWorkspace::focus(WindowId id, TabId page) {
   const auto found = m_windows.find(id);
   if (found == m_windows.end() || (page != found->second.primary && page != found->second.secondary)) {
     return false;
@@ -91,7 +91,7 @@ bool files::TabWorkspace::focus(WindowId id, TabId page) {
   save(found->second);
   return true;
 }
-void files::TabWorkspace::remove(TabWindow& window, TabId tab) {
+void luciole::TabWorkspace::remove(TabWindow& window, TabId tab) {
   save(window);
   const auto found = std::ranges::find(window.tabs, tab);
   const auto index = static_cast<std::size_t>(found - window.tabs.begin());
@@ -100,7 +100,7 @@ void files::TabWorkspace::remove(TabWindow& window, TabId tab) {
     load(window, window.tabs.empty() ? 0 : window.tabs[std::min(index, window.tabs.size() - 1)]);
   }
 }
-bool files::TabWorkspace::close(TabId page) {
+bool luciole::TabWorkspace::close(TabId page) {
   const auto id = owner(page), tab = tabFor(page);
   if (!id || !tab) {
     return false;
@@ -113,7 +113,7 @@ bool files::TabWorkspace::close(TabId page) {
   }
   return true;
 }
-bool files::TabWorkspace::reopen(WindowId id) {
+bool luciole::TabWorkspace::reopen(WindowId id) {
   if (m_closed.empty() || !m_windows.contains(id)) {
     return false;
   }
@@ -133,7 +133,7 @@ bool files::TabWorkspace::reopen(WindowId id) {
   load(window, tab);
   return true;
 }
-bool files::TabWorkspace::move(TabId page, WindowId destination, std::size_t index) {
+bool luciole::TabWorkspace::move(TabId page, WindowId destination, std::size_t index) {
   const auto origin = owner(page), tab = tabFor(page);
   if (!origin || !tab || !m_windows.contains(destination)) {
     return false;
@@ -151,7 +151,7 @@ bool files::TabWorkspace::move(TabId page, WindowId destination, std::size_t ind
   load(window, *tab);
   return true;
 }
-files::TabId files::TabWorkspace::addPane(WindowId id) {
+luciole::TabId luciole::TabWorkspace::addPane(WindowId id) {
   const auto found = m_windows.find(id);
   if (found == m_windows.end() || !found->second.selected || found->second.secondary) {
     return 0;
@@ -162,7 +162,7 @@ files::TabId files::TabWorkspace::addPane(WindowId id) {
   save(found->second);
   return page;
 }
-bool files::TabWorkspace::unsplit(WindowId id) {
+bool luciole::TabWorkspace::unsplit(WindowId id) {
   const auto found = m_windows.find(id);
   if (found == m_windows.end()) {
     return false;
@@ -173,7 +173,7 @@ bool files::TabWorkspace::unsplit(WindowId id) {
   save(window);
   return true;
 }
-bool files::TabWorkspace::closePane(WindowId id, TabId page) {
+bool luciole::TabWorkspace::closePane(WindowId id, TabId page) {
   const auto found = m_windows.find(id);
   if (found == m_windows.end() || !found->second.secondary) {
     return false;
@@ -189,14 +189,14 @@ bool files::TabWorkspace::closePane(WindowId id, TabId page) {
   save(window);
   return true;
 }
-std::optional<files::TabLayout> files::TabWorkspace::layout(TabId page) const {
+std::optional<luciole::TabLayout> luciole::TabWorkspace::layout(TabId page) const {
   const auto tab = tabFor(page);
   if (!tab) {
     return std::nullopt;
   }
   return m_layouts.at(*tab);
 }
-bool files::TabWorkspace::swap(WindowId id) {
+bool luciole::TabWorkspace::swap(WindowId id) {
   const auto found = m_windows.find(id);
   if (found == m_windows.end() || !found->second.secondary) {
     return false;
@@ -205,7 +205,7 @@ bool files::TabWorkspace::swap(WindowId id) {
   save(found->second);
   return true;
 }
-bool files::TabWorkspace::resize(WindowId id, float value) {
+bool luciole::TabWorkspace::resize(WindowId id, float value) {
   const auto found = m_windows.find(id);
   if (found == m_windows.end() || !std::isfinite(value)) {
     return false;
@@ -214,14 +214,14 @@ bool files::TabWorkspace::resize(WindowId id, float value) {
   save(found->second);
   return true;
 }
-std::optional<files::TabId> files::TabWorkspace::other(WindowId id) const {
+std::optional<luciole::TabId> luciole::TabWorkspace::other(WindowId id) const {
   const auto found = m_windows.find(id);
   if (found == m_windows.end() || !found->second.secondary) {
     return std::nullopt;
   }
   return found->second.active == found->second.primary ? found->second.secondary : std::optional(found->second.primary);
 }
-bool files::TabWorkspace::removeWindow(WindowId id) {
+bool luciole::TabWorkspace::removeWindow(WindowId id) {
   const auto found = m_windows.find(id);
   if (found == m_windows.end() || !found->second.tabs.empty()) {
     return false;

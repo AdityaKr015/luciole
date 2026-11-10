@@ -9,11 +9,11 @@
 #include <string_view>
 #include <vector>
 
-namespace files {
+namespace luciole {
   inline constexpr std::string_view kUriListMime = "text/uri-list";
   inline constexpr std::string_view kGnomeFilesMime = "x-special/gnome-copied-files";
-  // Files-specific drag-start intent; URI data and Wayland action negotiation stay standard.
-  inline constexpr std::string_view kAskDropMime = "application/x-noctalia-files-ask";
+  // Luciole-specific drag-start intent; URI data and Wayland action negotiation stay standard.
+  inline constexpr std::string_view kAskDropMime = "application/x-luciole-ask";
   inline constexpr std::string_view kKdeCutMime = "application/x-kde-cutselection";
   inline constexpr std::size_t kFilePayloadLimit = 1024 * 1024;
   inline constexpr std::size_t kFilePayloadCount = 4096;
@@ -27,4 +27,4 @@ namespace files {
   std::expected<FilePayload, std::string> parseFilePayload(std::string_view mime, std::string_view bytes);
   std::expected<std::string, std::string> encodeFilePayload(const FilePayload& payload, std::string_view mime);
   FilePayload remainingCutFiles(FilePayload payload, const std::vector<TransferResult>& results);
-} // namespace files
+} // namespace luciole

@@ -3,7 +3,7 @@
 #include "fs/filename.h"
 #include "fs/gio_interop.h"
 
-files::TrashInfo files::readTrashInfo(GFileInfo* info) {
+luciole::TrashInfo luciole::readTrashInfo(GFileInfo* info) {
   TrashInfo result;
   if (g_file_info_get_attribute_type(info, G_FILE_ATTRIBUTE_TRASH_ORIG_PATH) == G_FILE_ATTRIBUTE_TYPE_BYTE_STRING) {
     const char* path = g_file_info_get_attribute_byte_string(info, G_FILE_ATTRIBUTE_TRASH_ORIG_PATH);
@@ -20,7 +20,7 @@ files::TrashInfo files::readTrashInfo(GFileInfo* info) {
   }
   return result;
 }
-std::string files::trashOriginalParentText(const TrashInfo& info) {
+std::string luciole::trashOriginalParentText(const TrashInfo& info) {
   if (!info.original) {
     return {};
   }

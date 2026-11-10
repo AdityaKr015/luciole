@@ -14,19 +14,19 @@
 
 namespace {
   namespace fs = std::filesystem;
-  using files::TransferAction;
-  using files::TransferConflictChoice;
-  using files::TransferOutcome;
+  using luciole::TransferAction;
+  using luciole::TransferConflictChoice;
+  using luciole::TransferOutcome;
   void write(const fs::path& path, const std::string& text) { std::ofstream(path) << text; }
   std::string read(const fs::path& path) {
     std::ifstream input(path);
     return {(std::istreambuf_iterator<char>(input)), {}};
   }
-  files::Location location(const fs::path& path) { return files::Location::fromPath(path.native()); }
+  luciole::Location location(const fs::path& path) { return luciole::Location::fromPath(path.native()); }
   struct Fixture {
     fs::path root;
     explicit Fixture(const std::string& parent = "/tmp") {
-      std::string name = parent + "/noctalia-transfer-XXXXXX";
+      std::string name = parent + "/luciole-transfer-XXXXXX";
       TEST_CHECK(::mkdtemp(name.data()) != nullptr);
       root = name;
       fs::create_directory(root / "source");
@@ -46,7 +46,7 @@ namespace {
     fs::path destination(const std::string& name) const { return root / "destination" / name; }
     void clean() const {
       for (const auto& item : fs::recursive_directory_iterator(root)) {
-        TEST_CHECK(!item.path().filename().native().starts_with(".noctalia-files-transfer-"));
+        TEST_CHECK(!item.path().filename().native().starts_with(".luciole-transfer-"));
       }
     }
   };
@@ -63,8 +63,8 @@ namespace {
       }
     }
     void
-    run(files::TransferService& service, std::vector<files::Location> sources, const fs::path& destination,
-        TransferAction action, std::function<TransferConflictChoice(const files::TransferConflict&)> choose = {}) {
+    run(luciole::TransferService& service, std::vector<luciole::Location> sources, const fs::path& destination,
+        TransferAction action, std::function<TransferConflictChoice(const luciole::TransferConflict&)> choose = {}) {
       TEST_CHECK(service.start({std::move(sources), location(destination), action}));
       std::uint64_t handled = 0;
       until([&] {
@@ -83,12 +83,12 @@ namespace {
   };
   void testMoveAndCopy(Pump& pump) {
     Fixture fixture;
-    files::TransferService service;
+    luciole::TransferService service;
     write(fixture.source("file.txt"), "payload");
     fs::create_directories(fixture.source("folder/sub"));
     write(fixture.source("folder/sub/.hidden"), "nested");
     const bool attributes =
-        ::setxattr(fixture.source("folder/sub/.hidden").c_str(), "user.noctalia-test", "metadata", 8, 0) == 0;
+        ::setxattr(fixture.source("folder/sub/.hidden").c_str(), "user.luciole-test", "metadata", 8, 0) == 0;
     fs::create_symlink("../../outside", fixture.source("folder/link"));
     write(fixture.root / "outside", "outside must survive");
     pump.run(
@@ -115,7 +115,7 @@ namespace {
     if (attributes) {
       char value[16]{};
       TEST_CHECK(
-          ::getxattr(fixture.source("folder/sub/.hidden").c_str(), "user.noctalia-test", value, sizeof(value)) == 8
+          ::getxattr(fixture.source("folder/sub/.hidden").c_str(), "user.luciole-test", value, sizeof(value)) == 8
           && std::string(value, 8) == "metadata"
       );
     }
@@ -129,7 +129,7 @@ namespace {
   }
   void testConflicts(Pump& pump) {
     Fixture fixture;
-    files::TransferService service;
+    luciole::TransferService service;
     write(fixture.source("image.png"), "incoming");
     write(fixture.destination("image.png"), "existing");
     pump.run(
@@ -188,7 +188,7 @@ namespace {
   }
   void testGuardsAndRaces(Pump& pump) {
     Fixture fixture;
-    files::TransferService service;
+    luciole::TransferService service;
     fs::create_directories(fixture.source("tree/child"));
     write(fixture.source("tree/file"), "tree");
     fs::create_directory_symlink(fixture.source("tree/child"), fixture.root / "alias");
@@ -248,7 +248,7 @@ namespace {
   }
   void testCancellationAndNumbering(Pump& pump) {
     Fixture fixture;
-    files::TransferService service;
+    luciole::TransferService service;
     write(fixture.source("same.txt"), "same");
     pump.run(service, {location(fixture.source("same.txt"))}, fixture.source(""), TransferAction::Copy);
     TEST_CHECK(
@@ -308,7 +308,7 @@ namespace {
     write(source.source("tree/sub/data"), "cross filesystem");
     fs::create_hard_link(source.source("tree/sub/data"), source.source("tree/sub/linked"));
     fs::create_symlink("missing", source.source("tree/broken"));
-    files::TransferService service;
+    luciole::TransferService service;
     pump.run(service, {location(source.source("tree"))}, target.destination(""), TransferAction::Move);
     TEST_CHECK(
         service.results()[0].outcome == TransferOutcome::Moved
@@ -333,8 +333,8 @@ namespace {
     target.clean();
   }
   void finish(
-      Pump& pump, files::TransferService& service,
-      const std::function<TransferConflictChoice(const files::TransferConflict&)>& choose, bool all = false
+      Pump& pump, luciole::TransferService& service,
+      const std::function<TransferConflictChoice(const luciole::TransferConflict&)>& choose, bool all = false
   ) {
     std::uint64_t handled = 0;
     pump.until([&] {
@@ -348,7 +348,7 @@ namespace {
   void testMerge(Pump& pump) {
     for (const auto action : {TransferAction::Copy, TransferAction::Move}) {
       Fixture f;
-      files::TransferService service;
+      luciole::TransferService service;
       fs::create_directories(f.source("tree/sub"));
       fs::create_directories(f.destination("tree/sub"));
       write(f.source("tree/sub/value"), "incoming");
@@ -384,7 +384,7 @@ namespace {
   void testMergeSkipAndCancel(Pump& pump) {
     for (const auto choice : {TransferConflictChoice::Skip, TransferConflictChoice::Cancel}) {
       Fixture f;
-      files::TransferService service;
+      luciole::TransferService service;
       fs::create_directories(f.source("tree"));
       fs::create_directories(f.destination("tree"));
       write(f.source("tree/a-done"), "done");
@@ -403,7 +403,7 @@ namespace {
   }
   void testScopedChoices(Pump& pump) {
     Fixture f;
-    files::TransferService service;
+    luciole::TransferService service;
     for (const auto* folder : {"a", "b"}) {
       fs::create_directories(f.source(folder));
       fs::create_directories(f.destination(folder));
@@ -461,7 +461,7 @@ namespace {
   }
   void testMergeBindings(Pump& pump) {
     Fixture f;
-    files::TransferService service;
+    luciole::TransferService service;
     fs::create_directories(f.source("tree"));
     fs::create_directories(f.destination("tree"));
     write(f.source("tree/value"), "incoming");
@@ -496,7 +496,7 @@ namespace {
   }
   void testMergeLimitsAndNewEntries(Pump& pump) {
     Fixture f;
-    files::TransferService service;
+    luciole::TransferService service;
     fs::create_directory(f.source("tree"));
     fs::create_directory(f.destination("tree"));
     write(f.source("tree/a"), "captured");
@@ -531,7 +531,7 @@ namespace {
     }
     for (const auto action : {TransferAction::Copy, TransferAction::Move}) {
       Fixture f;
-      files::TransferService service;
+      luciole::TransferService service;
       fs::create_directories(f.source("tree"));
       fs::create_directories(f.destination("tree"));
       write(f.source("tree/a-done"), "completed");
@@ -561,7 +561,7 @@ namespace {
     }
     {
       Fixture f;
-      files::TransferService service;
+      luciole::TransferService service;
       fs::create_directories(f.source("tree"));
       fs::create_directories(f.destination("tree"));
       write(f.source("tree/a-done"), "completed");
@@ -586,7 +586,7 @@ namespace {
     }
     // A failed standalone item retries without replaying a completed sibling.
     Fixture f;
-    files::TransferService service;
+    luciole::TransferService service;
     write(f.source("a"), "done");
     write(f.source("b"), "retry");
     write(f.destination("b"), "old");
@@ -616,7 +616,7 @@ namespace {
     write(f.source("folder/nested/child"), "inside");
     write(f.source("café.txt"), "source bytes");
     fs::create_symlink("missing", f.source("broken"));
-    files::TransferService service;
+    luciole::TransferService service;
     pump.run(
         service,
         {location(f.source("folder")), location(f.source("folder/nested/child")), location(f.source("café.txt")),

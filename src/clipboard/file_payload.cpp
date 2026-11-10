@@ -5,7 +5,8 @@
 #include <algorithm>
 #include <unordered_set>
 
-std::expected<files::FilePayload, std::string> files::parseFilePayload(std::string_view mime, std::string_view bytes) {
+std::expected<luciole::FilePayload, std::string>
+luciole::parseFilePayload(std::string_view mime, std::string_view bytes) {
   if ((mime != kUriListMime && mime != kGnomeFilesMime)
       || bytes.empty()
       || bytes.size() > kFilePayloadLimit
@@ -62,7 +63,7 @@ std::expected<files::FilePayload, std::string> files::parseFilePayload(std::stri
   return payload;
 }
 
-std::expected<std::string, std::string> files::encodeFilePayload(const FilePayload& payload, std::string_view mime) {
+std::expected<std::string, std::string> luciole::encodeFilePayload(const FilePayload& payload, std::string_view mime) {
   if (payload.locations.empty() || payload.locations.size() > kFilePayloadCount) {
     return std::unexpected("Select between one and 4096 items.");
   }
@@ -91,7 +92,7 @@ std::expected<std::string, std::string> files::encodeFilePayload(const FilePaylo
   return bytes;
 }
 
-files::FilePayload files::remainingCutFiles(FilePayload payload, const std::vector<TransferResult>& results) {
+luciole::FilePayload luciole::remainingCutFiles(FilePayload payload, const std::vector<TransferResult>& results) {
   if (payload.cut) {
     std::unordered_set<std::string> moved;
     for (const auto& result : results) {

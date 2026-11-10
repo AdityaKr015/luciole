@@ -4,7 +4,7 @@
 #include "model/thumbnail_options.h"
 #include "thumbnails/file_icon_cache.h"
 
-namespace files {
+namespace luciole {
   // Adapted from Noctalia's ThumbnailService acquire/release and worker publication model.
   // Cells borrow immutable prepared pixels; the shared texture cache owns upload and residency.
   class ThumbnailService {
@@ -33,4 +33,4 @@ namespace files {
     struct State;
     std::shared_ptr<State> m_state;
   };
-} // namespace files
+} // namespace luciole

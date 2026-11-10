@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <filesystem>
 
-std::expected<LoadedImageFile, std::string> files::renderThumbnailProvider(
+std::expected<LoadedImageFile, std::string> luciole::renderThumbnailProvider(
     int sourceFd, const std::string& mime, int side, const ThumbnailOptions& options, GCancellable* cancellable
 ) {
   const bool image = mime.starts_with("image/");
@@ -19,7 +19,7 @@ std::expected<LoadedImageFile, std::string> files::renderThumbnailProvider(
   const std::size_t outputLimit = image
       ? std::max(std::size_t{8U * 1024U * 1024U}, 12 + static_cast<std::size_t>(side) * side * 4)
       : 8U * 1024U * 1024U;
-  const GString temporary(g_dir_make_tmp("noctalia-thumbnail-XXXXXX", nullptr));
+  const GString temporary(g_dir_make_tmp("luciole-thumbnail-XXXXXX", nullptr));
   if (!temporary) {
     return std::unexpected("cannot prepare thumbnail provider");
   }

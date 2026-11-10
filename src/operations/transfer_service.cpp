@@ -22,30 +22,30 @@
 #include <utility>
 
 namespace {
-  using namespace files::transfer;
+  using namespace luciole::transfer;
 
   struct Job {
-    explicit Job(files::TransferRequest transfer) : request(std::move(transfer)) {}
-    files::TransferRequest request;
+    explicit Job(luciole::TransferRequest transfer) : request(std::move(transfer)) {}
+    luciole::TransferRequest request;
     std::vector<std::shared_ptr<Node>> nodes;
-    std::unique_ptr<files::ProviderTransfer> provider;
+    std::unique_ptr<luciole::ProviderTransfer> provider;
     std::map<std::pair<dev_t, ino_t>, struct stat> changedLinks;
     std::size_t mergedItems = 0;
-    std::vector<files::TransferResult> outcomes;
+    std::vector<luciole::TransferResult> outcomes;
   };
 
   struct Answer {
-    files::TransferConflictChoice choice;
+    luciole::TransferConflictChoice choice;
     bool applyToAll = false;
   };
-  using Gate = files::ConflictGate<files::TransferConflict, Answer>;
+  using Gate = luciole::ConflictGate<luciole::TransferConflict, Answer>;
 
   struct Reply {
-    std::vector<files::TransferResult> results;
+    std::vector<luciole::TransferResult> results;
     std::string report;
   };
 
-  std::string reportUri(const files::Location& location) {
+  std::string reportUri(const luciole::Location& location) {
     const std::unique_ptr<GUri, decltype(&g_uri_unref)> parsed(
         g_uri_parse(
             location.uri().c_str(), static_cast<GUriFlags>(G_URI_FLAGS_ENCODED | G_URI_FLAGS_HAS_PASSWORD), nullptr
@@ -55,14 +55,14 @@ namespace {
     if (!parsed) {
       return "[invalid location]";
     }
-    const files::GString safe(g_uri_to_string_partial(parsed.get(), G_URI_HIDE_PASSWORD));
+    const luciole::GString safe(g_uri_to_string_partial(parsed.get(), G_URI_HIDE_PASSWORD));
     return safe ? safe.get() : "[invalid location]";
   }
 
-  std::string jobReport(const std::vector<files::TransferResult>& results) {
+  std::string jobReport(const std::vector<luciole::TransferResult>& results) {
     std::string report = "Transfer results\n";
     constexpr std::array labels{"Moved", "Copied", "Skipped", "Failed", "Cancelled", "Partial", "Linked"};
-    std::function<void(const files::TransferResult&)> append = [&](const auto& result) {
+    std::function<void(const luciole::TransferResult&)> append = [&](const auto& result) {
       if (report.size() > 16 * 1024 * 1024) {
         return;
       }
@@ -85,12 +85,12 @@ namespace {
     return report;
   }
 
-  files::FileError cancelledError() {
-    return {.kind = files::FileErrorKind::Cancelled, .message = "Transfer cancelled."};
+  luciole::FileError cancelledError() {
+    return {.kind = luciole::FileErrorKind::Cancelled, .message = "Transfer cancelled."};
   }
 } // namespace
 
-struct files::TransferService::State {
+struct luciole::TransferService::State {
   std::function<void()> changed;
   bool active = false;
   TransferAction action = TransferAction::Move;
@@ -128,11 +128,11 @@ struct files::TransferService::State {
 namespace {
   // Worker side of a conflict: remembered policies first, then the gate.
   Work::Choose conflictAsker(
-      Gate& gate, std::function<void()> published, files::CancelToken token, bool allowMerge,
-      std::map<std::pair<mode_t, mode_t>, files::TransferConflictChoice>& policies
+      Gate& gate, std::function<void()> published, luciole::CancelToken token, bool allowMerge,
+      std::map<std::pair<mode_t, mode_t>, luciole::TransferConflictChoice>& policies
   ) {
     return [&gate, published = std::move(published), token = std::move(token), allowMerge, &policies](
-               const Source& source, const files::Location& destination, const std::string& target,
+               const Source& source, const luciole::Location& destination, const std::string& target,
                const struct stat& existing, bool forcePrompt
            ) {
       const auto kind = std::pair{source.metadata.st_mode & S_IFMT, existing.st_mode & S_IFMT};
@@ -142,11 +142,11 @@ namespace {
         }
       }
       const bool folders = S_ISDIR(source.metadata.st_mode) && S_ISDIR(existing.st_mode);
-      files::TransferConflict conflict{
+      luciole::TransferConflict conflict{
           .id = 0,
           .source = source.location,
           .destination = destination.child(target),
-          .name = files::filenameDisplayText(target),
+          .name = luciole::filenameDisplayText(target),
           .sourceDirectory = S_ISDIR(source.metadata.st_mode),
           .destinationDirectory = S_ISDIR(existing.st_mode),
           .sourceSize = S_ISDIR(source.metadata.st_mode) || source.metadata.st_size < 0
@@ -167,16 +167,16 @@ namespace {
       };
       const auto answer = gate.ask(std::move(conflict), token, published);
       if (!answer) {
-        return files::TransferConflictChoice::Cancel;
+        return luciole::TransferConflictChoice::Cancel;
       }
-      if (answer->applyToAll && answer->choice != files::TransferConflictChoice::Cancel) {
+      if (answer->applyToAll && answer->choice != luciole::TransferConflictChoice::Cancel) {
         policies.insert_or_assign(kind, answer->choice);
       }
       return answer->choice;
     };
   }
 
-  std::vector<files::TransferResult> retryJob(Job& job, Work& work, std::atomic<std::size_t>& completed) {
+  std::vector<luciole::TransferResult> retryJob(Job& job, Work& work, std::atomic<std::size_t>& completed) {
     auto outcomes = job.outcomes;
     for (const auto& node : job.nodes) {
       if (node) {
@@ -188,10 +188,10 @@ namespace {
     return outcomes;
   }
 
-  std::vector<files::TransferResult> runFirst(Job& job, Work& work, std::atomic<std::size_t>& completed) {
-    using files::TransferOutcome;
+  std::vector<luciole::TransferResult> runFirst(Job& job, Work& work, std::atomic<std::size_t>& completed) {
+    using luciole::TransferOutcome;
     const auto& request = job.request;
-    std::vector<files::TransferResult> outcomes;
+    std::vector<luciole::TransferResult> outcomes;
     outcomes.reserve(request.sources.size());
     for (const auto& source : request.sources) {
       outcomes.emplace_back(source, TransferOutcome::Failed);
@@ -201,11 +201,13 @@ namespace {
     try {
       const auto path = request.destination.nativePath();
       if (!path) {
-        files::throwFileError(files::FileErrorKind::Unsupported, "Transfers to remote folders are not supported yet.");
+        luciole::throwFileError(
+            luciole::FileErrorKind::Unsupported, "Transfers to remote folders are not supported yet."
+        );
       }
       auto destination = opened(::open(path->c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
       auto binding =
-          std::make_shared<const Destination>(Destination{request.destination, files::statFd(destination.get()), {}});
+          std::make_shared<const Destination>(Destination{request.destination, luciole::statFd(destination.get()), {}});
       std::vector<Source> sources;
       for (std::size_t index = 0; index < request.sources.size(); ++index) {
         const auto& location = request.sources[index];
@@ -213,33 +215,36 @@ namespace {
           work.check();
           const auto sourcePath = location.nativePath();
           if (!sourcePath) {
-            files::throwFileError(
-                files::FileErrorKind::Unsupported, "Transfers from remote locations are not supported yet."
+            luciole::throwFileError(
+                luciole::FileErrorKind::Unsupported, "Transfers from remote locations are not supported yet."
             );
           }
           const std::filesystem::path source(*sourcePath);
           const auto name = source.filename().native();
           if (name.empty() || name == "." || name == "..") {
-            files::throwFileError(files::FileErrorKind::InvalidArgument, "The filesystem root cannot be transferred.");
+            luciole::throwFileError(
+                luciole::FileErrorKind::InvalidArgument, "The filesystem root cannot be transferred."
+            );
           }
           auto parent = opened(::open(source.parent_path().c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
           const auto metadata = info(parent.get(), name);
           sources.push_back(
-              {index, location, files::Fd{}, name, metadata, source.parent_path().native(), files::statFd(parent.get())}
+              {index, location, luciole::Fd{}, name, metadata, source.parent_path().native(),
+               luciole::statFd(parent.get())}
           );
         } catch (const TransferCancelled&) {
           outcomes[index] = {location, TransferOutcome::Cancelled, cancelledError()};
           processed[index] = true;
           completed.fetch_add(1);
         } catch (const std::exception&) {
-          outcomes[index] = {location, TransferOutcome::Failed, files::currentFileError()};
+          outcomes[index] = {location, TransferOutcome::Failed, luciole::currentFileError()};
           processed[index] = true;
           completed.fetch_add(1);
         }
       }
       std::set<std::pair<dev_t, ino_t>> selectedDirectories;
       for (const auto& source : sources) {
-        if (request.action != files::TransferAction::Link && S_ISDIR(source.metadata.st_mode)) {
+        if (request.action != luciole::TransferAction::Link && S_ISDIR(source.metadata.st_mode)) {
           selectedDirectories.emplace(source.metadata.st_dev, source.metadata.st_ino);
         }
       }
@@ -257,15 +262,15 @@ namespace {
           for (std::size_t depth = 0; !included[i] && !selectedDirectories.empty(); ++depth) {
             work.check();
             if (depth >= 65536) {
-              files::throwFileError(files::FileErrorKind::Unsupported, "The folder ancestry is too deep.");
+              luciole::throwFileError(luciole::FileErrorKind::Unsupported, "The folder ancestry is too deep.");
             }
-            const auto here = files::statFd(current.get());
+            const auto here = luciole::statFd(current.get());
             if (selectedDirectories.contains({here.st_dev, here.st_ino})) {
               included[i] = true;
               break;
             }
             auto parent = directory(current.get(), "..");
-            if (files::sameIdentity(here, files::statFd(parent.get()))) {
+            if (luciole::sameIdentity(here, luciole::statFd(parent.get()))) {
               break;
             }
             current = std::move(parent);
@@ -275,11 +280,11 @@ namespace {
           processed[source.index] = true;
           completed.fetch_add(1);
         } catch (const std::exception&) {
-          outcomes[source.index] = {source.location, TransferOutcome::Failed, files::currentFileError()};
+          outcomes[source.index] = {source.location, TransferOutcome::Failed, luciole::currentFileError()};
           processed[source.index] = true;
           completed.fetch_add(1);
         }
-        source.parent = files::Fd{};
+        source.parent = luciole::Fd{};
       }
 
       for (std::size_t i = 0; i < sources.size(); ++i) {
@@ -291,7 +296,7 @@ namespace {
           if (included[i]) {
             outcomes[source.index].outcome = TransferOutcome::Skipped;
           } else {
-            Source captured{source.index,    source.location,   files::Fd{},          source.name,
+            Source captured{source.index,    source.location,   luciole::Fd{},        source.name,
                             source.metadata, source.parentPath, source.parentMetadata};
             auto node = std::make_shared<Node>(std::move(captured), binding, outcomes[source.index]);
             job.nodes[source.index] = node;
@@ -299,14 +304,14 @@ namespace {
             outcomes[source.index] = snapshot(*node);
           }
         } catch (const std::exception&) {
-          outcomes[source.index].error = files::currentFileError();
+          outcomes[source.index].error = luciole::currentFileError();
         }
-        source.parent = files::Fd{};
+        source.parent = luciole::Fd{};
         processed[source.index] = true;
         completed.fetch_add(1);
       }
     } catch (const std::exception&) {
-      const auto error = files::currentFileError();
+      const auto error = luciole::currentFileError();
       for (std::size_t i = 0; i < outcomes.size(); ++i) {
         if (!processed[i]) {
           outcomes[i].error = error;
@@ -318,26 +323,26 @@ namespace {
   }
 } // namespace
 
-files::TransferService::TransferService() : m_state(std::make_shared<State>()) {}
-files::TransferService::~TransferService() {
+luciole::TransferService::TransferService() : m_state(std::make_shared<State>()) {}
+luciole::TransferService::~TransferService() {
   m_state->changed = {};
   cancel();
 }
-void files::TransferService::setChangedCallback(std::function<void()> callback) {
+void luciole::TransferService::setChangedCallback(std::function<void()> callback) {
   m_state->changed = std::move(callback);
 }
-bool files::TransferService::busy() const { return m_state->active; }
-std::size_t files::TransferService::total() const { return m_state->total; }
-std::size_t files::TransferService::completed() const { return m_state->completed.load(); }
-std::uint64_t files::TransferService::bytes() const { return m_state->bytes.load(); }
-files::TransferAction files::TransferService::action() const { return m_state->action; }
-const std::vector<files::TransferResult>& files::TransferService::results() const { return m_state->results; }
-void files::TransferService::cancel() {
+bool luciole::TransferService::busy() const { return m_state->active; }
+std::size_t luciole::TransferService::total() const { return m_state->total; }
+std::size_t luciole::TransferService::completed() const { return m_state->completed.load(); }
+std::uint64_t luciole::TransferService::bytes() const { return m_state->bytes.load(); }
+luciole::TransferAction luciole::TransferService::action() const { return m_state->action; }
+const std::vector<luciole::TransferResult>& luciole::TransferService::results() const { return m_state->results; }
+void luciole::TransferService::cancel() {
   m_state->token.cancel();
   m_state->gate.wake();
 }
-std::optional<files::TransferConflict> files::TransferService::conflict() const { return m_state->gate.pending(); }
-bool files::TransferService::resolve(std::uint64_t id, TransferConflictChoice choice, bool applyToAll) {
+std::optional<luciole::TransferConflict> luciole::TransferService::conflict() const { return m_state->gate.pending(); }
+bool luciole::TransferService::resolve(std::uint64_t id, TransferConflictChoice choice, bool applyToAll) {
   if (choice < TransferConflictChoice::Replace || choice > TransferConflictChoice::Merge) {
     return false;
   }
@@ -354,14 +359,14 @@ bool files::TransferService::resolve(std::uint64_t id, TransferConflictChoice ch
   });
 }
 
-std::size_t files::TransferService::retryable() const { return busy() ? 0 : m_state->retryable; }
-const std::string& files::TransferService::report() const { return m_state->report; }
-std::uint64_t files::TransferService::jobId() const { return m_state->jobId; }
-bool files::TransferService::start(TransferRequest request) { return launch(std::move(request), false); }
-bool files::TransferService::retryFailed() {
+std::size_t luciole::TransferService::retryable() const { return busy() ? 0 : m_state->retryable; }
+const std::string& luciole::TransferService::report() const { return m_state->report; }
+std::uint64_t luciole::TransferService::jobId() const { return m_state->jobId; }
+bool luciole::TransferService::start(TransferRequest request) { return launch(std::move(request), false); }
+bool luciole::TransferService::retryFailed() {
   return m_state->job && retryable() > 0 ? launch(m_state->job->request, true) : false;
 }
-bool files::TransferService::launch(TransferRequest request, bool retry) {
+bool luciole::TransferService::launch(TransferRequest request, bool retry) {
   if (busy() || request.sources.empty()) {
     return false;
   }

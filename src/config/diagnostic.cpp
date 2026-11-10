@@ -2,7 +2,7 @@
 
 #include <format>
 
-std::string files::ConfigIssue::format() const {
+std::string luciole::ConfigIssue::format() const {
   auto location = file.string();
   if (line != 0) {
     location += std::format(":{}:{}", line, column);

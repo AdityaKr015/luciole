@@ -13,7 +13,7 @@ VERSION = sys.argv.pop(1)
 
 class CliTest(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="noctalia-cli-test-")
+        temporary = tempfile.TemporaryDirectory(prefix="luciole-cli-test-")
         self.addCleanup(temporary.cleanup)
         self.config_dir = Path(temporary.name)
 
@@ -21,18 +21,19 @@ class CliTest(unittest.TestCase):
         env = dict(os.environ)
         for name in ("DISPLAY", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS"):
             env.pop(name, None)
-        env["WAYLAND_DISPLAY"] = "/noctalia-files-test-missing-wayland-socket"
+        env["WAYLAND_DISPLAY"] = "/luciole-test-missing-wayland-socket"
         env["XDG_CONFIG_HOME"] = str(self.config_dir if config_home is None else config_home)
         return subprocess.run([BINARY, *args], check=False, capture_output=True, text=True, env=env, timeout=5)
 
     def test_headless_information(self):
         version = self.invoke("--version")
         self.assertEqual(version.returncode, 0, version.stderr)
-        self.assertTrue(version.stdout.startswith(f"noctalia-files {VERSION} ("))
+        self.assertTrue(version.stdout.startswith(f"luciole {VERSION} ("))
         self.assertEqual(version.stderr, "")
         help_result = self.invoke("--help")
         self.assertEqual(help_result.returncode, 0, help_result.stderr)
-        self.assertIn("Usage:", help_result.stdout)
+        self.assertIn("Usage: luciole", help_result.stdout)
+        self.assertIn("Open Luciole in Home", help_result.stdout)
         self.assertEqual(help_result.stderr, "")
 
     def test_reject_invalid_argument_combinations(self):
@@ -52,13 +53,13 @@ class CliTest(unittest.TestCase):
                 result = self.invoke(*args)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(result.stdout, "")
-                self.assertTrue(result.stderr.startswith("noctalia-files:"))
+                self.assertTrue(result.stderr.startswith("luciole:"))
 
     def test_completions_are_shell_specific(self):
         for shell, marker in (
             ("bash", "complete -F"),
-            ("zsh", "#compdef noctalia-files"),
-            ("fish", "complete -c noctalia-files"),
+            ("zsh", "#compdef luciole"),
+            ("fish", "complete -c luciole"),
         ):
             with self.subTest(shell=shell):
                 result = self.invoke("completions", shell)
@@ -96,9 +97,9 @@ class CliTest(unittest.TestCase):
         script = r'''
 source /dev/stdin
 compopt() { :; }
-COMP_WORDS=(noctalia-files config validate "$1")
+COMP_WORDS=(luciole config validate "$1")
 COMP_CWORD=3
-_noctalia_files
+_luciole
 printf '%s\n' "${COMPREPLY[@]}"
 '''
         result = subprocess.run(
@@ -111,7 +112,7 @@ printf '%s\n' "${COMPREPLY[@]}"
         self.assertEqual(result.stdout.splitlines(), [str(path)], result.stderr)
 
     def test_invalid_startup_configuration_fails_before_wayland(self):
-        directory = self.config_dir / "noctalia-files"
+        directory = self.config_dir / "luciole"
         directory.mkdir()
         (directory / "config.toml").write_text("[browser]\nshow_hidden = 'wrong'\n")
         result = self.invoke()

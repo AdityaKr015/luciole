@@ -2,7 +2,7 @@
 
 #include "browser/browser_controller.h"
 
-namespace files {
+namespace luciole {
   // Column controllers remain alive until the view has detached their adapters.
   class MillerColumns {
   public:
@@ -47,4 +47,4 @@ namespace files {
     std::function<void()> m_changed;
     std::function<void(const Location&)> m_activate;
   };
-} // namespace files
+} // namespace luciole

@@ -20,41 +20,41 @@
 #include <utility>
 
 namespace {
-  using files::BrowserSettings;
+  using luciole::BrowserSettings;
   constexpr std::size_t kMaxConfigBytes = 256 * 1024;
 
   template <class T> struct Named {
     T value;
     std::string_view name;
   };
-  constexpr auto kActivationModes = std::to_array<Named<files::ActivationMode>>(
-      {{files::ActivationMode::SingleClick, "single_click"}, {files::ActivationMode::DoubleClick, "double_click"}}
+  constexpr auto kActivationModes = std::to_array<Named<luciole::ActivationMode>>(
+      {{luciole::ActivationMode::SingleClick, "single_click"}, {luciole::ActivationMode::DoubleClick, "double_click"}}
   );
-  constexpr auto kTypingModes = std::to_array<Named<files::TypingMode>>(
-      {{files::TypingMode::Search, "search"}, {files::TypingMode::Typeahead, "typeahead"}}
+  constexpr auto kTypingModes = std::to_array<Named<luciole::TypingMode>>(
+      {{luciole::TypingMode::Search, "search"}, {luciole::TypingMode::Typeahead, "typeahead"}}
   );
-  constexpr auto kSortFields = std::to_array<Named<files::SortField>>(
-      {{files::SortField::Name, "name"},
-       {files::SortField::Size, "size"},
-       {files::SortField::Modified, "modified"},
-       {files::SortField::Type, "type"},
-       {files::SortField::Accessed, "accessed"},
-       {files::SortField::Created, "created"},
-       {files::SortField::Owner, "owner"},
-       {files::SortField::Group, "group"},
-       {files::SortField::Permissions, "permissions"},
-       {files::SortField::Location, "location"}}
+  constexpr auto kSortFields = std::to_array<Named<luciole::SortField>>(
+      {{luciole::SortField::Name, "name"},
+       {luciole::SortField::Size, "size"},
+       {luciole::SortField::Modified, "modified"},
+       {luciole::SortField::Type, "type"},
+       {luciole::SortField::Accessed, "accessed"},
+       {luciole::SortField::Created, "created"},
+       {luciole::SortField::Owner, "owner"},
+       {luciole::SortField::Group, "group"},
+       {luciole::SortField::Permissions, "permissions"},
+       {luciole::SortField::Location, "location"}}
   );
-  constexpr auto kViewModes = std::to_array<Named<files::ViewMode>>(
-      {{files::ViewMode::List, "list"}, {files::ViewMode::Grid, "grid"}, {files::ViewMode::Miller, "miller"}}
+  constexpr auto kViewModes = std::to_array<Named<luciole::ViewMode>>(
+      {{luciole::ViewMode::List, "list"}, {luciole::ViewMode::Grid, "grid"}, {luciole::ViewMode::Miller, "miller"}}
   );
-  constexpr auto kDensities = std::to_array<Named<files::ViewDensity>>(
-      {{files::ViewDensity::Compact, "compact"}, {files::ViewDensity::Comfortable, "comfortable"}}
+  constexpr auto kDensities = std::to_array<Named<luciole::ViewDensity>>(
+      {{luciole::ViewDensity::Compact, "compact"}, {luciole::ViewDensity::Comfortable, "comfortable"}}
   );
-  constexpr auto kThumbnailPolicies = std::to_array<Named<files::ThumbnailPolicy>>(
-      {{files::ThumbnailPolicy::Never, "never"},
-       {files::ThumbnailPolicy::Local, "local"},
-       {files::ThumbnailPolicy::All, "all"}}
+  constexpr auto kThumbnailPolicies = std::to_array<Named<luciole::ThumbnailPolicy>>(
+      {{luciole::ThumbnailPolicy::Never, "never"},
+       {luciole::ThumbnailPolicy::Local, "local"},
+       {luciole::ThumbnailPolicy::All, "all"}}
   );
 
   // How a preference is spelled in TOML and which values it accepts. Enums
@@ -67,12 +67,12 @@ namespace {
     bool (*accepts)(int);
     std::string_view expected;
   };
-  template <> struct Rule<files::DetailsColumnOrder> {};
+  template <> struct Rule<luciole::DetailsColumnOrder> {};
 
   bool accepts(const Rule<bool>& /*rule*/, bool /*value*/) { return true; }
   bool accepts(const Rule<int>& rule, int value) { return rule.accepts(value); }
-  bool accepts(const Rule<files::DetailsColumnOrder>& /*rule*/, const files::DetailsColumnOrder& order) {
-    return files::validDetailsColumnOrder(order);
+  bool accepts(const Rule<luciole::DetailsColumnOrder>& /*rule*/, const luciole::DetailsColumnOrder& order) {
+    return luciole::validDetailsColumnOrder(order);
   }
   template <class T>
     requires std::is_enum_v<T>
@@ -86,18 +86,18 @@ namespace {
     const auto number = node.value_exact<std::int64_t>();
     return number && std::in_range<int>(*number) ? std::optional<int>(static_cast<int>(*number)) : std::nullopt;
   }
-  std::optional<files::DetailsColumnOrder>
-  decode(const Rule<files::DetailsColumnOrder>& /*rule*/, const toml::node& node) {
+  std::optional<luciole::DetailsColumnOrder>
+  decode(const Rule<luciole::DetailsColumnOrder>& /*rule*/, const toml::node& node) {
     const auto* columns = node.as_array();
-    files::DetailsColumnOrder order{};
+    luciole::DetailsColumnOrder order{};
     if (columns == nullptr || columns->size() < 3 || columns->size() > order.size()) {
       return std::nullopt;
     }
-    std::array<bool, files::kDetailsColumnCount> seen{};
+    std::array<bool, luciole::kDetailsColumnCount> seen{};
     std::size_t index = 0;
     for (const auto& item : *columns) {
       const auto* name = item.as_string();
-      const auto column = name ? files::detailsColumnFromName(name->get()) : std::nullopt;
+      const auto column = name ? luciole::detailsColumnFromName(name->get()) : std::nullopt;
       if (!column || seen[static_cast<std::size_t>(*column)]) {
         return std::nullopt;
       }
@@ -107,7 +107,7 @@ namespace {
     if (!seen[0] || !seen[1] || !seen[2]) {
       return std::nullopt;
     }
-    for (const auto column : files::kDefaultDetailsColumnOrder) {
+    for (const auto column : luciole::kDefaultDetailsColumnOrder) {
       if (!seen[static_cast<std::size_t>(column)]) {
         order[index++] = column;
       }
@@ -127,7 +127,7 @@ namespace {
 
   std::string expected(const Rule<bool>& /*rule*/) { return "expected a boolean"; }
   std::string expected(const Rule<int>& rule) { return std::string(rule.expected); }
-  std::string expected(const Rule<files::DetailsColumnOrder>& /*rule*/) {
+  std::string expected(const Rule<luciole::DetailsColumnOrder>& /*rule*/) {
     return "expected unique column names including 'type', 'size', and 'modified'; optional columns may be omitted";
   }
   template <class T>
@@ -150,12 +150,12 @@ namespace {
     table.insert(key, value);
   }
   void encode(
-      toml::table& table, std::string_view key, const Rule<files::DetailsColumnOrder>& /*rule*/,
-      const files::DetailsColumnOrder& order
+      toml::table& table, std::string_view key, const Rule<luciole::DetailsColumnOrder>& /*rule*/,
+      const luciole::DetailsColumnOrder& order
   ) {
     toml::array columns;
     for (const auto column : order) {
-      columns.push_back(files::detailsColumnName(column));
+      columns.push_back(luciole::detailsColumnName(column));
     }
     table.insert(key, std::move(columns));
   }
@@ -167,22 +167,22 @@ namespace {
 
   template <class T> struct Descriptor {
     using Value = T;
-    files::PreferenceKey<T> preference;
+    luciole::PreferenceKey<T> preference;
     std::string_view key; // Field name inside [browser].
     T& (*field)(BrowserSettings&);
     Rule<T> rule;
   };
   template <class T>
   constexpr Descriptor<T> describe(
-      files::PreferenceKey<T> preference, std::string_view key, std::type_identity_t<T>& (*field)(BrowserSettings&),
+      luciole::PreferenceKey<T> preference, std::string_view key, std::type_identity_t<T>& (*field)(BrowserSettings&),
       Rule<T> rule = {}
   ) {
     return {.preference = preference, .key = key, .field = field, .rule = rule};
   }
   template <int Minimum, int Maximum> bool between(int value) { return value >= Minimum && value <= Maximum; }
-  template <std::size_t Index> bool columnWidth(int value) { return files::validDetailsColumnWidth(Index, value); }
+  template <std::size_t Index> bool columnWidth(int value) { return luciole::validDetailsColumnWidth(Index, value); }
 
-  using P = files::BrowserPreference;
+  using P = luciole::BrowserPreference;
   using S = BrowserSettings;
   // Every browser.* setting, in BrowserPreferenceId order. Defaults are BrowserSettings' initializers.
   constexpr std::tuple kPreferences{
@@ -198,7 +198,7 @@ namespace {
       describe(P::ViewMode, "view_mode", [](S& s) -> auto& { return s.viewMode; }, {kViewModes}),
       describe(
           P::GridIconSize, "grid_icon_size", [](S& s) -> auto& { return s.gridIconSize; },
-          {[](int value) { return std::ranges::contains(files::kGridIconSizes, value); },
+          {[](int value) { return std::ranges::contains(luciole::kGridIconSizes, value); },
            "expected integer icon size 32, 48, 64, 80, 96, 128, 160, 192, or 256"}
       ),
       describe(P::Density, "density", [](S& s) -> auto& { return s.presentation.density; }, {kDensities}),
@@ -211,7 +211,8 @@ namespace {
       describe(P::ShowEmblems, "show_emblems", [](S& s) -> auto& { return s.presentation.showEmblems; }),
       describe(
           P::SidebarWidth, "sidebar_width", [](S& s) -> auto& { return s.sidebarWidth; },
-          {between<files::kMinSidebarWidth, files::kMaxSidebarWidth>, "expected integer sidebar width from 160 to 400"}
+          {between<luciole::kMinSidebarWidth, luciole::kMaxSidebarWidth>,
+           "expected integer sidebar width from 160 to 400"}
       ),
       describe(P::ShowSidebar, "show_sidebar", [](S& s) -> auto& { return s.showSidebar; }),
       describe(P::SidebarTree, "sidebar_tree", [](S& s) -> auto& { return s.sidebarTree; }),
@@ -240,43 +241,43 @@ namespace {
       describe(P::ShowLocationColumn, "show_location_column", [](S& s) -> auto& { return s.columns.location; }),
       describe(P::ColumnOrder, "column_order", [](S& s) -> auto& { return s.columnOrder; }),
       describe(
-          P::NameColumnWidth, files::kDetailsColumnWidthKeys[0], [](S& s) -> auto& { return s.columnWidths[0]; },
+          P::NameColumnWidth, luciole::kDetailsColumnWidthKeys[0], [](S& s) -> auto& { return s.columnWidths[0]; },
           {columnWidth<0>, "expected 0 (automatic) or an integer width from 160 to 16384"}
       ),
       describe(
-          P::TypeColumnWidth, files::kDetailsColumnWidthKeys[1], [](S& s) -> auto& { return s.columnWidths[1]; },
+          P::TypeColumnWidth, luciole::kDetailsColumnWidthKeys[1], [](S& s) -> auto& { return s.columnWidths[1]; },
           {columnWidth<1>, "expected an integer width from 64 to 2048"}
       ),
       describe(
-          P::SizeColumnWidth, files::kDetailsColumnWidthKeys[2], [](S& s) -> auto& { return s.columnWidths[2]; },
+          P::SizeColumnWidth, luciole::kDetailsColumnWidthKeys[2], [](S& s) -> auto& { return s.columnWidths[2]; },
           {columnWidth<2>, "expected an integer width from 64 to 2048"}
       ),
       describe(
-          P::ModifiedColumnWidth, files::kDetailsColumnWidthKeys[3], [](S& s) -> auto& { return s.columnWidths[3]; },
+          P::ModifiedColumnWidth, luciole::kDetailsColumnWidthKeys[3], [](S& s) -> auto& { return s.columnWidths[3]; },
           {columnWidth<3>, "expected an integer width from 64 to 2048"}
       ),
       describe(
-          P::AccessedColumnWidth, files::kDetailsColumnWidthKeys[4], [](S& s) -> auto& { return s.columnWidths[4]; },
+          P::AccessedColumnWidth, luciole::kDetailsColumnWidthKeys[4], [](S& s) -> auto& { return s.columnWidths[4]; },
           {columnWidth<4>, "expected an integer width from 64 to 2048"}
       ),
       describe(
-          P::CreatedColumnWidth, files::kDetailsColumnWidthKeys[5], [](S& s) -> auto& { return s.columnWidths[5]; },
+          P::CreatedColumnWidth, luciole::kDetailsColumnWidthKeys[5], [](S& s) -> auto& { return s.columnWidths[5]; },
           {columnWidth<5>, "expected an integer width from 64 to 2048"}
       ),
       describe(
-          P::OwnerColumnWidth, files::kDetailsColumnWidthKeys[6], [](S& s) -> auto& { return s.columnWidths[6]; },
+          P::OwnerColumnWidth, luciole::kDetailsColumnWidthKeys[6], [](S& s) -> auto& { return s.columnWidths[6]; },
           {columnWidth<6>, "expected an integer width from 64 to 2048"}
       ),
       describe(
-          P::GroupColumnWidth, files::kDetailsColumnWidthKeys[7], [](S& s) -> auto& { return s.columnWidths[7]; },
+          P::GroupColumnWidth, luciole::kDetailsColumnWidthKeys[7], [](S& s) -> auto& { return s.columnWidths[7]; },
           {columnWidth<7>, "expected an integer width from 64 to 2048"}
       ),
       describe(
-          P::PermissionsColumnWidth, files::kDetailsColumnWidthKeys[8], [](S& s) -> auto& { return s.columnWidths[8]; },
-          {columnWidth<8>, "expected an integer width from 64 to 2048"}
+          P::PermissionsColumnWidth, luciole::kDetailsColumnWidthKeys[8],
+          [](S& s) -> auto& { return s.columnWidths[8]; }, {columnWidth<8>, "expected an integer width from 64 to 2048"}
       ),
       describe(
-          P::LocationColumnWidth, files::kDetailsColumnWidthKeys[9], [](S& s) -> auto& { return s.columnWidths[9]; },
+          P::LocationColumnWidth, luciole::kDetailsColumnWidthKeys[9], [](S& s) -> auto& { return s.columnWidths[9]; },
           {columnWidth<9>, "expected an integer width from 64 to 2048"}
       ),
       describe(
@@ -297,10 +298,10 @@ namespace {
       ),
   };
   constexpr std::size_t kPreferenceCount = std::tuple_size_v<decltype(kPreferences)>;
-  static_assert(kPreferenceCount == std::to_underlying(files::BrowserPreferenceId::Count));
+  static_assert(kPreferenceCount == std::to_underlying(luciole::BrowserPreferenceId::Count));
   static_assert(
       []<std::size_t... I>(std::index_sequence<I...>) {
-        return ((std::get<I>(kPreferences).preference.id() == static_cast<files::BrowserPreferenceId>(I)) && ...);
+        return ((std::get<I>(kPreferences).preference.id() == static_cast<luciole::BrowserPreferenceId>(I)) && ...);
       }(std::make_index_sequence<kPreferenceCount>{}),
       "kPreferences must follow BrowserPreferenceId order"
   );
@@ -311,7 +312,7 @@ namespace {
       (visit(std::integral_constant<std::size_t, I>{}), ...);
     }(std::make_index_sequence<kPreferenceCount>{});
   }
-  template <class Visit> void visitPreference(files::BrowserPreferenceId id, Visit&& visit) {
+  template <class Visit> void visitPreference(luciole::BrowserPreferenceId id, Visit&& visit) {
     forEachPreference([&](auto index) {
       if (index == std::to_underlying(id)) {
         visit(index);
@@ -339,13 +340,13 @@ namespace {
     explicit FileDescriptor(int value) : fd(value) {}
   };
 
-  files::ConfigIssue ioIssue(const std::filesystem::path& file, std::string message) {
+  luciole::ConfigIssue ioIssue(const std::filesystem::path& file, std::string message) {
     return {.file = file, .key = {}, .message = std::move(message)};
   }
 
   std::string ioMessage(int error) { return std::error_code(error, std::generic_category()).message(); }
 
-  std::expected<std::optional<std::string>, files::ConfigIssue>
+  std::expected<std::optional<std::string>, luciole::ConfigIssue>
   readFile(const std::filesystem::path& file, bool optional) {
     if (optional) {
       struct stat linkInfo{};
@@ -391,18 +392,18 @@ namespace {
     }
   }
 
-  std::expected<Patch, files::ConfigIssues> parse(const std::filesystem::path& file, std::string_view text) {
-    auto table = files::parseToml(text, file);
+  std::expected<Patch, luciole::ConfigIssues> parse(const std::filesystem::path& file, std::string_view text) {
+    auto table = luciole::parseToml(text, file);
     if (!table) {
       return std::unexpected(std::move(table.error()));
     }
-    files::TomlDecoder decoder(file);
+    luciole::TomlDecoder decoder(file);
     Patch patch;
     for (const auto& [key, node] : *table) {
       if (key == "schema_version") {
-        if (!files::isSchemaVersion(node)) {
+        if (!luciole::isSchemaVersion(node)) {
           decoder.issue(
-              node, "schema_version", std::format("expected integer schema version {}", files::kSchemaVersion)
+              node, "schema_version", std::format("expected integer schema version {}", luciole::kSchemaVersion)
           );
         }
       } else if (key == "browser") {
@@ -439,7 +440,7 @@ namespace {
     return patch;
   }
 
-  void applyPatch(files::Settings& settings, const Patch& patch) {
+  void applyPatch(luciole::Settings& settings, const Patch& patch) {
     forEachPreference([&](auto index) {
       if (const auto& value = std::get<index>(patch)) {
         std::get<index>(kPreferences).field(settings.browser) = *value;
@@ -447,7 +448,7 @@ namespace {
     });
   }
 
-  void editPatch(Patch& patch, const files::OverrideEdit& edit) {
+  void editPatch(Patch& patch, const luciole::OverrideEdit& edit) {
     visitPreference(edit.preference(), [&](auto index) {
       std::get<index>(patch) = edit.value(std::get<index>(kPreferences).preference);
     });
@@ -461,7 +462,7 @@ namespace {
         encode(browser, descriptor.key, descriptor.rule, *value);
       }
     });
-    toml::table document{{"schema_version", files::kSchemaVersion}};
+    toml::table document{{"schema_version", luciole::kSchemaVersion}};
     if (!browser.empty()) {
       document.insert("browser", std::move(browser));
     }
@@ -477,7 +478,7 @@ namespace {
   }
 } // namespace
 
-template <class T> T& files::preferenceValue(BrowserSettings& settings, PreferenceKey<T> key) {
+template <class T> T& luciole::preferenceValue(BrowserSettings& settings, PreferenceKey<T> key) {
   T* field = nullptr;
   visitPreference(key.id(), [&](auto index) {
     const auto& descriptor = std::get<index>(kPreferences);
@@ -489,43 +490,44 @@ template <class T> T& files::preferenceValue(BrowserSettings& settings, Preferen
   return *field;
 }
 
-template <class T> const T& files::preferenceValue(const BrowserSettings& settings, PreferenceKey<T> key) {
+template <class T> const T& luciole::preferenceValue(const BrowserSettings& settings, PreferenceKey<T> key) {
   return preferenceValue(const_cast<BrowserSettings&>(settings), key);
 }
 
-template bool& files::preferenceValue(BrowserSettings&, PreferenceKey<bool>);
-template int& files::preferenceValue(BrowserSettings&, PreferenceKey<int>);
-template files::ActivationMode& files::preferenceValue(BrowserSettings&, PreferenceKey<ActivationMode>);
-template files::TypingMode& files::preferenceValue(BrowserSettings&, PreferenceKey<TypingMode>);
-template files::SortField& files::preferenceValue(BrowserSettings&, PreferenceKey<SortField>);
-template files::ViewMode& files::preferenceValue(BrowserSettings&, PreferenceKey<ViewMode>);
-template files::ViewDensity& files::preferenceValue(BrowserSettings&, PreferenceKey<ViewDensity>);
-template files::DetailsColumnOrder& files::preferenceValue(BrowserSettings&, PreferenceKey<DetailsColumnOrder>);
-template files::ThumbnailPolicy& files::preferenceValue(BrowserSettings&, PreferenceKey<ThumbnailPolicy>);
-template const bool& files::preferenceValue(const BrowserSettings&, PreferenceKey<bool>);
-template const int& files::preferenceValue(const BrowserSettings&, PreferenceKey<int>);
-template const files::ActivationMode& files::preferenceValue(const BrowserSettings&, PreferenceKey<ActivationMode>);
-template const files::TypingMode& files::preferenceValue(const BrowserSettings&, PreferenceKey<TypingMode>);
-template const files::SortField& files::preferenceValue(const BrowserSettings&, PreferenceKey<SortField>);
-template const files::ViewMode& files::preferenceValue(const BrowserSettings&, PreferenceKey<ViewMode>);
-template const files::ViewDensity& files::preferenceValue(const BrowserSettings&, PreferenceKey<ViewDensity>);
-template const files::DetailsColumnOrder&
-files::preferenceValue(const BrowserSettings&, PreferenceKey<DetailsColumnOrder>);
-template const files::ThumbnailPolicy& files::preferenceValue(const BrowserSettings&, PreferenceKey<ThumbnailPolicy>);
+template bool& luciole::preferenceValue(BrowserSettings&, PreferenceKey<bool>);
+template int& luciole::preferenceValue(BrowserSettings&, PreferenceKey<int>);
+template luciole::ActivationMode& luciole::preferenceValue(BrowserSettings&, PreferenceKey<ActivationMode>);
+template luciole::TypingMode& luciole::preferenceValue(BrowserSettings&, PreferenceKey<TypingMode>);
+template luciole::SortField& luciole::preferenceValue(BrowserSettings&, PreferenceKey<SortField>);
+template luciole::ViewMode& luciole::preferenceValue(BrowserSettings&, PreferenceKey<ViewMode>);
+template luciole::ViewDensity& luciole::preferenceValue(BrowserSettings&, PreferenceKey<ViewDensity>);
+template luciole::DetailsColumnOrder& luciole::preferenceValue(BrowserSettings&, PreferenceKey<DetailsColumnOrder>);
+template luciole::ThumbnailPolicy& luciole::preferenceValue(BrowserSettings&, PreferenceKey<ThumbnailPolicy>);
+template const bool& luciole::preferenceValue(const BrowserSettings&, PreferenceKey<bool>);
+template const int& luciole::preferenceValue(const BrowserSettings&, PreferenceKey<int>);
+template const luciole::ActivationMode& luciole::preferenceValue(const BrowserSettings&, PreferenceKey<ActivationMode>);
+template const luciole::TypingMode& luciole::preferenceValue(const BrowserSettings&, PreferenceKey<TypingMode>);
+template const luciole::SortField& luciole::preferenceValue(const BrowserSettings&, PreferenceKey<SortField>);
+template const luciole::ViewMode& luciole::preferenceValue(const BrowserSettings&, PreferenceKey<ViewMode>);
+template const luciole::ViewDensity& luciole::preferenceValue(const BrowserSettings&, PreferenceKey<ViewDensity>);
+template const luciole::DetailsColumnOrder&
+luciole::preferenceValue(const BrowserSettings&, PreferenceKey<DetailsColumnOrder>);
+template const luciole::ThumbnailPolicy&
+luciole::preferenceValue(const BrowserSettings&, PreferenceKey<ThumbnailPolicy>);
 
-std::vector<files::OverrideEdit> files::inheritAllPreferences() {
+std::vector<luciole::OverrideEdit> luciole::inheritAllPreferences() {
   std::vector<OverrideEdit> edits;
   edits.reserve(kPreferenceCount);
   forEachPreference([&](auto index) { edits.emplace_back(std::get<index>(kPreferences).preference, std::nullopt); });
   return edits;
 }
 
-files::ConfigPaths files::ConfigPaths::fromEnvironment() {
-  const auto directory = configHome() / "noctalia-files";
+luciole::ConfigPaths luciole::ConfigPaths::fromEnvironment() {
+  const auto directory = configHome() / "luciole";
   return {.base = directory / "config.toml", .overrides = directory / "settings.toml"};
 }
 
-files::ConfigIssues files::validateConfigFile(const std::filesystem::path& file) {
+luciole::ConfigIssues luciole::validateConfigFile(const std::filesystem::path& file) {
   auto text = readFile(file, false);
   if (!text) {
     return {std::move(text.error())};
@@ -534,9 +536,9 @@ files::ConfigIssues files::validateConfigFile(const std::filesystem::path& file)
   return parsed ? ConfigIssues{} : std::move(parsed.error());
 }
 
-static files::SettingsResult loadLayers(const files::ConfigPaths& paths, bool overrides) {
-  files::Settings settings;
-  files::ConfigIssues issues;
+static luciole::SettingsResult loadLayers(const luciole::ConfigPaths& paths, bool overrides) {
+  luciole::Settings settings;
+  luciole::ConfigIssues issues;
   for (const auto* file : {&paths.base, &paths.overrides}) {
     if (file == &paths.overrides && !overrides) {
       continue;
@@ -563,12 +565,12 @@ static files::SettingsResult loadLayers(const files::ConfigPaths& paths, bool ov
   return settings;
 }
 
-files::SettingsResult files::loadSettings(const ConfigPaths& paths) { return loadLayers(paths, true); }
-files::SettingsResult files::loadInheritedSettings(const ConfigPaths& paths) { return loadLayers(paths, false); }
+luciole::SettingsResult luciole::loadSettings(const ConfigPaths& paths) { return loadLayers(paths, true); }
+luciole::SettingsResult luciole::loadInheritedSettings(const ConfigPaths& paths) { return loadLayers(paths, false); }
 
-files::ConfigService::ConfigService(ConfigPaths paths) : m_paths(std::move(paths)) {}
+luciole::ConfigService::ConfigService(ConfigPaths paths) : m_paths(std::move(paths)) {}
 
-bool files::ConfigService::reload() {
+bool luciole::ConfigService::reload() {
   auto loaded = loadSettings(m_paths);
   if (!loaded) {
     m_issues = std::move(loaded.error());
@@ -579,7 +581,7 @@ bool files::ConfigService::reload() {
   return true;
 }
 
-files::AtomicWriteState files::ConfigService::saveOverrides(std::span<const OverrideEdit> edits) {
+luciole::AtomicWriteState luciole::ConfigService::saveOverrides(std::span<const OverrideEdit> edits) {
   if (edits.empty()) {
     return AtomicWriteState::Unchanged;
   }

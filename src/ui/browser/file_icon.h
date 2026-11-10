@@ -11,7 +11,7 @@ class Flex;
 class Glyph;
 class TextureManager;
 
-namespace files {
+namespace luciole {
   class FileIcon final : public Node {
   public:
     FileIcon(FileIconCache& cache, float size, ThumbnailService* thumbnails = nullptr);
@@ -53,4 +53,4 @@ namespace files {
     std::shared_ptr<const FileIconImage> m_asset;
     std::shared_ptr<const FileIconImage> m_prepared;
   };
-} // namespace files
+} // namespace luciole

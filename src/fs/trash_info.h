@@ -5,10 +5,10 @@
 #include <optional>
 #include <string>
 
-namespace files {
+namespace luciole {
   struct TrashInfo {
     std::optional<Location> original;
     std::optional<std::string> deletionDate;
   };
   std::string trashOriginalParentText(const TrashInfo& info);
-} // namespace files
+} // namespace luciole

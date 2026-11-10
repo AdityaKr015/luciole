@@ -14,7 +14,7 @@
 
 namespace {
   namespace fs = std::filesystem;
-  using namespace files;
+  using namespace luciole;
   using enum TransferAction;
   using enum TransferConflictChoice;
   using enum TransferOutcome;
@@ -256,7 +256,7 @@ namespace {
     );
     fs::remove(root / "source/large.bin");
     for (const auto& item : fs::recursive_directory_iterator(backend)) {
-      TEST_CHECK(!item.path().filename().native().starts_with(".noctalia-transfer-"));
+      TEST_CHECK(!item.path().filename().native().starts_with(".luciole-transfer-"));
     }
     write(root / "destination/upload.txt", "destination survives disconnect");
     TransferService disconnected;
@@ -435,7 +435,7 @@ namespace {
     }
     // No temporary publication directories remain after successful/conflicted/cancelled jobs.
     for (const auto& item : fs::recursive_directory_iterator(backend)) {
-      TEST_CHECK(!item.path().filename().native().starts_with(".noctalia-transfer-"));
+      TEST_CHECK(!item.path().filename().native().starts_with(".luciole-transfer-"));
     }
   }
 } // namespace
@@ -446,7 +446,7 @@ int main(int argc, char** argv) {
     TEST_CHECK(transferLocationSupported(remote) && transferLocationSupported(readOnly));
     mount(remote);
     mount(readOnly);
-    const files::GString uuid(g_uuid_string_random());
+    const luciole::GString uuid(g_uuid_string_random());
     const auto name = std::string("run-") + uuid.get();
     const auto backend = fs::path(argv[3]) / name, local = fs::path(argv[4]) / name;
     fs::create_directories(backend);
@@ -457,7 +457,7 @@ int main(int argc, char** argv) {
     const auto remote = Location::fromUri(argv[2]);
     TEST_CHECK(!remote.isNative() && transferLocationSupported(remote));
     mount(remote);
-    const files::GString uuid(g_uuid_string_random());
+    const luciole::GString uuid(g_uuid_string_random());
     const auto name = std::string("run-") + uuid.get();
     const auto backend = fs::path(argv[3]) / name, local = fs::path(argv[4]) / name;
     fs::create_directories(backend);
@@ -480,7 +480,7 @@ int main(int argc, char** argv) {
     );
     mount(remote);
   } else {
-    char directory[] = "/tmp/noctalia-provider-test-XXXXXX";
+    char directory[] = "/tmp/luciole-provider-test-XXXXXX";
     TEST_CHECK(mkdtemp(directory));
     const fs::path root(directory);
     fs::create_directory(root / "remote");
@@ -498,7 +498,7 @@ int main(int argc, char** argv) {
     TEST_CHECK(!transferLocationsEqual(
         Location::fromUri("dav://server/files/Case"), Location::fromUri("dav://server/files/case")
     ));
-    const files::GioPtr<GFileInfo> noFlags(g_file_info_new());
+    const luciole::GioPtr<GFileInfo> noFlags(g_file_info_new());
     TEST_CHECK(!readIsSymlink(noFlags.get()));
     g_file_info_set_file_type(noFlags.get(), G_FILE_TYPE_DIRECTORY);
     TEST_CHECK(!readIsSymlink(noFlags.get()));

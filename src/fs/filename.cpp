@@ -4,7 +4,7 @@
 
 #include <glib.h>
 
-std::optional<std::string> files::filenameProblem(const std::string& name) {
+std::optional<std::string> luciole::filenameProblem(const std::string& name) {
   if (name.empty()) {
     return "Enter a name.";
   }
@@ -19,11 +19,11 @@ std::optional<std::string> files::filenameProblem(const std::string& name) {
   }
   return std::nullopt;
 }
-std::size_t files::filenameStemLength(const std::string& name, bool directory) {
+std::size_t luciole::filenameStemLength(const std::string& name, bool directory) {
   const auto dot = name.rfind('.');
   return !directory && dot != std::string::npos && dot != 0 && dot + 1 < name.size() ? dot : name.size();
 }
-std::string files::filenameDisplayText(const std::string& name) {
+std::string luciole::filenameDisplayText(const std::string& name) {
   const GString text(g_filename_display_name(name.c_str()));
   return text.get();
 }

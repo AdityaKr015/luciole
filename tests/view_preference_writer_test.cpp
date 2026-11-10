@@ -13,17 +13,17 @@
 namespace {
   void testSaving() {
     namespace fs = std::filesystem;
-    const files::GString temporary(g_dir_make_tmp("noctalia-view-writer-XXXXXX", nullptr));
+    const luciole::GString temporary(g_dir_make_tmp("luciole-view-writer-XXXXXX", nullptr));
     TEST_CHECK(temporary != nullptr);
     const fs::path root(temporary.get());
     struct Cleanup {
       fs::path root;
       ~Cleanup() { fs::remove_all(root); }
     } cleanup{root};
-    const files::ConfigPaths paths{root / "config.toml", root / "settings.toml"};
+    const luciole::ConfigPaths paths{root / "config.toml", root / "settings.toml"};
     std::ofstream(paths.base) << "[browser]\nshow_hidden = true\nview_mode = 'list'\n";
     GlibPollSource source;
-    files::ViewPreferenceWriter writer(paths);
+    luciole::ViewPreferenceWriter writer(paths);
     std::string error;
     writer.setChangedCallback([&](const std::string& message) { error = message; });
     const auto wait = [&] {
@@ -37,20 +37,20 @@ namespace {
         source.dispatch(fds, start);
       }
     };
-    writer.save(files::ViewMode::Grid);
-    writer.save(files::ViewMode::List);
-    writer.save(files::ViewMode::Grid);
+    writer.save(luciole::ViewMode::Grid);
+    writer.save(luciole::ViewMode::List);
+    writer.save(luciole::ViewMode::Grid);
     writer.submit(
-        {{files::BrowserPreference::ThumbnailPolicy, files::ThumbnailPolicy::Never},
-         {files::BrowserPreference::ThumbnailCacheMib, 256}}
+        {{luciole::BrowserPreference::ThumbnailPolicy, luciole::ThumbnailPolicy::Never},
+         {luciole::BrowserPreference::ThumbnailCacheMib, 256}}
     );
     writer.submit(
-        {{files::BrowserPreference::ThumbnailPolicy, files::ThumbnailPolicy::All},
-         {files::BrowserPreference::ThumbnailCacheMib, 64}}
+        {{luciole::BrowserPreference::ThumbnailPolicy, luciole::ThumbnailPolicy::All},
+         {luciole::BrowserPreference::ThumbnailCacheMib, 64}}
     );
-    using P = files::BrowserPreference;
+    using P = luciole::BrowserPreference;
     writer.submit(
-        {{P::Density, files::ViewDensity::Compact},
+        {{P::Density, luciole::ViewDensity::Compact},
          {P::ShowSizeCaption, false},
          {P::ShowEmblems, true},
          {P::ShowBackups, true},
@@ -58,7 +58,7 @@ namespace {
          {P::ExpandableFolders, true}}
     );
     writer.submit(
-        {{P::Density, files::ViewDensity::Comfortable},
+        {{P::Density, luciole::ViewDensity::Comfortable},
          {P::ShowSizeCaption, true},
          {P::ShowTypeCaption, true},
          {P::ShowModifiedCaption, true},
@@ -77,41 +77,41 @@ namespace {
     writer.saveShowHidden(false);
     writer.saveShowHidden(true);
     writer.saveShowHidden(false);
-    writer.saveSort({files::SortField::Name, true, true});
-    writer.saveSort({files::SortField::Size, false, true});
-    const files::SortOptions finalSort{files::SortField::Type, true, false};
+    writer.saveSort({luciole::SortField::Name, true, true});
+    writer.saveSort({luciole::SortField::Size, false, true});
+    const luciole::SortOptions finalSort{luciole::SortField::Type, true, false};
     writer.saveSort(finalSort);
     writer.saveDetailsColumns({true, false, true});
     writer.saveDetailsColumns({false, true, false});
-    const files::DetailsColumnVisibility hiddenColumns{false, false, false};
+    const luciole::DetailsColumnVisibility hiddenColumns{false, false, false};
     writer.saveDetailsColumns(hiddenColumns);
     writer.saveColumnOrder(
-        {files::DetailsColumn::Size, files::DetailsColumn::Type, files::DetailsColumn::Modified,
-         files::DetailsColumn::Accessed, files::DetailsColumn::Created, files::DetailsColumn::Owner,
-         files::DetailsColumn::Group, files::DetailsColumn::Permissions, files::DetailsColumn::Location}
+        {luciole::DetailsColumn::Size, luciole::DetailsColumn::Type, luciole::DetailsColumn::Modified,
+         luciole::DetailsColumn::Accessed, luciole::DetailsColumn::Created, luciole::DetailsColumn::Owner,
+         luciole::DetailsColumn::Group, luciole::DetailsColumn::Permissions, luciole::DetailsColumn::Location}
     );
-    const files::DetailsColumnOrder finalOrder{files::DetailsColumn::Modified, files::DetailsColumn::Size,
-                                               files::DetailsColumn::Type,     files::DetailsColumn::Accessed,
-                                               files::DetailsColumn::Created,  files::DetailsColumn::Owner,
-                                               files::DetailsColumn::Group,    files::DetailsColumn::Permissions,
-                                               files::DetailsColumn::Location};
+    const luciole::DetailsColumnOrder finalOrder{luciole::DetailsColumn::Modified, luciole::DetailsColumn::Size,
+                                                 luciole::DetailsColumn::Type,     luciole::DetailsColumn::Accessed,
+                                                 luciole::DetailsColumn::Created,  luciole::DetailsColumn::Owner,
+                                                 luciole::DetailsColumn::Group,    luciole::DetailsColumn::Permissions,
+                                                 luciole::DetailsColumn::Location};
     writer.saveColumnOrder(finalOrder);
     writer.saveColumnWidths({400, 200, 100, 180, 156, 156, 128, 128, 112, 260});
-    const files::DetailsColumnWidths finalWidths{640, 192, 96, 224, 156, 156, 128, 128, 112, 260};
+    const luciole::DetailsColumnWidths finalWidths{640, 192, 96, 224, 156, 156, 128, 128, 112, 260};
     writer.saveColumnWidths(finalWidths);
-    writer.saveInteraction(files::ActivationMode::SingleClick, files::TypingMode::Search);
-    writer.saveInteraction(files::ActivationMode::DoubleClick, files::TypingMode::Typeahead);
-    writer.saveInteraction(files::ActivationMode::SingleClick, files::TypingMode::Typeahead);
+    writer.saveInteraction(luciole::ActivationMode::SingleClick, luciole::TypingMode::Search);
+    writer.saveInteraction(luciole::ActivationMode::DoubleClick, luciole::TypingMode::Typeahead);
+    writer.saveInteraction(luciole::ActivationMode::SingleClick, luciole::TypingMode::Typeahead);
     wait();
-    const auto loaded = files::loadSettings(paths);
+    const auto loaded = luciole::loadSettings(paths);
     TEST_CHECK(
         error.empty()
         && loaded
-        && loaded->browser.viewMode == files::ViewMode::Grid
+        && loaded->browser.viewMode == luciole::ViewMode::Grid
         && !loaded->browser.showHidden
         && !loaded->browser.showBackups
         && loaded->browser.gridIconSize == 64
-        && loaded->browser.thumbnails.policy == files::ThumbnailPolicy::All
+        && loaded->browser.thumbnails.policy == luciole::ThumbnailPolicy::All
         && loaded->browser.thumbnails.cacheMiB == 64
         && loaded->browser.sidebarWidth == 280
         && !loaded->browser.showSidebar
@@ -121,17 +121,17 @@ namespace {
         && loaded->browser.columns == hiddenColumns
         && loaded->browser.columnOrder == finalOrder
         && loaded->browser.columnWidths == finalWidths
-        && loaded->browser.activationMode == files::ActivationMode::SingleClick
-        && loaded->browser.typingMode == files::TypingMode::Typeahead
+        && loaded->browser.activationMode == luciole::ActivationMode::SingleClick
+        && loaded->browser.typingMode == luciole::TypingMode::Typeahead
         && loaded->browser.presentation
-            == files::BrowsePresentation(files::ViewDensity::Comfortable, {true, true, true}, false)
+            == luciole::BrowsePresentation(luciole::ViewDensity::Comfortable, {true, true, true}, false)
     );
     std::ifstream base(paths.base);
     const std::string content((std::istreambuf_iterator<char>(base)), {});
     TEST_CHECK(content == "[browser]\nshow_hidden = true\nview_mode = 'list'\n");
     writer.saveShowHidden(true);
     wait();
-    const auto shown = files::loadSettings(paths);
+    const auto shown = luciole::loadSettings(paths);
     TEST_CHECK(
         error.empty()
         && shown
@@ -142,31 +142,31 @@ namespace {
         && shown->browser.columns == hiddenColumns
         && shown->browser.columnOrder == finalOrder
         && shown->browser.columnWidths == finalWidths
-        && shown->browser.activationMode == files::ActivationMode::SingleClick
-        && shown->browser.typingMode == files::TypingMode::Typeahead
+        && shown->browser.activationMode == luciole::ActivationMode::SingleClick
+        && shown->browser.typingMode == luciole::TypingMode::Typeahead
     );
-    const files::SortOptions defaultSort;
+    const luciole::SortOptions defaultSort;
     writer.saveSort(defaultSort);
     writer.saveDetailsColumns({});
-    writer.saveColumnOrder(files::kDefaultDetailsColumnOrder);
-    writer.saveColumnWidths(files::kDefaultDetailsColumnWidths);
-    writer.saveInteraction(files::ActivationMode::DoubleClick, files::TypingMode::Search);
+    writer.saveColumnOrder(luciole::kDefaultDetailsColumnOrder);
+    writer.saveColumnWidths(luciole::kDefaultDetailsColumnWidths);
+    writer.saveInteraction(luciole::ActivationMode::DoubleClick, luciole::TypingMode::Search);
     wait();
-    const auto reset = files::loadSettings(paths);
+    const auto reset = luciole::loadSettings(paths);
     TEST_CHECK(
         error.empty()
         && reset
         && reset->browser.sort == defaultSort
         && reset->browser.showHidden
         && reset->browser.gridIconSize == 64
-        && reset->browser.columns == files::DetailsColumnVisibility{}
-        && reset->browser.columnOrder == files::kDefaultDetailsColumnOrder
-        && reset->browser.columnWidths == files::kDefaultDetailsColumnWidths
-        && reset->browser.activationMode == files::ActivationMode::DoubleClick
-        && reset->browser.typingMode == files::TypingMode::Search
+        && reset->browser.columns == luciole::DetailsColumnVisibility{}
+        && reset->browser.columnOrder == luciole::kDefaultDetailsColumnOrder
+        && reset->browser.columnWidths == luciole::kDefaultDetailsColumnWidths
+        && reset->browser.activationMode == luciole::ActivationMode::DoubleClick
+        && reset->browser.typingMode == luciole::TypingMode::Search
     );
     std::ofstream(paths.overrides) << "[broken\n";
-    writer.save(files::ViewMode::List);
+    writer.save(luciole::ViewMode::List);
     wait();
     TEST_CHECK(!error.empty());
     std::ifstream invalid(paths.overrides);
@@ -174,8 +174,8 @@ namespace {
   }
   void testWatchingAndReset() {
     namespace fs = std::filesystem;
-    using P = files::BrowserPreference;
-    const files::GString temporary(g_dir_make_tmp("noctalia-settings-watch-XXXXXX", nullptr));
+    using P = luciole::BrowserPreference;
+    const luciole::GString temporary(g_dir_make_tmp("luciole-settings-watch-XXXXXX", nullptr));
     TEST_CHECK(temporary != nullptr);
     const fs::path root(temporary.get());
     struct Cleanup {
@@ -186,11 +186,9 @@ namespace {
         fs::remove_all(root, ignored);
       }
     } cleanup{root};
-    const files::ConfigPaths paths{
-        root / "config/noctalia-files/config.toml", root / "config/noctalia-files/settings.toml"
-    };
+    const luciole::ConfigPaths paths{root / "config/luciole/config.toml", root / "config/luciole/settings.toml"};
     GlibPollSource source;
-    auto writer = std::make_unique<files::ViewPreferenceWriter>(paths);
+    auto writer = std::make_unique<luciole::ViewPreferenceWriter>(paths);
     std::string error;
     int changes = 0;
     writer->setChangedCallback([&](const std::string& message) {
@@ -214,7 +212,7 @@ namespace {
     };
     writer->startWatching();
     until([&] { return changes > 0 && !writer->busy(); });
-    TEST_CHECK(error.empty() && writer->settings() == files::Settings{});
+    TEST_CHECK(error.empty() && writer->settings() == luciole::Settings{});
     fs::create_directories(paths.base.parent_path());
     const std::string base = "[browser]\nshow_hidden = true\nview_mode = 'grid'\nsidebar_width = 240\n";
     write(root / "declarative.toml", base);
@@ -222,7 +220,7 @@ namespace {
     fs::permissions(root / "declarative.toml", fs::perms::owner_read);
     until([&] { return writer->settings()->browser.showHidden && !writer->busy(); });
     TEST_CHECK(writer->inheritedSettings()->browser.sidebarWidth == 240);
-    writer->submit({{P::ShowHidden, false}, {P::ViewMode, files::ViewMode::List}});
+    writer->submit({{P::ShowHidden, false}, {P::ViewMode, luciole::ViewMode::List}});
     writer->saveGridIconSize(128);
     writer->reload();
     until([&] { return !writer->busy(); });
@@ -230,7 +228,7 @@ namespace {
         error.empty()
         && !writer->settings()->browser.showHidden
         && writer->settings()->browser.gridIconSize == 128
-        && writer->settings()->browser.viewMode == files::ViewMode::List
+        && writer->settings()->browser.viewMode == luciole::ViewMode::List
         && writer->inheritedSettings()->browser.showHidden
     );
     writer->submit({{P::ShowHidden, std::nullopt}});
@@ -267,19 +265,19 @@ namespace {
     });
     fs::remove(paths.base);
     fs::remove(paths.overrides);
-    until([&] { return writer->settings() == files::Settings{} && !writer->busy(); });
+    until([&] { return writer->settings() == luciole::Settings{} && !writer->busy(); });
     write(paths.overrides, "[browser]\nview_mode = 'grid'\n");
-    until([&] { return writer->settings()->browser.viewMode == files::ViewMode::Grid && !writer->busy(); });
+    until([&] { return writer->settings()->browser.viewMode == luciole::ViewMode::Grid && !writer->busy(); });
     fs::rename(paths.base.parent_path(), root / "old-directory");
-    until([&] { return writer->settings() == files::Settings{} && !writer->busy(); });
+    until([&] { return writer->settings() == luciole::Settings{} && !writer->busy(); });
     fs::rename(root / "old-directory", paths.base.parent_path());
-    until([&] { return writer->settings()->browser.viewMode == files::ViewMode::Grid && !writer->busy(); });
+    until([&] { return writer->settings()->browser.viewMode == luciole::ViewMode::Grid && !writer->busy(); });
     write(paths.overrides, "[browser]\nview_mode = 'grid'\n");
     writer->reload();
     writer.reset();
     const auto drain = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
     until([&] { return std::chrono::steady_clock::now() >= drain; });
-    writer = std::make_unique<files::ViewPreferenceWriter>(paths);
+    writer = std::make_unique<luciole::ViewPreferenceWriter>(paths);
     writer->setChangedCallback([&](const std::string&) { writer.reset(); });
     writer->startWatching();
     until([&] { return !writer; });

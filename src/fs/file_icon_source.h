@@ -5,11 +5,11 @@
 #include <string>
 #include <vector>
 
-namespace files {
+namespace luciole {
   struct FileIconSource {
     std::vector<std::string> names;
     std::string filePath;
     std::string desktopFile;
     bool operator==(const FileIconSource&) const = default;
   };
-} // namespace files
+} // namespace luciole

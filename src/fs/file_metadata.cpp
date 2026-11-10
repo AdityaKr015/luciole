@@ -11,7 +11,7 @@ namespace {
   }
 } // namespace
 
-std::optional<std::string> files::readFastContentType(GFileInfo* info) {
+std::optional<std::string> luciole::readFastContentType(GFileInfo* info) {
   if (g_file_info_get_attribute_type(info, G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE)
       != G_FILE_ATTRIBUTE_TYPE_STRING) {
     return std::nullopt;
@@ -23,7 +23,7 @@ std::optional<std::string> files::readFastContentType(GFileInfo* info) {
   return value;
 }
 
-files::FileAccess files::readFileAccess(GFileInfo* info) {
+luciole::FileAccess luciole::readFileAccess(GFileInfo* info) {
   return {
       .read = boolean(info, G_FILE_ATTRIBUTE_ACCESS_CAN_READ),
       .write = boolean(info, G_FILE_ATTRIBUTE_ACCESS_CAN_WRITE),
@@ -34,7 +34,7 @@ files::FileAccess files::readFileAccess(GFileInfo* info) {
   };
 }
 
-files::FilesystemInfo files::readFilesystemInfo(GFileInfo* info) {
+luciole::FilesystemInfo luciole::readFilesystemInfo(GFileInfo* info) {
   FilesystemInfo result{
       .readOnly = boolean(info, G_FILE_ATTRIBUTE_FILESYSTEM_READONLY),
       .remote = boolean(info, G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE),
@@ -49,7 +49,7 @@ files::FilesystemInfo files::readFilesystemInfo(GFileInfo* info) {
   return result;
 }
 
-std::optional<files::FileIdentity> files::readFileIdentity(GFileInfo* info) {
+std::optional<luciole::FileIdentity> luciole::readFileIdentity(GFileInfo* info) {
   if (g_file_info_get_attribute_type(info, G_FILE_ATTRIBUTE_ID_FILESYSTEM) != G_FILE_ATTRIBUTE_TYPE_STRING
       || g_file_info_get_attribute_type(info, G_FILE_ATTRIBUTE_ID_FILE) != G_FILE_ATTRIBUTE_TYPE_STRING) {
     return std::nullopt;
@@ -62,7 +62,7 @@ std::optional<files::FileIdentity> files::readFileIdentity(GFileInfo* info) {
   return FileIdentity{filesystem, file};
 }
 
-files::EntryMetadata files::readEntryMetadata(GFileInfo* info) {
+luciole::EntryMetadata luciole::readEntryMetadata(GFileInfo* info) {
   EntryMetadata result;
   const auto number = [&](const char* key) -> std::optional<std::uint64_t> {
     return g_file_info_get_attribute_type(info, key) == G_FILE_ATTRIBUTE_TYPE_UINT64

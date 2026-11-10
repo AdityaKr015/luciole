@@ -1,12 +1,12 @@
-# Noctalia Files colors, rendered by a Noctalia template.
+# Luciole colors, rendered by a Noctalia template.
 #
 # Add to ~/.config/noctalia/config.toml:
 #
-#   [theme.templates.user.noctalia_files]
-#   input_path  = "/usr/share/noctalia-files/templates/colors.toml"   # <prefix>/share/... for local builds
-#   output_path = "$XDG_CONFIG_HOME/noctalia-files/colors.toml"
+#   [theme.templates.user.luciole]
+#   input_path  = "/usr/share/luciole/templates/colors.toml"   # <prefix>/share/... for local builds
+#   output_path = "$XDG_CONFIG_HOME/luciole/colors.toml"
 #
-# Noctalia Files reloads the rendered file as soon as it is written.
+# Luciole reloads the rendered file as soon as it is written.
 
 [colors]
 primary = "{{ colors.primary.default.hex }}"

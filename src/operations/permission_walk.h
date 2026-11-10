@@ -6,7 +6,7 @@
 #include <atomic>
 #include <cstddef>
 
-namespace files {
+namespace luciole {
   // Appends each root and its descendants to plan in postorder, so parent access stays
   // intact while descendants change. Links, other mounts and repeated folders become
   // Skipped rows; unreadable items become Failed rows. Selected roots found below
@@ -16,4 +16,4 @@ namespace files {
   void collectPermissionTargets(
       const PermissionBatch& roots, PermissionBatch& plan, const CancelToken& token, std::atomic<std::size_t>& found
   );
-} // namespace files
+} // namespace luciole

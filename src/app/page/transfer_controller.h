@@ -13,9 +13,9 @@
 #include <string_view>
 #include <vector>
 
-namespace files {
+namespace luciole {
   struct TransferRequest;
-} // namespace files
+} // namespace luciole
 
 class Button;
 class OperationJob;
@@ -30,20 +30,22 @@ public:
   TransferController(PageContext& page, std::function<void()> progressTick);
 
   // Pastes the clipboard's files into the request's folder once the clipboard answers.
-  void paste(const files::ActionRequest& request);
+  void paste(const luciole::ActionRequest& request);
   // Pastes the clipboard's files into the request's single target, a folder, once the clipboard answers.
-  void pasteInto(const files::ActionRequest& request);
+  void pasteInto(const luciole::ActionRequest& request);
   // True from a paste request until the clipboard answers.
   bool pastePending() const { return m_pendingFilePaste; }
   void cancelPaste() { m_pendingFilePaste = false; }
   // Copies or moves the request's targets into `destination`.
-  void transferTo(const files::ActionRequest& request, const files::Location& destination, bool copy);
+  void transferTo(const luciole::ActionRequest& request, const luciole::Location& destination, bool copy);
   // Starts a transfer job that copies or moves `sources` into `destination`.
-  void transfer(std::vector<files::Location> sources, const files::Location& destination, files::TransferAction action);
+  void transfer(
+      std::vector<luciole::Location> sources, const luciole::Location& destination, luciole::TransferAction action
+  );
   // Transfers a dropped payload; `finish` reports whether every item arrived.
   void receiveDrop(
-      files::FilePayload payload, const files::Location& destination, files::DropOptions options,
-      files::DropCompletion finish
+      luciole::FilePayload payload, const luciole::Location& destination, luciole::DropOptions options,
+      luciole::DropCompletion finish
   );
   // Transfer job change: reports the outcome once the job finishes.
   void transferChanged(OperationJob& job);
@@ -55,7 +57,7 @@ public:
   // Runs the progress tick for owned batch rename and permission work. Every owned job change and every tick call this.
   void updateOperationProgress();
   // Retries a completed owned transfer, preserving the clipboard move claim workflow.
-  void retry(files::JobId target);
+  void retry(luciole::JobId target);
 
   // Page teardown: stop the tick.
   void stopProgress();
@@ -67,19 +69,20 @@ private:
   };
 
   // Pastes into `destination` once the clipboard answers and `request` is still current for `scope`.
-  void paste(const files::ActionRequest& request, files::ActionScope scope, files::Location destination);
-  std::shared_ptr<OperationJob> start(files::TransferRequest request);
-  std::shared_ptr<OperationJob>
-  startPayloadTransfer(files::FilePayload payload, const files::Location& destination, files::TransferAction action);
+  void paste(const luciole::ActionRequest& request, luciole::ActionScope scope, luciole::Location destination);
+  std::shared_ptr<OperationJob> start(luciole::TransferRequest request);
+  std::shared_ptr<OperationJob> startPayloadTransfer(
+      luciole::FilePayload payload, const luciole::Location& destination, luciole::TransferAction action
+  );
   void chooseDrop(
-      files::FilePayload payload, const files::Location& destination, files::DropOptions options,
-      files::DropCompletion finish
+      luciole::FilePayload payload, const luciole::Location& destination, luciole::DropOptions options,
+      luciole::DropCompletion finish
   );
   void resolvedDrop(
-      files::FilePayload payload, const files::Location& destination, files::TransferAction action,
-      files::DropCompletion finish
+      luciole::FilePayload payload, const luciole::Location& destination, luciole::TransferAction action,
+      luciole::DropCompletion finish
   );
-  void finishMove(OperationJob& job, files::ClipboardFiles selection);
+  void finishMove(OperationJob& job, luciole::ClipboardFiles selection);
 
   PageContext& m_page;
   std::function<void()> m_progressTick;

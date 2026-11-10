@@ -16,7 +16,7 @@
 
 // Native-filesystem copy primitives for transfer jobs. Everything here runs on the
 // worker thread and works on descriptors relative to pinned parent folders.
-namespace files::transfer {
+namespace luciole::transfer {
   struct TransferCancelled : FileErrorException {
     TransferCancelled() : FileErrorException({.kind = FileErrorKind::Cancelled, .message = "Transfer cancelled."}) {}
   };
@@ -63,4 +63,4 @@ namespace files::transfer {
   // Makes everything written to `fd`'s filesystem durable. Copies skip per-file syncs; this runs once before a
   // transfer deletes data that the copy replaces (moved sources, replaced destinations).
   void synchronize(int fd);
-} // namespace files::transfer
+} // namespace luciole::transfer

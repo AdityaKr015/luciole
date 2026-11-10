@@ -119,7 +119,7 @@ namespace {
     sync();
     TEST_CHECK(!presenter.visible());
   }
-  std::string value(const files::FileTooltipData& data, const std::string& key) {
+  std::string value(const luciole::FileTooltipData& data, const std::string& key) {
     for (const auto& row : data.rows()) {
       if (row.key == key) {
         return row.value;
@@ -127,15 +127,15 @@ namespace {
     }
     return {};
   }
-  files::FileTooltipTarget target(const fs::path& path) {
+  luciole::FileTooltipTarget target(const fs::path& path) {
     return {
         .context = "page:column:context",
         .entry =
             {.id = 1,
-             .location = files::Location::fromPath(path.native()),
+             .location = luciole::Location::fromPath(path.native()),
              .name = path.filename().native(),
              .displayName = "<literal> café",
-             .type = files::FileType::Regular,
+             .type = luciole::FileType::Regular,
              .size = std::nullopt,
              .modifiedSeconds = std::nullopt,
              .etag = std::nullopt,
@@ -177,7 +177,7 @@ namespace {
     std::ofstream(a) << "abc";
     std::ofstream(b) << "123456789";
     int replies = 0;
-    files::FileTooltipData data([&] { ++replies; });
+    luciole::FileTooltipData data([&] { ++replies; });
     auto first = target(a);
     data.show(first);
     TEST_CHECK(value(data, "Name") == "<literal> café" && value(data, "Size") == "Unknown");
@@ -189,13 +189,13 @@ namespace {
     wait([&] { return replies == 2; });
     TEST_CHECK(value(data, "Size") == "6 bytes");
     auto other = target(b);
-    TEST_CHECK(!files::sameTooltipFile(first, other));
+    TEST_CHECK(!luciole::sameTooltipFile(first, other));
     auto recycled = first;
     recycled.entry.id = 2;
-    TEST_CHECK(!files::sameTooltipFile(first, recycled));
+    TEST_CHECK(!luciole::sameTooltipFile(first, recycled));
     recycled = first;
     recycled.context = "another page";
-    TEST_CHECK(!files::sameTooltipFile(first, recycled));
+    TEST_CHECK(!luciole::sameTooltipFile(first, recycled));
     data.show(first);
     data.refresh();
     data.show(other);
@@ -208,7 +208,7 @@ namespace {
     drain();
     TEST_CHECK(replies == before && data.rows().empty());
     {
-      files::FileTooltipData retired([&] { TEST_CHECK(false); });
+      luciole::FileTooltipData retired([&] { TEST_CHECK(false); });
       retired.show(first);
     }
     drain();
@@ -232,7 +232,7 @@ namespace {
     wait([&] { return value(data, "Status") == "Metadata unavailable"; });
     TEST_CHECK(value(data, "Size").empty() && value(data, "Modified").empty());
     auto stale = first;
-    stale.entry.identity = files::FileIdentity{"filesystem", "obsolete"};
+    stale.entry.identity = luciole::FileIdentity{"filesystem", "obsolete"};
     data.show(stale);
     wait([&] { return value(data, "Status") == "This item changed"; });
     TEST_CHECK(value(data, "Size").empty());
@@ -240,7 +240,7 @@ namespace {
 } // namespace
 
 int main() {
-  const files::GString directory(g_dir_make_tmp("noctalia-tooltip-test-XXXXXX", nullptr));
+  const luciole::GString directory(g_dir_make_tmp("luciole-tooltip-test-XXXXXX", nullptr));
   TEST_CHECK(directory != nullptr);
   checks(directory.get());
   presenterChecks();

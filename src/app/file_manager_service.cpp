@@ -31,10 +31,10 @@ namespace {
 
   const Logger kLog("file-manager-dbus");
 
-  std::optional<files::Location> parseLocation(const char* text) {
+  std::optional<luciole::Location> parseLocation(const char* text) {
     try {
       // The specification asks for URIs; tolerate the absolute paths some callers send.
-      return g_path_is_absolute(text) ? files::Location::fromPath(text) : files::Location::fromUri(text);
+      return g_path_is_absolute(text) ? luciole::Location::fromPath(text) : luciole::Location::fromUri(text);
     } catch (const std::exception& error) {
       kLog.warn("ignoring '{}': {}", text, error.what());
       return std::nullopt;
@@ -42,7 +42,7 @@ namespace {
   }
 } // namespace
 
-files::FileManagerService::FileManagerService(Handler handler, bool activated)
+luciole::FileManagerService::FileManagerService(Handler handler, bool activated)
     : m_handler(std::move(handler)), m_node(g_dbus_node_info_new_for_xml(kIntrospection, nullptr)),
       m_awaiting(activated) {
   m_owner = g_bus_own_name(
@@ -63,12 +63,12 @@ files::FileManagerService::FileManagerService(Handler handler, bool activated)
   }
 }
 
-files::FileManagerService::~FileManagerService() {
+luciole::FileManagerService::~FileManagerService() {
   release();
   g_dbus_node_info_unref(m_node);
 }
 
-void files::FileManagerService::release() {
+void luciole::FileManagerService::release() {
   stopAwaiting();
   if (m_registration != 0) {
     g_dbus_connection_unregister_object(m_connection, m_registration);
@@ -84,7 +84,7 @@ void files::FileManagerService::release() {
   }
 }
 
-void files::FileManagerService::stopAwaiting() {
+void luciole::FileManagerService::stopAwaiting() {
   m_awaiting = false;
   if (m_timeout != 0) {
     g_source_remove(m_timeout);
@@ -92,7 +92,7 @@ void files::FileManagerService::stopAwaiting() {
   }
 }
 
-void files::FileManagerService::busAcquired(GDBusConnection* connection, const char* /*name*/, gpointer data) {
+void luciole::FileManagerService::busAcquired(GDBusConnection* connection, const char* /*name*/, gpointer data) {
   auto* self = static_cast<FileManagerService*>(data);
   static const GDBusInterfaceVTable vtable = {
       .method_call = methodCall, .get_property = nullptr, .set_property = nullptr, .padding = {}
@@ -109,7 +109,7 @@ void files::FileManagerService::busAcquired(GDBusConnection* connection, const c
   self->m_connection = G_DBUS_CONNECTION(g_object_ref(connection));
 }
 
-void files::FileManagerService::nameLost(GDBusConnection* connection, const char* /*name*/, gpointer data) {
+void luciole::FileManagerService::nameLost(GDBusConnection* connection, const char* /*name*/, gpointer data) {
   auto* self = static_cast<FileManagerService*>(data);
   if (connection == nullptr) {
     kLog.debug("no session bus; FileManager1 requests are unavailable");
@@ -121,7 +121,7 @@ void files::FileManagerService::nameLost(GDBusConnection* connection, const char
   }
 }
 
-void files::FileManagerService::methodCall(
+void luciole::FileManagerService::methodCall(
     GDBusConnection* /*connection*/, const char* /*sender*/, const char* /*path*/, const char* /*interface*/,
     const char* method, GVariant* parameters, GDBusMethodInvocation* invocation, gpointer data
 ) {

@@ -129,7 +129,7 @@ bool SubmenuController::create(float width, float height) {
   m_surface->setSceneRoot(m_root.get());
   m_dispatcher.setSceneRoot(m_root.get());
   m_dispatcher.setCursorShapeCallback([this](std::uint32_t serial, std::uint32_t shape) {
-    m_connection.extension<files::DesktopIntegration>().setCursorShape(serial, shape);
+    m_connection.extension<luciole::DesktopIntegration>().setCursorShape(serial, shape);
   });
   m_surface->setConfigureCallback([this](std::uint32_t, std::uint32_t) {
     if (auto* menu = m_page.contextMenu()) {

@@ -10,7 +10,7 @@
 #include <span>
 #include <string_view>
 
-namespace files {
+namespace luciole {
   enum class ArchiveFormat { Zip, Tar, TarGzip, TarBzip2, TarZstd, TarXz, SevenZip };
   enum class ArchiveEntryKind { File, Directory, Symlink, Hardlink };
   enum class ArchivePhase { Idle, Reading, Compressing, Extracting, Transferring, Cleaning, WaitingPassword };
@@ -92,4 +92,4 @@ namespace files {
     struct State;
     std::shared_ptr<State> m_state;
   };
-} // namespace files
+} // namespace luciole

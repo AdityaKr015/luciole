@@ -14,7 +14,7 @@
 
 // Worker-side permission jobs. Each returns its outcome for the main thread to publish;
 // an unexpected failure throws FileErrorException.
-namespace files {
+namespace luciole {
   struct PermissionReply {
     std::shared_ptr<PermissionTarget> target = nullptr;
     std::optional<PermissionInfo> info = std::nullopt;
@@ -47,4 +47,4 @@ namespace files {
       std::atomic<std::size_t>& completed, std::atomic<std::size_t>& total, std::atomic<bool>& collecting
   );
   std::string permissionReport(const std::vector<PermissionResult>& rows);
-} // namespace files
+} // namespace luciole

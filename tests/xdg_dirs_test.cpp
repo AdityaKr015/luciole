@@ -20,23 +20,23 @@ namespace {
     for (const auto* variable : {"XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"}) {
       ::unsetenv(variable);
     }
-    TEST_CHECK(files::configHome() == "/home/xdg-test/.config");
-    TEST_CHECK(files::stateHome() == "/home/xdg-test/.local/state");
-    TEST_CHECK(files::cacheHome() == "/home/xdg-test/.cache");
+    TEST_CHECK(luciole::configHome() == "/home/xdg-test/.config");
+    TEST_CHECK(luciole::stateHome() == "/home/xdg-test/.local/state");
+    TEST_CHECK(luciole::cacheHome() == "/home/xdg-test/.cache");
 
     ::setenv("XDG_CACHE_HOME", "", 1);
-    TEST_CHECK(files::cacheHome() == "/home/xdg-test/.cache");
+    TEST_CHECK(luciole::cacheHome() == "/home/xdg-test/.cache");
     ::setenv("XDG_CACHE_HOME", "/var/cache/xdg-test", 1);
-    TEST_CHECK(files::cacheHome() == "/var/cache/xdg-test");
+    TEST_CHECK(luciole::cacheHome() == "/var/cache/xdg-test");
     ::setenv("XDG_CACHE_HOME", "relative/cache", 1);
-    TEST_CHECK(rejected(files::cacheHome));
+    TEST_CHECK(rejected(luciole::cacheHome));
 
     ::setenv("HOME", "relative-home", 1);
-    TEST_CHECK(rejected(files::configHome));
+    TEST_CHECK(rejected(luciole::configHome));
     ::setenv("XDG_CONFIG_HOME", "/etc/xdg-test", 1);
-    TEST_CHECK(files::configHome() == "/etc/xdg-test");
+    TEST_CHECK(luciole::configHome() == "/etc/xdg-test");
     ::unsetenv("HOME");
-    TEST_CHECK(rejected(files::stateHome));
+    TEST_CHECK(rejected(luciole::stateHome));
   }
 } // namespace
 

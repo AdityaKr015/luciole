@@ -16,7 +16,7 @@
 // Staged publication of transfer items: each item is copied into a private folder
 // beside its destination, verified, and only then renamed into place. Merges recurse
 // into per-child commits.
-namespace files::transfer {
+namespace luciole::transfer {
   struct Source {
     std::size_t index;
     Location location;
@@ -84,4 +84,4 @@ namespace files::transfer {
   void execute(Node& node, TransferAction action, Work& work, bool retry);
   std::size_t retryCount(const Node& node);
   TransferResult snapshot(const Node& node);
-} // namespace files::transfer
+} // namespace luciole::transfer

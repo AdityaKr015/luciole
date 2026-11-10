@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace files {
+namespace luciole {
   // Freedesktop thumbnail cache PNG: RGBA pixels plus tEXt metadata.
   struct ThumbnailPng {
     LoadedImageFile image;
@@ -17,4 +17,4 @@ namespace files {
   };
   std::expected<ThumbnailPng, std::string> readThumbnailPng(std::span<const std::uint8_t> bytes, int maxSide);
   std::expected<std::vector<std::uint8_t>, std::string> writeThumbnailPng(const ThumbnailPng& thumbnail);
-} // namespace files
+} // namespace luciole

@@ -8,9 +8,9 @@
 #include <span>
 #include <string>
 
-namespace files {
+namespace luciole {
   // Decodes a PNG to straight RGBA; dimensions are checked before any pixels are allocated.
   std::expected<DecodedRasterImage, std::string> decodePng(
       std::span<const std::uint8_t> bytes, std::uint64_t maxPixels = kMaxImagePixels, int maxSide = kMaxImageSide
   );
-} // namespace files
+} // namespace luciole

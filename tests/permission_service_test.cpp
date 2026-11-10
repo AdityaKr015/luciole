@@ -23,13 +23,13 @@
 
 namespace {
   namespace fs = std::filesystem;
-  using S = files::PermissionService;
-  using P = files::PermissionPhase;
+  using S = luciole::PermissionService;
+  using P = luciole::PermissionPhase;
   unsigned supportedSpecialBits = 0;
   struct Fixture {
     fs::path root;
     Fixture() {
-      std::string path = "/tmp/noctalia-permissions-XXXXXX";
+      std::string path = "/tmp/luciole-permissions-XXXXXX";
       TEST_CHECK(::mkdtemp(path.data()));
       root = path;
     }
@@ -66,14 +66,14 @@ namespace {
     return supported;
   }
   unsigned fixtureMode(unsigned value) { return value & (0777 | supportedSpecialBits); }
-  bool errorContains(const files::PermissionService& service, std::string_view text) {
+  bool errorContains(const luciole::PermissionService& service, std::string_view text) {
     const auto& error = service.snapshot().error;
     return error && error->message.contains(text);
   }
-  files::DirectoryEntry entry(const fs::path& path) {
-    const auto location = files::Location::fromPath(path.native());
-    const files::GioPtr<GFileInfo> info(g_file_query_info(
-        files::gioFile(location).get(), "id::file,id::filesystem,standard::type,standard::is-symlink",
+  luciole::DirectoryEntry entry(const fs::path& path) {
+    const auto location = luciole::Location::fromPath(path.native());
+    const luciole::GioPtr<GFileInfo> info(g_file_query_info(
+        luciole::gioFile(location).get(), "id::file,id::filesystem,standard::type,standard::is-symlink",
         G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, nullptr
     ));
     TEST_CHECK(info);
@@ -81,14 +81,14 @@ namespace {
         .id = 1,
         .location = location,
         .name = path.filename().native(),
-        .displayName = files::filenameDisplayText(path.filename().native()),
-        .type = files::fileType(g_file_info_get_file_type(info.get())),
+        .displayName = luciole::filenameDisplayText(path.filename().native()),
+        .type = luciole::fileType(g_file_info_get_file_type(info.get())),
         .symlink = g_file_info_get_is_symlink(info.get()) != FALSE,
         .size = {},
         .modifiedSeconds = {},
         .etag = {},
         .parentDisplayName = {},
-        .identity = files::readFileIdentity(info.get())
+        .identity = luciole::readFileIdentity(info.get())
     };
   }
   class Pump {
@@ -111,7 +111,7 @@ namespace {
       settle(service);
       TEST_CHECK(service.snapshot().phase == P::Ready && service.snapshot().info);
     }
-    void apply(S& service, files::PermissionEdit edit) {
+    void apply(S& service, luciole::PermissionEdit edit) {
       TEST_CHECK(service.apply(std::move(edit)));
       settle(service);
       TEST_CHECK(service.snapshot().phase == P::Ready);
@@ -177,7 +177,7 @@ namespace {
       TEST_CHECK(!service.snapshot().failed() && !service.snapshot().applied);
     }
     const auto original = mode(file);
-    for (const std::string value : {"", "4294967295", "999999999999999999999", "noctalia-no-such-account-370917"}) {
+    for (const std::string value : {"", "4294967295", "999999999999999999999", "luciole-no-such-account-370917"}) {
       pump.apply(service, {.mode = 0777, .owner = {}, .group = value});
       TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied && mode(file) == original);
     }
@@ -324,20 +324,20 @@ namespace {
         && !service.snapshot().info->canMode
         && !service.apply({.mode = 0777, .owner = {}, .group = {}})
     );
-    TEST_CHECK(service.prepare(files::Location::fromPath(file.native())));
+    TEST_CHECK(service.prepare(luciole::Location::fromPath(file.native())));
     pump.settle(service);
     TEST_CHECK(service.snapshot().info && service.snapshot().info->canMode);
     pump.apply(service, {.mode = 0640, .owner = {}, .group = {}});
     TEST_CHECK(!service.snapshot().failed() && mode(file) == 0640);
     auto remote = entry(file);
-    remote.location = files::Location::fromUri("sftp://example.invalid/file");
+    remote.location = luciole::Location::fromUri("sftp://example.invalid/file");
     TEST_CHECK(service.prepare(remote));
     pump.settle(service);
     TEST_CHECK(service.snapshot().phase == P::Error);
     TEST_CHECK(mode(file) != 0777);
   }
-  using O = files::PermissionOutcome;
-  void prepareBulk(Pump& pump, S& service, std::vector<files::DirectoryEntry> entries) {
+  using O = luciole::PermissionOutcome;
+  void prepareBulk(Pump& pump, S& service, std::vector<luciole::DirectoryEntry> entries) {
     TEST_CHECK(service.prepare(std::move(entries)));
     pump.settle(service);
     TEST_CHECK(service.snapshot().phase == P::Ready && service.snapshot().multiple && service.snapshot().results);
@@ -362,7 +362,7 @@ namespace {
     for (const auto& row : *service.snapshot().results) {
       TEST_CHECK(row.outcome == O::Unchanged);
     }
-    pump.apply(service, {.mode = 07777, .owner = {}, .group = "noctalia-no-such-group-370917", .mask = 07777});
+    pump.apply(service, {.mode = 07777, .owner = {}, .group = "luciole-no-such-group-370917", .mask = 07777});
     TEST_CHECK(service.snapshot().failed() && !service.snapshot().finished && !service.snapshot().applied);
     TEST_CHECK(service.snapshot().report.starts_with("No changes attempted:"));
     for (const auto& row : *service.snapshot().results) {
@@ -411,7 +411,7 @@ namespace {
         && service.snapshot().results->back().outcome == O::Changed
     );
     auto remote = entry(a);
-    remote.location = files::Location::fromUri("sftp://example.invalid/file");
+    remote.location = luciole::Location::fromUri("sftp://example.invalid/file");
     auto unknown = entry(b);
     unknown.identity.reset();
     prepareBulk(pump, service, {entry(a), unknown, remote});
@@ -451,9 +451,9 @@ namespace {
     pump.apply(service, {.mode = 0010, .owner = {}, .group = {}, .mask = 0010});
     TEST_CHECK(service.snapshot().failed() && mode(a) == 0400 && mode(b) == 0635);
     const auto source = entry(a);
-    TEST_CHECK(!service.prepare(std::vector<files::DirectoryEntry>{}));
+    TEST_CHECK(!service.prepare(std::vector<luciole::DirectoryEntry>{}));
     TEST_CHECK(!service.prepare(std::vector{source}));
-    TEST_CHECK(!service.prepare(std::vector<files::DirectoryEntry>(4097, source)));
+    TEST_CHECK(!service.prepare(std::vector<luciole::DirectoryEntry>(4097, source)));
     TEST_CHECK(service.prepare(std::vector{source, source}));
     pump.settle(service);
     TEST_CHECK(service.snapshot().phase == P::Error);
@@ -463,7 +463,7 @@ namespace {
       Fixture f;
       S service;
       constexpr std::size_t count = 256;
-      std::vector<files::DirectoryEntry> entries;
+      std::vector<luciole::DirectoryEntry> entries;
       write(f.root / "original");
       TEST_CHECK(::chmod((f.root / "original").c_str(), 0600) == 0);
       for (std::size_t i = 0; i < count; ++i) {
@@ -514,7 +514,7 @@ namespace {
     }
     Fixture f;
     S service;
-    std::vector<files::DirectoryEntry> entries;
+    std::vector<luciole::DirectoryEntry> entries;
     for (std::size_t i = 0; i < 256; ++i) {
       const auto path = f.root / std::to_string(i);
       write(path);
@@ -541,8 +541,8 @@ namespace {
       );
     }
   }
-  using O = files::PermissionOutcome;
-  files::RecursivePermissionEdit recursiveEdit() {
+  using O = luciole::PermissionOutcome;
+  luciole::RecursivePermissionEdit recursiveEdit() {
     return {
         .files = {.mode = 0004, .owner = {}, .group = {}, .mask = 0004}, .directoryMode = 0010, .directoryMask = 0010
     };
@@ -654,7 +654,7 @@ namespace {
     TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied && !service.snapshot().finished);
     TEST_CHECK(mode(f.root / "tree/good") == 0600);
     invalid = recursiveEdit();
-    invalid.files.group = "noctalia-no-such-account-370917";
+    invalid.files.group = "luciole-no-such-account-370917";
     TEST_CHECK(service.applyRecursive(invalid));
     pump.settle(service);
     TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied && mode(f.root / "tree/good") == 0600);
@@ -844,8 +844,8 @@ namespace {
     ::acl_free(value);
     return result;
   }
-  using Tag = files::AclTag;
-  std::vector<files::AclEntry> extended(std::string account) {
+  using Tag = luciole::AclTag;
+  std::vector<luciole::AclEntry> extended(std::string account) {
     return {
         {Tag::Owner, {}, 6},
         {Tag::User, std::move(account), 6},
@@ -854,7 +854,7 @@ namespace {
         {Tag::Other, {}, 0}
     };
   }
-  void applyAcl(Pump& pump, S& service, files::AclEdit edit) {
+  void applyAcl(Pump& pump, S& service, luciole::AclEdit edit) {
     TEST_CHECK(service.applyAcl(std::move(edit)));
     pump.settle(service);
     TEST_CHECK(service.snapshot().info && service.snapshot().info->acl);
@@ -898,7 +898,7 @@ namespace {
     write(second);
     const auto secondMode = mode(second);
     prepareBulk(pump, service, {entry(file), entry(second)});
-    files::AclPatchEdit patch;
+    luciole::AclPatchEdit patch;
     patch.access.entries.push_back({Tag::User, std::to_string(::geteuid()), 4, 7});
     TEST_CHECK(service.applyAclPatch(patch));
     pump.settle(service);
@@ -945,7 +945,7 @@ namespace {
     applyAcl(pump, service, {.access = bad, .defaults = {}});
     TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied && aclText(file) == before);
     bad = rules;
-    bad[1].qualifier = "noctalia-no-such-account-370917";
+    bad[1].qualifier = "luciole-no-such-account-370917";
     applyAcl(pump, service, {.access = bad, .defaults = {}});
     TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied && aclText(file) == before);
     bad = rules;
@@ -956,11 +956,11 @@ namespace {
     bad.erase(bad.begin() + 3);
     applyAcl(pump, service, {.access = bad, .defaults = {}});
     TEST_CHECK(service.snapshot().failed() && aclText(file) == before);
-    applyAcl(pump, service, {.access = std::vector<files::AclEntry>{}, .defaults = {}});
+    applyAcl(pump, service, {.access = std::vector<luciole::AclEntry>{}, .defaults = {}});
     TEST_CHECK(service.snapshot().failed() && aclText(file) == before);
     applyAcl(pump, service, {.access = rules, .defaults = rules});
     TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied && aclText(file) == before);
-    bad = std::vector<files::AclEntry>(129, {Tag::Other, {}, 0});
+    bad = std::vector<luciole::AclEntry>(129, {Tag::Other, {}, 0});
     applyAcl(pump, service, {.access = bad, .defaults = {}});
     TEST_CHECK(service.snapshot().failed() && aclText(file) == before);
     // Account names resolve on the worker and duplicate resolved IDs are refused.
@@ -978,7 +978,7 @@ namespace {
     // Strip the named entries and mask deliberately, then recover a mode-0000 file.
     applyAcl(
         pump, service,
-        {.access = std::vector<files::AclEntry>{{Tag::Owner, {}, 0}, {Tag::OwningGroup, {}, 0}, {Tag::Other, {}, 0}},
+        {.access = std::vector<luciole::AclEntry>{{Tag::Owner, {}, 0}, {Tag::OwningGroup, {}, 0}, {Tag::Other, {}, 0}},
          .defaults = {}}
     );
     TEST_CHECK(!service.snapshot().failed() && mode(file) == 0 && service.snapshot().info->acl->access.size() == 3);
@@ -1015,7 +1015,7 @@ namespace {
     TEST_CHECK(aclText(folder / "inherited").contains("user:" + std::to_string(::geteuid() + 20000) + ":rw-\n"));
     TEST_CHECK(aclText(folder / "existing") == existing);
     const auto inherited = aclText(folder / "inherited");
-    applyAcl(pump, service, {.access = {}, .defaults = std::vector<files::AclEntry>{}});
+    applyAcl(pump, service, {.access = {}, .defaults = std::vector<luciole::AclEntry>{}});
     TEST_CHECK(!service.snapshot().failed() && aclText(folder, true).empty());
     write(folder / "plain");
     TEST_CHECK(!aclText(folder / "plain").contains("user:" + std::to_string(::geteuid() + 20000) + ":"));
@@ -1023,7 +1023,7 @@ namespace {
     pump.prepare(service, folder);
     const int fd = ::open(folder.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC);
     TEST_CHECK(fd >= 0);
-    files::writeAcl(fd, true, rules);
+    luciole::writeAcl(fd, true, rules);
     TEST_CHECK(::close(fd) == 0);
     const auto unchangedAccess = aclText(folder);
     applyAcl(pump, service, {.access = rules, .defaults = {}});
@@ -1044,7 +1044,7 @@ namespace {
     other[1].permissions = 0;
     const int fd = ::open(file.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC);
     TEST_CHECK(fd >= 0);
-    files::writeAcl(fd, false, other);
+    luciole::writeAcl(fd, false, other);
     TEST_CHECK(::close(fd) == 0);
     const auto changed = aclText(file);
     TEST_CHECK(mode(file) == 0640);
@@ -1075,13 +1075,13 @@ namespace {
     ::acl_free(acl);
     TEST_CHECK(result == 0);
   }
-  void applyPatch(Pump& pump, S& service, files::AclPatchEdit patch) {
+  void applyPatch(Pump& pump, S& service, luciole::AclPatchEdit patch) {
     TEST_CHECK(service.applyAclPatch(std::move(patch)));
     pump.settle(service);
     TEST_CHECK(service.snapshot().results);
   }
-  files::AclPatchEdit userPatch(const std::string& id, unsigned value, unsigned mask = 7) {
-    files::AclPatchEdit patch;
+  luciole::AclPatchEdit userPatch(const std::string& id, unsigned value, unsigned mask = 7) {
+    luciole::AclPatchEdit patch;
     patch.access.entries.push_back({Tag::User, id, value, mask});
     return patch;
   }
@@ -1105,7 +1105,7 @@ namespace {
     TEST_CHECK(service.snapshot().report.contains("user:21000:-wx effective:--x"));
     TEST_CHECK(service.snapshot().report.contains("owning group::--- effective:---"));
     auto recalc = userPatch("21002", 6);
-    recalc.access.maskPolicy = files::AclMaskPolicy::Recalculate;
+    recalc.access.maskPolicy = luciole::AclMaskPolicy::Recalculate;
     applyPatch(pump, service, recalc);
     TEST_CHECK(
         !service.snapshot().failed() && aclText(a).contains("mask::rw-\n") && aclText(b).contains("mask::rwx\n")
@@ -1117,17 +1117,17 @@ namespace {
     TEST_CHECK(service.snapshot().failed() && !service.snapshot().finished && !service.snapshot().applied);
     TEST_CHECK(aclText(a) == beforeA && aclText(b) == beforeB);
     TEST_CHECK(service.snapshot().results->front().outcome == O::Ready);
-    bad = userPatch("noctalia-no-such-account-370917", 7);
+    bad = userPatch("luciole-no-such-account-370917", 7);
     applyPatch(pump, service, bad);
     TEST_CHECK(service.snapshot().failed() && aclText(a) == beforeA && aclText(b) == beforeB);
     for (unsigned invalid = 0; invalid < 4; ++invalid) {
-      files::AclPatchEdit patch;
+      luciole::AclPatchEdit patch;
       patch.access.entries.push_back({Tag::Other, {}, 7, 7});
       if (invalid == 0) {
         patch.access.entries.push_back({Tag::Owner, {}, {}, 7});
       } else if (invalid == 1) {
         patch.access.entries.push_back({Tag::Mask, {}, 7, 7});
-        patch.access.maskPolicy = files::AclMaskPolicy::Recalculate;
+        patch.access.maskPolicy = luciole::AclMaskPolicy::Recalculate;
       } else if (invalid == 2) {
         patch.access.entries.push_back({Tag::User, "4294967295", 7, 7});
       } else {
@@ -1139,12 +1139,12 @@ namespace {
     }
     // Mask removal cannot silently discard named rules or apply another part first.
     bad = userPatch("21000", 0);
-    bad.access.maskPolicy = files::AclMaskPolicy::RemoveUnused;
+    bad.access.maskPolicy = luciole::AclMaskPolicy::RemoveUnused;
     applyPatch(pump, service, bad);
     TEST_CHECK(service.snapshot().finished && service.snapshot().failed() && !service.snapshot().applied);
     TEST_CHECK(aclText(a) == beforeA && aclText(b) == beforeB);
-    files::AclPatchEdit remove;
-    remove.access.maskPolicy = files::AclMaskPolicy::RemoveUnused;
+    luciole::AclPatchEdit remove;
+    remove.access.maskPolicy = luciole::AclMaskPolicy::RemoveUnused;
     for (const auto* id : {"21000", "21001", "21002"}) {
       remove.access.entries.push_back({Tag::User, id, {}, 0});
     }
@@ -1161,7 +1161,7 @@ namespace {
     applyPatch(pump, service, userPatch("21000", 0, 1));
     TEST_CHECK(!service.snapshot().failed() && aclText(a).contains("user:21000:rw-\n"));
     applyPatch(pump, service, remove);
-    files::AclPatchEdit maskBit;
+    luciole::AclPatchEdit maskBit;
     maskBit.access.entries.push_back({Tag::Mask, {}, 1, 1});
     applyPatch(pump, service, maskBit);
     TEST_CHECK(!service.snapshot().failed() && aclText(a).contains("mask::r-x\n"));
@@ -1178,8 +1178,8 @@ namespace {
     TEST_CHECK(::chmod(a.c_str(), 0750) == 0 && ::chmod(b.c_str(), 0700) == 0);
     setAcl(a, "u::rwx,u:21001:r--,g::r-x,m::r-x,o::---", true);
     prepareBulk(pump, service, {entry(a), entry(b), entry(file)});
-    files::AclPatchEdit patch;
-    patch.defaultPolicy = files::AclDefaultPolicy::Existing;
+    luciole::AclPatchEdit patch;
+    patch.defaultPolicy = luciole::AclDefaultPolicy::Existing;
     patch.defaults.entries.push_back({Tag::User, "21000", 6, 7});
     applyPatch(pump, service, patch);
     TEST_CHECK(!service.snapshot().failed() && aclText(a, true).contains("user:21001:r--\n"));
@@ -1188,7 +1188,7 @@ namespace {
         service.snapshot().results->at(1).outcome == O::Skipped
         && service.snapshot().results->at(2).outcome == O::Skipped
     );
-    patch.defaultPolicy = files::AclDefaultPolicy::Create;
+    patch.defaultPolicy = luciole::AclDefaultPolicy::Create;
     patch.access.entries.push_back({Tag::Other, {}, 1, 1});
     applyPatch(pump, service, patch);
     TEST_CHECK(!service.snapshot().failed() && aclText(b, true).contains("other::--x\n"));
@@ -1197,17 +1197,17 @@ namespace {
     TEST_CHECK(aclText(a / "existing") == child);
     write(b / "new");
     TEST_CHECK(aclText(b / "new").contains("user:21000:rw-\n"));
-    files::AclPatchEdit invalid;
+    luciole::AclPatchEdit invalid;
     invalid.access.entries.push_back({Tag::Owner, {}, 0, 7});
-    invalid.defaults.maskPolicy = files::AclMaskPolicy::RemoveUnused;
-    invalid.defaultPolicy = files::AclDefaultPolicy::Existing;
+    invalid.defaults.maskPolicy = luciole::AclMaskPolicy::RemoveUnused;
+    invalid.defaultPolicy = luciole::AclDefaultPolicy::Existing;
     const auto before = aclText(a);
     applyPatch(pump, service, invalid);
     TEST_CHECK(
         service.snapshot().failed() && aclText(a) == before
     ); // Invalid default prevents access write on this folder.
-    files::AclPatchEdit remove;
-    remove.defaultPolicy = files::AclDefaultPolicy::Remove;
+    luciole::AclPatchEdit remove;
+    remove.defaultPolicy = luciole::AclDefaultPolicy::Remove;
     applyPatch(pump, service, remove);
     TEST_CHECK(!service.snapshot().failed() && aclText(a, true).empty() && aclText(b, true).empty());
     TEST_CHECK(service.snapshot().results->at(2).outcome == O::Skipped);
@@ -1267,7 +1267,7 @@ namespace {
     for (const bool aliases : {false, true}) {
       Fixture f;
       S service;
-      std::vector<files::DirectoryEntry> entries;
+      std::vector<luciole::DirectoryEntry> entries;
       for (unsigned i = 0; i < 256; ++i) {
         const auto path = f.root / std::to_string(i);
         if (aliases && i > 0) {

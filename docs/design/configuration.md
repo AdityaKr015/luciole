@@ -22,6 +22,6 @@ Outcomes distinguish unchanged, not committed, committed but directory synchroni
 
 [StateStore](../../src/config/state_store.h) owns a separate versioned Places schema and persistence revision. It is not a complete durable tab/window session. Do not conflate settings, Places state, future operation journals and regenerable thumbnails. Credentials do not belong in configuration, state, URI history or cache identities.
 
-The shared thumbnail cache and Files' ownership ledger are regenerable. Pruning must preserve untracked entries and foreign replacements. A future operation journal has different ordering/recovery requirements; cache persistence is not an implementation of crash-safe file-job recovery.
+The shared thumbnail cache and Luciole' ownership ledger are regenerable. Pruning must preserve untracked entries and foreign replacements. A future operation journal has different ordering/recovery requirements; cache persistence is not an implementation of crash-safe file-job recovery.
 
 Relevant suites are [settings](../../tests/settings_test.cpp), [preference writer](../../tests/view_preference_writer_test.cpp), [atomic files](../../tests/atomic_file_test.cpp) and [state store](../../tests/state_store_test.cpp). Use temporary XDG roots and actual invalid/replaced inputs. Test automatic reload and settings layout in an isolated window when those behaviors change.

@@ -6,7 +6,7 @@
 #include <optional>
 #include <string>
 
-namespace files {
+namespace luciole {
   enum class AtomicWriteState : unsigned char {
     Unchanged,
     NotCommitted,
@@ -31,4 +31,4 @@ namespace files {
   // No creation or chmod during reads; missing files/parents return nullopt.
   // Owned regular files only, without symlinks or hard links. Read-only is OK.
   std::expected<std::optional<std::string>, std::string> readPrivateTextFile(const std::filesystem::path& path);
-} // namespace files
+} // namespace luciole

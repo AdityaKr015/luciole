@@ -7,12 +7,12 @@
 #include <gio/gio.h>
 #include <span>
 
-namespace files {
+namespace luciole {
   struct ThumbnailCacheWrite {
     ThumbnailPng thumbnail;
     int side;
   };
-  // Worker-only access to the freedesktop PNG cache. Only files recorded by Files are pruned/cleared.
+  // Worker-only access to the freedesktop PNG cache. Only files recorded by Luciole are pruned/cleared.
   class ThumbnailStore {
   public:
     ThumbnailStore();
@@ -34,4 +34,4 @@ namespace files {
     std::filesystem::path m_index;
   };
   std::optional<std::vector<std::uint8_t>> readThumbnailFile(const std::filesystem::path& path, std::size_t maximum);
-} // namespace files
+} // namespace luciole

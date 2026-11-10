@@ -9,27 +9,27 @@
 namespace {
   // Owned reference to the GVolume or GMount behind one Drive.
   struct Handle {
-    files::GioPtr<GVolume> volume;
-    files::GioPtr<GMount> mount;
+    luciole::GioPtr<GVolume> volume;
+    luciole::GioPtr<GMount> mount;
   };
 
   std::string identifier(GVolume* volume) {
     for (const auto* kind : {G_VOLUME_IDENTIFIER_KIND_UUID, G_VOLUME_IDENTIFIER_KIND_UNIX_DEVICE}) {
-      if (const files::GString value(g_volume_get_identifier(volume, kind)); value) {
+      if (const luciole::GString value(g_volume_get_identifier(volume, kind)); value) {
         return value.get();
       }
     }
-    const files::GString name(g_volume_get_name(volume));
+    const luciole::GString name(g_volume_get_name(volume));
     return name ? name.get() : "";
   }
 
   std::string errorText(GError* error) {
-    const files::GErrorPtr owned(error);
+    const luciole::GErrorPtr owned(error);
     return owned ? owned->message : "";
   }
 } // namespace
 
-struct files::DriveMonitor::State : std::enable_shared_from_this<State> {
+struct luciole::DriveMonitor::State : std::enable_shared_from_this<State> {
   GioPtr<GVolumeMonitor> monitor{g_volume_monitor_get()};
   std::vector<Drive> drives;
   std::map<std::string, Handle> handles;
@@ -94,7 +94,7 @@ struct files::DriveMonitor::State : std::enable_shared_from_this<State> {
   }
 };
 
-files::DriveMonitor::DriveMonitor() : m_state(std::make_shared<State>()) {
+luciole::DriveMonitor::DriveMonitor() : m_state(std::make_shared<State>()) {
   for (const auto* signal :
        {"volume-added", "volume-removed", "volume-changed", "mount-added", "mount-removed", "mount-changed"}) {
     g_signal_connect_swapped(
@@ -105,14 +105,14 @@ files::DriveMonitor::DriveMonitor() : m_state(std::make_shared<State>()) {
   m_state->refresh();
 }
 
-files::DriveMonitor::~DriveMonitor() {
+luciole::DriveMonitor::~DriveMonitor() {
   g_signal_handlers_disconnect_by_data(m_state->monitor.get(), m_state.get());
   m_state->changed = {};
 }
 
-const std::vector<files::Drive>& files::DriveMonitor::drives() const { return m_state->drives; }
+const std::vector<luciole::Drive>& luciole::DriveMonitor::drives() const { return m_state->drives; }
 
-const files::Drive* files::DriveMonitor::find(const std::string& key) const {
+const luciole::Drive* luciole::DriveMonitor::find(const std::string& key) const {
   for (const auto& drive : m_state->drives) {
     if (drive.key == key) {
       return &drive;
@@ -121,9 +121,11 @@ const files::Drive* files::DriveMonitor::find(const std::string& key) const {
   return nullptr;
 }
 
-void files::DriveMonitor::setChangedCallback(std::function<void()> callback) { m_state->changed = std::move(callback); }
+void luciole::DriveMonitor::setChangedCallback(std::function<void()> callback) {
+  m_state->changed = std::move(callback);
+}
 
-void files::DriveMonitor::mount(
+void luciole::DriveMonitor::mount(
     const std::string& key, std::function<void(std::optional<Location>, std::string)> done
 ) {
   const auto* drive = find(key);
@@ -164,7 +166,7 @@ void files::DriveMonitor::mount(
   );
 }
 
-void files::DriveMonitor::remove(const std::string& key, std::function<void(std::string)> done) {
+void luciole::DriveMonitor::remove(const std::string& key, std::function<void(std::string)> done) {
   const auto* drive = find(key);
   const auto handle = m_state->handles.find(key);
   if (drive == nullptr || handle == m_state->handles.end() || !handle->second.mount || !drive->removable) {

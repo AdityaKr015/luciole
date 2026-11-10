@@ -70,19 +70,19 @@ namespace {
   }
 } // namespace
 
-std::expected<void, std::string> files::runProviderProcess(
+std::expected<void, std::string> luciole::runProviderProcess(
     std::vector<std::string> args, int input, GCancellable* cancellable, std::uint64_t fileBytes, unsigned maxCpus,
     int output
 ) {
   if (g_cancellable_is_cancelled(cancellable)) {
     return std::unexpected("thumbnail request cancelled");
   }
-  const files::GString executable(g_find_program_in_path(args.front().c_str()));
+  const luciole::GString executable(g_find_program_in_path(args.front().c_str()));
   if (!executable) {
     return std::unexpected("thumbnail provider executable unavailable");
   }
   args.front() = executable.get();
-  const files::GioPtr<GSubprocessLauncher> launcher(g_subprocess_launcher_new(
+  const luciole::GioPtr<GSubprocessLauncher> launcher(g_subprocess_launcher_new(
       static_cast<GSubprocessFlags>(
           (output >= 0 ? G_SUBPROCESS_FLAGS_NONE : G_SUBPROCESS_FLAGS_STDOUT_SILENCE)
           | G_SUBPROCESS_FLAGS_STDERR_SILENCE
@@ -109,7 +109,7 @@ std::expected<void, std::string> files::runProviderProcess(
     argv.push_back(argument.c_str());
   }
   argv.push_back(nullptr);
-  const files::GioPtr<GSubprocess> process(g_subprocess_launcher_spawnv(launcher.get(), argv.data(), nullptr));
+  const luciole::GioPtr<GSubprocess> process(g_subprocess_launcher_spawnv(launcher.get(), argv.data(), nullptr));
   if (!process) {
     return std::unexpected("cannot start thumbnail provider");
   }

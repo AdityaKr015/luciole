@@ -4,7 +4,7 @@
 
 #include <algorithm>
 
-std::optional<std::string> files::selectionPatternProblem(const std::string& pattern) {
+std::optional<std::string> luciole::selectionPatternProblem(const std::string& pattern) {
   if (pattern.empty()) {
     return "Enter a pattern.";
   }
@@ -15,25 +15,25 @@ std::optional<std::string> files::selectionPatternProblem(const std::string& pat
   }
   return std::nullopt;
 }
-void files::TypeaheadSelection::clear() {
+void luciole::TypeaheadSelection::clear() {
   m_text.clear();
   m_changed = {};
 }
-bool files::TypeaheadSelection::expire(Clock::time_point now) {
+bool luciole::TypeaheadSelection::expire(Clock::time_point now) {
   if (m_text.empty() || now - m_changed < timeout) {
     return false;
   }
   clear();
   return true;
 }
-std::optional<files::EntryId> files::TypeaheadSelection::match(DirectoryModel& model, bool cycle) {
+std::optional<luciole::EntryId> luciole::TypeaheadSelection::match(DirectoryModel& model, bool cycle) {
   const auto id = model.prefixMatch(m_text, cycle);
   if (id) {
     (void)model.select(*id);
   }
   return id;
 }
-std::optional<files::EntryId> files::TypeaheadSelection::append(
+std::optional<luciole::EntryId> luciole::TypeaheadSelection::append(
     DirectoryModel& model, const std::string& text, Clock::time_point now, bool composing
 ) {
   if (!composing) {
@@ -52,8 +52,8 @@ std::optional<files::EntryId> files::TypeaheadSelection::append(
   m_changed = now;
   return match(model, cycle);
 }
-std::optional<files::EntryId>
-files::TypeaheadSelection::erase(DirectoryModel& model, std::uint32_t bytes, Clock::time_point now, bool composing) {
+std::optional<luciole::EntryId>
+luciole::TypeaheadSelection::erase(DirectoryModel& model, std::uint32_t bytes, Clock::time_point now, bool composing) {
   if (!composing) {
     (void)expire(now);
   }

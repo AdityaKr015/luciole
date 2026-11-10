@@ -2,7 +2,7 @@
 
 #include "operations/archive_input.h"
 
-namespace files::archive_work {
+namespace luciole::archive_work {
   // Encrypted 7z goes through the system 7-Zip CLI (7zz, 7z or 7za), found at runtime.
   struct SevenZipMember {
     std::string path;
@@ -17,4 +17,4 @@ namespace files::archive_work {
       Input& input, Work& work, const Passwords& passwords, const std::vector<std::string>& names, bool encrypted,
       std::uint64_t largest, const std::string& directory
   );
-} // namespace files::archive_work
+} // namespace luciole::archive_work

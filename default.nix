@@ -13,7 +13,7 @@ let
   package = pkgs.callPackage ./nix/package.nix { };
   withPackage = module: {
     imports = [ module ];
-    programs.noctalia-files.package = pkgs.lib.mkDefault package;
+    programs.luciole.package = pkgs.lib.mkDefault package;
   };
 in
 {

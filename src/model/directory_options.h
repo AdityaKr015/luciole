@@ -9,7 +9,7 @@
 #include <string_view>
 #include <utility>
 
-namespace files {
+namespace luciole {
   inline constexpr std::array<int, 9> kGridIconSizes{32, 48, 64, 80, 96, 128, 160, 192, 256};
   inline constexpr int kDefaultGridIconSize = 48;
   inline constexpr int kMinSidebarWidth = 160;
@@ -218,4 +218,4 @@ namespace files {
     bool showBackups = true;
     bool operator==(const FilterOptions&) const = default;
   };
-} // namespace files
+} // namespace luciole

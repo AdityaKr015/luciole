@@ -16,7 +16,7 @@
 
 namespace {
   namespace fs = std::filesystem;
-  files::Location location(const fs::path& path) { return files::Location::fromPath(path.native()); }
+  luciole::Location location(const fs::path& path) { return luciole::Location::fromPath(path.native()); }
   void write(const fs::path& path, const std::string& value) { std::ofstream(path) << value; }
   std::string read(const fs::path& path) {
     std::ifstream input(path);
@@ -25,7 +25,7 @@ namespace {
   struct Fixture {
     fs::path root, home, data;
     Fixture() {
-      std::string path = "/tmp/noctalia-trash-XXXXXX";
+      std::string path = "/tmp/luciole-trash-XXXXXX";
       TEST_CHECK(::mkdtemp(path.data()) != nullptr);
       root = path;
       home = root / "home";
@@ -52,11 +52,11 @@ namespace {
       for (const auto& entry : fs::directory_iterator(info)) {
         std::unique_ptr<GKeyFile, decltype(&g_key_file_unref)> key(g_key_file_new(), g_key_file_unref);
         TEST_CHECK(g_key_file_load_from_file(key.get(), entry.path().c_str(), G_KEY_FILE_NONE, nullptr));
-        const files::GString encoded(g_key_file_get_string(key.get(), "Trash Info", "Path", nullptr));
+        const luciole::GString encoded(g_key_file_get_string(key.get(), "Trash Info", "Path", nullptr));
         TEST_CHECK(encoded != nullptr);
-        const files::GString decoded(g_uri_unescape_string(encoded.get(), nullptr));
+        const luciole::GString decoded(g_uri_unescape_string(encoded.get(), nullptr));
         if (decoded && original.native() == decoded.get()) {
-          const files::GString date(g_key_file_get_string(key.get(), "Trash Info", "DeletionDate", nullptr));
+          const luciole::GString date(g_key_file_get_string(key.get(), "Trash Info", "DeletionDate", nullptr));
           TEST_CHECK(date && std::string(date.get()).size() == 19);
           paths.push_back(data / "Trash/files" / entry.path().stem());
         }
@@ -76,8 +76,8 @@ namespace {
         m_source.dispatch(fds, first);
       }
     }
-    void prepare(files::TrashService& service, const fs::path& parent, const std::vector<fs::path>& paths) {
-      std::vector<files::Location> sources;
+    void prepare(luciole::TrashService& service, const fs::path& parent, const std::vector<fs::path>& paths) {
+      std::vector<luciole::Location> sources;
       sources.reserve(paths.size());
       for (const auto& path : paths) {
         sources.push_back(location(path));
@@ -86,10 +86,10 @@ namespace {
       until([&] { return !service.busy(); });
       TEST_CHECK(service.canTrash());
     }
-    void trash(files::TrashService& service) {
+    void trash(luciole::TrashService& service) {
       TEST_CHECK(service.trash());
       until([&] { return !service.busy(); });
-      TEST_CHECK(service.snapshot().status == files::TrashStatus::Finished);
+      TEST_CHECK(service.snapshot().status == luciole::TrashStatus::Finished);
     }
 
   private:
@@ -107,13 +107,13 @@ namespace {
     fs::create_symlink(file, parent / "link");
     fs::create_symlink("absent", parent / "broken");
     TEST_CHECK(::mkfifo((parent / "fifo").c_str(), 0600) == 0);
-    files::TrashService service;
+    luciole::TrashService service;
     pump.prepare(service, parent, {file, parent / "folder", parent / "link", parent / "broken", parent / "fifo"});
     TEST_CHECK(fs::exists(file));
     pump.trash(service);
     TEST_CHECK(service.snapshot().results.size() == 5 && service.completed() == 5);
     TEST_CHECK(std::ranges::all_of(service.snapshot().results, [](const auto& item) {
-      return item.outcome == files::TrashOutcome::Trashed;
+      return item.outcome == luciole::TrashOutcome::Trashed;
     }));
     TEST_CHECK(fs::is_empty(parent));
     const auto files = fixture.archived(file);
@@ -142,7 +142,7 @@ namespace {
     const auto parent = fixture.folder(raw);
     const auto file = parent / raw;
     write(file, "raw");
-    files::TrashService service;
+    luciole::TrashService service;
     pump.prepare(service, parent, {file});
     pump.trash(service);
     const auto archived = fixture.archived(file);
@@ -153,7 +153,7 @@ namespace {
     for (const auto* name : {"replaced", "good", "missing"}) {
       write(parent / name, name);
     }
-    files::TrashService service;
+    luciole::TrashService service;
     pump.prepare(service, parent, {parent / "replaced", parent / "good", parent / "missing"});
     fs::rename(parent / "replaced", parent / "original");
     write(parent / "replaced", "replacement");
@@ -161,9 +161,9 @@ namespace {
     pump.trash(service);
     const auto& results = service.snapshot().results;
     TEST_CHECK(
-        results[0].outcome == files::TrashOutcome::Failed
-        && results[1].outcome == files::TrashOutcome::Trashed
-        && results[2].outcome == files::TrashOutcome::Failed
+        results[0].outcome == luciole::TrashOutcome::Failed
+        && results[1].outcome == luciole::TrashOutcome::Trashed
+        && results[2].outcome == luciole::TrashOutcome::Failed
     );
     TEST_CHECK(read(parent / "replaced") == "replacement" && read(parent / "original") == "replaced");
     const auto stale = fixture.folder("stale");
@@ -174,7 +174,7 @@ namespace {
     write(stale / "item", "replacement");
     pump.trash(service);
     TEST_CHECK(
-        service.snapshot().results.front().outcome == files::TrashOutcome::Failed
+        service.snapshot().results.front().outcome == luciole::TrashOutcome::Failed
         && read(stale / "item") == "replacement"
         && read(fixture.home / "old-stale/item") == "original"
     );
@@ -185,7 +185,7 @@ namespace {
     fs::create_directory_symlink(fixture.home / "old-stale", alias);
     pump.trash(service);
     TEST_CHECK(
-        service.snapshot().results.front().outcome == files::TrashOutcome::Failed
+        service.snapshot().results.front().outcome == luciole::TrashOutcome::Failed
         && fs::exists(stale / "item")
         && fs::exists(alias / "item")
     );
@@ -193,27 +193,27 @@ namespace {
   void rejectsInvalidRequests(const Fixture& fixture, Pump& pump) {
     const auto parent = fixture.folder("invalid");
     write(parent / "keep", "keep");
-    files::TrashService service;
-    for (const auto& sources : std::vector<std::vector<files::Location>>{
+    luciole::TrashService service;
+    for (const auto& sources : std::vector<std::vector<luciole::Location>>{
              {location(parent / "keep"), location(parent / "keep")},
              {location(parent / "keep"), location(parent / "missing")},
              {location(parent)},
              {location(fixture.home / "elsewhere")},
-             {files::Location::fromUri("sftp://example.invalid/file")}
+             {luciole::Location::fromUri("sftp://example.invalid/file")}
          }) {
       TEST_CHECK(service.prepare(location(parent), sources));
       pump.until([&] { return !service.busy(); });
-      TEST_CHECK(service.snapshot().status == files::TrashStatus::Error && !service.canTrash());
+      TEST_CHECK(service.snapshot().status == luciole::TrashStatus::Error && !service.canTrash());
       TEST_CHECK(read(parent / "keep") == "keep");
     }
-    TEST_CHECK(service.prepare(files::Location::fromUri("sftp://example.invalid/"), {location(parent / "keep")}));
+    TEST_CHECK(service.prepare(luciole::Location::fromUri("sftp://example.invalid/"), {location(parent / "keep")}));
     pump.until([&] { return !service.busy(); });
-    TEST_CHECK(service.snapshot().status == files::TrashStatus::Error);
+    TEST_CHECK(service.snapshot().status == luciole::TrashStatus::Error);
   }
   void cancellationAndLifetime(const Fixture& fixture, Pump& pump) {
     const auto parent = fixture.folder("cancelled");
     write(parent / "keep", "keep");
-    files::TrashService service;
+    luciole::TrashService service;
     pump.prepare(service, parent, {parent / "keep"});
     service.cancel();
     TEST_CHECK(!service.trash() && read(parent / "keep") == "keep");
@@ -234,14 +234,14 @@ namespace {
     pump.until([&] { return !service.busy(); });
     for (const auto& result : service.snapshot().results) {
       const auto path = fs::path(*result.source.nativePath());
-      TEST_CHECK((result.outcome == files::TrashOutcome::Trashed) == !fs::exists(path));
-      if (result.outcome == files::TrashOutcome::Trashed) {
+      TEST_CHECK((result.outcome == luciole::TrashOutcome::Trashed) == !fs::exists(path));
+      if (result.outcome == luciole::TrashOutcome::Trashed) {
         TEST_CHECK(fixture.archived(path).size() == 1);
       }
     }
     service.cancel();
-    TEST_CHECK(service.snapshot().status == files::TrashStatus::Finished);
-    auto destroyed = std::make_unique<files::TrashService>();
+    TEST_CHECK(service.snapshot().status == luciole::TrashStatus::Finished);
+    auto destroyed = std::make_unique<luciole::TrashService>();
     bool notified = false;
     destroyed->setChangedCallback([&] { notified = true; });
     TEST_CHECK(destroyed->prepare(location(parent), {location(parent / "keep")}));
@@ -258,13 +258,13 @@ namespace {
     }
     const auto parent = fixture.folder("permission");
     write(parent / "keep", "keep");
-    files::TrashService service;
+    luciole::TrashService service;
     pump.prepare(service, parent, {parent / "keep"});
     fs::permissions(parent, fs::perms::owner_read | fs::perms::owner_exec);
     pump.trash(service);
     fs::permissions(parent, fs::perms::owner_all);
     TEST_CHECK(
-        service.snapshot().results.front().outcome == files::TrashOutcome::Failed
+        service.snapshot().results.front().outcome == luciole::TrashOutcome::Failed
         && read(parent / "keep") == "keep"
         && fixture.archived(parent / "keep").empty()
     );
@@ -273,16 +273,16 @@ namespace {
     const auto parent = fixture.folder("monitored");
     write(parent / "selected", "content");
     write(parent / "remaining", "keep");
-    files::DirectorySession session;
-    files::DirectoryModel model;
+    luciole::DirectorySession session;
+    luciole::DirectoryModel model;
     session.setChangedCallback([&] { model.applySnapshot(session.snapshot()); });
     session.open(location(parent));
-    pump.until([&] { return model.snapshot().status == files::DirectoryStatus::Ready && model.rows().size() == 2; });
-    const auto selected = std::ranges::find(model.snapshot().entries, "selected", &files::DirectoryEntry::name);
+    pump.until([&] { return model.snapshot().status == luciole::DirectoryStatus::Ready && model.rows().size() == 2; });
+    const auto selected = std::ranges::find(model.snapshot().entries, "selected", &luciole::DirectoryEntry::name);
     TEST_CHECK(selected != model.snapshot().entries.end());
     const auto id = selected->id;
     model.select(id);
-    files::TrashService service;
+    luciole::TrashService service;
     pump.prepare(service, parent, {parent / "selected"});
     pump.trash(service);
     pump.until([&] { return model.rows().size() == 1 && model.entry(id) == nullptr; });

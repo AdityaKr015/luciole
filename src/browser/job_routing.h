@@ -7,7 +7,7 @@
 #include <optional>
 #include <vector>
 
-namespace files {
+namespace luciole {
   using JobId = std::uint64_t;
 
   // Which page shows each file job. A job starts on its origin page and stays with the page that owns it while that
@@ -48,4 +48,4 @@ namespace files {
     };
     std::map<JobId, Route> m_routes;
   };
-} // namespace files
+} // namespace luciole

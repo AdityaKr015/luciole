@@ -14,7 +14,7 @@
 
 // GIO bridge for code that drives GIO itself: fs, operations, thumbnails, imaging,
 // platform, and clipboard sources. browser, config, ui, and app use the typed fs API.
-namespace files {
+namespace luciole {
   GioPtr<GFile> gioFile(const Location& location);
   Location locationFromFile(GFile* file);
   GCancellable* gioCancellable(const CancelToken& token);
@@ -32,4 +32,4 @@ namespace files {
   FileIconSource readIconSource(GIcon* icon);
   FileIconSource readFileIcon(GFileInfo* info, const Location& location);
   TrashInfo readTrashInfo(GFileInfo* info);
-} // namespace files
+} // namespace luciole

@@ -9,7 +9,7 @@
 #include <optional>
 #include <utility>
 
-namespace files {
+namespace luciole {
   // One pending worker question answered from the main thread. Conflict needs an
   // `id` member; ask() assigns it.
   template <typename Conflict, typename Choice> class ConflictGate {
@@ -64,4 +64,4 @@ namespace files {
     std::optional<Choice> m_choice;
     std::uint64_t m_next = 0;
   };
-} // namespace files
+} // namespace luciole

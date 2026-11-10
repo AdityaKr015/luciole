@@ -47,7 +47,7 @@ namespace {
       );
       setHitTestVisible(false);
     }
-    void bind(const files::BatchRenameRow& row, const files::BatchRenameResult* result, bool hovered) {
+    void bind(const luciole::BatchRenameRow& row, const luciole::BatchRenameResult* result, bool hovered) {
       m_before->setText(row.before);
       m_after->setText(row.after);
       m_after->setColor(colorSpecFromRole(
@@ -106,15 +106,15 @@ private:
   BatchRenameDialog& m_owner;
 };
 BatchRenameDialog::BatchRenameDialog(
-    std::size_t count, std::function<void(files::BatchRenameOptions)> preview, std::function<void()> apply,
+    std::size_t count, std::function<void(luciole::BatchRenameOptions)> preview, std::function<void()> apply,
     std::function<void()> cancel, std::function<void()> close, std::function<void()> copyReport,
     std::function<void()> requestUpdate
 )
     : m_adapter(std::make_unique<Adapter>(*this)), m_preview(std::move(preview)) {
   setDirection(FlexDirection::Vertical);
   setAlign(FlexAlign::Stretch);
-  files::applyDialogStyle(*this);
-  addChild(files::dialogHeader(std::format("Rename {} items", count), "forms", std::move(close)));
+  luciole::applyDialogStyle(*this);
+  addChild(luciole::dialogHeader(std::format("Rename {} items", count), "forms", std::move(close)));
   auto scroll =
       ui::scrollView({.out = &m_scroll, .viewportPaddingH = 0.0F, .viewportPaddingV = 0.0F, .flexGrow = 1.0F});
   scroll->setReserveScrollbarGutter(true);
@@ -253,9 +253,9 @@ BatchRenameDialog::BatchRenameDialog(
 }
 BatchRenameDialog::~BatchRenameDialog() { m_grid->setAdapter(nullptr); }
 Input* BatchRenameDialog::firstInput() const { return m_mode->selectedIndex() == 0 ? m_pattern : m_find; }
-files::BatchRenameOptions BatchRenameDialog::options() const {
+luciole::BatchRenameOptions BatchRenameDialog::options() const {
   return {
-      .mode = m_mode->selectedIndex() == 0 ? files::BatchRenameMode::Numbering : files::BatchRenameMode::Replace,
+      .mode = m_mode->selectedIndex() == 0 ? luciole::BatchRenameMode::Numbering : luciole::BatchRenameMode::Replace,
       .pattern = m_pattern->value().substr(0, 4097),
       .find = m_find->value().substr(0, 4097),
       .replacement = m_replacement->value().substr(0, 4097),
@@ -277,9 +277,9 @@ void BatchRenameDialog::changed() {
   markLayoutDirty();
 }
 void BatchRenameDialog::sync(
-    const files::BatchRenameSnapshot& snapshot, std::size_t completed, bool clipboardAvailable
+    const luciole::BatchRenameSnapshot& snapshot, std::size_t completed, bool clipboardAvailable
 ) {
-  using P = files::BatchRenamePhase;
+  using P = luciole::BatchRenamePhase;
   const bool finished = snapshot.phase == P::Finished, applying = snapshot.phase == P::Applying;
   const bool editable = !finished && !applying;
   const bool rowsChanged = snapshot.rows != m_snapshot.rows || snapshot.results != m_snapshot.results;
@@ -298,7 +298,7 @@ void BatchRenameDialog::sync(
   m_report->setParticipatesInLayout(finished);
   m_report->setEnabled(clipboardAvailable && !snapshot.report.empty());
   const auto count = snapshot.rows ? snapshot.rows->size() : 0;
-  std::string status = snapshot.error ? files::fileErrorText(*snapshot.error) : std::string{};
+  std::string status = snapshot.error ? luciole::fileErrorText(*snapshot.error) : std::string{};
   bool error = !status.empty();
   if (status.empty()) {
     if (snapshot.phase == P::Preparing) {
@@ -310,7 +310,7 @@ void BatchRenameDialog::sync(
     } else if (finished && snapshot.results) {
       for (std::size_t i = 0; i < outcomeNames.size(); ++i) {
         const auto amount = std::ranges::count(
-            *snapshot.results, static_cast<files::BatchRenameOutcome>(i), &files::BatchRenameResult::outcome
+            *snapshot.results, static_cast<luciole::BatchRenameOutcome>(i), &luciole::BatchRenameResult::outcome
         );
         if (amount > 0) {
           if (!status.empty()) {
@@ -321,7 +321,7 @@ void BatchRenameDialog::sync(
       }
     } else if (snapshot.rows) {
       const auto errors = std::ranges::count_if(*snapshot.rows, [](const auto& row) { return !row.error.empty(); });
-      const auto changes = std::ranges::count(*snapshot.rows, true, &files::BatchRenameRow::changed);
+      const auto changes = std::ranges::count(*snapshot.rows, true, &luciole::BatchRenameRow::changed);
       error = errors > 0;
       status = errors > 0 ? std::format("{} names need attention", errors)
                           : std::format("{} of {} names will change", changes, count);

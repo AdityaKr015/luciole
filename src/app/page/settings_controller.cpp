@@ -18,7 +18,7 @@
 #include <utility>
 
 SettingsController::SettingsController(
-    PageContext& page, files::ViewPreferenceWriter& preferences, files::ThumbnailService& thumbnails,
+    PageContext& page, luciole::ViewPreferenceWriter& preferences, luciole::ThumbnailService& thumbnails,
     WaylandConnection& connection, RenderContext& renderer, std::function<void()> clearThumbnails
 )
     : m_page(page), m_preferences(preferences), m_thumbnails(thumbnails), m_connection(connection),
@@ -49,7 +49,7 @@ void SettingsController::onFrame() {
 void SettingsController::sync() {
   const auto& inherited = m_preferences.inheritedSettings();
   m_view->sync(
-      m_page.settings(), inherited ? inherited->browser : files::BrowserSettings{},
+      m_page.settings(), inherited ? inherited->browser : luciole::BrowserSettings{},
       m_preferences.busy() || m_thumbnails.clearing(), m_error.empty() ? m_thumbnails.error() : m_error,
       m_thumbnails.clearing()
   );
@@ -72,7 +72,7 @@ void SettingsController::toggle() {
   }
   m_viewLifetime = std::make_shared<int>(0);
   auto root = std::make_unique<SettingsDialog>(
-      [this](files::OverrideEdit edit) {
+      [this](luciole::OverrideEdit edit) {
         m_preferences.submit({edit});
         if (auto* surface = m_page.menuSurface()) {
           surface->requestLayout();
@@ -116,7 +116,7 @@ bool SettingsController::key(const KeyboardEvent& event) {
     m_dropdown->onKeyboardEvent(event);
     return true;
   }
-  if (event.pressed && files::shortcutMatches(files::BrowserAction::Settings, event.sym, event.modifiers)) {
+  if (event.pressed && luciole::shortcutMatches(luciole::BrowserAction::Settings, event.sym, event.modifiers)) {
     m_page.dismissMenu();
     return true;
   }

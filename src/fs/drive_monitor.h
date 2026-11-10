@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace files {
+namespace luciole {
   // One mountable volume or mount reported by GIO's volume monitor (removable media, extra partitions,
   // network mounts), as Nautilus lists them under "Other Locations".
   struct Drive {
@@ -44,4 +44,4 @@ namespace files {
     struct State;
     std::shared_ptr<State> m_state;
   };
-} // namespace files
+} // namespace luciole

@@ -6,7 +6,7 @@
 #include <functional>
 #include <memory>
 
-namespace files {
+namespace luciole {
   struct PathSuggestion {
     Location location;
     std::string label;
@@ -37,4 +37,4 @@ namespace files {
     struct State;
     std::shared_ptr<State> m_state;
   };
-} // namespace files
+} // namespace luciole

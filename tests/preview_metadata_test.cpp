@@ -16,7 +16,7 @@
 
 namespace {
   namespace fs = std::filesystem;
-  using files::GioPtr;
+  using luciole::GioPtr;
   void wait(const std::function<bool()>& done) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
     while (!done()) {
@@ -36,7 +36,7 @@ namespace {
     const GioPtr<GSubprocess> process(g_subprocess_newv(argv.data(), G_SUBPROCESS_FLAGS_STDOUT_SILENCE, nullptr));
     TEST_CHECK(process && g_subprocess_wait_check(process.get(), nullptr, nullptr));
   }
-  std::string value(const files::MetadataFields& fields, const std::string& key) {
+  std::string value(const luciole::MetadataFields& fields, const std::string& key) {
     for (const auto& field : fields) {
       if (field.label == key) {
         return field.value;
@@ -44,10 +44,10 @@ namespace {
     }
     return {};
   }
-  files::DirectoryEntry entry(const fs::path& path, std::string mime) {
-    const auto location = files::Location::fromPath(path.native());
+  luciole::DirectoryEntry entry(const fs::path& path, std::string mime) {
+    const auto location = luciole::Location::fromPath(path.native());
     const GioPtr<GFileInfo> info(g_file_query_info(
-        files::gioFile(location).get(),
+        luciole::gioFile(location).get(),
         "standard::size,time::modified,id::file,id::filesystem,etag::value,time::changed,time::changed-nsec,time::"
         "changed-usec",
         G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, nullptr
@@ -61,25 +61,25 @@ namespace {
         .location = location,
         .name = path.filename().native(),
         .displayName = path.filename().native(),
-        .type = files::FileType::Regular,
+        .type = luciole::FileType::Regular,
         .size = g_file_info_get_attribute_uint64(info.get(), G_FILE_ATTRIBUTE_STANDARD_SIZE),
         .modifiedSeconds = g_file_info_get_attribute_uint64(info.get(), G_FILE_ATTRIBUTE_TIME_MODIFIED),
         .etag = g_file_info_get_etag(info.get()),
         .parentDisplayName = {},
-        .identity = files::readFileIdentity(info.get()),
+        .identity = luciole::readFileIdentity(info.get()),
         .contentType = std::move(mime),
         .contentRevision =
             std::format("{}:{}", g_file_info_get_attribute_uint64(info.get(), G_FILE_ATTRIBUTE_TIME_CHANGED), nanos),
     };
   }
-  files::MetadataFields inspect(const fs::path& path, const std::string& mime) {
-    files::PreviewMetadataService metadata;
+  luciole::MetadataFields inspect(const fs::path& path, const std::string& mime) {
+    luciole::PreviewMetadataService metadata;
     metadata.show(entry(path, mime), {});
     wait([&] { return !metadata.busy(); });
     return metadata.fields();
   }
   void parserChecks() {
-    const auto fields = files::parseMediaMetadata(
+    const auto fields = luciole::parseMediaMetadata(
         R"({"format":{"format_long_name":"Test","duration":"1.25","bit_rate":"128000","tags":{"title":"<b>literal café","artist":"Artist\nName"}},"streams":[{"codec_type":"video","codec_name":"png","width":1,"height":1,"disposition":{"attached_pic":1}},{"codec_type":"video","codec_name":"h264","width":1920,"height":1080,"avg_frame_rate":"30000/1001","nb_frames":"N/A","side_data_list":[{"rotation":-90}]},{"codec_type":"audio","codec_name":"aac","sample_rate":"48000","channels":2,"channel_layout":"stereo"}]})"
     );
     TEST_CHECK(value(fields, "Duration") == "0:00:01.250");
@@ -87,8 +87,8 @@ namespace {
     TEST_CHECK(value(fields, "Frame rate") == "29.970 fps" && value(fields, "Frames").empty());
     TEST_CHECK(value(fields, "Rotation") == "-90°" && value(fields, "Channels") == "stereo");
     TEST_CHECK(value(fields, "Title") == "<b>literal café" && value(fields, "Artist") == "Artist Name");
-    TEST_CHECK(files::parseMediaMetadata("broken").empty());
-    const auto unknown = files::parseMediaMetadata(
+    TEST_CHECK(luciole::parseMediaMetadata("broken").empty());
+    const auto unknown = luciole::parseMediaMetadata(
         R"({"format":{"duration":"NaN","bit_rate":"-1"},"streams":[{"codec_type":"video","avg_frame_rate":"0/0","width":0}]})"
     );
     TEST_CHECK(
@@ -96,9 +96,9 @@ namespace {
         && value(unknown, "Frame size").empty()
         && value(unknown, "Frame rate").empty()
     );
-    TEST_CHECK(files::parseMediaMetadata(std::string(70000, 'x')).empty());
+    TEST_CHECK(luciole::parseMediaMetadata(std::string(70000, 'x')).empty());
     const auto pdf =
-        files::parsePdfMetadata("Title: <literal> café\nPages: 3\nPDF version: 1.7\nPage size: 612 x 792 pts\n");
+        luciole::parsePdfMetadata("Title: <literal> café\nPages: 3\nPDF version: 1.7\nPage size: 612 x 792 pts\n");
     TEST_CHECK(value(pdf, "Pages") == "3" && value(pdf, "Title") == "<literal> café");
   }
   void writePdf(const fs::path& path) {
@@ -179,7 +179,7 @@ namespace {
     zipFile.close();
     fields = inspect(svgz, "image/svg+xml-compressed");
     TEST_CHECK(value(fields, "Pixel size") == "400 × 200 px" && value(fields, "Compression") == "Gzip");
-    files::PreviewService preview;
+    luciole::PreviewService preview;
     const auto source = entry(path, "image/png");
     preview.show(source, 128, {});
     wait([&] { return !preview.busy(); });
@@ -198,7 +198,7 @@ namespace {
     TEST_CHECK(value(inspect(corrupt, "image/png"), "Pixel size").empty());
     auto stale = source;
     stale.size = 1;
-    files::PreviewMetadataService metadata;
+    luciole::PreviewMetadataService metadata;
     metadata.show(stale, {});
     wait([&] { return !metadata.busy(); });
     TEST_CHECK(metadata.fields().empty());
@@ -217,7 +217,7 @@ namespace {
     }));
     TEST_CHECK(preview.snapshot().text == "UTF-8 café");
     stale = source;
-    stale.identity = files::FileIdentity{"old", "old"};
+    stale.identity = luciole::FileIdentity{"old", "old"};
     metadata.show(stale, {});
     wait([&] { return !metadata.busy(); });
     TEST_CHECK(metadata.fields().empty());
@@ -227,8 +227,8 @@ namespace {
     fs::create_directory(directory);
     std::ofstream(directory / "untouched.txt") << "child";
     auto source = entry(directory, "inode/directory");
-    source.type = files::FileType::Directory;
-    files::PreviewMetadataService service;
+    source.type = luciole::FileType::Directory;
+    luciole::PreviewMetadataService service;
     service.show(source, {});
     wait([&] { return !service.busy(); });
     TEST_CHECK(!value(service.fields(), "Permissions").empty());
@@ -244,7 +244,7 @@ namespace {
     const auto fifo = root / "fifo.png";
     TEST_CHECK(::mkfifo(fifo.c_str(), 0600) == 0);
     source = entry(fifo, "image/png");
-    source.type = files::FileType::Special;
+    source.type = luciole::FileType::Special;
     service.show(source, {});
     wait([&] { return !service.busy(); });
     TEST_CHECK(value(service.fields(), "Permissions") == "0600");
@@ -289,7 +289,7 @@ namespace {
     command(
         {"ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "sine=duration=0.2:sample_rate=44100", wav.native()}
     );
-    files::PreviewService preview;
+    luciole::PreviewService preview;
     preview.show(entry(wav, "audio/x-wav"), 128, {});
     wait([&] { return !preview.busy(); });
     TEST_CHECK(value(preview.snapshot().metadata, "Audio codec") == "pcm_s16le");
@@ -297,7 +297,7 @@ namespace {
         value(preview.snapshot().metadata, "Sample rate") == "44100 Hz"
         && value(preview.snapshot().metadata, "Audio depth") == "16-bit"
     );
-    TEST_CHECK(!preview.snapshot().image && preview.snapshot().status == files::PreviewStatus::Unavailable);
+    TEST_CHECK(!preview.snapshot().image && preview.snapshot().status == luciole::PreviewStatus::Unavailable);
     const auto rotated = root / "rotated.mp4";
     command(
         {"ffmpeg", "-nostdin", "-v", "error", "-display_rotation:v:0", "90", "-i", clip.native(), "-c", "copy",
@@ -316,10 +316,10 @@ namespace {
     const auto svg = entry(root / "vector.svg", "image/svg+xml");
     const auto bin = root / "bin";
     fs::create_directory(bin);
-    const files::GString shell(g_find_program_in_path("sh")), sleep(g_find_program_in_path("sleep"));
+    const luciole::GString shell(g_find_program_in_path("sh")), sleep(g_find_program_in_path("sleep"));
     TEST_CHECK(shell && sleep);
     PathOverride restore;
-    ::setenv("PATH", "/noctalia-no-provider", 1);
+    ::setenv("PATH", "/luciole-no-provider", 1);
     TEST_CHECK(value(inspect(path, "video/mp4"), "Video codec").empty());
     ::setenv("PATH", bin.c_str(), 1);
     const auto started = root / "started";
@@ -333,7 +333,7 @@ namespace {
         << " 30\n";
     TEST_CHECK(::chmod((bin / "ffprobe").c_str(), 0700) == 0);
     int replies = 0;
-    files::PreviewMetadataService service;
+    luciole::PreviewMetadataService service;
     service.setChangedCallback([&] { ++replies; });
     service.show(video, {});
     wait([&] { return fs::exists(started); });
@@ -353,7 +353,7 @@ namespace {
     TEST_CHECK(service.fields().empty() && replies == 1);
     fs::remove(started);
     {
-      files::PreviewMetadataService retired;
+      luciole::PreviewMetadataService retired;
       retired.setChangedCallback([] { TEST_CHECK(false); });
       retired.show(video, {});
       wait([&] { return fs::exists(started); });
@@ -388,12 +388,12 @@ int main(int argc, char** argv) {
     args.emplace_back(argv[i]);
   }
   if (!args.empty() && args.front() == "--preview-metadata-worker") {
-    return files::runPreviewMetadataWorker(std::span(args).subspan(1));
+    return luciole::runPreviewMetadataWorker(std::span(args).subspan(1));
   }
   if (!args.empty() && args.front() == "--thumbnail-worker") {
-    return files::runThumbnailWorker(std::span(args).subspan(1));
+    return luciole::runThumbnailWorker(std::span(args).subspan(1));
   }
-  const files::GString temporary(g_dir_make_tmp("noctalia-metadata-test-XXXXXX", nullptr));
+  const luciole::GString temporary(g_dir_make_tmp("luciole-metadata-test-XXXXXX", nullptr));
   TEST_CHECK(temporary != nullptr);
   const fs::path root(temporary.get());
   ::setenv("XDG_CACHE_HOME", (root / "cache").c_str(), 1);

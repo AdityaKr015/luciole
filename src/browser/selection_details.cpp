@@ -46,16 +46,16 @@ namespace {
       if (!first) {
         return "Unknown";
       }
-      auto value = files::metadataTime(first);
-      const auto end = files::metadataTime(last);
+      auto value = luciole::metadataTime(first);
+      const auto end = luciole::metadataTime(last);
       if (value != end) {
         value += " to " + end;
       }
       return unknown ? value + " (some unknown)" : value;
     }
   };
-  files::SelectionFacts
-  inspect(const std::vector<files::DirectoryEntry>& entries, std::size_t total, const files::CancelToken& token) {
+  luciole::SelectionFacts
+  inspect(const std::vector<luciole::DirectoryEntry>& entries, std::size_t total, const luciole::CancelToken& token) {
     Common owner, group, mode, location;
     TimeRange modified, accessed, created;
     std::uint64_t bytes = 0;
@@ -66,22 +66,22 @@ namespace {
         return {};
       }
       try {
-        const auto details = files::readFileDetails(source.location, token);
+        const auto details = luciole::readFileDetails(source.location, token);
         if ((source.identity && source.identity != details.identity)
             || (source.etag && source.etag != details.etag)
             || (source.contentRevision && source.contentRevision != details.contentRevision)) {
-          throw files::FileErrorException({files::FileErrorKind::Changed, "The selected item changed"});
+          throw luciole::FileErrorException({luciole::FileErrorKind::Changed, "The selected item changed"});
         }
-        if (details.type == files::FileType::Symlink) {
+        if (details.type == luciole::FileType::Symlink) {
           ++links;
-        } else if (details.type == files::FileType::Directory) {
+        } else if (details.type == luciole::FileType::Directory) {
           ++folders;
-        } else if (details.type == files::FileType::Regular) {
+        } else if (details.type == luciole::FileType::Regular) {
           ++files;
         } else {
           ++other;
         }
-        if (details.type != files::FileType::Directory) {
+        if (details.type != luciole::FileType::Directory) {
           if (!details.size) {
             ++unknownSizes;
           } else if (*details.size > std::numeric_limits<std::uint64_t>::max() - bytes) {
@@ -94,11 +94,11 @@ namespace {
         group.add(details.metadata.group);
         mode.add(details.metadata.mode ? std::optional(std::format("{:04o}", *details.metadata.mode)) : std::nullopt);
         const auto parent = source.location.parent();
-        location.add(parent ? std::optional(files::locationEditText(*parent)) : std::nullopt);
+        location.add(parent ? std::optional(luciole::locationEditText(*parent)) : std::nullopt);
         modified.add(details.modifiedSeconds);
         accessed.add(details.metadata.accessedSeconds);
         created.add(details.metadata.createdSeconds);
-      } catch (const files::FileErrorException&) {
+      } catch (const luciole::FileErrorException&) {
         ++unavailable;
         owner.unknown = group.unknown = mode.unknown = location.unknown = true;
         modified.unknown = accessed.unknown = created.unknown = true;
@@ -109,9 +109,9 @@ namespace {
       owner.unknown = group.unknown = mode.unknown = location.unknown = true;
       modified.unknown = accessed.unknown = created.unknown = true;
     }
-    const files::GString size(g_format_size_full(bytes, G_FORMAT_SIZE_IEC_UNITS));
+    const luciole::GString size(g_format_size_full(bytes, G_FORMAT_SIZE_IEC_UNITS));
     const bool partial = limited || unavailable || unknownSizes;
-    files::SelectionFacts fields{
+    luciole::SelectionFacts fields{
         {"Inspected", std::format("{} of {} items", entries.size() - unavailable, total)},
         {"Files", std::to_string(files)},
         {"Folders", std::to_string(folders)},
@@ -142,7 +142,7 @@ namespace {
   }
 } // namespace
 
-struct files::SelectionDetailsService::State : std::enable_shared_from_this<State> {
+struct luciole::SelectionDetailsService::State : std::enable_shared_from_this<State> {
   std::vector<DirectoryEntry> entries;
   std::size_t total = 0;
   SelectionFacts fields;
@@ -172,20 +172,20 @@ struct files::SelectionDetailsService::State : std::enable_shared_from_this<Stat
     );
   }
 };
-files::SelectionDetailsService::SelectionDetailsService() : m_state(std::make_shared<State>()) {}
-files::SelectionDetailsService::~SelectionDetailsService() {
+luciole::SelectionDetailsService::SelectionDetailsService() : m_state(std::make_shared<State>()) {}
+luciole::SelectionDetailsService::~SelectionDetailsService() {
   m_state->alive = false;
   m_state->changed = {};
   clear();
 }
-void files::SelectionDetailsService::clear() {
+void luciole::SelectionDetailsService::clear() {
   ++m_state->serial;
   m_state->cancel.cancel();
   m_state->pending = false;
   m_state->entries.clear();
   m_state->fields.clear();
 }
-void files::SelectionDetailsService::show(std::span<const DirectoryEntry> entries) {
+void luciole::SelectionDetailsService::show(std::span<const DirectoryEntry> entries) {
   clear();
   m_state->total = entries.size();
   m_state->entries.assign(entries.begin(), entries.begin() + std::min<std::size_t>(4096, entries.size()));
@@ -193,8 +193,8 @@ void files::SelectionDetailsService::show(std::span<const DirectoryEntry> entrie
   m_state->pending = true;
   m_state->start();
 }
-void files::SelectionDetailsService::setChangedCallback(std::function<void()> changed) {
+void luciole::SelectionDetailsService::setChangedCallback(std::function<void()> changed) {
   m_state->changed = std::move(changed);
 }
-const files::SelectionFacts& files::SelectionDetailsService::fields() const { return m_state->fields; }
-bool files::SelectionDetailsService::busy() const { return m_state->running || m_state->pending; }
+const luciole::SelectionFacts& luciole::SelectionDetailsService::fields() const { return m_state->fields; }
+bool luciole::SelectionDetailsService::busy() const { return m_state->running || m_state->pending; }

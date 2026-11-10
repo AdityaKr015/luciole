@@ -8,7 +8,9 @@
 
 #include <cmath>
 
-MillerView::MillerView(files::MillerColumns& columns, files::FileIconCache& icons, files::ThumbnailService& thumbnails)
+MillerView::MillerView(
+    luciole::MillerColumns& columns, luciole::FileIconCache& icons, luciole::ThumbnailService& thumbnails
+)
     : m_columns(columns), m_icons(icons), m_thumbnails(thumbnails) {
   setFlexGrow(1);
   setClipChildren(true);
@@ -114,13 +116,13 @@ void MillerView::synchronize() {
     if (m_views.contains(id)) {
       continue;
     }
-    auto adapter = std::make_unique<files::FileViewAdapter>(
-        *source->browser, m_icons, m_thumbnails, files::ViewMode::Miller,
+    auto adapter = std::make_unique<luciole::FileViewAdapter>(
+        *source->browser, m_icons, m_thumbnails, luciole::ViewMode::Miller,
         [this] { return modifiers ? modifiers() : 0U; },
         [this, id] { return indexOf(id) == m_columns.focused() && keyboardFocus && keyboardFocus(); }
     );
-    adapter->setCutPredicate([this](const files::Location& location) { return cut && cut(location); });
-    adapter->setActivateCallback([this, id](files::EntryId entry) {
+    adapter->setCutPredicate([this](const luciole::Location& location) { return cut && cut(location); });
+    adapter->setActivateCallback([this, id](luciole::EntryId entry) {
       if (focus) {
         focus(indexOf(id));
       }
@@ -128,7 +130,7 @@ void MillerView::synchronize() {
         activate(entry);
       }
     });
-    adapter->setContextCallback([this, id](std::optional<files::EntryId> entry, float x, float y) {
+    adapter->setContextCallback([this, id](std::optional<luciole::EntryId> entry, float x, float y) {
       if (focus) {
         focus(indexOf(id));
       }
@@ -184,8 +186,8 @@ void MillerView::synchronize() {
     source->browser->setCaptureViewport([grid, controller = source->browser.get()] {
       const auto first = grid->firstVisibleIndex();
       const auto& rows = controller->model().rows();
-      return files::BrowseViewport{
-          .mode = files::ViewMode::Miller,
+      return luciole::BrowseViewport{
+          .mode = luciole::ViewMode::Miller,
           .iconSize = controller->viewport().iconSize,
           .vertical = grid->scrollView().scrollOffset(),
           .withinRow = grid->firstVisibleOffset(),
@@ -285,7 +287,7 @@ void MillerView::synchronize() {
     const auto& snapshot = model.snapshot();
     view.adapter->setPresentation(presentation, snapshot.metadata.filesystem.readOnly);
     const bool context = !column.browser->searchQuery().empty() || (snapshot.location && snapshot.location->isTrash());
-    const float rowHeight = files::fileRowHeight(presentation, context);
+    const float rowHeight = luciole::fileRowHeight(presentation, context);
     if (rowHeight != view.rowHeight) {
       const auto anchor = view.grid->firstVisibleIndex();
       const float offset = view.grid->firstVisibleOffset();
@@ -299,7 +301,7 @@ void MillerView::synchronize() {
     }
     view.adapter->setActivationMode(activationMode);
     view.adapter->setColumnActive(i == m_columns.focused());
-    std::optional<files::EntryId> path;
+    std::optional<luciole::EntryId> path;
     if (i + 1 < m_columns.columns().size() && model.selection().selected.size() == 1) {
       const auto id = *model.selection().selected.begin();
       if (model.entry(id) && model.entry(id)->location == m_columns.columns()[i + 1]->location) {
@@ -419,10 +421,10 @@ void MillerView::doLayout(Renderer& renderer) {
     view.root->setFrameSize(columnWidth, h);
     view.grid->arrange(renderer, {0, 0, columnWidth, h});
     const auto& snapshot = model.snapshot();
-    loadPending = loadPending || snapshot.status == files::DirectoryStatus::Idle;
+    loadPending = loadPending || snapshot.status == luciole::DirectoryStatus::Idle;
     const bool empty = model.rows().empty();
     view.notice->setText(
-        snapshot.status == files::DirectoryStatus::Loading || snapshot.status == files::DirectoryStatus::Idle
+        snapshot.status == luciole::DirectoryStatus::Loading || snapshot.status == luciole::DirectoryStatus::Idle
             ? "Loading…"
             : snapshot.error ? snapshot.error->message
                              : "This folder is empty"

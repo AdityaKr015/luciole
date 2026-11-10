@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace files {
+namespace luciole {
   enum class BatchRenameMode { Numbering, Replace };
   struct BatchRenameOptions {
     BatchRenameMode mode = BatchRenameMode::Numbering;
@@ -63,4 +63,4 @@ namespace files {
   };
   std::string
   batchRenameName(const std::string& name, bool directory, std::size_t index, const BatchRenameOptions& options);
-} // namespace files
+} // namespace luciole

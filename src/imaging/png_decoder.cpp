@@ -3,7 +3,7 @@
 #include <png.h>
 
 std::expected<DecodedRasterImage, std::string>
-files::decodePng(std::span<const std::uint8_t> bytes, std::uint64_t maxPixels, int maxSide) {
+luciole::decodePng(std::span<const std::uint8_t> bytes, std::uint64_t maxPixels, int maxSide) {
   png_image image{};
   image.version = PNG_IMAGE_VERSION;
   if (bytes.empty() || !maxPixels || maxPixels > kMaxImagePixelBudget || maxSide < 1 || maxSide > kMaxImageSide) {

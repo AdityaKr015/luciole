@@ -11,7 +11,7 @@
 #include <string_view>
 #include <vector>
 
-namespace files {
+namespace luciole {
   // Reads a regular file of at most kMaxEncodedImageBytes.
   std::expected<std::vector<std::uint8_t>, std::string> readEncodedImageFile(const std::string& path);
   // Decodes raster bytes through GdkPixbuf, scaled to fit `target`; SVG is rejected.
@@ -21,4 +21,4 @@ namespace files {
   );
   // Some system loaders return full-size pixels despite a requested decode size.
   std::expected<LoadedImageFile, std::string> fitRasterPixels(GdkPixbuf* pixbuf, int target, std::uint64_t maxPixels);
-} // namespace files
+} // namespace luciole

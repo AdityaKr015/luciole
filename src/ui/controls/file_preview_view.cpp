@@ -13,7 +13,8 @@
 #include <format>
 
 FilePreviewView::FilePreviewView(
-    files::FileIconCache& icons, std::function<void()> close, std::function<void()> open, std::function<void()> openWith
+    luciole::FileIconCache& icons, std::function<void()> close, std::function<void()> open,
+    std::function<void()> openWith
 ) {
   setDirection(FlexDirection::Vertical);
   setAlign(FlexAlign::Stretch);
@@ -43,7 +44,7 @@ FilePreviewView::FilePreviewView(
   body->setReserveScrollbarGutter(true);
   body->content()->setAlign(FlexAlign::Stretch);
   body->content()->setGap(Style::spaceMd);
-  auto image = std::make_unique<files::FileIcon>(icons, 192);
+  auto image = std::make_unique<luciole::FileIcon>(icons, 192);
   m_image = image.get();
   body->content()->addChild(ui::row({.justify = FlexJustify::Center}, std::move(image)));
   const auto literal = [](Label& label) { label.setUseMarkup(false); };
@@ -84,7 +85,7 @@ FilePreviewView::FilePreviewView(
   );
 }
 void FilePreviewView::sync(
-    const files::PreviewSnapshot& snapshot, float width, float height, std::string_view typeLabel, bool quick
+    const luciole::PreviewSnapshot& snapshot, float width, float height, std::string_view typeLabel, bool quick
 ) {
   setPadding(Style::spaceMd, Style::spaceMd, quick ? Style::spaceMd : Style::borderWidth, Style::spaceMd);
   // Docked, the preview is part of the flush content plane; Quick Look floats as a card.
@@ -113,16 +114,16 @@ void FilePreviewView::sync(
   m_name->setText(entry ? entry->displayName : "Select an item to preview");
   m_name->setFontWeight(entry ? FontWeight::SemiBold : FontWeight::Normal);
   m_name->setColor(colorSpecFromRole(entry ? ColorRole::OnSurface : ColorRole::OnSurfaceVariant));
-  files::MetadataFields metadata;
-  files::MetadataFields fileFacts;
+  luciole::MetadataFields metadata;
+  luciole::MetadataFields fileFacts;
   if (entry) {
-    const auto type = !typeLabel.empty()            ? std::string(typeLabel)
-        : entry->symlink                            ? "Symbolic link"
-        : entry->type == files::FileType::Directory ? "Folder"
-                                                    : entry->contentType.value_or("File");
+    const auto type = !typeLabel.empty()              ? std::string(typeLabel)
+        : entry->symlink                              ? "Symbolic link"
+        : entry->type == luciole::FileType::Directory ? "Folder"
+                                                      : entry->contentType.value_or("File");
     metadata.push_back({"Type", type});
-    if (entry->size && entry->type != files::FileType::Directory) {
-      const files::GString size(g_format_size_full(*entry->size, G_FORMAT_SIZE_IEC_UNITS));
+    if (entry->size && entry->type != luciole::FileType::Directory) {
+      const luciole::GString size(g_format_size_full(*entry->size, G_FORMAT_SIZE_IEC_UNITS));
       metadata.push_back({"File size", size.get()});
     }
     if (entry->modifiedSeconds && *entry->modifiedSeconds <= G_MAXINT64) {
@@ -130,7 +131,7 @@ void FilePreviewView::sync(
           g_date_time_new_from_unix_local(static_cast<gint64>(*entry->modifiedSeconds)), &g_date_time_unref
       );
       if (date) {
-        const files::GString formatted(g_date_time_format(date.get(), "%Y-%m-%d %H:%M"));
+        const luciole::GString formatted(g_date_time_format(date.get(), "%Y-%m-%d %H:%M"));
         fileFacts.push_back({"Modified", formatted.get()});
       }
     }
@@ -138,7 +139,7 @@ void FilePreviewView::sync(
   }
   const auto* pixels = snapshot.image && snapshot.image->pixels ? &*snapshot.image->pixels : nullptr;
   const auto image =
-      files::previewImageLayout(pixels ? pixels->width : 0, pixels ? pixels->height : 0, width, height, 1, quick);
+      luciole::previewImageLayout(pixels ? pixels->width : 0, pixels ? pixels->height : 0, width, height, 1, quick);
   m_image->setIconSize(image.width);
   m_image->setPreviewHeight(image.height);
   m_image->setPreparedImage(snapshot.image);
@@ -149,13 +150,13 @@ void FilePreviewView::sync(
   metadata.insert(metadata.end(), fileFacts.begin(), fileFacts.end());
   m_metadata->sync(metadata, budget, true);
   m_status->setText(snapshot.message);
-  m_status->setColor(
-      colorSpecFromRole(snapshot.status == files::PreviewStatus::Error ? ColorRole::Error : ColorRole::OnSurfaceVariant)
-  );
+  m_status->setColor(colorSpecFromRole(
+      snapshot.status == luciole::PreviewStatus::Error ? ColorRole::Error : ColorRole::OnSurfaceVariant
+  ));
   m_text->setText(snapshot.text);
   m_text->setVisible(!snapshot.text.empty());
   m_text->setParticipatesInLayout(!snapshot.text.empty());
   m_open->setEnabled(entry.has_value());
-  m_openWith->setEnabled(entry && entry->type == files::FileType::Regular && !entry->symlink);
+  m_openWith->setEnabled(entry && entry->type == luciole::FileType::Regular && !entry->symlink);
 }
 void FilePreviewView::clear(Renderer& renderer) { m_image->releaseFile(renderer); }

@@ -5,7 +5,7 @@
 
 #include <format>
 
-std::string files::metadataTime(std::optional<std::uint64_t> seconds) {
+std::string luciole::metadataTime(std::optional<std::uint64_t> seconds) {
   if (!seconds || *seconds > G_MAXINT64) {
     return "Unknown";
   }
@@ -16,7 +16,7 @@ std::string files::metadataTime(std::optional<std::uint64_t> seconds) {
   return value ? value.get() : "Unknown";
 }
 
-std::string files::entryColumnText(const DirectoryEntry& entry, DetailsColumn column, std::string_view typeLabel) {
+std::string luciole::entryColumnText(const DirectoryEntry& entry, DetailsColumn column, std::string_view typeLabel) {
   switch (column) {
   case DetailsColumn::Type:
     return std::string(typeLabel);
@@ -47,7 +47,7 @@ std::string files::entryColumnText(const DirectoryEntry& entry, DetailsColumn co
   return "Unknown";
 }
 
-std::optional<std::uint64_t> files::entrySortNumber(const DirectoryEntry& entry, SortField field) {
+std::optional<std::uint64_t> luciole::entrySortNumber(const DirectoryEntry& entry, SortField field) {
   switch (field) {
   case SortField::Size:
     return entry.size;

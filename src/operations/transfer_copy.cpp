@@ -11,7 +11,7 @@
 #include <sys/xattr.h>
 #include <unistd.h>
 
-namespace files::transfer {
+namespace luciole::transfer {
   namespace {
     void copyAttributes(int from, int to, CopyWork& work) {
       const auto count = ::flistxattr(from, nullptr, 0);
@@ -386,4 +386,4 @@ namespace files::transfer {
     }
     work.note(statFd(pinned.get()));
   }
-} // namespace files::transfer
+} // namespace luciole::transfer

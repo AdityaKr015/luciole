@@ -52,7 +52,7 @@ namespace {
   }
 } // namespace
 
-Palette files::defaultPalette() {
+Palette luciole::defaultPalette() {
   return {
       .primary = hex("#fff59b"),
       .onPrimary = hex("#0e0e43"),
@@ -85,10 +85,10 @@ Palette files::defaultPalette() {
   };
 }
 
-std::filesystem::path files::palettePath() { return configHome() / "noctalia-files" / "colors.toml"; }
+std::filesystem::path luciole::palettePath() { return configHome() / "luciole" / "colors.toml"; }
 
 std::expected<Palette, std::string>
-files::parsePalette(std::string_view text, std::string_view source, const Palette& base) {
+luciole::parsePalette(std::string_view text, std::string_view source, const Palette& base) {
   toml::table table;
   try {
     table = toml::parse(text, source);
@@ -117,7 +117,7 @@ files::parsePalette(std::string_view text, std::string_view source, const Palett
   return result;
 }
 
-std::expected<Palette, std::string> files::loadPalette(const std::filesystem::path& path, const Palette& base) {
+std::expected<Palette, std::string> luciole::loadPalette(const std::filesystem::path& path, const Palette& base) {
   std::ifstream file(path, std::ios::binary);
   if (!file) {
     std::error_code error;

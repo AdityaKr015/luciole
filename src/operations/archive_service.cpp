@@ -8,7 +8,7 @@
 #include <glib.h>
 #include <utility>
 
-struct files::ArchiveService::State : std::enable_shared_from_this<State> {
+struct luciole::ArchiveService::State : std::enable_shared_from_this<State> {
   enum class Operation { Inspect, Compress, Extract, Open };
   struct Request {
     Operation operation;
@@ -270,7 +270,7 @@ struct files::ArchiveService::State : std::enable_shared_from_this<State> {
     notify();
   }
 };
-files::ArchiveService::ArchiveService(ArchiveLimits limits) : m_state(std::make_shared<State>(limits)) {
+luciole::ArchiveService::ArchiveService(ArchiveLimits limits) : m_state(std::make_shared<State>(limits)) {
   const std::weak_ptr<State> weak = m_state;
   m_state->transfers.setChangedCallback([weak] {
     if (const auto owner = weak.lock()) {
@@ -278,14 +278,14 @@ files::ArchiveService::ArchiveService(ArchiveLimits limits) : m_state(std::make_
     }
   });
 }
-files::ArchiveService::~ArchiveService() {
+luciole::ArchiveService::~ArchiveService() {
   m_state->changed = {};
   shutdown();
 }
-bool files::ArchiveService::inspect(Location source) {
+bool luciole::ArchiveService::inspect(Location source) {
   return m_state->start(State::Operation::Inspect, {std::move(source)}, std::nullopt, ArchiveFormat::Zip, {});
 }
-bool files::ArchiveService::compress(
+bool luciole::ArchiveService::compress(
     std::vector<Location> sources, Location destination, ArchiveFormat format, std::string password
 ) {
   auto passwords = std::make_shared<archive_work::Passwords>();
@@ -301,7 +301,7 @@ bool files::ArchiveService::compress(
       State::Operation::Compress, std::move(sources), std::move(destination), format, {}, nullptr, std::move(passwords)
   );
 }
-bool files::ArchiveService::extract(
+bool luciole::ArchiveService::extract(
     Location source, Location destination, std::vector<std::string> selected,
     std::shared_ptr<const ArchiveCatalog> expected
 ) {
@@ -310,7 +310,7 @@ bool files::ArchiveService::extract(
       std::move(expected)
   );
 }
-bool files::ArchiveService::openMember(const std::string& path) {
+bool luciole::ArchiveService::openMember(const std::string& path) {
   if (!m_state->catalog) {
     return false;
   }
@@ -318,7 +318,7 @@ bool files::ArchiveService::openMember(const std::string& path) {
       State::Operation::Open, {m_state->catalog->source}, m_state->catalog->source, ArchiveFormat::Zip, {path}
   );
 }
-void files::ArchiveService::cancel() {
+void luciole::ArchiveService::cancel() {
   m_state->cancel.cancel();
   m_state->transfers.cancel();
   if (m_state->phase == ArchivePhase::WaitingPassword) {
@@ -328,7 +328,7 @@ void files::ArchiveService::cancel() {
     m_state->clean({});
   }
 }
-void files::ArchiveService::shutdown() {
+void luciole::ArchiveService::shutdown() {
   if (m_state->closing) {
     return;
   }
@@ -338,30 +338,34 @@ void files::ArchiveService::shutdown() {
     m_state->clean({});
   }
 }
-bool files::ArchiveService::busy() const { return m_state->phase != ArchivePhase::Idle; }
-files::ArchivePhase files::ArchiveService::phase() const { return m_state->phase; }
-std::uint64_t files::ArchiveService::bytes() const {
+bool luciole::ArchiveService::busy() const { return m_state->phase != ArchivePhase::Idle; }
+luciole::ArchivePhase luciole::ArchiveService::phase() const { return m_state->phase; }
+std::uint64_t luciole::ArchiveService::bytes() const {
   return m_state->phase == ArchivePhase::Transferring ? m_state->transfers.bytes() : m_state->progress.bytes.load();
 }
-std::size_t files::ArchiveService::items() const { return m_state->progress.items.load(); }
-const std::optional<files::FileError>& files::ArchiveService::error() const { return m_state->error; }
-const std::shared_ptr<const files::ArchiveCatalog>& files::ArchiveService::catalog() const { return m_state->catalog; }
-std::optional<files::Location> files::ArchiveService::takeOpenedFile() {
+std::size_t luciole::ArchiveService::items() const { return m_state->progress.items.load(); }
+const std::optional<luciole::FileError>& luciole::ArchiveService::error() const { return m_state->error; }
+const std::shared_ptr<const luciole::ArchiveCatalog>& luciole::ArchiveService::catalog() const {
+  return m_state->catalog;
+}
+std::optional<luciole::Location> luciole::ArchiveService::takeOpenedFile() {
   return std::exchange(m_state->opened, std::nullopt);
 }
-const std::vector<files::TransferResult>& files::ArchiveService::results() const { return m_state->results; }
-std::optional<files::TransferConflict> files::ArchiveService::conflict() const { return m_state->transfers.conflict(); }
-bool files::ArchiveService::resolve(std::uint64_t id, TransferConflictChoice choice) {
+const std::vector<luciole::TransferResult>& luciole::ArchiveService::results() const { return m_state->results; }
+std::optional<luciole::TransferConflict> luciole::ArchiveService::conflict() const {
+  return m_state->transfers.conflict();
+}
+bool luciole::ArchiveService::resolve(std::uint64_t id, TransferConflictChoice choice) {
   return m_state->transfers.resolve(id, choice);
 }
-void files::ArchiveService::setChangedCallback(std::function<void()> callback) {
+void luciole::ArchiveService::setChangedCallback(std::function<void()> callback) {
   m_state->changed = std::move(callback);
 }
 
-std::optional<files::ArchivePasswordRequest> files::ArchiveService::passwordRequest() const {
+std::optional<luciole::ArchivePasswordRequest> luciole::ArchiveService::passwordRequest() const {
   return m_state->password;
 }
-bool files::ArchiveService::providePassword(std::uint64_t id, std::string password) {
+bool luciole::ArchiveService::providePassword(std::uint64_t id, std::string password) {
   archive_work::Passwords incoming;
   incoming.values.push_back(std::move(password));
   auto& value = incoming.values.back();

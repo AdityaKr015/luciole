@@ -7,10 +7,10 @@
 #include <memory>
 #include <vector>
 
-namespace files {
+namespace luciole {
   class FileIconCache;
   struct DirectoryEntry;
-} // namespace files
+} // namespace luciole
 
 struct KeyboardEvent;
 class AclEditor;
@@ -30,10 +30,10 @@ class Segmented;
 // The Properties dialog: general facts, and for up to 4096 items the permission and ACL editors with their results.
 class PropertiesController {
 public:
-  PropertiesController(PageContext& page, files::FileIconCache& icons);
+  PropertiesController(PageContext& page, luciole::FileIconCache& icons);
 
   // `captureCurrentLocation` reads the permissions of the first target's location instead of its listed entry.
-  void show(const std::vector<files::DirectoryEntry>& targets, bool captureCurrentLocation = false);
+  void show(const std::vector<luciole::DirectoryEntry>& targets, bool captureCurrentLocation = false);
   // Owned permission job change: sync the dialog on the next frame, or report a job whose dialog closed.
   void changed(OperationJob& job);
   // Operation progress tick: keep syncing while permissions are read or applied.
@@ -50,9 +50,9 @@ public:
 private:
   struct Body;
 
-  Body buildGeneral(const std::vector<files::DirectoryEntry>& targets, float width, bool editable);
+  Body buildGeneral(const std::vector<luciole::DirectoryEntry>& targets, float width, bool editable);
   Body buildBody(
-      const std::vector<files::DirectoryEntry>& targets, float width, bool editable, bool multiple, bool folders,
+      const std::vector<luciole::DirectoryEntry>& targets, float width, bool editable, bool multiple, bool folders,
       bool withResults
   );
   void showAdvanced(bool advanced, bool focus = false);
@@ -64,7 +64,7 @@ private:
   PageContext& m_page;
   // The dialog's job: reads the targets, then applies changes.
   std::shared_ptr<OperationJob> m_job;
-  files::FileIconCache& m_icons;
+  luciole::FileIconCache& m_icons;
   PermissionEditor* m_permissionEditor = nullptr;
   AclEditor* m_aclEditor = nullptr;
   BulkAclEditor* m_bulkAclEditor = nullptr;
@@ -78,8 +78,8 @@ private:
   Segmented* m_permissionTabs = nullptr;
   ScrollView* m_permissionScroll = nullptr;
   Button* m_permissionSave = nullptr;
-  files::PreviewMetadataService m_metadata;
-  files::SelectionDetailsService m_selectionMetadata;
+  luciole::PreviewMetadataService m_metadata;
+  luciole::SelectionDetailsService m_selectionMetadata;
   bool m_multiple = false;
   FileMetadataView* m_metadataView = nullptr;
   FolderTotalsView* m_folderTotals = nullptr;

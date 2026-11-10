@@ -24,23 +24,23 @@
 #include <utility>
 #include <vector>
 
-using Action = files::BrowserAction;
+using Action = luciole::BrowserAction;
 
 DetailsHeaderController::DetailsHeaderController(
-    PageContext& page, files::ViewPreferenceWriter& preferences, files::FileViewAdapter& listAdapter,
-    files::FileViewAdapter& gridAdapter, MenuController& menus
+    PageContext& page, luciole::ViewPreferenceWriter& preferences, luciole::FileViewAdapter& listAdapter,
+    luciole::FileViewAdapter& gridAdapter, MenuController& menus
 )
     : m_page(page), m_preferences(preferences), m_listAdapter(listAdapter), m_gridAdapter(gridAdapter), m_menus(menus) {
 }
 
-void DetailsHeaderController::load(const files::BrowserSettings& settings) {
+void DetailsHeaderController::load(const luciole::BrowserSettings& settings) {
   m_columnVisibility = settings.columns;
   m_columnOrder = settings.columnOrder;
   m_columnWidths = settings.columnWidths;
 }
 
 void DetailsHeaderController::applySettings(
-    const files::BrowserSettings& before, const files::BrowserSettings& settings, bool force
+    const luciole::BrowserSettings& before, const luciole::BrowserSettings& settings, bool force
 ) {
   if (force || before.columns != settings.columns) {
     m_columnVisibility = settings.columns;
@@ -54,7 +54,7 @@ void DetailsHeaderController::applySettings(
 }
 
 std::unique_ptr<Flex> DetailsHeaderController::buildHeader() {
-  m_appliedColumnOrder = files::kDefaultDetailsColumnOrder;
+  m_appliedColumnOrder = luciole::kDefaultDetailsColumnOrder;
   auto row = ui::row(
       {.out = &m_detailsHeaderRow, .align = FlexAlign::Center, .paddingH = 0.0F, .participatesInLayout = false}
   );
@@ -68,22 +68,22 @@ std::unique_ptr<Flex> DetailsHeaderController::buildHeader() {
            .variant = ButtonVariant::Ghost,
            .tooltip = "Sort by name; click again to reverse",
            .paddingH = Style::spaceSm,
-           .onClick = [this] { sortBy(files::SortField::Name); }}
+           .onClick = [this] { sortBy(luciole::SortField::Name); }}
       )
   );
-  for (const auto column : files::kDefaultDetailsColumnOrder) {
+  for (const auto column : luciole::kDefaultDetailsColumnOrder) {
     const auto index = static_cast<std::size_t>(column);
     row->addChild(
         ui::button(
             {.out = &m_headers[index],
-             .text = std::string(files::detailsColumnLabel(column)),
+             .text = std::string(luciole::detailsColumnLabel(column)),
              .fontSize = Style::fontSizeCaption,
              .controlHeight = Style::controlHeightSm,
              .contentAlign = ButtonContentAlign::Start,
              .variant = ButtonVariant::Ghost,
-             .tooltip = std::format("Sort by {}; click again to reverse", files::detailsColumnName(column)),
+             .tooltip = std::format("Sort by {}; click again to reverse", luciole::detailsColumnName(column)),
              .paddingH = Style::spaceSm,
-             .onClick = [this, column] { sortBy(files::detailsColumnSort(column)); }}
+             .onClick = [this, column] { sortBy(luciole::detailsColumnSort(column)); }}
         )
     );
   }
@@ -156,7 +156,7 @@ void DetailsHeaderController::attach(Node& root) {
       m_columnWidths = resize.before;
       const int allocation = std::clamp(
           static_cast<int>(std::lround(resize.width + (m_page.pointerX() - resize.pressX) * (Style::rtl() ? -1 : 1))),
-          files::minimumDetailsColumnWidth(resize.index), files::maximumDetailsColumnWidth(resize.index)
+          luciole::minimumDetailsColumnWidth(resize.index), luciole::maximumDetailsColumnWidth(resize.index)
       );
       if (allocation != static_cast<int>(std::lround(resize.width))) {
         m_columnWidths[resize.index] = allocation;
@@ -204,7 +204,7 @@ void DetailsHeaderController::attach(Node& root) {
 }
 
 void DetailsHeaderController::focusChanged(InputArea* focused) {
-  if (m_nameHeader == nullptr || m_page.viewMode() != files::ViewMode::List) {
+  if (m_nameHeader == nullptr || m_page.viewMode() != luciole::ViewMode::List) {
     return;
   }
   for (std::size_t index = 0; index < m_columnWidths.size(); ++index) {
@@ -215,22 +215,22 @@ void DetailsHeaderController::focusChanged(InputArea* focused) {
   }
 }
 
-void DetailsHeaderController::sync(const files::SortOptions& sort) {
+void DetailsHeaderController::sync(const luciole::SortOptions& sort) {
   m_listAdapter.setDetailsColumns(m_detailsColumns);
   m_listAdapter.setDetailsColumnOrder(m_columnOrder);
   const char* indicator = sort.descending ? "arrow-down" : "arrow-up";
   m_nameHeader->setGlyph(indicator);
-  m_nameHeader->glyph()->setVisible(sort.field == files::SortField::Name);
-  m_nameHeader->glyph()->setParticipatesInLayout(sort.field == files::SortField::Name);
-  for (const auto column : files::kDefaultDetailsColumnOrder) {
+  m_nameHeader->glyph()->setVisible(sort.field == luciole::SortField::Name);
+  m_nameHeader->glyph()->setParticipatesInLayout(sort.field == luciole::SortField::Name);
+  for (const auto column : luciole::kDefaultDetailsColumnOrder) {
     auto* header = columnHeader(column);
     header->setGlyph(indicator);
-    const bool active = sort.field == files::detailsColumnSort(column);
+    const bool active = sort.field == luciole::detailsColumnSort(column);
     header->glyph()->setVisible(active);
     header->glyph()->setParticipatesInLayout(active);
   }
   // An empty list shows only the empty-state notice; headers there would sort nothing.
-  const bool shown = m_page.viewMode() == files::ViewMode::List && !m_page.browser().model().rows().empty();
+  const bool shown = m_page.viewMode() == luciole::ViewMode::List && !m_page.browser().model().rows().empty();
   m_listHeader->setVisible(shown);
   m_listHeader->setParticipatesInLayout(shown);
 }
@@ -265,7 +265,7 @@ bool DetailsHeaderController::contextPress(const PointerEvent& event, float x, f
       && event.button == BTN_RIGHT
       && m_listHeader->visible()
       && m_listHeader->containsScenePoint(x, y)) {
-    std::optional<files::DetailsColumn> column;
+    std::optional<luciole::DetailsColumn> column;
     for (const auto candidate : m_columnOrder) {
       auto* header = columnHeader(candidate);
       if (header->visible() && header->containsScenePoint(x, y)) {
@@ -294,7 +294,7 @@ bool DetailsHeaderController::headerContains(float x, float y) const {
 }
 
 bool DetailsHeaderController::widthKey(const KeyboardEvent& event) {
-  if (m_page.viewMode() == files::ViewMode::List
+  if (m_page.viewMode() == luciole::ViewMode::List
       && event.modifiers == KeyMod::Ctrl
       && (event.sym == XKB_KEY_Left || event.sym == XKB_KEY_Right)) {
     for (std::size_t index = 0; index < m_columnWidths.size(); ++index) {
@@ -302,8 +302,8 @@ bool DetailsHeaderController::widthKey(const KeyboardEvent& event) {
         auto widths = m_columnWidths;
         const int delta = (event.sym == XKB_KEY_Right ? 16 : -16) * (Style::rtl() ? -1 : 1);
         widths[index] = std::clamp(
-            static_cast<int>(std::lround(headerWidth(index))) + delta, files::minimumDetailsColumnWidth(index),
-            files::maximumDetailsColumnWidth(index)
+            static_cast<int>(std::lround(headerWidth(index))) + delta, luciole::minimumDetailsColumnWidth(index),
+            luciole::maximumDetailsColumnWidth(index)
         );
         if (index != 0 && widths[0] == 0 && widths[index] != m_columnWidths[index]) {
           widths[0] = static_cast<int>(std::lround(m_detailsColumns.nameWidth));
@@ -323,7 +323,7 @@ bool DetailsHeaderController::menuKey(const KeyboardEvent& event) {
     for (std::size_t index = 0; index < m_columnWidths.size(); ++index) {
       auto* header = widthHeader(index);
       if (m_page.dispatcher().focusedArea() == header->inputArea()) {
-        std::optional<files::DetailsColumn> column;
+        std::optional<luciole::DetailsColumn> column;
         for (const auto candidate : m_columnOrder) {
           if (columnHeader(candidate) == header) {
             column = candidate;
@@ -342,7 +342,7 @@ bool DetailsHeaderController::menuKey(const KeyboardEvent& event) {
   return false;
 }
 
-void DetailsHeaderController::setDetailsColumnVisibility(files::DetailsColumnVisibility visibility) {
+void DetailsHeaderController::setDetailsColumnVisibility(luciole::DetailsColumnVisibility visibility) {
   if (visibility == m_columnVisibility) {
     return;
   }
@@ -356,7 +356,7 @@ void DetailsHeaderController::setDetailsColumnVisibility(files::DetailsColumnVis
 }
 
 Button* DetailsHeaderController::widthHeader(std::size_t index) const {
-  return index == 0 ? m_nameHeader : columnHeader(static_cast<files::DetailsColumn>(index - 1));
+  return index == 0 ? m_nameHeader : columnHeader(static_cast<luciole::DetailsColumn>(index - 1));
 }
 
 float DetailsHeaderController::headerWidth(std::size_t index) const { return widthHeader(index)->width(); }
@@ -372,7 +372,7 @@ void DetailsHeaderController::cancelColumnResize() {
   m_page.surface().requestLayout();
 }
 
-void DetailsHeaderController::setDetailsColumnWidths(files::DetailsColumnWidths widths) {
+void DetailsHeaderController::setDetailsColumnWidths(luciole::DetailsColumnWidths widths) {
   if (m_columnWidths == widths) {
     return;
   }
@@ -385,7 +385,7 @@ void DetailsHeaderController::setDetailsColumnWidths(files::DetailsColumnWidths 
 }
 
 void DetailsHeaderController::scrollDetails(float offset) {
-  if (m_page.viewMode() != files::ViewMode::List || m_columnResize || m_columnDrag) {
+  if (m_page.viewMode() != luciole::ViewMode::List || m_columnResize || m_columnDrag) {
     return;
   }
   const float maximum = std::max(0.0F, m_detailsColumns.contentWidth - m_detailsHeaderViewport->width());
@@ -405,12 +405,12 @@ bool DetailsHeaderController::layoutColumns(bool miller) {
     m_detailsScrollHost->setParticipatesInLayout(false);
     return false;
   }
-  const bool list = m_page.viewMode() == files::ViewMode::List;
+  const bool list = m_page.viewMode() == luciole::ViewMode::List;
   auto* fileList = m_page.fileList();
   // The header remains laid out when the file grid is hidden for an empty
   // folder or an error. Do not derive its width from that stale grid.
   const float viewport = list ? m_detailsHeaderViewport->width() : fileList->scrollView().contentViewportWidth(true);
-  const auto columns = files::DetailsColumns::forWidth(viewport, m_columnVisibility, m_columnWidths);
+  const auto columns = luciole::DetailsColumns::forWidth(viewport, m_columnVisibility, m_columnWidths);
   const bool columnsChanged = columns != m_detailsColumns;
   m_detailsColumns = columns;
   m_viewport = viewport;
@@ -420,7 +420,7 @@ bool DetailsHeaderController::layoutColumns(bool miller) {
   for (std::size_t index = 0; index < m_columnWidths.size(); ++index) {
     auto* header = widthHeader(index);
     const bool visible =
-        index == 0 || files::detailsColumnVisible(m_columnVisibility, static_cast<files::DetailsColumn>(index - 1));
+        index == 0 || luciole::detailsColumnVisible(m_columnVisibility, static_cast<luciole::DetailsColumn>(index - 1));
     header->setVisible(visible);
     header->setParticipatesInLayout(visible);
     const float allocation = index == 0 ? columns.nameWidth : static_cast<float>(m_columnWidths[index]);
@@ -440,7 +440,7 @@ bool DetailsHeaderController::layoutColumns(bool miller) {
 }
 
 void DetailsHeaderController::layoutHeader(Renderer& renderer) {
-  const bool list = m_page.viewMode() == files::ViewMode::List;
+  const bool list = m_page.viewMode() == luciole::ViewMode::List;
   const float viewport = m_viewport;
   const auto& columns = m_detailsColumns;
   m_detailsHeaderRow->arrange(
@@ -498,7 +498,7 @@ std::optional<DetailsHeaderController::ColumnDrop> DetailsHeaderController::colu
   if (!columnHeader(source)->visible()) {
     return std::nullopt;
   }
-  std::vector<std::pair<files::DetailsColumn, LayoutRect>> visible;
+  std::vector<std::pair<luciole::DetailsColumn, LayoutRect>> visible;
   auto left = static_cast<float>(m_page.surface().width());
   float right = 0;
   for (const auto column : m_columnOrder) {
@@ -517,7 +517,7 @@ std::optional<DetailsHeaderController::ColumnDrop> DetailsHeaderController::colu
   if (visible.empty() || x < left || x > right || y < bounds.y || y > bounds.y + bounds.height) {
     return std::nullopt;
   }
-  std::optional<files::DetailsColumn> before;
+  std::optional<luciole::DetailsColumn> before;
   float marker = Style::rtl() ? visible.back().second.x : visible.back().second.x + visible.back().second.width;
   for (const auto& [column, rect] : visible) {
     if (Style::rtl() ? x > rect.x + rect.width * 0.5F : x < rect.x + rect.width * 0.5F) {
@@ -526,7 +526,7 @@ std::optional<DetailsHeaderController::ColumnDrop> DetailsHeaderController::colu
       break;
     }
   }
-  const auto order = files::insertDetailsColumnBefore(m_columnOrder, source, before);
+  const auto order = luciole::insertDetailsColumnBefore(m_columnOrder, source, before);
   if (!order) {
     return std::nullopt;
   }
@@ -592,17 +592,17 @@ void DetailsHeaderController::layoutDrag(Renderer& renderer) {
   }
 }
 
-Button* DetailsHeaderController::columnHeader(files::DetailsColumn column) const {
+Button* DetailsHeaderController::columnHeader(luciole::DetailsColumn column) const {
   return m_headers[static_cast<std::size_t>(column)];
 }
 
-std::optional<files::DetailsColumnOrder>
-DetailsHeaderController::movedColumnOrder(files::DetailsColumn column, int direction) const {
-  return files::moveDetailsColumn(m_columnOrder, column, direction, m_columnVisibility);
+std::optional<luciole::DetailsColumnOrder>
+DetailsHeaderController::movedColumnOrder(luciole::DetailsColumn column, int direction) const {
+  return luciole::moveDetailsColumn(m_columnOrder, column, direction, m_columnVisibility);
 }
 
-void DetailsHeaderController::setDetailsColumnOrder(files::DetailsColumnOrder order) {
-  if (order == m_columnOrder || !files::validDetailsColumnOrder(order)) {
+void DetailsHeaderController::setDetailsColumnOrder(luciole::DetailsColumnOrder order) {
+  if (order == m_columnOrder || !luciole::validDetailsColumnOrder(order)) {
     return;
   }
   m_page.captureViewAnchor();
@@ -614,21 +614,21 @@ void DetailsHeaderController::setDetailsColumnOrder(files::DetailsColumnOrder or
   m_page.requestSync();
 }
 
-void DetailsHeaderController::sortBy(files::SortField field) {
+void DetailsHeaderController::sortBy(luciole::SortField field) {
   auto options = m_page.browser().model().sort();
   options.descending = options.field == field && !options.descending;
   options.field = field;
-  const auto action = field == files::SortField::Name ? Action::SortName
-      : field == files::SortField::Type               ? Action::SortType
-      : field == files::SortField::Size               ? Action::SortSize
-      : field == files::SortField::Accessed           ? Action::SortAccessed
-      : field == files::SortField::Created            ? Action::SortCreated
-      : field == files::SortField::Owner              ? Action::SortOwner
-      : field == files::SortField::Group              ? Action::SortGroup
-      : field == files::SortField::Permissions        ? Action::SortPermissions
-      : field == files::SortField::Location           ? Action::SortLocation
+  const auto action = field == luciole::SortField::Name ? Action::SortName
+      : field == luciole::SortField::Type               ? Action::SortType
+      : field == luciole::SortField::Size               ? Action::SortSize
+      : field == luciole::SortField::Accessed           ? Action::SortAccessed
+      : field == luciole::SortField::Created            ? Action::SortCreated
+      : field == luciole::SortField::Owner              ? Action::SortOwner
+      : field == luciole::SortField::Group              ? Action::SortGroup
+      : field == luciole::SortField::Permissions        ? Action::SortPermissions
+      : field == luciole::SortField::Location           ? Action::SortLocation
 
-                                            : Action::SortModified;
+                                              : Action::SortModified;
   if (m_page.browser().model().sort().field == field) {
     m_page.dispatchAction(options.descending ? Action::Descending : Action::Ascending);
   } else {

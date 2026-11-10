@@ -19,13 +19,13 @@
 
 namespace {
   namespace fs = std::filesystem;
-  using S = files::BatchRenameService;
-  using P = files::BatchRenamePhase;
-  using O = files::BatchRenameOutcome;
+  using S = luciole::BatchRenameService;
+  using P = luciole::BatchRenamePhase;
+  using O = luciole::BatchRenameOutcome;
   struct Fixture {
     fs::path root;
     Fixture() {
-      std::string path = "/tmp/noctalia-batch-XXXXXX";
+      std::string path = "/tmp/luciole-batch-XXXXXX";
       TEST_CHECK(::mkdtemp(path.data()));
       root = path;
     }
@@ -39,10 +39,10 @@ namespace {
     std::ifstream input(path);
     return {std::istreambuf_iterator<char>(input), {}};
   }
-  files::Location location(const fs::path& path) { return files::Location::fromPath(path.native()); }
-  files::DirectoryEntry entry(const fs::path& path) {
-    const files::GioPtr<GFileInfo> info(g_file_query_info(
-        files::gioFile(location(path)).get(), "id::file,id::filesystem,standard::type,standard::is-symlink",
+  luciole::Location location(const fs::path& path) { return luciole::Location::fromPath(path.native()); }
+  luciole::DirectoryEntry entry(const fs::path& path) {
+    const luciole::GioPtr<GFileInfo> info(g_file_query_info(
+        luciole::gioFile(location(path)).get(), "id::file,id::filesystem,standard::type,standard::is-symlink",
         G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, nullptr
     ));
     TEST_CHECK(info);
@@ -50,14 +50,14 @@ namespace {
         .id = 1,
         .location = location(path),
         .name = path.filename().native(),
-        .displayName = files::filenameDisplayText(path.filename().native()),
-        .type = files::fileType(g_file_info_get_file_type(info.get())),
+        .displayName = luciole::filenameDisplayText(path.filename().native()),
+        .type = luciole::fileType(g_file_info_get_file_type(info.get())),
         .symlink = g_file_info_get_is_symlink(info.get()) != FALSE,
         .size = {},
         .modifiedSeconds = {},
         .etag = {},
         .parentDisplayName = {},
-        .identity = files::readFileIdentity(info.get())
+        .identity = luciole::readFileIdentity(info.get())
     };
   }
   class Pump {
@@ -75,12 +75,12 @@ namespace {
     void settle(S& service) {
       until([&] { return !service.busy(); });
     }
-    void prepare(S& service, std::vector<files::DirectoryEntry> entries) {
+    void prepare(S& service, std::vector<luciole::DirectoryEntry> entries) {
       TEST_CHECK(service.prepare(std::move(entries)));
       settle(service);
       TEST_CHECK(service.snapshot().phase == P::Ready);
     }
-    void preview(S& service, const files::BatchRenameOptions& options) {
+    void preview(S& service, const luciole::BatchRenameOptions& options) {
       TEST_CHECK(service.preview(options));
       TEST_CHECK(!service.snapshot().canApply);
       settle(service);
@@ -94,24 +94,24 @@ namespace {
     GlibPollSource m_source;
   };
   void names() {
-    files::BatchRenameOptions o;
-    TEST_CHECK(files::batchRenameName("résumé.png", false, 2, o) == "résumé_003.png");
-    TEST_CHECK(files::batchRenameName(".profile", false, 0, o) == ".profile_001");
-    TEST_CHECK(files::batchRenameName("folder.ext", true, 0, o) == "folder.ext_001");
+    luciole::BatchRenameOptions o;
+    TEST_CHECK(luciole::batchRenameName("résumé.png", false, 2, o) == "résumé_003.png");
+    TEST_CHECK(luciole::batchRenameName(".profile", false, 0, o) == ".profile_001");
+    TEST_CHECK(luciole::batchRenameName("folder.ext", true, 0, o) == "folder.ext_001");
     o.pattern = "{{{number}}}_{name}";
     o.start = 9;
     o.digits = 1;
-    TEST_CHECK(files::batchRenameName("a.tar.gz", false, 1, o) == "{10}_a.tar.gz");
-    o.mode = files::BatchRenameMode::Replace;
+    TEST_CHECK(luciole::batchRenameName("a.tar.gz", false, 1, o) == "{10}_a.tar.gz");
+    o.mode = luciole::BatchRenameMode::Replace;
     o.find = "文";
     o.replacement = "é";
-    TEST_CHECK(files::batchRenameName("文文.文", false, 0, o) == "éé.文");
+    TEST_CHECK(luciole::batchRenameName("文文.文", false, 0, o) == "éé.文");
     o.keepExtensions = false;
-    TEST_CHECK(files::batchRenameName("文文.文", false, 0, o) == "éé.é");
-    const auto rejects = [](const files::BatchRenameOptions& options) {
+    TEST_CHECK(luciole::batchRenameName("文文.文", false, 0, o) == "éé.é");
+    const auto rejects = [](const luciole::BatchRenameOptions& options) {
       bool rejected = false;
       try {
-        (void)files::batchRenameName("a", false, 0, options);
+        (void)luciole::batchRenameName("a", false, 0, options);
       } catch (const std::exception&) {
         rejected = true;
       }
@@ -132,12 +132,12 @@ namespace {
     o.pattern.assign(4097, 'x');
     rejects(o);
     o = {};
-    o.mode = files::BatchRenameMode::Replace;
+    o.mode = luciole::BatchRenameMode::Replace;
     o.find = "a";
     o.replacement.assign(4096, 'b');
     bool rejected = false;
     try {
-      (void)files::batchRenameName("aa", false, 0, o);
+      (void)luciole::batchRenameName("aa", false, 0, o);
     } catch (const std::exception&) {
       rejected = true;
     }
@@ -150,7 +150,7 @@ namespace {
     S service;
     TEST_CHECK(!service.prepare({}));
     TEST_CHECK(!service.prepare({entry(f.root / "a.txt")}));
-    TEST_CHECK(!service.prepare(std::vector<files::DirectoryEntry>(4097, entry(f.root / "a.txt"))));
+    TEST_CHECK(!service.prepare(std::vector<luciole::DirectoryEntry>(4097, entry(f.root / "a.txt"))));
     TEST_CHECK(service.prepare({entry(f.root / "a.txt"), entry(f.root / "a.txt")}));
     pump.settle(service);
     TEST_CHECK(service.snapshot().phase == P::Error);
@@ -162,7 +162,7 @@ namespace {
     pump.prepare(service, {entry(f.root / "b.txt"), entry(f.root / "a.txt")});
     TEST_CHECK(service.snapshot().canApply);
     TEST_CHECK(service.snapshot().rows->front().after == "b_001.txt");
-    files::BatchRenameOptions o;
+    luciole::BatchRenameOptions o;
     o.pattern = "same";
     pump.preview(service, o);
     TEST_CHECK(!service.snapshot().canApply && !service.snapshot().rows->front().error.empty());
@@ -215,7 +215,7 @@ namespace {
     Fixture f;
     S service;
     for (int count : {2, 3, 128}) {
-      std::vector<files::DirectoryEntry> entries;
+      std::vector<luciole::DirectoryEntry> entries;
       for (int i = 1; i <= count; ++i) {
         write(f.root / ("file" + std::to_string(i)), std::to_string(i));
       }
@@ -225,7 +225,7 @@ namespace {
         entries.push_back(entry(f.root / ("file" + std::to_string(i))));
       }
       pump.prepare(service, entries);
-      files::BatchRenameOptions o;
+      luciole::BatchRenameOptions o;
       o.pattern = "file{number}";
       o.digits = 1;
       pump.preview(service, o);
@@ -245,7 +245,7 @@ namespace {
     const std::string raw = std::string("raw-") + static_cast<char>(0xff);
     write(f.root / raw, "raw");
     pump.prepare(service, {entry(f.root / "dir.ext"), entry(f.root / "broken"), entry(f.root / raw)});
-    files::BatchRenameOptions o;
+    luciole::BatchRenameOptions o;
     o.pattern = "result-{number}";
     pump.preview(service, o);
     pump.apply(service);
@@ -253,7 +253,7 @@ namespace {
     TEST_CHECK(fs::read_symlink(f.root / "result-002") == "absent");
     TEST_CHECK(read(f.root / "result-003") == "raw");
     pump.prepare(service, {entry(f.root / "result-002"), entry(f.root / "result-003")});
-    o.mode = files::BatchRenameMode::Replace;
+    o.mode = luciole::BatchRenameMode::Replace;
     o.find = "result";
     o.replacement = "changed";
     pump.preview(service, o);
@@ -277,7 +277,7 @@ namespace {
     TEST_CHECK(service.snapshot().phase == P::Ready && !service.snapshot().canApply);
     TEST_CHECK(read(f.root / "a") == "replacement");
     fs::remove(f.root / "a_001");
-    files::BatchRenameOptions o;
+    luciole::BatchRenameOptions o;
     for (int i = 0; i < 100; ++i) {
       o.pattern = "v" + std::to_string(i) + "-{number}";
       TEST_CHECK(service.preview(o));
@@ -348,7 +348,7 @@ namespace {
     for (const bool connected : {false, true}) {
       Fixture f;
       constexpr int count = 256;
-      std::vector<files::DirectoryEntry> entries;
+      std::vector<luciole::DirectoryEntry> entries;
       for (int i = 0; i < count; ++i) {
         const auto path = f.root / ("file" + std::to_string(i));
         write(path, std::to_string(i));
@@ -356,7 +356,7 @@ namespace {
       }
       S service;
       pump.prepare(service, entries);
-      files::BatchRenameOptions o;
+      luciole::BatchRenameOptions o;
       o.pattern = connected ? "file{number}" : "new-{number}";
       o.digits = 1;
       pump.preview(service, o);
@@ -366,7 +366,7 @@ namespace {
           return true;
         }
         return connected && std::ranges::any_of(fs::directory_iterator(f.root), [](const auto& item) {
-                 return item.path().filename().native().starts_with(".noctalia-rename-");
+                 return item.path().filename().native().starts_with(".luciole-rename-");
                });
       });
       service.cancel();
@@ -386,7 +386,7 @@ namespace {
   void runtimeCollision(Pump& pump) {
     Fixture f;
     constexpr int count = 256;
-    std::vector<files::DirectoryEntry> entries;
+    std::vector<luciole::DirectoryEntry> entries;
     for (int i = 0; i < count; ++i) {
       const auto path = f.root / ("file" + std::to_string(i));
       write(path, std::to_string(i));
@@ -394,7 +394,7 @@ namespace {
     }
     S service;
     pump.prepare(service, entries);
-    files::BatchRenameOptions o;
+    luciole::BatchRenameOptions o;
     o.pattern = "file{number}";
     o.digits = 1;
     pump.preview(service, o);

@@ -11,9 +11,9 @@
 #include <string>
 #include <utility>
 
-namespace files {
+namespace luciole {
   class MillerColumns;
-} // namespace files
+} // namespace luciole
 
 struct KeyboardEvent;
 class LocationBarController;
@@ -26,16 +26,16 @@ class StatusBarController;
 class FileKeyboardController final : public TextInputClient {
 public:
   FileKeyboardController(
-      PageContext& page, TextInputService& textInput, files::MillerColumns& miller, MenuController& menus,
+      PageContext& page, TextInputService& textInput, luciole::MillerColumns& miller, MenuController& menus,
       LocationBarController& locationBar, StatusBarController& status
   );
 
-  void setTypingMode(files::TypingMode mode) { m_typingMode = mode; }
+  void setTypingMode(luciole::TypingMode mode) { m_typingMode = mode; }
   // True while the list shows the keyboard focus ring.
   bool keyboardFocus() const { return m_fileKeyboardFocus; }
   void setKeyboardFocus(bool focus) { m_fileKeyboardFocus = focus; }
   // The item a key moved to, which the next sync scrolls into view.
-  std::optional<files::EntryId> takeReveal() { return std::exchange(m_keyboardReveal, std::nullopt); }
+  std::optional<luciole::EntryId> takeReveal() { return std::exchange(m_keyboardReveal, std::nullopt); }
   void resetReveal() { m_keyboardReveal.reset(); }
 
   // Typed text, including the input method's preedit; empty while typeahead is idle.
@@ -66,22 +66,23 @@ public:
 
 private:
   bool listFocused() const;
-  void typeaheadChanged(std::optional<files::EntryId> match, TextInputChangeCause cause = TextInputChangeCause::Other);
+  void
+  typeaheadChanged(std::optional<luciole::EntryId> match, TextInputChangeCause cause = TextInputChangeCause::Other);
   void applyTypeahead(
       const std::string& text, TextInputChangeCause cause = TextInputChangeCause::Other, bool composing = false
   );
 
   PageContext& m_page;
   TextInputService& m_textInput;
-  files::MillerColumns& m_miller;
+  luciole::MillerColumns& m_miller;
   MenuController& m_menus;
   LocationBarController& m_locationBar;
   StatusBarController& m_status;
-  files::TypingMode m_typingMode = files::TypingMode::Search;
-  files::TypeaheadSelection m_typeahead;
+  luciole::TypingMode m_typingMode = luciole::TypingMode::Search;
+  luciole::TypeaheadSelection m_typeahead;
   std::string m_typeaheadPreedit;
   Timer m_typeaheadTimer;
   std::uint64_t m_typeaheadContext = 0;
   bool m_fileKeyboardFocus = false;
-  std::optional<files::EntryId> m_keyboardReveal;
+  std::optional<luciole::EntryId> m_keyboardReveal;
 };

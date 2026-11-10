@@ -1,6 +1,6 @@
 # Maintainer design notes
 
-The [user guide](../user/index.md) explains how to use and configure Files. These notes describe the contracts that maintainers need when changing it.
+The [user guide](../user/index.md) explains how to use and configure Luciole. These notes describe the contracts that maintainers need when changing it.
 
 - [Architecture and ownership](architecture.md): modules, windows, pages and asynchronous work.
 - [Rendering and images](rendering-images.md): shared-library boundary, UI phases, thumbnails and texture residency.

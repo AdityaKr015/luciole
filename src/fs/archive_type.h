@@ -4,7 +4,7 @@
 
 #include <string_view>
 
-namespace files {
+namespace luciole {
   enum class ArchiveCompression { None, Gzip, Bzip2, Zstd, Xz };
   // Native outer-filter support; this never discovers or starts helper programs.
   bool archiveCompressionAvailable(ArchiveCompression compression);
@@ -12,4 +12,4 @@ namespace files {
   std::optional<unsigned> splitZipPart(const Location& location);
   bool isSupportedArchive(const Location& location, const std::optional<std::string>& mime);
   std::string archiveFolderName(const Location& location);
-} // namespace files
+} // namespace luciole

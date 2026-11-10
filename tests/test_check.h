@@ -8,10 +8,10 @@
 #include <type_traits>
 
 #ifdef NDEBUG
-#error "Noctalia test targets must be compiled without NDEBUG"
+#error "Luciole test targets must be compiled without NDEBUG"
 #endif
 
-namespace noctalia::test {
+namespace luciole::test {
 
   [[noreturn]] inline void
   failCheck(const char* expression, std::source_location location = std::source_location::current()) {
@@ -57,11 +57,9 @@ namespace noctalia::test {
     }
   }
 
-} // namespace noctalia::test
+} // namespace luciole::test
 
-#define TEST_CHECK(expression) ::noctalia::test::check(static_cast<bool>(expression), #expression)
+#define TEST_CHECK(expression) ::luciole::test::check(static_cast<bool>(expression), #expression)
 
 #define TEST_NEAR(actual, expected, tolerance)                                                                         \
-  ::noctalia::test::checkNear(                                                                                         \
-      (actual), (expected), (tolerance), "TEST_NEAR(" #actual ", " #expected ", " #tolerance ")"                       \
-  )
+  ::luciole::test::checkNear((actual), (expected), (tolerance), "TEST_NEAR(" #actual ", " #expected ", " #tolerance ")")

@@ -11,17 +11,17 @@
 
 namespace {
   namespace fs = std::filesystem;
-  using files::ActivePane;
-  using files::AtomicWriteState;
-  using files::Bookmark;
-  using files::Location;
-  using files::SavedWindow;
-  using files::StateStore;
+  using luciole::ActivePane;
+  using luciole::AtomicWriteState;
+  using luciole::Bookmark;
+  using luciole::Location;
+  using luciole::SavedWindow;
+  using luciole::StateStore;
 
   struct Fixture {
     fs::path directory;
     Fixture() {
-      const files::GString name(g_dir_make_tmp("noctalia-state-test-XXXXXX", nullptr));
+      const luciole::GString name(g_dir_make_tmp("luciole-state-test-XXXXXX", nullptr));
       TEST_CHECK(name != nullptr);
       directory = name.get();
     }
@@ -179,7 +179,7 @@ namespace {
     write(fixture.path(), "schema_version = true\n");
     TEST_CHECK(!store.load() && store.issues().front().line == 1 && store.issues().front().key == "schema_version");
     fs::remove(fixture.path());
-    TEST_CHECK(store.load() && store.state() == files::SessionState{});
+    TEST_CHECK(store.load() && store.state() == luciole::SessionState{});
   }
 
   void testPrivacyAndBounds() {
@@ -245,8 +245,8 @@ namespace {
 
     const char* previous = std::getenv("XDG_STATE_HOME");
     const std::optional<std::string> saved = previous != nullptr ? std::optional<std::string>(previous) : std::nullopt;
-    ::setenv("XDG_STATE_HOME", "/tmp/noctalia-state-path-test", 1);
-    TEST_CHECK(StateStore::pathFromEnvironment() == "/tmp/noctalia-state-path-test/noctalia-files/state.toml");
+    ::setenv("XDG_STATE_HOME", "/tmp/luciole-state-path-test", 1);
+    TEST_CHECK(StateStore::pathFromEnvironment() == "/tmp/luciole-state-path-test/luciole/state.toml");
     ::setenv("XDG_STATE_HOME", "relative-invalid", 1);
     bool rejected = false;
     try {
@@ -256,9 +256,7 @@ namespace {
     }
     TEST_CHECK(rejected);
     ::unsetenv("XDG_STATE_HOME");
-    TEST_CHECK(
-        StateStore::pathFromEnvironment() == fs::path(std::getenv("HOME")) / ".local/state/noctalia-files/state.toml"
-    );
+    TEST_CHECK(StateStore::pathFromEnvironment() == fs::path(std::getenv("HOME")) / ".local/state/luciole/state.toml");
     if (saved) {
       ::setenv("XDG_STATE_HOME", saved->c_str(), 1);
     }

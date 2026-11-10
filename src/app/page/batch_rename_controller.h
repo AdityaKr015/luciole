@@ -6,10 +6,10 @@
 #include <memory>
 #include <vector>
 
-namespace files {
+namespace luciole {
   struct BatchRenameSnapshot;
   struct DirectoryEntry;
-} // namespace files
+} // namespace luciole
 
 class BatchRenameDialog;
 class OperationJob;
@@ -22,7 +22,7 @@ class BatchRenameController {
 public:
   explicit BatchRenameController(PageContext& page);
 
-  void open(const std::vector<files::DirectoryEntry>& targets);
+  void open(const std::vector<luciole::DirectoryEntry>& targets);
   // Owned batch rename job change: sync the dialog on the next frame, or report a job whose dialog closed.
   void changed(OperationJob& job);
   // Operation progress tick: keep syncing while the rename applies.
@@ -39,7 +39,7 @@ public:
 
 private:
   void sync();
-  void report(const files::BatchRenameSnapshot& snapshot);
+  void report(const luciole::BatchRenameSnapshot& snapshot);
 
   PageContext& m_page;
   // The dialog's job: previews, then applies the rename.
@@ -47,6 +47,6 @@ private:
   BatchRenameDialog* m_dialog = nullptr;
   bool m_dirty = false;
   bool m_reported = false;
-  std::vector<files::Location> m_reveal;
+  std::vector<luciole::Location> m_reveal;
   std::uint64_t m_revealContext = 0;
 };

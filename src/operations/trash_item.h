@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace files {
+namespace luciole {
   struct TrashItemIdentity {
     FileIdentity id;
     FileType type = FileType::Unknown;
@@ -40,4 +40,4 @@ namespace files {
   TrashItemInfo queryTrashItem(const Location& location, const CancelToken& token, bool follow = false);
   // Blocking; the immediate items of the Trash root. Throws FileErrorException.
   std::vector<TrashItem> listTrashItems(const CancelToken& token);
-} // namespace files
+} // namespace luciole

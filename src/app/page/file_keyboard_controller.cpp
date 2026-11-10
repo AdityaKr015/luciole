@@ -20,10 +20,10 @@
 #include <iterator>
 #include <utility>
 
-using Action = files::BrowserAction;
+using Action = luciole::BrowserAction;
 
 FileKeyboardController::FileKeyboardController(
-    PageContext& page, TextInputService& textInput, files::MillerColumns& miller, MenuController& menus,
+    PageContext& page, TextInputService& textInput, luciole::MillerColumns& miller, MenuController& menus,
     LocationBarController& locationBar, StatusBarController& status
 )
     : m_page(page), m_textInput(textInput), m_miller(miller), m_menus(menus), m_locationBar(locationBar),
@@ -100,7 +100,7 @@ bool FileKeyboardController::commandKey(const KeyboardEvent& event) {
       }
       return true;
     }
-    if (const auto action = files::shortcutAction({Action::Rename, Action::Properties}, event.sym, event.modifiers)) {
+    if (const auto action = luciole::shortcutAction({Action::Rename, Action::Properties}, event.sym, event.modifiers)) {
       m_page.dispatchAction(*action);
       return true;
     }
@@ -111,7 +111,7 @@ bool FileKeyboardController::commandKey(const KeyboardEvent& event) {
 bool FileKeyboardController::typeKey(const KeyboardEvent& event) {
   if (event.pressed
       && !event.preedit
-      && m_typingMode == files::TypingMode::Typeahead
+      && m_typingMode == luciole::TypingMode::Typeahead
       && m_page.fileList() != nullptr
       && m_page.dispatcher().focusedArea() == m_page.fileList()->focusArea()
       && (event.modifiers & (KeyMod::Ctrl | KeyMod::Alt | KeyMod::Super)) == 0) {
@@ -126,14 +126,14 @@ bool FileKeyboardController::typeKey(const KeyboardEvent& event) {
       const char* previous = g_utf8_find_prev_char(text.data(), text.data() + text.size());
       typeaheadChanged(m_typeahead.erase(
           m_page.browser().model(), static_cast<std::uint32_t>(text.data() + text.size() - previous),
-          files::TypeaheadSelection::Clock::now()
+          luciole::TypeaheadSelection::Clock::now()
       ));
       return true;
     }
   }
   if (event.pressed
       && !event.preedit
-      && m_typingMode == files::TypingMode::Search
+      && m_typingMode == luciole::TypingMode::Search
       && m_page.fileList() != nullptr
       && m_page.dispatcher().focusedArea() == m_page.fileList()->focusArea()
       && (event.modifiers & (KeyMod::Ctrl | KeyMod::Alt | KeyMod::Super)) == 0
@@ -154,14 +154,14 @@ void FileKeyboardController::clearTypeahead() {
   m_textInput.notifyClientStateChanged(this, TextInputChangeCause::Other);
 }
 
-void FileKeyboardController::typeaheadChanged(std::optional<files::EntryId> match, TextInputChangeCause cause) {
+void FileKeyboardController::typeaheadChanged(std::optional<luciole::EntryId> match, TextInputChangeCause cause) {
   if (match) {
     m_keyboardReveal = match;
   }
   m_typeaheadContext = m_page.browser().contextSerial();
   m_fileKeyboardFocus = true;
   m_page.requestSync();
-  m_typeaheadTimer.start(files::TypeaheadSelection::timeout, [this] {
+  m_typeaheadTimer.start(luciole::TypeaheadSelection::timeout, [this] {
     if (m_typeaheadPreedit.empty()) {
       clearTypeahead();
     }
@@ -173,12 +173,12 @@ void FileKeyboardController::applyTypeahead(const std::string& text, TextInputCh
   m_page.dispatcher().cancelPointerCapture();
   m_page.fileList()->cancelPointerGesture();
   typeaheadChanged(
-      m_typeahead.append(m_page.browser().model(), text, files::TypeaheadSelection::Clock::now(), composing), cause
+      m_typeahead.append(m_page.browser().model(), text, luciole::TypeaheadSelection::Clock::now(), composing), cause
   );
 }
 
 TextInputState FileKeyboardController::textInputState() const {
-  if (m_typingMode == files::TypingMode::Search) {
+  if (m_typingMode == luciole::TypingMode::Search) {
     return m_locationBar.filterInput().textInputState();
   }
   const auto bounds = m_status.statusRect();
@@ -193,8 +193,8 @@ TextInputState FileKeyboardController::textInputState() const {
 }
 
 void FileKeyboardController::textInputApplyEdit(const TextInputEdit& edit) {
-  if (m_typingMode == files::TypingMode::Typeahead) {
-    const auto now = files::TypeaheadSelection::Clock::now();
+  if (m_typingMode == luciole::TypingMode::Typeahead) {
+    const auto now = luciole::TypeaheadSelection::Clock::now();
     if (edit.hasDelete && edit.deleteBeforeLength != 0 && edit.deleteAfterLength == 0 && !m_typeahead.text().empty()) {
       typeaheadChanged(
           m_typeahead.erase(m_page.browser().model(), edit.deleteBeforeLength, now, !m_typeaheadPreedit.empty()),
@@ -252,12 +252,12 @@ bool FileKeyboardController::listKey(const KeyboardEvent& event) {
   }
   auto& model = m_page.browser().model();
   if (const auto action =
-          files::shortcutAction({Action::SelectAll, Action::ClearSelection}, event.sym, event.modifiers)) {
+          luciole::shortcutAction({Action::SelectAll, Action::ClearSelection}, event.sym, event.modifiers)) {
     m_page.dispatchAction(*action);
     return true;
   }
   if (const auto action =
-          files::shortcutAction({Action::InvertSelection, Action::SelectPattern}, event.sym, event.modifiers)) {
+          luciole::shortcutAction({Action::InvertSelection, Action::SelectPattern}, event.sym, event.modifiers)) {
     if (!event.repeat) {
       m_page.dispatchAction(*action);
     }
@@ -294,9 +294,9 @@ bool FileKeyboardController::listKey(const KeyboardEvent& event) {
     index += hasFocus ? columns : 0;
   } else if (event.sym == XKB_KEY_Up) {
     index += hasFocus ? -columns : 0;
-  } else if (m_page.viewMode() == files::ViewMode::Grid && event.sym == XKB_KEY_Right) {
+  } else if (m_page.viewMode() == luciole::ViewMode::Grid && event.sym == XKB_KEY_Right) {
     index += hasFocus ? (Style::rtl() ? -1 : 1) : 0;
-  } else if (m_page.viewMode() == files::ViewMode::Grid && event.sym == XKB_KEY_Left) {
+  } else if (m_page.viewMode() == luciole::ViewMode::Grid && event.sym == XKB_KEY_Left) {
     index += hasFocus ? (Style::rtl() ? 1 : -1) : 0;
   } else if (event.sym == XKB_KEY_Home) {
     index = 0;
@@ -322,7 +322,8 @@ bool FileKeyboardController::listKey(const KeyboardEvent& event) {
     }
     (void)model.select(
         id,
-        shift ? (ctrl ? files::SelectionMode::AddRange : files::SelectionMode::Range) : files::SelectionMode::Replace
+        shift ? (ctrl ? luciole::SelectionMode::AddRange : luciole::SelectionMode::Range)
+              : luciole::SelectionMode::Replace
     );
   }
   m_keyboardReveal = id;

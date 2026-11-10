@@ -2,9 +2,9 @@
 
 #include <string>
 
-namespace files {
+namespace luciole {
   class FileLauncher;
-} // namespace files
+} // namespace luciole
 
 class InputArea;
 class Label;
@@ -14,7 +14,7 @@ class ScrollView;
 // The About dialog.
 class AboutController {
 public:
-  AboutController(PageContext& page, files::FileLauncher& launcher);
+  AboutController(PageContext& page, luciole::FileLauncher& launcher);
 
   void open();
   // Launcher change: shows why a link did not open, or hides the message once one did.
@@ -24,7 +24,7 @@ public:
 
 private:
   PageContext& m_page;
-  files::FileLauncher& m_launcher;
+  luciole::FileLauncher& m_launcher;
   ScrollView* m_scroll = nullptr;
   Label* m_message = nullptr;
 };

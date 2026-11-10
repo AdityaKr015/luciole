@@ -2,7 +2,7 @@
 
 ## Module boundaries
 
-[meson.build](../../meson.build) assembles the local Noctalia library and Files-owned static modules. [CONTRIBUTING.md](../../CONTRIBUTING.md#module-layering) defines the allowed dependencies. Public domain APIs use `Location`, typed metadata and `CancelToken`; UI callers do not operate directly on GIO file objects.
+[meson.build](../../meson.build) assembles the local Noctalia library and Luciole-owned static modules. [CONTRIBUTING.md](../../CONTRIBUTING.md#module-layering) defines the allowed dependencies. Public domain APIs use `Location`, typed metadata and `CancelToken`; UI callers do not operate directly on GIO file objects.
 
 | Area | Responsibility |
 | --- | --- |
@@ -13,11 +13,11 @@
 | `src/browser/` | Published directory model, controllers, selection, history, Miller chains and tab/job routing |
 | `src/operations/` | Worker-backed file jobs, conflicts, per-item outcomes and archive services |
 | `src/imaging/`, `src/system/`, `src/thumbnails/` | Decoders, artwork resolution, generation providers, metadata and disk cache |
-| `src/platform/`, `src/clipboard/` | Files-owned desktop launching, decoration, clipboard and native drop transport |
-| `src/ui/` | Files-specific views and compositions of actual Noctalia controls |
+| `src/platform/`, `src/clipboard/` | Luciole-owned desktop launching, decoration, clipboard and native drop transport |
+| `src/ui/` | Luciole-specific views and compositions of actual Noctalia controls |
 | `src/app/`, `src/event_loop/` | Application ownership, page orchestration, platform polling and GLib integration |
 
-The application uses direct Wayland and OpenGL ES with Pango/Cairo. GdkPixbuf/Glycin supplies image decoding, not a widget layer. Builds consume the checked-in mirror; a sibling checkout and the Noctalia shell are not runtime/build requirements. Generic library changes go upstream before reviewed updates are copied back into Files.
+The application uses direct Wayland and OpenGL ES with Pango/Cairo. GdkPixbuf/Glycin supplies image decoding, not a widget layer. Builds consume the checked-in mirror; a sibling checkout and the Noctalia shell are not runtime/build requirements. Generic library changes go upstream before reviewed updates are copied back into Luciole.
 
 ## Windows, tabs and pages
 
@@ -25,7 +25,7 @@ The application uses direct Wayland and OpenGL ES with Pango/Cairo. GdkPixbuf/Gl
 
 [BrowserPage](../../src/app/page/browser_page.h) orchestrates feature controllers rather than implementing file jobs or decoder work. Each page has its own browse controller, selection, history, query and viewport. Its [MillerColumns](../../src/browser/miller_columns.h) chain owns additional lazy controllers within the same page. The focused controller supplies action and preview targets. Offscreen/retired branches release resources; at most 16 live columns remain while deeper navigation retires old ancestors.
 
-Page visibility does not confer ownership of running file jobs. Accepted Follow-scope jobs can move to another page when a tab closes; page-scoped preparation is cancelled. The OperationHub also owns bounded recent activity reports and one in-memory native rename Undo/Redo record across pages and windows. Its job ownership/activity adapter is compiled as the internal `files-app-jobs` static library so headless tests exercise the actual application lifecycle without UI wiring. See [file jobs](file-jobs.md). Current tab/window state is in memory; durable session restoration remains unfinished.
+Page visibility does not confer ownership of running file jobs. Accepted Follow-scope jobs can move to another page when a tab closes; page-scoped preparation is cancelled. The OperationHub also owns bounded recent activity reports and one in-memory native rename Undo/Redo record across pages and windows. Its job ownership/activity adapter is compiled as the internal `luciole-app-jobs` static library so headless tests exercise the actual application lifecycle without UI wiring. See [file jobs](file-jobs.md). Current tab/window state is in memory; durable session restoration remains unfinished.
 
 ## Asynchronous publication
 

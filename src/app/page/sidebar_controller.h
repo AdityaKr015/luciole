@@ -11,14 +11,14 @@
 #include <utility>
 #include <vector>
 
-namespace files {
+namespace luciole {
   class DriveMonitor;
   class PinService;
   class PlacesSidebar;
   class ViewPreferenceWriter;
   struct Bookmark;
   struct BrowserSettings;
-} // namespace files
+} // namespace luciole
 
 class AnimationManager;
 class Box;
@@ -36,14 +36,15 @@ public:
   static constexpr float kHandleWidth = 6.0F;
 
   SidebarController(
-      PageContext& page, files::PinService& pins, files::DriveMonitor& drives, files::ViewPreferenceWriter& preferences,
-      AnimationManager& animations, MenuController& menus, RenameController& renamer, DragDropController& drags
+      PageContext& page, luciole::PinService& pins, luciole::DriveMonitor& drives,
+      luciole::ViewPreferenceWriter& preferences, AnimationManager& animations, MenuController& menus,
+      RenameController& renamer, DragDropController& drags
   );
 
   // Takes the sidebar settings of a new page.
-  void load(const files::BrowserSettings& settings);
+  void load(const luciole::BrowserSettings& settings);
   // Takes the sidebar settings that changed; `force` takes them all.
-  void applySettings(const files::BrowserSettings& before, const files::BrowserSettings& settings, bool force);
+  void applySettings(const luciole::BrowserSettings& before, const luciole::BrowserSettings& settings, bool force);
 
   bool visible() const { return m_showSidebar; }
   void setVisible(bool visible, bool persist = true);
@@ -54,8 +55,8 @@ public:
   bool resizing() const { return m_resizingSidebar; }
   // False until the scene is built.
   bool hasPlaces() const { return m_places != nullptr; }
-  files::PlacesSidebar& places() { return *m_places; }
-  const files::PlacesSidebar& places() const { return *m_places; }
+  luciole::PlacesSidebar& places() { return *m_places; }
+  const luciole::PlacesSidebar& places() const { return *m_places; }
   // The sidebar and its resize handle, detached from the page.
   Node* bundle() const { return m_sidebarBundle; }
   void take(Node& host);
@@ -66,9 +67,9 @@ public:
   // Pins or devices changed: rebuild the list on the next layout.
   void markDirty() { m_placesDirty = true; }
   // Focuses the entry for `location` once no popup or overlay is open.
-  void focusPlace(files::Location location) { m_restorePlaceFocus = std::move(location); }
+  void focusPlace(luciole::Location location) { m_restorePlaceFocus = std::move(location); }
   // Pins `bookmarks` before the pin at `before`, or reports why pins cannot change.
-  void pinFolders(std::vector<files::Bookmark> bookmarks, std::size_t before);
+  void pinFolders(std::vector<luciole::Bookmark> bookmarks, std::size_t before);
 
   // Scene: the places list and the resize handle, which the page places beside the file pane and detaches once
   // the page root exists, and the pin drop line for the drag overlay.
@@ -80,7 +81,7 @@ public:
   void showDropLine(Renderer& renderer, std::size_t slot);
 
   // BrowserPage::syncBrowser(): highlights the current folder.
-  void sync(const std::optional<files::Location>& location);
+  void sync(const std::optional<luciole::Location>& location);
   // Frame slot in BrowserPage::prepareFrame(): the resize line follows hover and focus.
   void onFrame();
   // Layout hooks in BrowserPage::prepareFrame(), in this order.
@@ -101,21 +102,21 @@ private:
   void openDriveMenu(const std::string& key, float x, float y);
 
   PageContext& m_page;
-  files::PinService& m_pins;
-  files::DriveMonitor& m_drives;
-  files::ViewPreferenceWriter& m_preferences;
+  luciole::PinService& m_pins;
+  luciole::DriveMonitor& m_drives;
+  luciole::ViewPreferenceWriter& m_preferences;
   AnimationManager& m_animations;
   MenuController& m_menus;
   RenameController& m_renamer;
   DragDropController& m_drags;
-  files::PlacesSidebar* m_places = nullptr;
+  luciole::PlacesSidebar* m_places = nullptr;
   bool m_placesDirty = true;
-  int m_sidebarWidth = files::kDefaultSidebarWidth;
+  int m_sidebarWidth = luciole::kDefaultSidebarWidth;
   bool m_showSidebar = true;
   bool m_sidebarTree = false;
   bool m_showDrives = true;
-  int m_sidebarStartWidth = files::kDefaultSidebarWidth;
-  int m_sidebarStartVisibleWidth = files::kDefaultSidebarWidth;
+  int m_sidebarStartWidth = luciole::kDefaultSidebarWidth;
+  int m_sidebarStartVisibleWidth = luciole::kDefaultSidebarWidth;
   // Expires with this controller so drive callbacks that finish later do nothing.
   std::shared_ptr<int> m_lifetime = std::make_shared<int>(0);
   float m_sidebarPressX = 0;
@@ -125,5 +126,5 @@ private:
   Box* m_placeDropLine = nullptr;
   Node* m_sidebarBundle = nullptr;
   std::unique_ptr<Node> m_detachedSidebar;
-  std::optional<files::Location> m_restorePlaceFocus;
+  std::optional<luciole::Location> m_restorePlaceFocus;
 };

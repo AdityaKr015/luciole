@@ -10,7 +10,7 @@
 #include <optional>
 #include <string>
 
-namespace files {
+namespace luciole {
   struct FileDetails {
     FileType type = FileType::Unknown;
     std::optional<std::string> displayName;
@@ -48,4 +48,4 @@ namespace files {
   std::optional<FileError> enumerateChildren(
       const Location& parent, const CancelToken& token, const std::function<bool(const ChildInfo&)>& visit
   );
-} // namespace files
+} // namespace luciole

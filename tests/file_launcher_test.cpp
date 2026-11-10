@@ -15,10 +15,11 @@ namespace {
     void operator()(GVariant* value) const { g_variant_unref(value); }
   };
   using Variant = std::unique_ptr<GVariant, VariantUnref>;
-  files::ApplicationList query(
-      files::FileLauncher& launcher, bool all, std::string search = {}, std::vector<std::string> types = {"text/plain"}
+  luciole::ApplicationList query(
+      luciole::FileLauncher& launcher, bool all, std::string search = {},
+      std::vector<std::string> types = {"text/plain"}
   ) {
-    std::optional<files::ApplicationList> result;
+    std::optional<luciole::ApplicationList> result;
     launcher.applications(std::move(types), [&](auto value) { result = std::move(value); }, all, std::move(search));
     const auto deadline = g_get_monotonic_time() + 5000000;
     while (launcher.busy()) {
@@ -30,7 +31,7 @@ namespace {
     return std::move(*result);
   }
 
-  files::ApplicationChoice testCatalog(files::FileLauncher& launcher, bool large) {
+  luciole::ApplicationChoice testCatalog(luciole::FileLauncher& launcher, bool large) {
     TEST_CHECK(std::string_view(g_get_user_config_dir()) == g_getenv("XDG_CONFIG_HOME"));
     TEST_CHECK(std::string_view(g_get_user_data_dir()) == g_getenv("XDG_DATA_HOME"));
     const auto suggested = query(launcher, false);
@@ -63,10 +64,10 @@ namespace {
     return other.choices.front();
   }
 
-  void testDbus(files::FileLauncher& launcher, const std::vector<files::Location>& locations) {
-    const files::GioPtr<GTestDBus> bus(g_test_dbus_new(G_TEST_DBUS_NONE));
+  void testDbus(luciole::FileLauncher& launcher, const std::vector<luciole::Location>& locations) {
+    const luciole::GioPtr<GTestDBus> bus(g_test_dbus_new(G_TEST_DBUS_NONE));
     g_test_dbus_up(bus.get());
-    files::GioPtr<GDBusConnection> connection(g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, nullptr));
+    luciole::GioPtr<GDBusConnection> connection(g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, nullptr));
     TEST_CHECK(connection);
     const Variant name(g_dbus_connection_call_sync(
         connection.get(), "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName",
@@ -113,7 +114,7 @@ namespace {
     TEST_CHECK(registration);
     g_dbus_node_info_unref(node);
     const auto choices = query(launcher, false);
-    const auto app = std::ranges::find(choices.choices, "org.example.Fixture.desktop", &files::ApplicationChoice::id);
+    const auto app = std::ranges::find(choices.choices, "org.example.Fixture.desktop", &luciole::ApplicationChoice::id);
     TEST_CHECK(app != choices.choices.end());
     launcher.setActivationProvider([](const auto&, const auto& reply) { reply("dbus-fresh"); });
     launcher.openWith(locations, *app);
@@ -142,7 +143,7 @@ namespace {
     g_test_dbus_down(bus.get());
   }
 
-  void testMixed(files::FileLauncher& launcher) {
+  void testMixed(luciole::FileLauncher& launcher) {
     const auto common = query(launcher, false, "Private", {"image/png", "text/plain", "image/png"});
     TEST_CHECK(
         common.choices.size() == 1
@@ -155,7 +156,7 @@ namespace {
     TEST_CHECK(other.choices.size() == 1 && !other.choices.front().suggested && !other.choices.front().isDefault);
   }
 
-  void testDefault(files::FileLauncher& launcher, const files::ApplicationChoice& app, bool failure) {
+  void testDefault(luciole::FileLauncher& launcher, const luciole::ApplicationChoice& app, bool failure) {
     const auto set = [&](const std::string& mime) {
       std::optional<std::string> error;
       launcher.setDefault(mime, app, [&](std::string value) { error = std::move(value); });
@@ -172,7 +173,7 @@ namespace {
     const auto error = set("text/plain");
     TEST_CHECK(error.empty() != failure);
     if (!failure) {
-      const files::GioPtr<GAppInfo> current(g_app_info_get_default_for_type("text/plain", false));
+      const luciole::GioPtr<GAppInfo> current(g_app_info_get_default_for_type("text/plain", false));
       TEST_CHECK(current && std::string_view(g_app_info_get_id(current.get())) == app.id);
       const auto listed = query(launcher, false);
       TEST_CHECK(!listed.choices.empty() && listed.choices.front().id == app.id && listed.choices.front().isDefault);
@@ -187,7 +188,7 @@ int main(int argc, char** argv) {
     }
     initLogLevelFromEnvironment();
     GlibPollSource glib;
-    auto launcher = std::make_unique<files::FileLauncher>();
+    auto launcher = std::make_unique<luciole::FileLauncher>();
     const bool destroy = std::string_view(argv[1]) == "destroy";
     const bool expectError = std::string_view(argv[1]) == "error";
     const bool sequential = std::string_view(argv[1]) == "sequential";
@@ -206,9 +207,9 @@ int main(int argc, char** argv) {
     });
     const auto deadline = g_get_monotonic_time() + 5000000;
     if (mode == "dbus") {
-      std::vector<files::Location> locations;
+      std::vector<luciole::Location> locations;
       for (int i = 2; i < argc; ++i) {
-        locations.push_back(files::Location::fromPath(argv[i]));
+        locations.push_back(luciole::Location::fromPath(argv[i]));
       }
       testDbus(*launcher, locations);
       TEST_CHECK(callbacks == 2 && errors == 0);
@@ -220,13 +221,13 @@ int main(int argc, char** argv) {
     }
     if (batch || tokens || activationDestroy) {
       const auto apps = query(*launcher, false);
-      const auto app = std::ranges::find(apps.choices, "fixture.desktop", &files::ApplicationChoice::id);
+      const auto app = std::ranges::find(apps.choices, "fixture.desktop", &luciole::ApplicationChoice::id);
       TEST_CHECK(app != apps.choices.end());
-      std::vector<files::Location> locations;
+      std::vector<luciole::Location> locations;
       for (int i = 2; i < argc; ++i) {
-        locations.push_back(files::Location::fromPath(argv[i]));
+        locations.push_back(luciole::Location::fromPath(argv[i]));
       }
-      std::vector<files::FileLauncher::ActivationReply> replies;
+      std::vector<luciole::FileLauncher::ActivationReply> replies;
       std::vector<std::string> appIds;
       if (tokens || activationDestroy) {
         launcher->setActivationProvider([&](const std::string& id, auto reply) {
@@ -266,7 +267,7 @@ int main(int argc, char** argv) {
       }
       return 0;
     }
-    std::optional<files::ApplicationChoice> choice;
+    std::optional<luciole::ApplicationChoice> choice;
     bool staleChoice = false;
     if (other || catalog || changeDefault || defaultError) {
       choice = testCatalog(*launcher, catalog);
@@ -301,9 +302,9 @@ int main(int argc, char** argv) {
     }
     for (int index = 2; index < argc; ++index) {
       if (with) {
-        launcher->openWith(files::Location::fromPath(argv[index]), *choice);
+        launcher->openWith(luciole::Location::fromPath(argv[index]), *choice);
       } else {
-        launcher->open(files::Location::fromPath(argv[index]));
+        launcher->open(luciole::Location::fromPath(argv[index]));
       }
       while (sequential && launcher->busy()) {
         if (g_get_monotonic_time() >= deadline) {
@@ -352,7 +353,7 @@ int main(int argc, char** argv) {
       throw std::runtime_error("unexpected launch callback/error count");
     }
     if (other) {
-      const files::GioPtr<GAppInfo> current(g_app_info_get_default_for_type("text/plain", false));
+      const luciole::GioPtr<GAppInfo> current(g_app_info_get_default_for_type("text/plain", false));
       TEST_CHECK(current && std::string_view(g_app_info_get_id(current.get())) == "fixture.desktop");
     }
     std::println("file launcher checks passed");

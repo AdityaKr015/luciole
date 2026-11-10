@@ -10,14 +10,14 @@
 #include <unistd.h>
 
 namespace {
-  files::Location parentOf(const files::Location& location) {
+  luciole::Location parentOf(const luciole::Location& location) {
     auto parent = location.parent();
     if (!parent) {
-      files::throwFileError(files::FileErrorKind::Unavailable, "The original folder is unavailable.");
+      luciole::throwFileError(luciole::FileErrorKind::Unavailable, "The original folder is unavailable.");
     }
     return std::move(*parent);
   }
-  files::Location numbered(const files::Location& original, bool directory, std::size_t number) {
+  luciole::Location numbered(const luciole::Location& original, bool directory, std::size_t number) {
     const auto parent = parentOf(original);
     const auto base = original.basename().value_or(std::string{});
     const auto dot = base.find_last_of('.');
@@ -28,7 +28,7 @@ namespace {
     const auto limit = ::pathconf(parent.nativePath()->c_str(), _PC_NAME_MAX);
     if (limit > 0 && stem.size() + counter.size() + suffix.size() > static_cast<std::size_t>(limit)) {
       if (counter.size() + suffix.size() >= static_cast<std::size_t>(limit)) {
-        files::throwFileError(files::FileErrorKind::NameTooLong, "The renamed file name would be too long.");
+        luciole::throwFileError(luciole::FileErrorKind::NameTooLong, "The renamed file name would be too long.");
       }
       auto bytes = static_cast<std::size_t>(limit) - counter.size() - suffix.size();
       if (g_utf8_validate(stem.data(), static_cast<gssize>(stem.size()), nullptr)) {
@@ -40,12 +40,12 @@ namespace {
     }
     return parent.child(stem + counter + suffix);
   }
-  bool collision(files::FileErrorKind kind) {
-    using Kind = files::FileErrorKind;
+  bool collision(luciole::FileErrorKind kind) {
+    using Kind = luciole::FileErrorKind;
     return kind == Kind::Exists || kind == Kind::WouldMerge || kind == Kind::IsDirectory;
   }
-  files::RestoreOutcome failedMove(files::FileErrorKind kind) {
-    using Kind = files::FileErrorKind;
+  luciole::RestoreOutcome failedMove(luciole::FileErrorKind kind) {
+    using Kind = luciole::FileErrorKind;
     switch (kind) {
     case Kind::Missing:
     case Kind::Denied:
@@ -56,14 +56,14 @@ namespace {
     case Kind::WouldRecurse:
     case Kind::NotDirectory:
     case Kind::NoSpace:
-      return files::RestoreOutcome::Failed;
+      return luciole::RestoreOutcome::Failed;
     default:
-      return files::RestoreOutcome::Unconfirmed;
+      return luciole::RestoreOutcome::Unconfirmed;
     }
   }
 } // namespace
 
-struct files::RestoreService::State {
+struct luciole::RestoreService::State {
   CancelToken token;
   bool active = false;
   std::size_t total = 0;
@@ -193,24 +193,24 @@ struct files::RestoreService::State {
   }
 };
 
-files::RestoreService::RestoreService() : m_state(std::make_shared<State>()) {}
-files::RestoreService::~RestoreService() {
+luciole::RestoreService::RestoreService() : m_state(std::make_shared<State>()) {}
+luciole::RestoreService::~RestoreService() {
   m_state->changed = {};
   cancel();
 }
-bool files::RestoreService::busy() const { return m_state->active; }
-std::size_t files::RestoreService::total() const { return m_state->total; }
-std::size_t files::RestoreService::completed() const { return m_state->completed.load(); }
-const std::vector<files::RestoreResult>& files::RestoreService::results() const { return m_state->results; }
-void files::RestoreService::setChangedCallback(std::function<void()> callback) {
+bool luciole::RestoreService::busy() const { return m_state->active; }
+std::size_t luciole::RestoreService::total() const { return m_state->total; }
+std::size_t luciole::RestoreService::completed() const { return m_state->completed.load(); }
+const std::vector<luciole::RestoreResult>& luciole::RestoreService::results() const { return m_state->results; }
+void luciole::RestoreService::setChangedCallback(std::function<void()> callback) {
   m_state->changed = std::move(callback);
 }
-void files::RestoreService::cancel() {
+void luciole::RestoreService::cancel() {
   m_state->token.cancel();
   m_state->gate.wake();
 }
-std::optional<files::TransferConflict> files::RestoreService::conflict() const { return m_state->gate.pending(); }
-bool files::RestoreService::resolve(std::uint64_t id, TransferConflictChoice choice) {
+std::optional<luciole::TransferConflict> luciole::RestoreService::conflict() const { return m_state->gate.pending(); }
+bool luciole::RestoreService::resolve(std::uint64_t id, TransferConflictChoice choice) {
   return m_state->gate.resolve(id, choice, [&](const TransferConflict&) {
     if (choice == TransferConflictChoice::Merge) {
       return false;
@@ -221,7 +221,7 @@ bool files::RestoreService::resolve(std::uint64_t id, TransferConflictChoice cho
     return true;
   });
 }
-bool files::RestoreService::start(std::vector<DirectoryEntry> selection) {
+bool luciole::RestoreService::start(std::vector<DirectoryEntry> selection) {
   if (busy() || selection.empty() || selection.size() > 4096) {
     return false;
   }

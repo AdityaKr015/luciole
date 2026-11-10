@@ -29,15 +29,15 @@
 #include <string>
 
 DragDropController::DragDropController(
-    PageContext& page, WaylandConnection& connection, files::PinService& pins, TransferController& transferController,
-    files::ThumbnailService& thumbnails, files::FileIconCache& icons, files::MillerColumns& miller,
+    PageContext& page, WaylandConnection& connection, luciole::PinService& pins, TransferController& transferController,
+    luciole::ThumbnailService& thumbnails, luciole::FileIconCache& icons, luciole::MillerColumns& miller,
     SidebarController& sidebar, LocationBarController& locationBar
 )
     : m_page(page), m_connection(connection), m_pins(pins), m_transferController(transferController),
       m_thumbnails(thumbnails), m_icons(icons), m_miller(miller), m_sidebar(sidebar), m_locationBar(locationBar) {}
 
 void DragDropController::setForeignDrop(
-    std::function<std::optional<std::pair<files::Location, LayoutRect>>(float, float)> callback
+    std::function<std::optional<std::pair<luciole::Location, LayoutRect>>(float, float)> callback
 ) {
   m_foreignDrop = std::move(callback);
 }
@@ -72,7 +72,7 @@ void DragDropController::buildOverlay(AnimationManager& animations) {
   m_dragOverlay->setParticipatesInLayout(false);
   m_dragOverlay->setHitTestVisible(false);
   m_dragOverlay->setAnimationManager(&animations);
-  auto dragIcon = std::make_unique<files::FileIcon>(m_icons, 40);
+  auto dragIcon = std::make_unique<luciole::FileIcon>(m_icons, 40);
   m_dragIcon = dragIcon.get();
   m_dragIcon->setVisible(false);
   m_dragIcon->setParticipatesInLayout(false);
@@ -167,11 +167,11 @@ void DragDropController::clearExternalDrop() {
   }
 }
 
-const std::vector<files::Bookmark>* DragDropController::draggedFolders() const {
+const std::vector<luciole::Bookmark>* DragDropController::draggedFolders() const {
   return m_systemDrag && m_drag && m_drag->foldersOnly ? &m_drag->bookmarks : nullptr;
 }
 
-files::FileDropTarget DragDropController::externalDrop(float x, float y, const std::vector<files::Bookmark>* pins) {
+luciole::FileDropTarget DragDropController::externalDrop(float x, float y, const std::vector<luciole::Bookmark>* pins) {
   m_externalDraggingHere = true;
   updateExternalScroll();
   // External offers are decoded only after a drop. Transfer worker validation
@@ -184,16 +184,16 @@ files::FileDropTarget DragDropController::externalDrop(float x, float y, const s
       const std::weak_ptr<int> lifetime = m_lifetime;
       return {
           .receive =
-              [this, lifetime, bookmarks = *pins,
-               slot =
-                   *slot](const files::FilePayload&, const files::DropOptions&, const files::DropCompletion& finish) {
+              [this, lifetime, bookmarks = *pins, slot = *slot](
+                  const luciole::FilePayload&, const luciole::DropOptions&, const luciole::DropCompletion& finish
+              ) {
                 if (lifetime.expired() || !m_page.visible() || !m_pins.editable()) {
                   finish(false);
                   return;
                 }
                 finish(m_pins.add(bookmarks, slot));
               },
-          .preferred = files::DragAction::Copy,
+          .preferred = luciole::DragAction::Copy,
           .copyOnly = true
       };
     }
@@ -207,12 +207,12 @@ files::FileDropTarget DragDropController::externalDrop(float x, float y, const s
   return externalDestination(target->location, target->rect);
 }
 
-files::FileDropTarget DragDropController::externalDestination(const files::Location& destination, LayoutRect rect) {
+luciole::FileDropTarget DragDropController::externalDestination(const luciole::Location& destination, LayoutRect rect) {
   if (!m_page.visible()
       || m_page.overlay()
       || m_page.menuSurface() != nullptr
       || m_page.operationsBusy()
-      || !files::transferLocationSupported(destination)) {
+      || !luciole::transferLocationSupported(destination)) {
     return {};
   }
   m_externalDropTarget = DropTarget{destination, rect};
@@ -223,7 +223,7 @@ files::FileDropTarget DragDropController::externalDestination(const files::Locat
   return {
       .receive =
           [this, lifetime, context,
-           destination](files::FilePayload payload, files::DropOptions options, files::DropCompletion finish) {
+           destination](luciole::FilePayload payload, luciole::DropOptions options, luciole::DropCompletion finish) {
             if (lifetime.expired()
                 || context != m_page.browser().contextSerial()
                 || !m_page.visible()
@@ -234,15 +234,15 @@ files::FileDropTarget DragDropController::externalDestination(const files::Locat
             }
             m_transferController.receiveDrop(std::move(payload), destination, std::move(options), std::move(finish));
           },
-      .preferred = (m_connection.keyboardModifiers() & KeyMod::Alt) != 0 ? files::DragAction::Ask
-          : (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0       ? files::DragAction::Copy
-          : (m_connection.keyboardModifiers() & KeyMod::Shift) != 0      ? files::DragAction::Move
-          : !destination.isNative()                                      ? files::DragAction::Copy
-                                                                         : files::DragAction::Move
+      .preferred = (m_connection.keyboardModifiers() & KeyMod::Alt) != 0 ? luciole::DragAction::Ask
+          : (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0       ? luciole::DragAction::Copy
+          : (m_connection.keyboardModifiers() & KeyMod::Shift) != 0      ? luciole::DragAction::Move
+          : !destination.isNative()                                      ? luciole::DragAction::Copy
+                                                                         : luciole::DragAction::Move
   };
 }
 
-std::optional<std::pair<files::Location, LayoutRect>> DragDropController::foreignTarget(float x, float y) const {
+std::optional<std::pair<luciole::Location, LayoutRect>> DragDropController::foreignTarget(float x, float y) const {
   if (!m_page.visible() || !m_page.filePane().containsScenePoint(x, y) || m_page.overlay()) {
     return std::nullopt;
   }
@@ -254,8 +254,8 @@ std::optional<std::pair<files::Location, LayoutRect>> DragDropController::foreig
     const auto* entry = m_page.browser().model().entry(rows[*index]);
     if (!entry
         || entry->symlink
-        || entry->type != files::FileType::Directory
-        || !files::transferLocationSupported(entry->location)) {
+        || entry->type != luciole::FileType::Directory
+        || !luciole::transferLocationSupported(entry->location)) {
       return std::nullopt;
     }
     if (auto rect = m_page.fileList()->itemRect(*index)) {
@@ -264,7 +264,7 @@ std::optional<std::pair<files::Location, LayoutRect>> DragDropController::foreig
     return std::nullopt;
   }
   const auto& location = m_page.browser().model().snapshot().location;
-  if (location && files::transferLocationSupported(*location) && m_page.browser().searchQuery().empty()) {
+  if (location && luciole::transferLocationSupported(*location) && m_page.browser().searchQuery().empty()) {
     return std::pair(*location, sceneRect(m_page.filePane()));
   }
   return std::nullopt;
@@ -285,9 +285,9 @@ bool DragDropController::dragCurrent() const {
   });
 }
 
-bool DragDropController::validDropFolder(const files::Location& destination) const {
+bool DragDropController::validDropFolder(const luciole::Location& destination) const {
   if (m_externalHover) {
-    if (!files::transferLocationSupported(destination)) {
+    if (!luciole::transferLocationSupported(destination)) {
       return false;
     }
     const auto* payload = m_page.clipboard().dragFiles();
@@ -296,27 +296,28 @@ bool DragDropController::validDropFolder(const files::Location& destination) con
     }
     bool differentParent = false;
     for (const auto& source : payload->locations) {
-      if (files::transferLocationsEqual(source, destination) || files::transferLocationInside(destination, source)) {
+      if (luciole::transferLocationsEqual(source, destination)
+          || luciole::transferLocationInside(destination, source)) {
         return false;
       }
       differentParent |= source.parent() != destination;
     }
     return differentParent || (m_connection.keyboardModifiers() & (KeyMod::Ctrl | KeyMod::Alt)) != 0;
   }
-  if (!m_drag || m_drag->sourcePin || !files::transferLocationSupported(destination)) {
+  if (!m_drag || m_drag->sourcePin || !luciole::transferLocationSupported(destination)) {
     return false;
   }
   bool anyDifferentParent = false;
   for (const auto& source : m_drag->entries) {
-    if (!files::transferLocationSupported(source.location)
-        || files::transferLocationsEqual(source.location, destination)) {
+    if (!luciole::transferLocationSupported(source.location)
+        || luciole::transferLocationsEqual(source.location, destination)) {
       return false;
     }
     const auto* entry = m_page.browser().model().entry(source.id);
     if (entry == nullptr) {
       return false;
     }
-    if (entry->type == files::FileType::Directory && files::transferLocationInside(destination, source.location)) {
+    if (entry->type == luciole::FileType::Directory && luciole::transferLocationInside(destination, source.location)) {
       return false;
     }
     anyDifferentParent = anyDifferentParent || source.location.parent() != destination;
@@ -368,7 +369,7 @@ std::optional<DragDropController::DropTarget> DragDropController::dropTarget() c
         if (*row < model.rows().size()) {
           const auto* entry = model.entry(model.rows()[*row]);
           if (entry
-              && entry->type == files::FileType::Directory
+              && entry->type == luciole::FileType::Directory
               && !entry->symlink
               && validDropFolder(entry->location)) {
             return DropTarget{entry->location, *grid->itemRect(*row), entry->id};
@@ -389,7 +390,7 @@ std::optional<DragDropController::DropTarget> DragDropController::dropTarget() c
       if (*index < rows.size()) {
         const auto* entry = m_page.browser().model().entry(rows[*index]);
         if (entry != nullptr
-            && entry->type == files::FileType::Directory
+            && entry->type == luciole::FileType::Directory
             && !entry->symlink
             && validDropFolder(entry->location)) {
           if (const auto rect = m_page.fileList()->itemRect(*index)) {
@@ -418,7 +419,7 @@ std::optional<std::size_t> DragDropController::pinDropSlot() const {
   return m_sidebar.places().dropSlot(m_page.pointerX(), m_page.pointerY());
 }
 
-void DragDropController::startFileDrag(const std::vector<files::EntryId>& ids) {
+void DragDropController::startFileDrag(const std::vector<luciole::EntryId>& ids) {
   if (ids.empty() || m_page.jobs().busy()) {
     return;
   }
@@ -428,10 +429,12 @@ void DragDropController::startFileDrag(const std::vector<files::EntryId>& ids) {
     const auto* entry = m_page.browser().model().entry(id);
     if (entry == nullptr
         || entry->location.isTrash()
-        || (entry->type != files::FileType::Directory && entry->type != files::FileType::Regular && !entry->symlink)) {
+        || (entry->type != luciole::FileType::Directory
+            && entry->type != luciole::FileType::Regular
+            && !entry->symlink)) {
       return;
     }
-    drag.foldersOnly = drag.foldersOnly && entry->type == files::FileType::Directory && !entry->symlink;
+    drag.foldersOnly = drag.foldersOnly && entry->type == luciole::FileType::Directory && !entry->symlink;
     drag.entries.push_back({id, entry->location});
     drag.bookmarks.push_back({entry->displayName, entry->location});
   }
@@ -442,19 +445,19 @@ void DragDropController::startFileDrag(const std::vector<files::EntryId>& ids) {
       m_dragArtwork = m_icons.request(
           entry->icon,
           static_cast<int>(std::ceil(
-              (m_page.viewMode() == files::ViewMode::Grid ? m_page.gridIconSize() : 24)
+              (m_page.viewMode() == luciole::ViewMode::Grid ? m_page.gridIconSize() : 24)
               * m_page.surface().effectiveBufferScale()
           ))
       );
     }
   }
   m_drag = std::move(drag);
-  files::FilePayload payload;
+  luciole::FilePayload payload;
   for (const auto& target : m_drag->entries) {
     payload.locations.push_back(target.location);
   }
   const std::weak_ptr<int> lifetime = m_lifetime;
-  const auto cursorSerial = m_connection.extension<files::DesktopIntegration>().pointerEnterSerial();
+  const auto cursorSerial = m_connection.extension<luciole::DesktopIntegration>().pointerEnterSerial();
   m_systemDrag = m_page.clipboard().startDrag(
       std::move(payload), m_page.surface().wlSurface(), m_fileDragSerial,
       m_dragArtwork && m_dragArtwork->pixels ? &*m_dragArtwork->pixels : nullptr,
@@ -464,24 +467,24 @@ void DragDropController::startFileDrag(const std::vector<files::EntryId>& ids) {
           cancelDrag();
         }
       },
-      (m_connection.keyboardModifiers() & KeyMod::Alt) != 0         ? std::optional(files::DragAction::Ask)
-          : (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0  ? std::optional(files::DragAction::Copy)
-          : (m_connection.keyboardModifiers() & KeyMod::Shift) != 0 ? std::optional(files::DragAction::Move)
+      (m_connection.keyboardModifiers() & KeyMod::Alt) != 0         ? std::optional(luciole::DragAction::Ask)
+          : (m_connection.keyboardModifiers() & KeyMod::Ctrl) != 0  ? std::optional(luciole::DragAction::Copy)
+          : (m_connection.keyboardModifiers() & KeyMod::Shift) != 0 ? std::optional(luciole::DragAction::Move)
                                                                     : std::nullopt,
-      [this, lifetime, cursorSerial](std::optional<files::DragAction> action) {
+      [this, lifetime, cursorSerial](std::optional<luciole::DragAction> action) {
         if (!lifetime.expired()) {
           // The shared connection binds cursor-shape v1; dnd_ask requires v2.
-          const auto shape = action == files::DragAction::Copy ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY
-              : action == files::DragAction::Move              ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE
-              : action == files::DragAction::Ask               ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_CONTEXT_MENU
-                                                               : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP;
-          m_connection.extension<files::DesktopIntegration>().setCursorShape(cursorSerial, shape);
+          const auto shape = action == luciole::DragAction::Copy ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY
+              : action == luciole::DragAction::Move              ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE
+              : action == luciole::DragAction::Ask               ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_CONTEXT_MENU
+                                                                 : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP;
+          m_connection.extension<luciole::DesktopIntegration>().setCursorShape(cursorSerial, shape);
         }
       }
   );
   if (m_systemDrag) {
     m_page.dispatcher().cancelPointerCapture();
-    m_connection.extension<files::DesktopIntegration>().setCursorShape(
+    m_connection.extension<luciole::DesktopIntegration>().setCursorShape(
         cursorSerial, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP
     );
     m_page.surface().requestLayout();
@@ -490,7 +493,7 @@ void DragDropController::startFileDrag(const std::vector<files::EntryId>& ids) {
   }
 }
 
-void DragDropController::startPlaceDrag(const files::Bookmark& bookmark) {
+void DragDropController::startPlaceDrag(const luciole::Bookmark& bookmark) {
   if (!m_pins.editable()) {
     return;
   }
@@ -519,7 +522,7 @@ void DragDropController::cancelDrag() {
     m_sidebar.hideDropLine();
     m_folderDropHighlight->setVisible(false);
   }
-  m_connection.extension<files::DesktopIntegration>().setCursorShape(
+  m_connection.extension<luciole::DesktopIntegration>().setCursorShape(
       m_connection.lastInputSerial(), WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT
   );
   m_page.surface().requestLayout();
@@ -642,8 +645,8 @@ void DragDropController::layout(Renderer& renderer) {
     }
     return;
   }
-  files::FileIconSource icon{.names = {"folder"}, .filePath = {}, .desktopFile = {}};
-  if (m_drag->sourcePin == files::Location::trash()) {
+  luciole::FileIconSource icon{.names = {"folder"}, .filePath = {}, .desktopFile = {}};
+  if (m_drag->sourcePin == luciole::Location::trash()) {
     icon.names = {"user-trash"};
   }
   if (!m_drag->entries.empty()) {
@@ -677,7 +680,7 @@ void DragDropController::layout(Renderer& renderer) {
              : copy                                            ? WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_COPY
                                                                : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_MOVE)
       : WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NO_DROP;
-  m_connection.extension<files::DesktopIntegration>().setCursorShape(m_connection.lastInputSerial(), shape);
+  m_connection.extension<luciole::DesktopIntegration>().setCursorShape(m_connection.lastInputSerial(), shape);
 }
 
 void DragDropController::finishDrag() {
@@ -696,20 +699,20 @@ void DragDropController::finishDrag() {
     return;
   }
   if (target && previous && target->location == previous->location && target->entry == previous->entry) {
-    std::vector<files::Location> sources;
+    std::vector<luciole::Location> sources;
     sources.reserve(drag.entries.size());
     for (const auto& entry : drag.entries) {
       sources.push_back(entry.location);
     }
     m_page.setActionMessage({});
     const bool ask = (m_connection.keyboardModifiers() & KeyMod::Alt) != 0;
-    files::DropOptions options{
-        .action = ask ? files::DragAction::Ask
-            : copy    ? files::DragAction::Copy
-                      : files::DragAction::Move,
+    luciole::DropOptions options{
+        .action = ask ? luciole::DragAction::Ask
+            : copy    ? luciole::DragAction::Copy
+                      : luciole::DragAction::Move,
         .canCopy = true,
         .canMove = true,
-        .select = [](files::TransferAction) { return true; }
+        .select = [](luciole::TransferAction) { return true; }
     };
     m_transferController.receiveDrop({std::move(sources), false}, target->location, std::move(options), [](bool) {});
   } else if (slot) {

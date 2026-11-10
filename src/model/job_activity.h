@@ -5,7 +5,7 @@
 #include <optional>
 #include <string>
 
-namespace files {
+namespace luciole {
   enum class ActivityState { Preparing, Working, Waiting, Succeeded, Failed, Partial, Cancelled };
   struct JobActivity {
     std::uint64_t id = 0;
@@ -16,4 +16,4 @@ namespace files {
     bool finished = false, canCancel = false, canRetry = false, canReview = false;
     bool failed() const { return state == ActivityState::Failed || state == ActivityState::Partial; }
   };
-} // namespace files
+} // namespace luciole

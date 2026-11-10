@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace files {
+namespace luciole {
   enum class AclTag { Owner, User, OwningGroup, Group, Mask, Other };
   struct AclEntry {
     AclTag tag;
@@ -59,4 +59,4 @@ namespace files {
   // Apply a normalized patch to this item's tables, preserving all unmentioned rules.
   AclEdit patchAcl(const AclInfo& actual, const AclPatchEdit& edit);
   std::string describeAcl(const AclInfo& info);
-} // namespace files
+} // namespace luciole

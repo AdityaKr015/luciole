@@ -2,8 +2,8 @@
 
 #include "app/application.h"
 #include "config/settings.h"
-#include "noctalia_files_build_info.h"
-#include "noctalia_files_completions.h"
+#include "luciole_build_info.h"
+#include "luciole_completions.h"
 #include "thumbnails/preview_metadata.h"
 #include "thumbnails/thumbnail_worker.h"
 
@@ -14,10 +14,10 @@
 namespace {
 
   constexpr std::string_view kHelp =
-      R"(Usage: noctalia-files [--help | --version | completions <shell> | config validate <file>]
+      R"(Usage: luciole [--help | --version | completions <shell> | config validate <file>]
 
-Open Noctalia Files in Home, or pass one directory path/URI to browse.
-Usage: noctalia-files [directory]
+Open Luciole in Home, or pass one directory path/URI to browse.
+Usage: luciole [directory]
 
 Options:
   --help                 Show this help
@@ -28,13 +28,13 @@ Options:
 
   int printCompletions(std::string_view shell) {
     if (shell == "bash") {
-      std::print("{}", files::completions::kBash);
+      std::print("{}", luciole::completions::kBash);
     } else if (shell == "zsh") {
-      std::print("{}", files::completions::kZsh);
+      std::print("{}", luciole::completions::kZsh);
     } else if (shell == "fish") {
-      std::print("{}", files::completions::kFish);
+      std::print("{}", luciole::completions::kFish);
     } else {
-      std::println(stderr, "noctalia-files: unsupported completion shell '{}'; expected bash, zsh, or fish", shell);
+      std::println(stderr, "luciole: unsupported completion shell '{}'; expected bash, zsh, or fish", shell);
       return EXIT_FAILURE;
     }
     return EXIT_SUCCESS;
@@ -42,7 +42,7 @@ Options:
 
 } // namespace
 
-int files::runCli(std::span<const std::string_view> args) {
+int luciole::runCli(std::span<const std::string_view> args) {
   if (!args.empty() && args.front() == "--preview-metadata-worker") {
     return runPreviewMetadataWorker(args.subspan(1));
   }
@@ -57,7 +57,7 @@ int files::runCli(std::span<const std::string_view> args) {
     return EXIT_SUCCESS;
   }
   if (args.size() == 1 && args.front() == "--version") {
-    std::println("noctalia-files {} ({})", NOCTALIA_FILES_VERSION, NOCTALIA_FILES_BUILD_REVISION);
+    std::println("luciole {} ({})", LUCIOLE_VERSION, LUCIOLE_BUILD_REVISION);
     return EXIT_SUCCESS;
   }
   if (args.size() == 2 && args.front() == "completions") {
@@ -67,7 +67,7 @@ int files::runCli(std::span<const std::string_view> args) {
     const auto issues = validateConfigFile(std::filesystem::path(args[2]));
     if (!issues.empty()) {
       for (const auto& issue : issues) {
-        std::println(stderr, "noctalia-files: {}", issue.format());
+        std::println(stderr, "luciole: {}", issue.format());
       }
       return EXIT_FAILURE;
     }
@@ -83,6 +83,6 @@ int files::runCli(std::span<const std::string_view> args) {
   if (args.size() == 2 && args.front() == "--") {
     return runApplication(std::string(args[1]));
   }
-  std::println(stderr, "noctalia-files: invalid arguments; use --help for available commands");
+  std::println(stderr, "luciole: invalid arguments; use --help for available commands");
   return EXIT_FAILURE;
 }

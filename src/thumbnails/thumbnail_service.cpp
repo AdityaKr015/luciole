@@ -41,17 +41,17 @@ namespace {
         || g_uri_get_fragment(parsed.get());
   }
   struct LoadResult {
-    files::FileIconImage image{
+    luciole::FileIconImage image{
         .pixels = {}, .path = {}, .symbolic = false, .ready = true, .sourceKey = {}, .revision = {}
     };
-    std::optional<files::ThumbnailCacheWrite> write;
+    std::optional<luciole::ThumbnailCacheWrite> write;
     bool decodeNeeded = false;
   };
   LoadResult load(
-      const files::DirectoryEntry& source, int side, const files::ThumbnailOptions& options, GCancellable* cancel,
+      const luciole::DirectoryEntry& source, int side, const luciole::ThumbnailOptions& options, GCancellable* cancel,
       bool generate
   ) {
-    using namespace files;
+    using namespace luciole;
     LoadResult result;
     ThumbnailStore store;
     const auto native = source.location.nativePath();
@@ -80,7 +80,7 @@ namespace {
       }
       return result;
     }
-    const files::Fd file(::open(native->c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK));
+    const luciole::Fd file(::open(native->c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK));
     struct stat before{};
     if (!file.valid()
         || ::fstat(file.get(), &before) < 0
@@ -167,8 +167,8 @@ namespace {
               {"Thumb::URI", source.location.uri()},
               {"Thumb::MTime", std::to_string(before.st_mtim.tv_sec)},
               {"Thumb::Size", std::to_string(before.st_size)},
-              {"X-Noctalia-Files::Stamp", sourceStamp},
-              {"Software", "Noctalia Files"}
+              {"X-Luciole::Stamp", sourceStamp},
+              {"Software", "Luciole"}
           }
       };
       result.write.emplace(ThumbnailCacheWrite{std::move(cached), side});
@@ -178,7 +178,7 @@ namespace {
   }
 } // namespace
 
-struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
+struct luciole::ThumbnailService::State : std::enable_shared_from_this<State> {
   enum class Stage : std::uint8_t { ProbeQueued, Probing, DecodeQueued, Decoding, Ready };
   struct Item {
     explicit Item(DirectoryEntry entry) : source(std::move(entry)) {}
@@ -483,20 +483,20 @@ struct files::ThumbnailService::State : std::enable_shared_from_this<State> {
   }
 };
 
-files::ThumbnailService::ThumbnailService(ThumbnailPurpose purpose) : m_state(std::make_shared<State>()) {
+luciole::ThumbnailService::ThumbnailService(ThumbnailPurpose purpose) : m_state(std::make_shared<State>()) {
   m_state->purpose = purpose;
 }
-int files::ThumbnailService::pixelSizeClass(int pixels, ThumbnailPurpose purpose) {
+int luciole::ThumbnailService::pixelSizeClass(int pixels, ThumbnailPurpose purpose) {
   return purpose == ThumbnailPurpose::Preview && pixels > 1024 ? kMaxPreviewImageSide
                                                                : ThumbnailStore::sizeClass(std::clamp(pixels, 1, 1024));
 }
-files::ThumbnailService::~ThumbnailService() {
+luciole::ThumbnailService::~ThumbnailService() {
   m_state->alive = false;
   m_state->changed = {};
   m_state->retire();
 }
-std::shared_ptr<const files::FileIconImage>
-files::ThumbnailService::request(const DirectoryEntry& source, int pixels, bool visible) {
+std::shared_ptr<const luciole::FileIconImage>
+luciole::ThumbnailService::request(const DirectoryEntry& source, int pixels, bool visible) {
   auto& state = *m_state;
   const auto& mime = source.contentType;
   if (state.options.policy == ThumbnailPolicy::Never
@@ -508,7 +508,7 @@ files::ThumbnailService::request(const DirectoryEntry& source, int pixels, bool 
           || mime->starts_with("audio/")
           || *mime == "application/pdf"
       )
-      || source.type != files::FileType::Regular
+      || source.type != luciole::FileType::Regular
       || source.symlink
       || !source.modifiedSeconds
       || privateUri(source.location.uri())
@@ -543,7 +543,7 @@ files::ThumbnailService::request(const DirectoryEntry& source, int pixels, bool 
   }
   return found->second.image;
 }
-bool files::ThumbnailService::touch(const std::shared_ptr<const FileIconImage>& image, bool visible) {
+bool luciole::ThumbnailService::touch(const std::shared_ptr<const FileIconImage>& image, bool visible) {
   const auto found = m_state->leases.find(image.get());
   if (found == m_state->leases.end()) {
     return false;
@@ -556,7 +556,7 @@ bool files::ThumbnailService::touch(const std::shared_ptr<const FileIconImage>& 
   item.used = ++m_state->clock;
   return true;
 }
-std::shared_ptr<const files::FileIconImage> files::ThumbnailService::prepared(const DirectoryEntry& source) {
+std::shared_ptr<const luciole::FileIconImage> luciole::ThumbnailService::prepared(const DirectoryEntry& source) {
   if (m_state->clearing || m_state->options.policy == ThumbnailPolicy::Never) {
     return {};
   }
@@ -578,7 +578,7 @@ std::shared_ptr<const files::FileIconImage> files::ThumbnailService::prepared(co
   }
   return {};
 }
-void files::ThumbnailService::synchronizeSources(const DirectorySnapshot& snapshot) {
+void luciole::ThumbnailService::synchronizeSources(const DirectorySnapshot& snapshot) {
   if (m_state->cache.empty()) {
     return;
   }
@@ -613,7 +613,7 @@ void files::ThumbnailService::synchronizeSources(const DirectorySnapshot& snapsh
     }
   }
 }
-void files::ThumbnailService::setOptions(ThumbnailOptions options) {
+void luciole::ThumbnailService::setOptions(ThumbnailOptions options) {
   if (options == m_state->options) {
     return;
   }
@@ -638,8 +638,8 @@ void files::ThumbnailService::setOptions(ThumbnailOptions options) {
   }
   m_state->notify();
 }
-void files::ThumbnailService::invalidate() { m_state->retire(); }
-void files::ThumbnailService::endFrame() {
+void luciole::ThumbnailService::invalidate() { m_state->retire(); }
+void luciole::ThumbnailService::endFrame() {
   for (auto it = m_state->cache.begin(); it != m_state->cache.end();) {
     if (it->second.stage == State::Stage::Ready && it->second.image.use_count() == 1) {
       auto retired = it++;
@@ -650,10 +650,10 @@ void files::ThumbnailService::endFrame() {
   }
   m_state->schedule();
 }
-void files::ThumbnailService::setChangedCallback(std::function<void()> callback) {
+void luciole::ThumbnailService::setChangedCallback(std::function<void()> callback) {
   m_state->changed = std::move(callback);
 }
-void files::ThumbnailService::clearCache() {
+void luciole::ThumbnailService::clearCache() {
   if (m_state->clearing) {
     return;
   }
@@ -686,11 +686,11 @@ void files::ThumbnailService::clearCache() {
   });
   m_state->notify();
 }
-bool files::ThumbnailService::clearing() const { return m_state->clearing; }
-const std::string& files::ThumbnailService::error() const { return m_state->error; }
-std::size_t files::ThumbnailService::reservedBytes() const { return m_state->reserved; }
-std::size_t files::ThumbnailService::activeJobs() const { return m_state->active; }
-std::size_t files::ThumbnailService::queuedJobs() const {
+bool luciole::ThumbnailService::clearing() const { return m_state->clearing; }
+const std::string& luciole::ThumbnailService::error() const { return m_state->error; }
+std::size_t luciole::ThumbnailService::reservedBytes() const { return m_state->reserved; }
+std::size_t luciole::ThumbnailService::activeJobs() const { return m_state->active; }
+std::size_t luciole::ThumbnailService::queuedJobs() const {
   return static_cast<std::size_t>(std::ranges::count_if(m_state->cache, [](const auto& item) {
     return item.second.stage != State::Stage::Ready && item.second.stage != State::Stage::Decoding;
   }));

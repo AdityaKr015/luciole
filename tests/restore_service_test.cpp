@@ -12,8 +12,8 @@
 
 namespace {
   namespace fs = std::filesystem;
-  using O = files::RestoreOutcome;
-  using C = files::TransferConflictChoice;
+  using O = luciole::RestoreOutcome;
+  using C = luciole::TransferConflictChoice;
   void write(const fs::path& path, const std::string& text) { std::ofstream(path) << text; }
   std::string read(const fs::path& path) {
     std::ifstream stream(path);
@@ -22,7 +22,7 @@ namespace {
   struct Fixture {
     fs::path root;
     Fixture() {
-      const files::GString path(g_dir_make_tmp("noctalia-restore-XXXXXX", nullptr));
+      const luciole::GString path(g_dir_make_tmp("luciole-restore-XXXXXX", nullptr));
       TEST_CHECK(path != nullptr);
       root = path.get();
     }
@@ -43,25 +43,25 @@ namespace {
         m_source.dispatch(fds, first);
       }
     }
-    std::vector<files::DirectoryEntry> listing(const files::Location& location) {
-      files::DirectorySession session;
+    std::vector<luciole::DirectoryEntry> listing(const luciole::Location& location) {
+      luciole::DirectorySession session;
       session.open(location);
-      until([&] { return session.snapshot().status != files::DirectoryStatus::Loading; });
-      TEST_CHECK(session.snapshot().status == files::DirectoryStatus::Ready);
+      until([&] { return session.snapshot().status != luciole::DirectoryStatus::Loading; });
+      TEST_CHECK(session.snapshot().status == luciole::DirectoryStatus::Ready);
       return session.snapshot().entries;
     }
-    files::DirectoryEntry trashed(const fs::path& original) {
-      auto entries = listing(files::Location::trash());
+    luciole::DirectoryEntry trashed(const fs::path& original) {
+      auto entries = listing(luciole::Location::trash());
       const auto found = std::ranges::find_if(entries, [&](const auto& entry) {
-        return entry.trash.original == files::Location::fromPath(original.native());
+        return entry.trash.original == luciole::Location::fromPath(original.native());
       });
       TEST_CHECK(found != entries.end());
       return *found;
     }
-    void done(files::RestoreService& service) {
+    void done(luciole::RestoreService& service) {
       until([&] { return !service.busy(); });
     }
-    void decide(files::RestoreService& service, C choice) {
+    void decide(luciole::RestoreService& service, C choice) {
       until([&] { return service.conflict().has_value() || !service.busy(); });
       TEST_CHECK(service.conflict());
       TEST_CHECK(!service.resolve(service.conflict()->id + 1, choice));
@@ -73,38 +73,39 @@ namespace {
   };
   void trash(const fs::path& path) {
     GError* error = nullptr;
-    const bool result = g_file_trash(files::gioFile(files::Location::fromPath(path.native())).get(), nullptr, &error);
+    const bool result =
+        g_file_trash(luciole::gioFile(luciole::Location::fromPath(path.native())).get(), nullptr, &error);
     const std::string message = error ? error->message : "trash failed";
     g_clear_error(&error);
     if (!result) {
       throw std::runtime_error(message);
     }
   }
-  fs::path backing(const files::DirectoryEntry& entry) {
-    const files::GioPtr<GFileInfo> info(g_file_query_info(
-        files::gioFile(entry.location).get(), G_FILE_ATTRIBUTE_STANDARD_TARGET_URI, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS,
-        nullptr, nullptr
+  fs::path backing(const luciole::DirectoryEntry& entry) {
+    const luciole::GioPtr<GFileInfo> info(g_file_query_info(
+        luciole::gioFile(entry.location).get(), G_FILE_ATTRIBUTE_STANDARD_TARGET_URI,
+        G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, nullptr
     ));
     TEST_CHECK(info);
     const auto* uri = g_file_info_get_attribute_string(info.get(), G_FILE_ATTRIBUTE_STANDARD_TARGET_URI);
     TEST_CHECK(uri);
-    const auto path = files::Location::fromUri(uri).nativePath();
+    const auto path = luciole::Location::fromUri(uri).nativePath();
     TEST_CHECK(path);
     return *path;
   }
   void guardsAndUnavailable(Pump& pump) {
     Fixture fixture;
     write(fixture.root / "keep.txt", "keep");
-    auto entry = pump.listing(files::Location::fromPath(fixture.root.native())).front();
-    files::RestoreService service;
+    auto entry = pump.listing(luciole::Location::fromPath(fixture.root.native())).front();
+    luciole::RestoreService service;
     TEST_CHECK(!service.start({}) && !service.start({entry}));
-    entry.location = files::Location::fromUri("trash:///unavailable");
-    entry.trash.original = files::Location::fromPath((fixture.root / "keep.txt").native());
+    entry.location = luciole::Location::fromUri("trash:///unavailable");
+    entry.trash.original = luciole::Location::fromPath((fixture.root / "keep.txt").native());
     TEST_CHECK(!service.start({entry, entry}));
     TEST_CHECK(service.start({entry}) && !service.start({entry}));
     pump.done(service);
     TEST_CHECK(service.results().front().outcome == O::Failed && read(fixture.root / "keep.txt") == "keep");
-    auto dying = std::make_unique<files::RestoreService>();
+    auto dying = std::make_unique<luciole::RestoreService>();
     bool notified = false;
     dying->setChangedCallback([&] { notified = true; });
     TEST_CHECK(dying->start({entry}));
@@ -123,14 +124,14 @@ namespace {
     fs::create_symlink("missing", fixture.root / "broken");
     const auto raw = std::string("raw-") + static_cast<char>(0xff);
     write(fixture.root / raw, "raw name");
-    std::vector<files::DirectoryEntry> selection;
+    std::vector<luciole::DirectoryEntry> selection;
     for (const auto& name :
          {std::string("folder 文"), std::string("plain #%.txt"), std::string("link"), std::string("broken"), raw}) {
       const auto original = fixture.root / name;
       trash(original);
       selection.push_back(pump.trashed(original));
     }
-    files::RestoreService service;
+    luciole::RestoreService service;
     TEST_CHECK(service.start(selection));
     pump.done(service);
     TEST_CHECK(service.results().size() == selection.size() && service.completed() == selection.size());
@@ -149,7 +150,7 @@ namespace {
     trash(path);
     const auto selected = pump.trashed(path);
     write(path, "existing");
-    files::RestoreService service;
+    luciole::RestoreService service;
     TEST_CHECK(service.start({selected}));
     pump.decide(service, C::Skip);
     pump.done(service);
@@ -194,7 +195,7 @@ namespace {
     write(fixture.root / "good", "good");
     trash(fixture.root / "good");
     const auto good = pump.trashed(fixture.root / "good");
-    files::RestoreService service;
+    luciole::RestoreService service;
     TEST_CHECK(service.start({missing, stale, good}));
     pump.done(service);
     TEST_CHECK(service.results()[0].outcome == O::Failed && service.results()[1].outcome == O::Failed);

@@ -8,7 +8,7 @@
 #include <filesystem>
 #include <glib.h>
 
-files::TemplateRevision files::templateRevision(const struct stat& info) {
+luciole::TemplateRevision luciole::templateRevision(const struct stat& info) {
   if (!S_ISREG(info.st_mode) || info.st_size < 0) {
     throwFileError(FileErrorKind::InvalidArgument, "The template is not a regular file.");
   }
@@ -24,8 +24,8 @@ files::TemplateRevision files::templateRevision(const struct stat& info) {
 }
 namespace {
   // Fills result in place so a failure still reports the templates read before it.
-  void listTemplates(files::TemplateListing& result, const files::CancelToken& token) {
-    using namespace files;
+  void listTemplates(luciole::TemplateListing& result, const luciole::CancelToken& token) {
+    using namespace luciole;
     const char* configured = g_get_user_special_dir(G_USER_DIRECTORY_TEMPLATES);
     if (!configured || !g_path_is_absolute(configured)) {
       throwFileError(FileErrorKind::Unavailable, "No Templates folder is configured.");
@@ -80,22 +80,22 @@ namespace {
   }
 } // namespace
 
-struct files::TemplateCatalog::State {
+struct luciole::TemplateCatalog::State {
   CancelToken token;
   std::uint64_t revision = 0;
   bool active = true;
 };
-files::TemplateCatalog::TemplateCatalog() : m_state(std::make_shared<State>()) {}
-files::TemplateCatalog::~TemplateCatalog() {
+luciole::TemplateCatalog::TemplateCatalog() : m_state(std::make_shared<State>()) {}
+luciole::TemplateCatalog::~TemplateCatalog() {
   m_state->active = false;
   cancel();
 }
-void files::TemplateCatalog::cancel() {
+void luciole::TemplateCatalog::cancel() {
   ++m_state->revision;
   m_state->token.cancel();
   m_state->token = CancelToken{};
 }
-void files::TemplateCatalog::load(std::function<void(TemplateListing)> completed) {
+void luciole::TemplateCatalog::load(std::function<void(TemplateListing)> completed) {
   cancel();
   runJob<TemplateListing>(
       [token = m_state->token] {

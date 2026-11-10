@@ -9,7 +9,7 @@
 #include <optional>
 #include <string>
 
-namespace files {
+namespace luciole {
   enum class RenameStatus { Idle, Preparing, Ready, Renaming, Succeeded, Error, Cancelled };
   struct RenameSnapshot {
     RenameStatus status = RenameStatus::Idle;
@@ -39,4 +39,4 @@ namespace files {
     struct State;
     std::shared_ptr<State> m_state;
   };
-} // namespace files
+} // namespace luciole

@@ -5,10 +5,10 @@
 #include <exception>
 #include <utility>
 
-files::FileErrorException::FileErrorException(FileError error)
+luciole::FileErrorException::FileErrorException(FileError error)
     : std::runtime_error(error.message), m_error(std::move(error)) {}
 
-files::FileError files::errnoError(int code) {
+luciole::FileError luciole::errnoError(int code) {
   using Kind = FileErrorKind;
   auto kind = Kind::Other;
   switch (code) {
@@ -68,13 +68,13 @@ files::FileError files::errnoError(int code) {
   return {.kind = kind, .message = std::strerror(code)};
 }
 
-void files::throwFileError(FileErrorKind kind, std::string message) {
+void luciole::throwFileError(FileErrorKind kind, std::string message) {
   throw FileErrorException({.kind = kind, .message = std::move(message)});
 }
 
-void files::throwErrno(int code) { throw FileErrorException(errnoError(code)); }
+void luciole::throwErrno(int code) { throw FileErrorException(errnoError(code)); }
 
-files::FileError files::currentFileError() {
+luciole::FileError luciole::currentFileError() {
   try {
     throw;
   } catch (const FileErrorException& error) {

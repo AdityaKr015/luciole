@@ -4,7 +4,7 @@
 
 #include <chrono>
 
-namespace files {
+namespace luciole {
   std::optional<std::string> selectionPatternProblem(const std::string& pattern);
   // Append-only, bounded input for the file pane's optional typeahead mode.
   // The clock is explicit so timeout, repeat cycling and edits are testable.
@@ -25,4 +25,4 @@ namespace files {
     std::string m_text;
     Clock::time_point m_changed;
   };
-} // namespace files
+} // namespace luciole

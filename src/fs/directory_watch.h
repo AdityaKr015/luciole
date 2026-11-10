@@ -4,7 +4,7 @@
 #include <functional>
 #include <memory>
 
-namespace files {
+namespace luciole {
   // Main-context monitor for one local directory. changed receives each path the
   // provider reports, including both ends of a move, and must not throw.
   class DirectoryWatch {
@@ -21,4 +21,4 @@ namespace files {
     explicit DirectoryWatch(std::unique_ptr<State> state);
     std::unique_ptr<State> m_state;
   };
-} // namespace files
+} // namespace luciole

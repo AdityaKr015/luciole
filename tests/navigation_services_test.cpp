@@ -18,7 +18,7 @@ namespace {
   struct Fixture {
     fs::path path;
     Fixture() {
-      const files::GString temp(g_dir_make_tmp("noctalia-navigation-XXXXXX", nullptr));
+      const luciole::GString temp(g_dir_make_tmp("luciole-navigation-XXXXXX", nullptr));
       TEST_CHECK(temp != nullptr);
       path = temp.get();
       fs::create_directory(path / "Alpha");
@@ -53,23 +53,23 @@ namespace {
     GlibPollSource m_source;
   };
   void identityChecks() {
-    const files::GioPtr<GFileInfo> info(g_file_info_new());
-    TEST_CHECK(!files::readFileIdentity(info.get()));
+    const luciole::GioPtr<GFileInfo> info(g_file_info_new());
+    TEST_CHECK(!luciole::readFileIdentity(info.get()));
     g_file_info_set_attribute_string(info.get(), G_FILE_ATTRIBUTE_ID_FILE, "file");
-    TEST_CHECK(!files::readFileIdentity(info.get()));
+    TEST_CHECK(!luciole::readFileIdentity(info.get()));
     g_file_info_set_attribute_boolean(info.get(), G_FILE_ATTRIBUTE_ID_FILESYSTEM, true);
-    TEST_CHECK(!files::readFileIdentity(info.get()));
+    TEST_CHECK(!luciole::readFileIdentity(info.get()));
     g_file_info_set_attribute_string(info.get(), G_FILE_ATTRIBUTE_ID_FILESYSTEM, "filesystem");
-    TEST_CHECK((files::readFileIdentity(info.get()) == files::FileIdentity{"filesystem", "file"}));
+    TEST_CHECK((luciole::readFileIdentity(info.get()) == luciole::FileIdentity{"filesystem", "file"}));
   }
   void completionChecks() {
     Fixture fixture;
     Pump pump;
-    files::PathCompletion completion;
-    const auto base = files::Location::fromPath(fixture.path.native());
-    files::PathSuggestions result;
+    luciole::PathCompletion completion;
+    const auto base = luciole::Location::fromPath(fixture.path.native());
+    luciole::PathSuggestions result;
     bool done = false;
-    const auto receive = [&](files::PathSuggestions suggestions) {
+    const auto receive = [&](luciole::PathSuggestions suggestions) {
       result = std::move(suggestions);
       done = true;
     };
@@ -77,7 +77,7 @@ namespace {
     pump.until([&] { return done; });
     TEST_CHECK(result.error.empty() && result.items.size() == 3);
     for (const auto& item : result.items) {
-      TEST_CHECK(files::resolveLocationText(item.text, base) == item.location);
+      TEST_CHECK(luciole::resolveLocationText(item.text, base) == item.location);
     }
     done = false;
     completion.complete(".", base, false, receive);
@@ -91,7 +91,7 @@ namespace {
         && result.items.front().text.starts_with("file:")
         && result.items.front().text.contains("%FF")
     );
-    TEST_CHECK(files::resolveLocationText(result.items.front().text, base) == result.items.front().location);
+    TEST_CHECK(luciole::resolveLocationText(result.items.front().text, base) == result.items.front().location);
     done = false;
     completion.complete("A%20", base, false, receive);
     pump.until([&] { return done; });
@@ -102,7 +102,7 @@ namespace {
     TEST_CHECK(result.items.size() == 1 && result.items.front().label == "A space <literal> café");
     bool obsolete = false;
     done = false;
-    completion.children(base, true, [&](const files::PathSuggestions&) { obsolete = true; });
+    completion.children(base, true, [&](const luciole::PathSuggestions&) { obsolete = true; });
     completion.complete("Alpha", base, false, receive);
     pump.until([&] { return done; });
     TEST_CHECK(!obsolete && result.items.size() == 1);
@@ -117,20 +117,20 @@ namespace {
     completion.complete("many-", base, false, receive);
     pump.until([&] { return done; });
     TEST_CHECK(result.truncated && result.items.size() == 256);
-    const auto home = files::Location::fromPath(g_get_home_dir());
-    TEST_CHECK(files::resolveLocationText("~/", base) == home);
+    const auto home = luciole::Location::fromPath(g_get_home_dir());
+    TEST_CHECK(luciole::resolveLocationText("~/", base) == home);
     TEST_CHECK(
-        files::resolveLocationText("./Alpha", base) == files::Location::fromPath((fixture.path / "Alpha").native())
+        luciole::resolveLocationText("./Alpha", base) == luciole::Location::fromPath((fixture.path / "Alpha").native())
     );
     bool rejected = false;
     try {
-      (void)files::resolveLocationText(std::string("bad\0name", 8), base);
+      (void)luciole::resolveLocationText(std::string("bad\0name", 8), base);
     } catch (const std::invalid_argument&) {
       rejected = true;
     }
     TEST_CHECK(rejected);
-    auto destroyed = std::make_unique<files::PathCompletion>();
-    destroyed->children(base, true, [&](const files::PathSuggestions&) { obsolete = true; });
+    auto destroyed = std::make_unique<luciole::PathCompletion>();
+    destroyed->children(base, true, [&](const luciole::PathSuggestions&) { obsolete = true; });
     destroyed.reset();
     done = false;
     completion.children(base, true, receive);
@@ -142,18 +142,18 @@ namespace {
     Pump pump;
     const char* oldPath = g_getenv("PATH");
     const std::string original = oldPath ? oldPath : "";
-    const files::GString shell(g_find_program_in_path("sh"));
+    const luciole::GString shell(g_find_program_in_path("sh"));
     TEST_CHECK(shell != nullptr);
     const auto helper = fixture.path / "xdg-terminal-exec";
     const auto log = fixture.path / "terminal.log";
     {
       std::ofstream script(helper);
-      script << "#!" << shell.get() << "\nprintf '%s\\0' \"$PWD\" \"$@\" > \"$NOCTALIA_TEST_TERMINAL_LOG\"\n";
+      script << "#!" << shell.get() << "\nprintf '%s\\0' \"$PWD\" \"$@\" > \"$LUCIOLE_TEST_TERMINAL_LOG\"\n";
     }
     fs::permissions(helper, fs::perms::owner_all);
     g_setenv("PATH", fixture.path.c_str(), true);
-    g_setenv("NOCTALIA_TEST_TERMINAL_LOG", log.c_str(), true);
-    files::TerminalLauncher launcher;
+    g_setenv("LUCIOLE_TEST_TERMINAL_LOG", log.c_str(), true);
+    luciole::TerminalLauncher launcher;
     g_setenv("PATH", original.c_str(), true);
     TEST_CHECK(launcher.available());
     const auto target = fixture.path / "quotes ' $() ; newline\n日本語";
@@ -164,39 +164,39 @@ namespace {
       error = std::move(message);
       done = true;
     };
-    launcher.open(files::Location::fromPath(target.native()), receive);
+    launcher.open(luciole::Location::fromPath(target.native()), receive);
     pump.until([&] { return done; });
     TEST_CHECK(error.empty());
     std::ifstream stream(log, std::ios::binary);
     const std::string output{std::istreambuf_iterator<char>(stream), {}};
     TEST_CHECK(output == target.native() + std::string(1, '\0') + "--dir=" + target.native() + std::string(1, '\0'));
     done = false;
-    launcher.open(files::Location::fromUri("sftp://example.invalid/folder"), receive);
+    launcher.open(luciole::Location::fromUri("sftp://example.invalid/folder"), receive);
     pump.until([&] { return done; });
     TEST_CHECK(!error.empty());
     done = false;
-    launcher.open(files::Location::fromPath((fixture.path / "A file").native()), receive);
+    launcher.open(luciole::Location::fromPath((fixture.path / "A file").native()), receive);
     pump.until([&] { return done; });
     TEST_CHECK(!error.empty());
     g_setenv("PATH", "", true);
-    files::TerminalLauncher missing;
+    luciole::TerminalLauncher missing;
     g_setenv("PATH", original.c_str(), true);
     TEST_CHECK(!missing.available());
     done = false;
-    missing.open(files::Location::fromPath(target.native()), receive);
+    missing.open(luciole::Location::fromPath(target.native()), receive);
     pump.until([&] { return done; });
     TEST_CHECK(!error.empty());
-    auto destroyed = std::make_unique<files::TerminalLauncher>();
+    auto destroyed = std::make_unique<luciole::TerminalLauncher>();
     bool called = false;
-    destroyed->open(files::Location::fromUri("sftp://example.invalid/folder"), [&](const std::string&) {
+    destroyed->open(luciole::Location::fromUri("sftp://example.invalid/folder"), [&](const std::string&) {
       called = true;
     });
     destroyed.reset();
     done = false;
-    missing.open(files::Location::fromPath(target.native()), receive);
+    missing.open(luciole::Location::fromPath(target.native()), receive);
     pump.until([&] { return done; });
     TEST_CHECK(!called);
-    g_unsetenv("NOCTALIA_TEST_TERMINAL_LOG");
+    g_unsetenv("LUCIOLE_TEST_TERMINAL_LOG");
   }
 } // namespace
 int main() {

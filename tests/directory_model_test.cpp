@@ -16,19 +16,19 @@
 
 namespace {
   using namespace std::chrono_literals;
-  using files::DirectoryEntry;
-  using files::DirectoryModel;
-  using files::DirectorySnapshot;
-  using files::DirectoryStatus;
-  using files::EntryId;
-  using files::Location;
-  using files::SelectionMode;
-  using files::SortField;
+  using luciole::DirectoryEntry;
+  using luciole::DirectoryModel;
+  using luciole::DirectorySnapshot;
+  using luciole::DirectoryStatus;
+  using luciole::EntryId;
+  using luciole::Location;
+  using luciole::SelectionMode;
+  using luciole::SortField;
 
-  DirectoryEntry entry(EntryId id, const std::string& name, files::FileType type = files::FileType::Regular) {
+  DirectoryEntry entry(EntryId id, const std::string& name, luciole::FileType type = luciole::FileType::Regular) {
     return {
         .id = id,
-        .location = Location::fromPath("/tmp/noctalia-model-fixture/" + name),
+        .location = Location::fromPath("/tmp/luciole-model-fixture/" + name),
         .name = name,
         .displayName = name,
         .type = type,
@@ -42,7 +42,7 @@ namespace {
   DirectorySnapshot snapshot(std::vector<DirectoryEntry> entries, std::uint64_t generation = 1) {
     DirectorySnapshot result;
     result.generation = generation;
-    result.location = Location::fromPath("/tmp/noctalia-model-fixture");
+    result.location = Location::fromPath("/tmp/luciole-model-fixture");
     result.status = DirectoryStatus::Ready;
     result.entries = std::move(entries);
     return result;
@@ -66,8 +66,8 @@ namespace {
     raw.displayName = "raw bytes";
     DirectoryModel model;
     model.applySnapshot(snapshot(
-        {entry(1, "notes.txt"), renamed, hidden, hiddenBackup, entry(5, "directory~", files::FileType::Directory),
-         entry(6, "notes.bak"), entry(7, "link~", files::FileType::Symlink), entry(8, "café-<literal>-文~"), raw,
+        {entry(1, "notes.txt"), renamed, hidden, hiddenBackup, entry(5, "directory~", luciole::FileType::Directory),
+         entry(6, "notes.bak"), entry(7, "link~", luciole::FileType::Symlink), entry(8, "café-<literal>-文~"), raw,
          ordinary}
     ));
     TEST_CHECK(model.rows().size() == 8 && model.filter().showBackups);
@@ -92,8 +92,8 @@ namespace {
   void testSortAndMetadata() {
     DirectoryModel model;
     auto data = snapshot(
-        {entry(10, "item10"), entry(2, "item2"), entry(1, "item1"), entry(30, "z-folder", files::FileType::Directory),
-         entry(20, "a-folder", files::FileType::Directory)}
+        {entry(10, "item10"), entry(2, "item2"), entry(1, "item1"), entry(30, "z-folder", luciole::FileType::Directory),
+         entry(20, "a-folder", luciole::FileType::Directory)}
     );
     model.applySnapshot(data);
     rows(model, {20, 30, 1, 2, 10});
@@ -151,106 +151,106 @@ namespace {
     rows(model, {1, 2});
     model.setSort({SortField::Location, true, false});
     rows(model, {2, 1});
-    const auto columns = files::DetailsColumns::forWidth(300, files::allDetailsColumns());
+    const auto columns = luciole::DetailsColumns::forWidth(300, luciole::allDetailsColumns());
     TEST_CHECK(columns.contentWidth > 1500 && columns.nameWidth == 160);
-    for (const auto column : files::kDefaultDetailsColumnOrder) {
+    for (const auto column : luciole::kDefaultDetailsColumnOrder) {
       TEST_CHECK(columns.visible(column) && columns.width(column) >= 56);
     }
-    const auto reordered = files::insertDetailsColumnBefore(
-        files::kDefaultDetailsColumnOrder, files::DetailsColumn::Owner, files::DetailsColumn::Type
+    const auto reordered = luciole::insertDetailsColumnBefore(
+        luciole::kDefaultDetailsColumnOrder, luciole::DetailsColumn::Owner, luciole::DetailsColumn::Type
     );
-    TEST_CHECK(reordered && reordered->front() == files::DetailsColumn::Owner);
+    TEST_CHECK(reordered && reordered->front() == luciole::DetailsColumn::Owner);
   }
 
   void testDetailsLayout() {
-    const auto wide = files::DetailsColumns::forWidth(1000);
+    const auto wide = luciole::DetailsColumns::forWidth(1000);
     TEST_CHECK(wide.contentWidth == 1000 && wide.nameWidth == 566 && wide.showType);
-    const auto ultrawide = files::DetailsColumns::forWidth(4000);
+    const auto ultrawide = luciole::DetailsColumns::forWidth(4000);
     TEST_CHECK(ultrawide.nameWidth == 3566 && ultrawide.contentWidth == 4000);
-    const auto bounded = files::DetailsColumns::forWidth(100000);
-    TEST_CHECK(files::validDetailsColumnWidth(0, static_cast<int>(bounded.nameWidth)));
-    const files::DetailsColumnWidths requested{400, 200, 96, 180, 156, 156, 128, 128, 112, 260};
-    const auto narrow = files::DetailsColumns::forWidth(300, {}, requested);
-    const auto expanded = files::DetailsColumns::forWidth(1600, {}, requested);
+    const auto bounded = luciole::DetailsColumns::forWidth(100000);
+    TEST_CHECK(luciole::validDetailsColumnWidth(0, static_cast<int>(bounded.nameWidth)));
+    const luciole::DetailsColumnWidths requested{400, 200, 96, 180, 156, 156, 128, 128, 112, 260};
+    const auto narrow = luciole::DetailsColumns::forWidth(300, {}, requested);
+    const auto expanded = luciole::DetailsColumns::forWidth(1600, {}, requested);
     TEST_CHECK(
         narrow == expanded && narrow.contentWidth == 884 && narrow.showType && narrow.showSize && narrow.showModified
     );
-    const auto hidden = files::DetailsColumns::forWidth(300, {false, false, false}, requested);
+    const auto hidden = luciole::DetailsColumns::forWidth(300, {false, false, false}, requested);
     TEST_CHECK(hidden.contentWidth == 408 && hidden.nameWidth == 400);
-    const auto automatic = files::DetailsColumns::forWidth(300);
+    const auto automatic = luciole::DetailsColumns::forWidth(300);
     TEST_CHECK(automatic.nameWidth == 160 && automatic.contentWidth == 594 && automatic.showType);
   }
 
   void testDetailsColumnMoves() {
-    using Column = files::DetailsColumn;
-    const auto defaults = files::kDefaultDetailsColumnOrder;
+    using Column = luciole::DetailsColumn;
+    const auto defaults = luciole::kDefaultDetailsColumnOrder;
     TEST_CHECK(
-        !files::moveDetailsColumn(defaults, Column::Type, -1, {})
-        && !files::moveDetailsColumn(defaults, Column::Modified, 1, {})
+        !luciole::moveDetailsColumn(defaults, Column::Type, -1, {})
+        && !luciole::moveDetailsColumn(defaults, Column::Modified, 1, {})
     );
     TEST_CHECK(
-        (files::moveDetailsColumn(defaults, Column::Type, 1, {})
-         == files::DetailsColumnOrder{
+        (luciole::moveDetailsColumn(defaults, Column::Type, 1, {})
+         == luciole::DetailsColumnOrder{
              Column::Size, Column::Type, Column::Modified, Column::Accessed, Column::Created, Column::Owner,
              Column::Group, Column::Permissions, Column::Location
          })
     );
     TEST_CHECK(
-        (files::moveDetailsColumn(defaults, Column::Modified, -1, {})
-         == files::DetailsColumnOrder{
+        (luciole::moveDetailsColumn(defaults, Column::Modified, -1, {})
+         == luciole::DetailsColumnOrder{
              Column::Type, Column::Modified, Column::Size, Column::Accessed, Column::Created, Column::Owner,
              Column::Group, Column::Permissions, Column::Location
          })
     );
     TEST_CHECK(
-        (files::moveDetailsColumn(defaults, Column::Type, 1, {.size = false})
-         == files::DetailsColumnOrder{
+        (luciole::moveDetailsColumn(defaults, Column::Type, 1, {.size = false})
+         == luciole::DetailsColumnOrder{
              Column::Modified, Column::Size, Column::Type, Column::Accessed, Column::Created, Column::Owner,
              Column::Group, Column::Permissions, Column::Location
          })
     );
     TEST_CHECK(
-        !files::moveDetailsColumn(defaults, Column::Type, -1, {.type = false})
-        && !files::moveDetailsColumn(defaults, Column::Type, 1, {.size = false, .modified = false})
-        && !files::moveDetailsColumn(defaults, Column::Type, 0, {})
-        && !files::moveDetailsColumn({Column::Type, Column::Type, Column::Size}, Column::Type, 1, {})
+        !luciole::moveDetailsColumn(defaults, Column::Type, -1, {.type = false})
+        && !luciole::moveDetailsColumn(defaults, Column::Type, 1, {.size = false, .modified = false})
+        && !luciole::moveDetailsColumn(defaults, Column::Type, 0, {})
+        && !luciole::moveDetailsColumn({Column::Type, Column::Type, Column::Size}, Column::Type, 1, {})
     );
   }
 
   void testDetailsColumnInsertion() {
-    using Column = files::DetailsColumn;
-    const auto defaults = files::kDefaultDetailsColumnOrder;
+    using Column = luciole::DetailsColumn;
+    const auto defaults = luciole::kDefaultDetailsColumnOrder;
     TEST_CHECK(
-        (files::insertDetailsColumnBefore(defaults, Column::Type, std::nullopt)
-         == files::DetailsColumnOrder{
+        (luciole::insertDetailsColumnBefore(defaults, Column::Type, std::nullopt)
+         == luciole::DetailsColumnOrder{
              Column::Size, Column::Modified, Column::Accessed, Column::Created, Column::Owner, Column::Group,
              Column::Permissions, Column::Location, Column::Type
          })
     );
     TEST_CHECK(
-        (files::insertDetailsColumnBefore(defaults, Column::Modified, Column::Type)
-         == files::DetailsColumnOrder{
+        (luciole::insertDetailsColumnBefore(defaults, Column::Modified, Column::Type)
+         == luciole::DetailsColumnOrder{
              Column::Modified, Column::Type, Column::Size, Column::Accessed, Column::Created, Column::Owner,
              Column::Group, Column::Permissions, Column::Location
          })
     );
     TEST_CHECK(
-        files::insertDetailsColumnBefore(defaults, Column::Type, Column::Type) == defaults
-        && files::insertDetailsColumnBefore(defaults, Column::Size, Column::Modified) == defaults
+        luciole::insertDetailsColumnBefore(defaults, Column::Type, Column::Type) == defaults
+        && luciole::insertDetailsColumnBefore(defaults, Column::Size, Column::Modified) == defaults
     );
     TEST_CHECK(
-        !files::insertDetailsColumnBefore(defaults, static_cast<Column>(99), std::nullopt)
-        && !files::insertDetailsColumnBefore(defaults, Column::Type, static_cast<Column>(99))
-        && !files::insertDetailsColumnBefore({Column::Type, Column::Type, Column::Size}, Column::Type, std::nullopt)
+        !luciole::insertDetailsColumnBefore(defaults, static_cast<Column>(99), std::nullopt)
+        && !luciole::insertDetailsColumnBefore(defaults, Column::Type, static_cast<Column>(99))
+        && !luciole::insertDetailsColumnBefore({Column::Type, Column::Type, Column::Size}, Column::Type, std::nullopt)
     );
   }
 
   void testTypeSort() {
     DirectoryModel model;
     auto data = snapshot(
-        {entry(10, "z-folder", files::FileType::Directory), entry(2, "link"), entry(3, "note10.txt"),
+        {entry(10, "z-folder", luciole::FileType::Directory), entry(2, "link"), entry(3, "note10.txt"),
          entry(4, "note2.txt"), entry(5, "z.png"), entry(6, "a.bin"), entry(7, "b"),
-         entry(8, "special", files::FileType::Special), entry(9, "c", files::FileType::Unknown)}
+         entry(8, "special", luciole::FileType::Special), entry(9, "c", luciole::FileType::Unknown)}
     );
     data.entries[1].symlink = true;
     data.entries[1].contentType = "image/png";
@@ -294,8 +294,8 @@ namespace {
   void testSelectionSummary() {
     DirectoryModel model;
     auto data = snapshot(
-        {entry(1, "empty"), entry(2, "known"), entry(3, "unknown"), entry(4, "folder", files::FileType::Directory),
-         entry(5, "link"), entry(6, "special", files::FileType::Special), entry(7, ".hidden")}
+        {entry(1, "empty"), entry(2, "known"), entry(3, "unknown"), entry(4, "folder", luciole::FileType::Directory),
+         entry(5, "link"), entry(6, "special", luciole::FileType::Special), entry(7, ".hidden")}
     );
     data.entries[0].size = 0;
     data.entries[1].size = 5;
@@ -307,7 +307,7 @@ namespace {
     data.entries[6].size = 12;
     model.applySnapshot(data);
     model.selectAll();
-    const files::SelectionSummary expected{.files = 3, .folders = 1, .others = 2, .bytes = 5, .unknownSizes = 1};
+    const luciole::SelectionSummary expected{.files = 3, .folders = 1, .others = 2, .bytes = 5, .unknownSizes = 1};
     TEST_CHECK(model.selectionSummary() == expected);
     model.setFilter({.showHidden = true, .text = {}});
     model.selectAll();
@@ -318,10 +318,10 @@ namespace {
     model.applySnapshot(data);
     TEST_CHECK(model.selectionSummary().bytes == 10);
     TEST_CHECK(model.replaceSelection(std::array<EntryId, 2>{1, 2}));
-    TEST_CHECK((model.selectionSummary() == files::SelectionSummary{.files = 2, .bytes = 10}));
+    TEST_CHECK((model.selectionSummary() == luciole::SelectionSummary{.files = 2, .bytes = 10}));
     data.status = DirectoryStatus::Cancelled;
     model.applySnapshot(data);
-    TEST_CHECK(model.selectionSummary() == files::SelectionSummary{});
+    TEST_CHECK(model.selectionSummary() == luciole::SelectionSummary{});
     auto huge = snapshot({entry(10, "large"), entry(11, "one")}, 2);
     huge.entries[0].size = std::numeric_limits<std::uint64_t>::max();
     huge.entries[1].size = 1;
@@ -329,10 +329,10 @@ namespace {
     model.selectAll();
     TEST_CHECK(
         (model.selectionSummary()
-         == files::SelectionSummary{.files = 2, .bytes = std::numeric_limits<std::uint64_t>::max(), .overflow = true})
+         == luciole::SelectionSummary{.files = 2, .bytes = std::numeric_limits<std::uint64_t>::max(), .overflow = true})
     );
     model.clearSelection();
-    TEST_CHECK(model.selectionSummary() == files::SelectionSummary{});
+    TEST_CHECK(model.selectionSummary() == luciole::SelectionSummary{});
   }
 
   void testFiltering() {
@@ -400,15 +400,15 @@ namespace {
     model.applySnapshot(snapshot({entry(1, "a"), entry(2, "b"), entry(3, "c")}));
     int publications = 0;
     model.setChangedCallback([&] { ++publications; });
-    const std::array initial{files::EntryId{1}, files::EntryId{3}, files::EntryId{1}};
+    const std::array initial{luciole::EntryId{1}, luciole::EntryId{3}, luciole::EntryId{1}};
     TEST_CHECK(model.replaceSelection(initial));
     selected(model, {1, 3});
     TEST_CHECK(publications == 1 && model.selection().anchor == 1 && model.selection().focused == 1);
-    const std::array invalid{files::EntryId{2}, files::EntryId{999}};
+    const std::array invalid{luciole::EntryId{2}, luciole::EntryId{999}};
     TEST_CHECK(!model.replaceSelection(invalid));
     selected(model, {1, 3});
     TEST_CHECK(publications == 1);
-    const std::array reduced{files::EntryId{3}};
+    const std::array reduced{luciole::EntryId{3}};
     TEST_CHECK(model.replaceSelection(reduced));
     selected(model, {3});
     model.setSort({.descending = true});
@@ -460,7 +460,7 @@ namespace {
     model.applySnapshot(cancelled);
     TEST_CHECK(!model.select(2));
     cancelled.status = DirectoryStatus::Error;
-    cancelled.error = files::FileError{.kind = files::FileErrorKind::Denied, .message = "partial fixture"};
+    cancelled.error = luciole::FileError{.kind = luciole::FileErrorKind::Denied, .message = "partial fixture"};
     model.applySnapshot(cancelled);
     TEST_CHECK(model.snapshot().error && model.select(2));
     auto other = snapshot({entry(2, "other")}, 15);
@@ -476,7 +476,7 @@ namespace {
   struct Fixture {
     std::filesystem::path path;
     Fixture() {
-      const files::GString directory(g_dir_make_tmp("noctalia-model-test-XXXXXX", nullptr));
+      const luciole::GString directory(g_dir_make_tmp("luciole-model-test-XXXXXX", nullptr));
       TEST_CHECK(directory != nullptr);
       path = directory.get();
     }
@@ -519,7 +519,7 @@ namespace {
     fixture.write("item10");
     Pump pump;
     DirectoryModel model;
-    files::DirectorySession session;
+    luciole::DirectorySession session;
     session.setChangedCallback([&] { model.applySnapshot(session.snapshot()); });
     session.open(Location::fromPath(fixture.path.native()));
     pump.until([&] { return model.snapshot().status == DirectoryStatus::Ready; });

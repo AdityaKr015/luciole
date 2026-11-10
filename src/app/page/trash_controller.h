@@ -16,10 +16,10 @@ class TrashController {
 public:
   explicit TrashController(PageContext& page);
 
-  void trashItems(const std::vector<files::DirectoryEntry>& targets);
-  void restore(const std::vector<files::DirectoryEntry>& targets);
+  void trashItems(const std::vector<luciole::DirectoryEntry>& targets);
+  void restore(const std::vector<luciole::DirectoryEntry>& targets);
   // Empties Trash, or deletes `selection` from it, after the user confirms.
-  void openEmptyTrash(std::optional<std::vector<files::DirectoryEntry>> selection = std::nullopt);
+  void openEmptyTrash(std::optional<std::vector<luciole::DirectoryEntry>> selection = std::nullopt);
   // Owned job changes: sync the confirmation dialog, or report a finished job.
   void trashChanged(OperationJob& job);
   void emptyTrashChanged(OperationJob& job);
@@ -30,7 +30,7 @@ public:
   void layoutDialog();
 
 private:
-  bool canTrashItems(const std::vector<files::DirectoryEntry>& targets) const;
+  bool canTrashItems(const std::vector<luciole::DirectoryEntry>& targets) const;
   void confirmEmptyTrash();
   void syncEmptyTrash();
 

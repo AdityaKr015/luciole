@@ -46,7 +46,7 @@ namespace {
       if (image->rgba.size() != static_cast<std::size_t>(image->width) * image->height * 4) {
         return {};
       }
-      const int fd = memfd_create("noctalia-files-drag", MFD_CLOEXEC);
+      const int fd = memfd_create("luciole-drag", MFD_CLOEXEC);
       if (fd < 0) {
         return {};
       }
@@ -169,7 +169,7 @@ namespace {
   }
 } // namespace
 
-struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> {
+struct luciole::WaylandTextClipboard::State : std::enable_shared_from_this<State> {
   struct Offer {
     std::unordered_set<std::string> types;
     std::uint32_t actions = WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY;
@@ -597,7 +597,7 @@ struct files::WaylandTextClipboard::State : std::enable_shared_from_this<State> 
   }
 };
 
-files::WaylandTextClipboard::WaylandTextClipboard(
+luciole::WaylandTextClipboard::WaylandTextClipboard(
     wl_display* display, wl_data_device_manager* manager, wl_seat* seat, std::function<std::uint32_t()> serial,
     wl_compositor* compositor, wl_shm* shm
 )
@@ -666,7 +666,7 @@ files::WaylandTextClipboard::WaylandTextClipboard(
   };
   wl_data_device_add_listener(state.device, &listener, &state);
 }
-files::WaylandTextClipboard::~WaylandTextClipboard() {
+luciole::WaylandTextClipboard::~WaylandTextClipboard() {
   auto& state = *m_state;
   state.active = false;
   if (state.focusSync) {
@@ -694,16 +694,16 @@ files::WaylandTextClipboard::~WaylandTextClipboard() {
     }
   }
 }
-bool files::WaylandTextClipboard::available() const { return m_state->device && m_state->serial() != 0; }
-std::optional<std::string> files::WaylandTextClipboard::clipboardText() { return m_state->text; }
-void files::WaylandTextClipboard::requestClipboardText(std::function<void(std::optional<std::string>)> callback) {
+bool luciole::WaylandTextClipboard::available() const { return m_state->device && m_state->serial() != 0; }
+std::optional<std::string> luciole::WaylandTextClipboard::clipboardText() { return m_state->text; }
+void luciole::WaylandTextClipboard::requestClipboardText(std::function<void(std::optional<std::string>)> callback) {
   if (m_state->pending) {
     m_state->callbacks.push_back(std::move(callback));
   } else {
     callback(m_state->text);
   }
 }
-void files::WaylandTextClipboard::setClipboardText(std::string text) {
+void luciole::WaylandTextClipboard::setClipboardText(std::string text) {
   if (!available()
       || text.size() > kTextLimit
       || text.contains('\0')
@@ -720,10 +720,10 @@ void files::WaylandTextClipboard::setClipboardText(std::string text) {
   wl_data_device_set_selection(state.device, source, state.serial());
   state.received();
 }
-bool files::WaylandTextClipboard::setFiles(FilePayload payload) {
+bool luciole::WaylandTextClipboard::setFiles(FilePayload payload) {
   return available() && m_state->publish(std::move(payload));
 }
-bool files::WaylandTextClipboard::hasFiles() const {
+bool luciole::WaylandTextClipboard::hasFiles() const {
   const auto& state = *m_state;
   if (state.moving == state.epoch) {
     return false;
@@ -737,13 +737,13 @@ bool files::WaylandTextClipboard::hasFiles() const {
   }
   return false;
 }
-bool files::WaylandTextClipboard::isCut(const Location& location) const {
+bool luciole::WaylandTextClipboard::isCut(const Location& location) const {
   return m_state->owned
       && m_state->files
       && m_state->files->cut
       && std::ranges::contains(m_state->files->locations, location);
 }
-void files::WaylandTextClipboard::requestFiles(std::function<void(std::optional<ClipboardFiles>)> callback) {
+void luciole::WaylandTextClipboard::requestFiles(std::function<void(std::optional<ClipboardFiles>)> callback) {
   auto self = m_state;
   if (!available() || !hasFiles()) {
     callback(std::nullopt);
@@ -801,7 +801,7 @@ void files::WaylandTextClipboard::requestFiles(std::function<void(std::optional<
     finish();
   });
 }
-bool files::WaylandTextClipboard::claimMove(std::uint64_t revision) {
+bool luciole::WaylandTextClipboard::claimMove(std::uint64_t revision) {
   if (revision != m_state->epoch || m_state->moving == revision || m_state->reconciliation) {
     return false;
   }
@@ -809,7 +809,7 @@ bool files::WaylandTextClipboard::claimMove(std::uint64_t revision) {
   m_state->notify();
   return true;
 }
-void files::WaylandTextClipboard::finishMove(
+void luciole::WaylandTextClipboard::finishMove(
     const ClipboardFiles& selection, const std::vector<TransferResult>& results
 ) {
   if (m_state->moving != selection.revision) {
@@ -834,11 +834,11 @@ void files::WaylandTextClipboard::finishMove(
   m_state->reconcile();
   m_state->notify();
 }
-void files::WaylandTextClipboard::keyboardFocusEntered() { m_state->focusEntered(); }
-void files::WaylandTextClipboard::setChangedCallback(std::function<void()> callback) {
+void luciole::WaylandTextClipboard::keyboardFocusEntered() { m_state->focusEntered(); }
+void luciole::WaylandTextClipboard::setChangedCallback(std::function<void()> callback) {
   m_state->changed = std::move(callback);
 }
-bool files::WaylandTextClipboard::startDrag(
+bool luciole::WaylandTextClipboard::startDrag(
     FilePayload payload, wl_surface* origin, std::uint32_t pressSerial, const LoadedImageFile* image,
     std::function<void()> finished, std::optional<DragAction> forcedAction,
     std::function<void(std::optional<DragAction>)> actionChanged
@@ -882,8 +882,8 @@ bool files::WaylandTextClipboard::startDrag(
   }
   return true;
 }
-void files::WaylandTextClipboard::refreshDrag() { m_state->updateDrag(); }
-void files::WaylandTextClipboard::cancelDrag() {
+void luciole::WaylandTextClipboard::refreshDrag() { m_state->updateDrag(); }
+void luciole::WaylandTextClipboard::cancelDrag() {
   for (auto it = m_state->sources.begin(); it != m_state->sources.end(); ++it) {
     if (it->second.drag && !it->second.dropped) {
       auto* source = it->first;
@@ -897,7 +897,7 @@ void files::WaylandTextClipboard::cancelDrag() {
     }
   }
 }
-const files::FilePayload* files::WaylandTextClipboard::dragFiles() const {
+const luciole::FilePayload* luciole::WaylandTextClipboard::dragFiles() const {
   for (const auto& [source, value] : m_state->sources) {
     (void)source;
     if (value.drag && !value.dropped && value.files) {
@@ -906,7 +906,7 @@ const files::FilePayload* files::WaylandTextClipboard::dragFiles() const {
   }
   return nullptr;
 }
-void files::WaylandTextClipboard::setDropCallbacks(
+void luciole::WaylandTextClipboard::setDropCallbacks(
     std::function<FileDropTarget(wl_surface*, float, float)> hover, std::function<void()> leave
 ) {
   m_state->hover = std::move(hover);

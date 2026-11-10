@@ -2,17 +2,19 @@
 
 Open Settings with Ctrl+, or the main menu. It is a page inside the existing window. Changes save automatically; no manual reload is needed. Reset removes a GUI override so the base configuration or built-in default applies again. Reset all settings removes the browser override set.
 
+Luciole uses `luciole/` for its application-owned directories. Existing data under the previous application name is not imported automatically. To retain settings or Places, move the corresponding files into the paths documented below while the application is closed.
+
 ## Files and precedence
 
 Settings load in this order:
 
 1. Built-in defaults.
-2. `$XDG_CONFIG_HOME/noctalia-files/config.toml`, your optional base configuration.
-3. `$XDG_CONFIG_HOME/noctalia-files/settings.toml`, writable GUI overrides.
+2. `$XDG_CONFIG_HOME/luciole/config.toml`, your optional base configuration.
+3. `$XDG_CONFIG_HOME/luciole/settings.toml`, writable GUI overrides.
 
-When `XDG_CONFIG_HOME` is unset, use `~/.config`. Files never writes through your base configuration. This lets Nix or another declarative tool own `config.toml` while GUI changes remain writable in `settings.toml`. A base edit hidden by a GUI override becomes effective after resetting that preference.
+When `XDG_CONFIG_HOME` is unset, use `~/.config`. Luciole never writes through your base configuration. This lets Nix or another declarative tool own `config.toml` while GUI changes remain writable in `settings.toml`. A base edit hidden by a GUI override becomes effective after resetting that preference.
 
-Valid external changes apply automatically. Invalid reloads keep the last working settings and report the error. Unknown keys, incorrect types and unsupported values are errors. Files does not search `/etc/xdg` or a packaged default configuration.
+Valid external changes apply automatically. Invalid reloads keep the last working settings and report the error. Unknown keys, incorrect types and unsupported values are errors. Luciole does not search `/etc/xdg` or a packaged default configuration.
 
 This is a valid starting configuration, not a required file:
 
@@ -33,7 +35,7 @@ directories_first = true
 Validate one file without opening a window or reading adjacent GUI overrides:
 
 ```sh
-noctalia-files config validate /path/to/config.toml
+luciole config validate /path/to/config.toml
 ```
 
 `schema_version` is optional; when present it must be integer `1`.
@@ -104,12 +106,12 @@ Name accepts `0` for automatic sizing or an integer from `160` through `16384`. 
 | `thumbnail_max_megapixels` | `32` | Integer `1` through `64` |
 | `thumbnail_cache_mib` | `128` | Integer `16` through `1024` |
 
-Local policy generates thumbnails for eligible local files. All additionally permits existing cached remote thumbnails; it does not download remote files to generate previews. Provider safety limits can be narrower than a preference's maximum. Settings also provides cache inspection/clearing; Files preserves untracked shared thumbnails owned by other applications.
+Local policy generates thumbnails for eligible local files. All additionally permits existing cached remote thumbnails; it does not download remote files to generate previews. Provider safety limits can be narrower than a preference's maximum. Settings also provides cache inspection/clearing; Luciole preserves untracked shared thumbnails owned by other applications.
 
 ## Other writable data
 
-Places state lives in `$XDG_STATE_HOME/noctalia-files/state.toml`, defaulting to `~/.local/state/noctalia-files/state.toml`. It is separate from settings and is not a complete saved window/tab session.
+Places state lives in `$XDG_STATE_HOME/luciole/state.toml`, defaulting to `~/.local/state/luciole/state.toml`. It is separate from settings and is not a complete saved window/tab session.
 
-Thumbnails use the shared `$XDG_CACHE_HOME/thumbnails/` cache plus a Files ownership ledger under `$XDG_CACHE_HOME/noctalia-files/`. The default cache root is `~/.cache`. Custom actions live in the [Scripts directory](scripts.md).
+Thumbnails use the shared `$XDG_CACHE_HOME/thumbnails/` cache plus a Luciole ownership ledger under `$XDG_CACHE_HOME/luciole/`. The default cache root is `~/.cache`. Custom actions live in the [Scripts directory](scripts.md).
 
-An optional `colors.toml` beside the settings files supplies the supported Noctalia palette handoff. The installed template is `share/noctalia-files/templates/colors.toml`; broader palette/font/UI-scale preferences remain planned. See [Packaging](../../PACKAGING.md#configuration-and-writable-data) for the complete ownership and installation notes.
+An optional `colors.toml` beside the settings files supplies the supported Noctalia palette handoff. The installed template is `share/luciole/templates/colors.toml`; broader palette/font/UI-scale preferences remain planned. See [Packaging](../../PACKAGING.md#configuration-and-writable-data) for the complete ownership and installation notes.

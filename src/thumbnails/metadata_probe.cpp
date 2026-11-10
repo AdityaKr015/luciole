@@ -21,7 +21,7 @@ namespace {
         info.st_ctim.tv_sec, info.st_ctim.tv_nsec
     );
   }
-  bool matches(const files::DirectoryEntry& source, GFileInfo* info) {
+  bool matches(const luciole::DirectoryEntry& source, GFileInfo* info) {
     if (source.size
         && (g_file_info_get_attribute_type(info, G_FILE_ATTRIBUTE_STANDARD_SIZE) != G_FILE_ATTRIBUTE_TYPE_UINT64
             || g_file_info_get_attribute_uint64(info, G_FILE_ATTRIBUTE_STANDARD_SIZE) != *source.size)) {
@@ -32,7 +32,7 @@ namespace {
             || g_file_info_get_attribute_uint64(info, G_FILE_ATTRIBUTE_TIME_MODIFIED) != *source.modifiedSeconds)) {
       return false;
     }
-    if (source.identity && files::readFileIdentity(info) != source.identity) {
+    if (source.identity && luciole::readFileIdentity(info) != source.identity) {
       return false;
     }
     if (source.etag && (!g_file_info_get_etag(info) || *source.etag != g_file_info_get_etag(info))) {
@@ -68,14 +68,14 @@ namespace {
         && descriptor.st_ctim.tv_nsec >= 0
         && static_cast<std::uint64_t>(descriptor.st_ctim.tv_nsec) == nanos;
   }
-  files::MetadataFields commonFields(GFileInfo* info) {
-    files::MetadataFields fields;
+  luciole::MetadataFields commonFields(GFileInfo* info) {
+    luciole::MetadataFields fields;
     for (const auto& [attribute, label] :
          {std::pair{G_FILE_ATTRIBUTE_OWNER_USER, "Owner"}, std::pair{G_FILE_ATTRIBUTE_OWNER_GROUP, "Group"}}) {
       if (g_file_info_get_attribute_type(info, attribute) == G_FILE_ATTRIBUTE_TYPE_STRING) {
         const char* text = g_file_info_get_attribute_string(info, attribute);
         if (text && *text) {
-          const files::GString valid(g_utf8_make_valid(text, -1));
+          const luciole::GString valid(g_utf8_make_valid(text, -1));
           fields.push_back({label, valid.get(), false});
         }
       }
@@ -97,18 +97,18 @@ namespace {
           &g_date_time_unref
       );
       if (date) {
-        const files::GString value(g_date_time_format(date.get(), "%Y-%m-%d %H:%M"));
+        const luciole::GString value(g_date_time_format(date.get(), "%Y-%m-%d %H:%M"));
         fields.push_back({label, value.get(), false});
       }
     }
     return fields;
   }
-  files::MetadataFields imageFields(std::string_view data) {
+  luciole::MetadataFields imageFields(std::string_view data) {
     const auto root = nlohmann::json::parse(data, nullptr, false);
     if (!root.is_array() || root.size() > 24) {
       return {};
     }
-    files::MetadataFields fields;
+    luciole::MetadataFields fields;
     for (const auto& row : root) {
       if (!row.is_object()
           || !row.contains("label")
@@ -131,8 +131,8 @@ namespace {
   }
 } // namespace
 
-files::MetadataFields
-files::probePreviewMetadata(const DirectoryEntry& entry, ThumbnailOptions options, GCancellable* cancel) {
+luciole::MetadataFields
+luciole::probePreviewMetadata(const DirectoryEntry& entry, ThumbnailOptions options, GCancellable* cancel) {
   const auto path = entry.location.nativePath();
   const auto mime = entry.contentType.value_or("");
   const bool image = mime.starts_with("image/"), media = mime.starts_with("video/") || mime.starts_with("audio/");
@@ -180,7 +180,7 @@ files::probePreviewMetadata(const DirectoryEntry& entry, ThumbnailOptions option
   if (!sameDescriptor(before, current.get())) {
     return {};
   }
-  const GString temporary(g_dir_make_tmp("noctalia-metadata-XXXXXX", nullptr));
+  const GString temporary(g_dir_make_tmp("luciole-metadata-XXXXXX", nullptr));
   if (!temporary) {
     return fields;
   }

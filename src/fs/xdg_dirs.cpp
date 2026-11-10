@@ -22,6 +22,6 @@ namespace {
   }
 } // namespace
 
-std::filesystem::path files::configHome() { return baseDirectory("XDG_CONFIG_HOME", ".config"); }
-std::filesystem::path files::stateHome() { return baseDirectory("XDG_STATE_HOME", ".local/state"); }
-std::filesystem::path files::cacheHome() { return baseDirectory("XDG_CACHE_HOME", ".cache"); }
+std::filesystem::path luciole::configHome() { return baseDirectory("XDG_CONFIG_HOME", ".config"); }
+std::filesystem::path luciole::stateHome() { return baseDirectory("XDG_STATE_HOME", ".local/state"); }
+std::filesystem::path luciole::cacheHome() { return baseDirectory("XDG_CACHE_HOME", ".cache"); }

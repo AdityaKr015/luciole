@@ -2,7 +2,7 @@
 
 #include "app/page/active_dialog.h"
 #include "app/page/page_context.h"
-#include "noctalia_files_build_info.h"
+#include "luciole_build_info.h"
 #include "platform/file_launcher.h"
 #include "ui/builders.h"
 #include "ui/controls/scroll_view.h"
@@ -13,7 +13,7 @@
 
 #include <format>
 
-AboutController::AboutController(PageContext& page, files::FileLauncher& launcher)
+AboutController::AboutController(PageContext& page, luciole::FileLauncher& launcher)
     : m_page(page), m_launcher(launcher) {}
 
 void AboutController::open() {
@@ -43,12 +43,11 @@ void AboutController::open() {
   };
   text(
       std::format(
-          "Version {} · {}\nRevision {}\nBuilt with {}", NOCTALIA_FILES_VERSION, NOCTALIA_FILES_BUILD_TYPE,
-          NOCTALIA_FILES_BUILD_REVISION, NOCTALIA_FILES_COMPILER
+          "Version {} · {}\nRevision {}\nBuilt with {}", LUCIOLE_VERSION, LUCIOLE_BUILD_TYPE, LUCIOLE_BUILD_REVISION,
+          LUCIOLE_COMPILER
       )
   );
-  text("A standalone file manager from Noctalia.");
-  const auto link = [this](const char* address) { m_launcher.open(files::Location::fromUri(address)); };
+  const auto link = [this](const char* address) { m_launcher.open(luciole::Location::fromUri(address)); };
   body->content()->addChild(
       ui::row(
           {.gap = Style::spaceSm},
@@ -58,7 +57,7 @@ void AboutController::open() {
                .onClick = [link] { link("https://noctalia.dev"); }}
           ),
           ui::button({.text = "Source code", .variant = ButtonVariant::Default, .onClick = [link] {
-                        link("https://github.com/noctalia-dev/noctalia-files");
+                        link("https://github.com/noctalia-dev/luciole");
                       }})
       )
   );
@@ -75,9 +74,9 @@ void AboutController::open() {
   );
   auto root = ui::column(
       {.align = FlexAlign::Stretch},
-      files::dialogHeader("About Noctalia Files", "info-circle", [this] { m_page.dismissMenu(); }), std::move(body)
+      luciole::dialogHeader("About Luciole", "info-circle", [this] { m_page.dismissMenu(); }), std::move(body)
   );
-  files::applyDialogStyle(*root);
+  luciole::applyDialogStyle(*root);
   m_page.showCenteredDialog(std::move(root), 588.0F);
   if (m_page.menuSurface()) {
     m_page.activeDialog().bind(ActiveDialog::Kind::About, [this] {

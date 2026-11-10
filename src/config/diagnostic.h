@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace files {
+namespace luciole {
   struct ConfigIssue {
     std::filesystem::path file;
     std::uint32_t line = 0;
@@ -16,4 +16,4 @@ namespace files {
   };
 
   using ConfigIssues = std::vector<ConfigIssue>;
-} // namespace files
+} // namespace luciole

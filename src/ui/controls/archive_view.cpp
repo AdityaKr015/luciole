@@ -15,13 +15,13 @@
 namespace {
   class ArchiveRow final : public Flex {
   public:
-    explicit ArchiveRow(files::FileIconCache& icons) {
+    explicit ArchiveRow(luciole::FileIconCache& icons) {
       setDirection(FlexDirection::Horizontal);
       setAlign(FlexAlign::Center);
       setGap(10);
       setPadding(6, 12);
       setRadius(Style::radiusSm);
-      auto icon = std::make_unique<files::FileIcon>(icons, 24);
+      auto icon = std::make_unique<luciole::FileIcon>(icons, 24);
       m_icon = icon.get();
       addChild(std::move(icon));
       addChild(ui::label({.out = &m_name, .maxLines = 1, .flexGrow = 1, .configure = [](Label& text) {
@@ -40,17 +40,19 @@ namespace {
       );
       setHitTestVisible(false);
     }
-    void bind(const files::ArchiveEntry& entry, bool selected, bool hovered) {
+    void bind(const luciole::ArchiveEntry& entry, bool selected, bool hovered) {
       m_name->setText(entry.displayName);
       m_name->setColor(colorSpecFromRole(ColorRole::OnSurface));
       m_icon->bind(entry.icon, colorSpecFromRole(ColorRole::OnSurface));
       std::string size;
-      if (entry.kind == files::ArchiveEntryKind::Directory) {
+      if (entry.kind == luciole::ArchiveEntryKind::Directory) {
         size = "Folder";
-      } else if (entry.kind == files::ArchiveEntryKind::Symlink || entry.kind == files::ArchiveEntryKind::Hardlink) {
+      } else if (
+          entry.kind == luciole::ArchiveEntryKind::Symlink || entry.kind == luciole::ArchiveEntryKind::Hardlink
+      ) {
         size = "Link";
       } else if (entry.size) {
-        const files::GString value(g_format_size_full(*entry.size, G_FORMAT_SIZE_IEC_UNITS));
+        const luciole::GString value(g_format_size_full(*entry.size, G_FORMAT_SIZE_IEC_UNITS));
         size = value.get();
       }
       m_size->setText(size);
@@ -62,14 +64,14 @@ namespace {
     }
 
   private:
-    files::FileIcon* m_icon;
+    luciole::FileIcon* m_icon;
     Label* m_name = nullptr;
     Label* m_size = nullptr;
   };
 } // namespace
 class ArchiveView::Adapter final : public VirtualGridAdapter {
 public:
-  Adapter(ArchiveView& owner, files::FileIconCache& icons) : m_owner(owner), m_icons(icons) {}
+  Adapter(ArchiveView& owner, luciole::FileIconCache& icons) : m_owner(owner), m_icons(icons) {}
   std::size_t itemCount() const override { return m_owner.m_rows.size(); }
   std::unique_ptr<Node> createTile() override { return std::make_unique<ArchiveRow>(m_icons); }
   void bindTile(Node& tile, std::size_t index, bool, bool hovered) override {
@@ -110,13 +112,13 @@ public:
 
 private:
   ArchiveView& m_owner;
-  files::FileIconCache& m_icons;
+  luciole::FileIconCache& m_icons;
   std::optional<std::size_t> m_pressed, m_last;
   std::chrono::steady_clock::time_point m_time;
   bool m_plain = false;
 };
 ArchiveView::ArchiveView(
-    files::FileIconCache& icons, std::function<std::uint32_t()> modifiers, std::function<void()> close,
+    luciole::FileIconCache& icons, std::function<std::uint32_t()> modifiers, std::function<void()> close,
     std::function<void(std::vector<std::string>)> extract, std::function<void(const std::string&)> open,
     std::function<void()> reload, std::function<void()> cancel
 )
@@ -228,10 +230,10 @@ ArchiveView::ArchiveView(
 }
 ArchiveView::~ArchiveView() { m_grid->setAdapter(nullptr); }
 void ArchiveView::sync(
-    std::shared_ptr<const files::ArchiveCatalog> catalog, files::ArchivePhase phase, std::size_t items,
-    std::uint64_t bytes, const std::optional<files::FileError>& error
+    std::shared_ptr<const luciole::ArchiveCatalog> catalog, luciole::ArchivePhase phase, std::size_t items,
+    std::uint64_t bytes, const std::optional<luciole::FileError>& error
 ) {
-  m_busy = phase != files::ArchivePhase::Idle;
+  m_busy = phase != luciole::ArchivePhase::Idle;
   if (catalog != m_catalog) {
     m_catalog = std::move(catalog);
     m_parent.clear();
@@ -243,9 +245,9 @@ void ArchiveView::sync(
   if (m_catalog) {
     m_title->setText(m_catalog->source.displayName().value_or("Archive"));
   }
-  const files::GString size(g_format_size_full(bytes, G_FORMAT_SIZE_IEC_UNITS));
+  const luciole::GString size(g_format_size_full(bytes, G_FORMAT_SIZE_IEC_UNITS));
   m_status->setText(
-      error        ? files::fileErrorText(*error)
+      error        ? luciole::fileErrorText(*error)
           : m_busy ? std::format("Processing {} entries · {}", items, size.get())
                    : std::format("{} item{}", m_rows.size(), m_rows.size() == 1 ? "" : "s")
   );
@@ -270,8 +272,8 @@ void ArchiveView::rebuild() {
     std::ranges::sort(m_rows, [this](auto left, auto right) {
       const auto& a = m_catalog->entries[left];
       const auto& b = m_catalog->entries[right];
-      if ((a.kind == files::ArchiveEntryKind::Directory) != (b.kind == files::ArchiveEntryKind::Directory)) {
-        return a.kind == files::ArchiveEntryKind::Directory;
+      if ((a.kind == luciole::ArchiveEntryKind::Directory) != (b.kind == luciole::ArchiveEntryKind::Directory)) {
+        return a.kind == luciole::ArchiveEntryKind::Directory;
       }
       const int order = g_utf8_collate(a.displayName.c_str(), b.displayName.c_str());
       return order == 0 ? a.path < b.path : order < 0;
@@ -289,8 +291,8 @@ void ArchiveView::selectionChanged() {
   m_extractSelected->setEnabled(m_catalog && !m_busy && !m_selection.empty());
   bool canOpen = false;
   if (m_catalog && m_selection.size() == 1) {
-    const auto found = std::ranges::find(m_catalog->entries, *m_selection.begin(), &files::ArchiveEntry::path);
-    canOpen = found != m_catalog->entries.end() && found->kind != files::ArchiveEntryKind::Symlink;
+    const auto found = std::ranges::find(m_catalog->entries, *m_selection.begin(), &luciole::ArchiveEntry::path);
+    canOpen = found != m_catalog->entries.end() && found->kind != luciole::ArchiveEntryKind::Symlink;
   }
   m_openButton->setEnabled(canOpen && !m_busy);
   m_grid->notifyDataChanged();
@@ -326,13 +328,13 @@ void ArchiveView::activate(std::size_t index) {
     return;
   }
   const auto& entry = m_catalog->entries[m_rows[index]];
-  if (entry.kind == files::ArchiveEntryKind::Directory) {
+  if (entry.kind == luciole::ArchiveEntryKind::Directory) {
     m_parent = entry.path;
     m_selection.clear();
     m_focus.reset();
     m_anchor.reset();
     rebuild();
-  } else if (entry.kind != files::ArchiveEntryKind::Symlink) {
+  } else if (entry.kind != luciole::ArchiveEntryKind::Symlink) {
     m_open(entry.path);
   }
 }

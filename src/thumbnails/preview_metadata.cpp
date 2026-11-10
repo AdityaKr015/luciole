@@ -7,7 +7,7 @@
 #include <utility>
 
 namespace {
-  bool sameSource(const files::DirectoryEntry& a, const files::DirectoryEntry& b) {
+  bool sameSource(const luciole::DirectoryEntry& a, const luciole::DirectoryEntry& b) {
     return a.id == b.id
         && a.location == b.location
         && a.identity == b.identity
@@ -22,7 +22,7 @@ namespace {
   }
 } // namespace
 
-struct files::PreviewMetadataService::State : std::enable_shared_from_this<State> {
+struct luciole::PreviewMetadataService::State : std::enable_shared_from_this<State> {
   std::optional<DirectoryEntry> entry;
   ThumbnailOptions options;
   MetadataFields fields;
@@ -63,18 +63,18 @@ struct files::PreviewMetadataService::State : std::enable_shared_from_this<State
   }
 };
 
-files::PreviewMetadataService::PreviewMetadataService() : m_state(std::make_shared<State>()) {}
-files::PreviewMetadataService::~PreviewMetadataService() {
+luciole::PreviewMetadataService::PreviewMetadataService() : m_state(std::make_shared<State>()) {}
+luciole::PreviewMetadataService::~PreviewMetadataService() {
   m_state->alive = false;
   m_state->changed = {};
   clear();
 }
-void files::PreviewMetadataService::clear() {
+void luciole::PreviewMetadataService::clear() {
   if (m_state->entry) {
     m_state->reset();
   }
 }
-void files::PreviewMetadataService::show(const DirectoryEntry& entry, ThumbnailOptions options) {
+void luciole::PreviewMetadataService::show(const DirectoryEntry& entry, ThumbnailOptions options) {
   auto& state = *m_state;
   if (state.entry
       && sameSource(*state.entry, entry)
@@ -88,8 +88,8 @@ void files::PreviewMetadataService::show(const DirectoryEntry& entry, ThumbnailO
   state.pending = entry.location.isNative();
   state.start();
 }
-void files::PreviewMetadataService::setChangedCallback(std::function<void()> callback) {
+void luciole::PreviewMetadataService::setChangedCallback(std::function<void()> callback) {
   m_state->changed = std::move(callback);
 }
-const files::MetadataFields& files::PreviewMetadataService::fields() const { return m_state->fields; }
-bool files::PreviewMetadataService::busy() const { return m_state->running || m_state->pending; }
+const luciole::MetadataFields& luciole::PreviewMetadataService::fields() const { return m_state->fields; }
+bool luciole::PreviewMetadataService::busy() const { return m_state->running || m_state->pending; }

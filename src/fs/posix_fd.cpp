@@ -6,15 +6,15 @@
 #include <unistd.h>
 #include <utility>
 
-files::Fd::~Fd() {
+luciole::Fd::~Fd() {
   if (m_fd >= 0) {
     ::close(m_fd);
   }
 }
 
-files::Fd::Fd(Fd&& other) noexcept : m_fd(std::exchange(other.m_fd, -1)) {}
+luciole::Fd::Fd(Fd&& other) noexcept : m_fd(std::exchange(other.m_fd, -1)) {}
 
-files::Fd& files::Fd::operator=(Fd&& other) noexcept {
+luciole::Fd& luciole::Fd::operator=(Fd&& other) noexcept {
   if (this != &other) {
     if (m_fd >= 0) {
       ::close(m_fd);
@@ -24,16 +24,16 @@ files::Fd& files::Fd::operator=(Fd&& other) noexcept {
   return *this;
 }
 
-int files::Fd::close() { return ::close(std::exchange(m_fd, -1)); }
+int luciole::Fd::close() { return ::close(std::exchange(m_fd, -1)); }
 
-files::Fd files::checkedFd(int fd) {
+luciole::Fd luciole::checkedFd(int fd) {
   if (fd < 0) {
     throwErrno(errno);
   }
   return Fd(fd);
 }
 
-struct stat files::statFd(int fd) {
+struct stat luciole::statFd(int fd) {
   struct stat value{};
   if (::fstat(fd, &value) != 0) {
     throwErrno(errno);
@@ -41,6 +41,6 @@ struct stat files::statFd(int fd) {
   return value;
 }
 
-bool files::sameIdentity(const struct stat& a, const struct stat& b) {
+bool luciole::sameIdentity(const struct stat& a, const struct stat& b) {
   return a.st_dev == b.st_dev && a.st_ino == b.st_ino && (a.st_mode & S_IFMT) == (b.st_mode & S_IFMT);
 }

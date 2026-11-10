@@ -22,18 +22,18 @@
 #include <vector>
 
 namespace {
-  std::string renameErrorText(const std::optional<files::FileError>& error) {
-    return error ? files::nameErrorText(*error) : std::string{};
+  std::string renameErrorText(const std::optional<luciole::FileError>& error) {
+    return error ? luciole::nameErrorText(*error) : std::string{};
   }
 } // namespace
 
-RenameController::RenameController(PageContext& page, files::PinService& pins) : m_page(page), m_pins(pins) {}
+RenameController::RenameController(PageContext& page, luciole::PinService& pins) : m_page(page), m_pins(pins) {}
 
-bool RenameController::canFileRename(const files::DirectoryEntry& entry) const {
-  return m_page.actionState(files::BrowserAction::Rename, m_page.requestFor({entry})).enabled;
+bool RenameController::canFileRename(const luciole::DirectoryEntry& entry) const {
+  return m_page.actionState(luciole::BrowserAction::Rename, m_page.requestFor({entry})).enabled;
 }
 
-void RenameController::openFileRename(files::DirectoryEntry target) {
+void RenameController::openFileRename(luciole::DirectoryEntry target) {
   if (!canFileRename(target) || !m_page.targetsCurrent({target})) {
     m_page.actionError("This item cannot be renamed right now.");
     return;
@@ -42,8 +42,8 @@ void RenameController::openFileRename(files::DirectoryEntry target) {
   const float width = std::min(420.0F, static_cast<float>(surface.width()) - 32.0F);
   const bool validText = g_utf8_validate(target.name.data(), static_cast<gssize>(target.name.size()), nullptr);
   auto editor = std::make_unique<NameDialog>(
-      width, target.type == files::FileType::Directory && !target.symlink ? "Rename folder" : "Rename file", "pencil",
-      validText ? target.name : "", validText ? "" : "Enter a new UTF-8 name for this item.", files::filenameProblem,
+      width, target.type == luciole::FileType::Directory && !target.symlink ? "Rename folder" : "Rename file", "pencil",
+      validText ? target.name : "", validText ? "" : "Enter a new UTF-8 name for this item.", luciole::filenameProblem,
       [this](std::string name) { submitFileRename(std::move(name)); }, [this] { m_page.dismissMenu(); }
   );
   auto* control = editor.get();
@@ -71,8 +71,8 @@ void RenameController::openFileRename(files::DirectoryEntry target) {
     m_fileRenameTarget = std::move(target);
     m_fileRenamePreparing = true;
     control->setSaving(true);
-    m_job = m_page.jobs().create<files::RenameService>(JobScope::Page);
-    if (!m_job->service<files::RenameService>().prepare(m_fileRenameTarget->location)) {
+    m_job = m_page.jobs().create<luciole::RenameService>(JobScope::Page);
+    if (!m_job->service<luciole::RenameService>().prepare(m_fileRenameTarget->location)) {
       control->showError("Another rename is still finishing.");
     }
   }
@@ -86,10 +86,10 @@ void RenameController::submitFileRename(std::string name) {
     m_fileRenameEditor->showError("The item changed. Close this editor and try again.");
     return;
   }
-  auto& renamer = m_job->service<files::RenameService>();
+  auto& renamer = m_job->service<luciole::RenameService>();
   if (!renamer.rename(std::move(name))) {
     m_fileRenameEditor->showError(
-        renamer.snapshot().error ? files::nameErrorText(*renamer.snapshot().error)
+        renamer.snapshot().error ? luciole::nameErrorText(*renamer.snapshot().error)
                                  : "The item is unavailable. Reopen Rename."
     );
   } else {
@@ -114,13 +114,13 @@ void RenameController::onFrame() {
 }
 
 void RenameController::syncFileRename(const OperationJob& job) {
-  const auto& renamer = job.service<files::RenameService>();
+  const auto& renamer = job.service<luciole::RenameService>();
   const auto& snapshot = renamer.snapshot();
   if (renamer.busy()) {
     return;
   }
   const bool editor = &job == m_job.get() && m_fileRenameEditor != nullptr;
-  if (snapshot.status == files::RenameStatus::Succeeded) {
+  if (snapshot.status == luciole::RenameStatus::Succeeded) {
     m_page.setActionMessage(
         job.renameReplay() == RenameReplay::Undo       ? "Rename undone."
             : job.renameReplay() == RenameReplay::Redo ? "Rename redone."
@@ -129,7 +129,7 @@ void RenameController::syncFileRename(const OperationJob& job) {
     auto& browser = m_page.browser();
     const auto& current = browser.model().snapshot().location;
     if (current && snapshot.source && snapshot.source->isInside(*current)) {
-      std::vector<files::Location> reveal;
+      std::vector<luciole::Location> reveal;
       if (snapshot.destination) {
         reveal.push_back(*snapshot.destination);
       }
@@ -141,7 +141,7 @@ void RenameController::syncFileRename(const OperationJob& job) {
       m_page.dismissMenu();
     }
   } else if (!editor) {
-    if (snapshot.status == files::RenameStatus::Error) {
+    if (snapshot.status == luciole::RenameStatus::Error) {
       m_page.actionError(
           (job.renameReplay() == RenameReplay::Undo       ? "Could not undo rename: "
                : job.renameReplay() == RenameReplay::Redo ? "Could not redo rename: "
@@ -149,24 +149,24 @@ void RenameController::syncFileRename(const OperationJob& job) {
           + renameErrorText(snapshot.error)
       );
     }
-  } else if (snapshot.status == files::RenameStatus::Ready || snapshot.status == files::RenameStatus::Error) {
+  } else if (snapshot.status == luciole::RenameStatus::Ready || snapshot.status == luciole::RenameStatus::Error) {
     m_fileRenameEditor->setSaving(false);
     m_fileRenameEditor->showError(renameErrorText(snapshot.error));
     if (std::exchange(m_fileRenamePreparing, false)) {
       m_page.menuDispatcher().setFocus(m_fileRenameEditor->input()->inputArea());
       const auto& value = m_fileRenameEditor->input()->value();
-      const bool directory = m_fileRenameTarget->type == files::FileType::Directory && !m_fileRenameTarget->symlink;
-      m_fileRenameEditor->input()->selectRange(0, files::filenameStemLength(value, directory));
+      const bool directory = m_fileRenameTarget->type == luciole::FileType::Directory && !m_fileRenameTarget->symlink;
+      m_fileRenameEditor->input()->selectRange(0, luciole::filenameStemLength(value, directory));
     }
     m_page.menuSurface()->requestLayout();
   }
 }
 
-void RenameController::openPlaceRename(const files::Bookmark& bookmark) {
+void RenameController::openPlaceRename(const luciole::Bookmark& bookmark) {
   if (bookmark.location.isTrash()) {
     return;
   }
-  const auto found = std::ranges::find(m_pins.bookmarks(), bookmark.location, &files::Bookmark::location);
+  const auto found = std::ranges::find(m_pins.bookmarks(), bookmark.location, &luciole::Bookmark::location);
   if (!m_pins.editable() || found == m_pins.bookmarks().end()) {
     m_page.actionError("This place is unavailable for editing. Reload Places and try again.");
     return;
@@ -177,7 +177,7 @@ void RenameController::openPlaceRename(const files::Bookmark& bookmark) {
   auto editor = std::make_unique<NameDialog>(
       width, "Rename place", "pencil", current.label, "Changes the sidebar label only.",
       [](const std::string& label) -> std::optional<std::string> {
-        if (const auto error = files::bookmarkLabelProblem(label)) {
+        if (const auto error = luciole::bookmarkLabelProblem(label)) {
           return error;
         }
         if (label.find_first_not_of(' ') == std::string::npos) {
@@ -237,7 +237,7 @@ void RenameController::syncPlaceRename() {
   if (m_placeEditor == nullptr || !m_pendingPlaceLabel || m_pins.busy()) {
     return;
   }
-  const auto found = std::ranges::find(m_pins.bookmarks(), m_placeRenameTarget->location, &files::Bookmark::location);
+  const auto found = std::ranges::find(m_pins.bookmarks(), m_placeRenameTarget->location, &luciole::Bookmark::location);
   if (found != m_pins.bookmarks().end() && found->label == *m_pendingPlaceLabel) {
     m_page.dismissMenu();
   } else {

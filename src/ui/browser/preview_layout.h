@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace files {
+namespace luciole {
   struct PreviewImageLayout {
     float width, height;
     int pixels;
@@ -33,4 +33,4 @@ namespace files {
     );
     return {imageWidth, imageHeight, pixels};
   }
-} // namespace files
+} // namespace luciole

@@ -6,21 +6,21 @@
 
 namespace {
   using Uri = std::unique_ptr<GUri, decltype(&g_uri_unref)>;
-  Uri parsed(const files::Location& location) {
+  Uri parsed(const luciole::Location& location) {
     return Uri(g_uri_parse(location.uri().c_str(), G_URI_FLAGS_NONE, nullptr), g_uri_unref);
   }
   std::string folded(const char* value) {
     if (!value || !g_utf8_validate(value, -1, nullptr)) {
       return {};
     }
-    const files::GString text(g_utf8_casefold(value, -1));
+    const luciole::GString text(g_utf8_casefold(value, -1));
     return text.get();
   }
   int smbPort(GUri* uri) {
     const auto value = g_uri_get_port(uri);
     return value < 0 ? 445 : value;
   }
-  std::optional<std::string> smbPath(const files::Location& source, const files::Location& target) {
+  std::optional<std::string> smbPath(const luciole::Location& source, const luciole::Location& target) {
     const auto a = parsed(source), b = parsed(target);
     if (!a
         || !b
@@ -34,7 +34,7 @@ namespace {
   }
 } // namespace
 
-bool files::transferLocationSupported(const Location& location) {
+bool luciole::transferLocationSupported(const Location& location) {
   const std::unique_ptr<GUri, decltype(&g_uri_unref)> uri(
       g_uri_parse(
           location.uri().c_str(), static_cast<GUriFlags>(G_URI_FLAGS_ENCODED | G_URI_FLAGS_HAS_PASSWORD), nullptr
@@ -55,7 +55,7 @@ bool files::transferLocationSupported(const Location& location) {
 
 // SMB names are commonly case-insensitive. Conservatively treat case-folded aliases
 // as the same operation target even when the GFile URI preserves their spelling.
-bool files::transferLocationsEqual(const Location& source, const Location& target) {
+bool luciole::transferLocationsEqual(const Location& source, const Location& target) {
   if (source == target) {
     return true;
   }
@@ -66,7 +66,7 @@ bool files::transferLocationsEqual(const Location& source, const Location& targe
   const auto a = parsed(source);
   return folded(g_uri_get_path(a.get())) == *path;
 }
-bool files::transferLocationInside(const Location& child, const Location& parent) {
+bool luciole::transferLocationInside(const Location& child, const Location& parent) {
   if (child.isInside(parent)) {
     return true;
   }
@@ -82,7 +82,7 @@ bool files::transferLocationInside(const Location& child, const Location& parent
   return path->starts_with(prefix);
 }
 
-bool files::transferAffectsLocation(
+bool luciole::transferAffectsLocation(
     const std::vector<TransferResult>& results, const Location& location, bool recursive
 ) {
   const auto affected = [&](const Location& item) {

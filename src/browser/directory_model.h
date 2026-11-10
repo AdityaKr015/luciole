@@ -9,7 +9,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-namespace files {
+namespace luciole {
   using EntryId = std::uint64_t;
 
   enum class SelectionMode : std::uint8_t { Replace, Toggle, Range, AddRange };
@@ -104,4 +104,4 @@ namespace files {
     bool m_preserveRootOrder = false;
     std::function<void()> m_changed;
   };
-} // namespace files
+} // namespace luciole

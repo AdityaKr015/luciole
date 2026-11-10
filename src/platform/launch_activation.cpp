@@ -6,14 +6,14 @@
 #include <chrono>
 #include <utility>
 
-struct files::LaunchActivation::Pending {
+struct luciole::LaunchActivation::Pending {
   LaunchActivation& owner;
   std::function<void(std::string)> completed;
   Timer timeout;
 };
 
-files::LaunchActivation::LaunchActivation(xdg_activation_v1* manager) : m_manager(manager) {}
-files::LaunchActivation::~LaunchActivation() {
+luciole::LaunchActivation::LaunchActivation(xdg_activation_v1* manager) : m_manager(manager) {}
+luciole::LaunchActivation::~LaunchActivation() {
   m_closing = true;
   while (!m_pending.empty()) {
     finish(m_pending.begin()->first, {});
@@ -22,7 +22,7 @@ files::LaunchActivation::~LaunchActivation() {
     xdg_activation_v1_destroy(m_manager);
   }
 }
-void files::LaunchActivation::request(
+void luciole::LaunchActivation::request(
     wl_surface* surface, wl_seat* seat, std::uint32_t serial, const std::string& appId,
     std::function<void(std::string)> completed
 ) {
@@ -49,7 +49,7 @@ void files::LaunchActivation::request(
   m_pending.emplace(token, std::move(pending));
   xdg_activation_token_v1_commit(token);
 }
-void files::LaunchActivation::finish(xdg_activation_token_v1* token, std::string value) {
+void luciole::LaunchActivation::finish(xdg_activation_token_v1* token, std::string value) {
   const auto found = m_pending.find(token);
   if (found == m_pending.end()) {
     return;

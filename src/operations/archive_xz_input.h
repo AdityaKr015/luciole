@@ -5,7 +5,7 @@
 #include <array>
 #include <lzma.h>
 
-namespace files::archive_work {
+namespace luciole::archive_work {
   // Decode outside libarchive, whose native XZ filter has no memory-limit API.
   // Only TAR consumes this stream. Source identity remains owned by Input.
   class XzInput {
@@ -26,4 +26,4 @@ namespace files::archive_work {
     std::uint64_t m_decoded = 0, m_budget;
     bool m_eof = false, m_finished = false;
   };
-} // namespace files::archive_work
+} // namespace luciole::archive_work

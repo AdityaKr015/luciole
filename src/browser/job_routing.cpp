@@ -1,29 +1,29 @@
 #include "browser/job_routing.h"
 
-void files::JobRouting::add(JobId job, TabId page, const TabWorkspace& workspace, bool follow) {
+void luciole::JobRouting::add(JobId job, TabId page, const TabWorkspace& workspace, bool follow) {
   const Place place{.window = workspace.owner(page).value_or(0), .page = page};
   m_routes.insert_or_assign(job, Route{.origin = place, .owner = place, .follow = follow});
 }
 
-void files::JobRouting::remove(JobId job) { m_routes.erase(job); }
+void luciole::JobRouting::remove(JobId job) { m_routes.erase(job); }
 
-void files::JobRouting::follow(JobId job) {
+void luciole::JobRouting::follow(JobId job) {
   if (const auto found = m_routes.find(job); found != m_routes.end()) {
     found->second.follow = true;
   }
 }
 
-bool files::JobRouting::following(JobId job) const {
+bool luciole::JobRouting::following(JobId job) const {
   const auto found = m_routes.find(job);
   return found != m_routes.end() && found->second.follow;
 }
 
-files::TabId files::JobRouting::owner(JobId job) const {
+luciole::TabId luciole::JobRouting::owner(JobId job) const {
   const auto found = m_routes.find(job);
   return found == m_routes.end() ? 0 : found->second.owner.page;
 }
 
-std::optional<files::JobRouting::Place> files::JobRouting::origin(JobId job) const {
+std::optional<luciole::JobRouting::Place> luciole::JobRouting::origin(JobId job) const {
   const auto found = m_routes.find(job);
   if (found == m_routes.end()) {
     return std::nullopt;
@@ -31,8 +31,8 @@ std::optional<files::JobRouting::Place> files::JobRouting::origin(JobId job) con
   return found->second.origin;
 }
 
-std::vector<files::JobRouting::Move>
-files::JobRouting::update(const TabWorkspace& workspace, std::optional<WindowId> preferred) {
+std::vector<luciole::JobRouting::Move>
+luciole::JobRouting::update(const TabWorkspace& workspace, std::optional<WindowId> preferred) {
   const auto& windows = workspace.windows();
   const auto activeIn = [&windows](WindowId id) -> std::optional<Place> {
     const auto found = windows.find(id);

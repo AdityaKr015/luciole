@@ -2,14 +2,14 @@
 
 #include <ranges>
 
-void files::MillerColumns::notify() const {
+void luciole::MillerColumns::notify() const {
   if (m_changed) {
     m_changed();
   }
 }
 
-std::unique_ptr<files::MillerColumns::Column>
-files::MillerColumns::makeColumn(BrowserController& source, const Location& location, bool inheritHistory) {
+std::unique_ptr<luciole::MillerColumns::Column>
+luciole::MillerColumns::makeColumn(BrowserController& source, const Location& location, bool inheritHistory) {
   auto column = std::make_unique<Column>(Column{
       ++m_nextId,
       std::make_unique<BrowserController>(
@@ -32,7 +32,7 @@ files::MillerColumns::makeColumn(BrowserController& source, const Location& loca
   return column;
 }
 
-void files::MillerColumns::start(BrowserController& source, bool showParents) {
+void luciole::MillerColumns::start(BrowserController& source, bool showParents) {
   const auto location = source.model().snapshot().location;
   if (!location) {
     return;
@@ -41,7 +41,7 @@ void files::MillerColumns::start(BrowserController& source, bool showParents) {
   buildChain(makeColumn(source, *location));
 }
 
-void files::MillerColumns::buildChain(std::unique_ptr<Column> current) {
+void luciole::MillerColumns::buildChain(std::unique_ptr<Column> current) {
   std::vector<Location> parents;
   auto file = current->location;
   while (m_showParents && parents.size() + 1 < maxColumns) {
@@ -69,7 +69,7 @@ void files::MillerColumns::buildChain(std::unique_ptr<Column> current) {
   notify();
 }
 
-void files::MillerColumns::trim(std::size_t count) {
+void luciole::MillerColumns::trim(std::size_t count) {
   while (m_columns.size() > count) {
     auto column = std::move(m_columns.back());
     m_columns.pop_back();
@@ -80,10 +80,10 @@ void files::MillerColumns::trim(std::size_t count) {
   }
   m_focused = m_columns.empty() ? 0 : std::min(m_focused, m_columns.size() - 1);
 }
-void files::MillerColumns::clear() { trim(0); }
-void files::MillerColumns::collectRetired() { m_retired.clear(); }
+void luciole::MillerColumns::clear() { trim(0); }
+void luciole::MillerColumns::collectRetired() { m_retired.clear(); }
 
-bool files::MillerColumns::focus(std::size_t index) {
+bool luciole::MillerColumns::focus(std::size_t index) {
   load(index);
   if (index >= m_columns.size() || index == m_focused) {
     return false;
@@ -93,20 +93,20 @@ bool files::MillerColumns::focus(std::size_t index) {
   return true;
 }
 
-void files::MillerColumns::load(std::size_t index) {
+void luciole::MillerColumns::load(std::size_t index) {
   if (index < m_columns.size() && m_columns[index]->browser->model().snapshot().status == DirectoryStatus::Idle) {
     m_columns[index]->browser->open(m_columns[index]->location);
   }
 }
 
-void files::MillerColumns::interact(std::size_t index) {
+void luciole::MillerColumns::interact(std::size_t index) {
   if (index < m_columns.size() && m_columns[index]->seedPath) {
     m_columns[index]->seedPath = false;
     notify();
   }
 }
 
-void files::MillerColumns::synchronize() {
+void luciole::MillerColumns::synchronize() {
   if (!enabled()) {
     return;
   }
@@ -171,7 +171,7 @@ void files::MillerColumns::synchronize() {
               break;
             }
             child.identity = entry.identity;
-            if (entry.type == files::FileType::Directory || entry.symlink) {
+            if (entry.type == luciole::FileType::Directory || entry.symlink) {
               parent.pathEntry = entry.id;
             }
             break;
@@ -189,7 +189,7 @@ void files::MillerColumns::synchronize() {
     const auto& selected = model.selection().selected;
     const auto* entry = selected.size() == 1 ? model.entry(*selected.begin()) : nullptr;
     const bool folder =
-        entry && entry->type == files::FileType::Directory && !entry->symlink && browser.searchQuery().empty();
+        entry && entry->type == luciole::FileType::Directory && !entry->symlink && browser.searchQuery().empty();
     if (i + 1 < m_columns.size()) {
       auto& child = *m_columns[i + 1];
       if (child.explicitPath && !child.identity && entry && entry->location == child.location) {
@@ -232,7 +232,7 @@ void files::MillerColumns::synchronize() {
   }
 }
 
-bool files::MillerColumns::enter() {
+bool luciole::MillerColumns::enter() {
   synchronize();
   return focus(m_focused + 1);
 }

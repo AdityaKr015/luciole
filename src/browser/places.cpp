@@ -11,7 +11,7 @@
 
 namespace {
   std::string pinLabel(const std::string& input) {
-    const files::GString valid(g_utf8_make_valid(input.data(), static_cast<gssize>(input.size())));
+    const luciole::GString valid(g_utf8_make_valid(input.data(), static_cast<gssize>(input.size())));
     std::string label(valid.get());
     for (auto& c : label) {
       if (static_cast<unsigned char>(c) < 32 || c == 127) {
@@ -29,7 +29,7 @@ namespace {
   }
 } // namespace
 
-std::vector<files::UserPlace> files::configuredUserPlaces() {
+std::vector<luciole::UserPlace> luciole::configuredUserPlaces() {
   struct Special {
     GUserDirectory directory;
     const char* label;
@@ -67,7 +67,7 @@ std::vector<files::UserPlace> files::configuredUserPlaces() {
   return result;
 }
 
-struct files::PinService::State : std::enable_shared_from_this<State> {
+struct luciole::PinService::State : std::enable_shared_from_this<State> {
   struct Result {
     bool ready = false;
     std::vector<Bookmark> bookmarks;
@@ -161,23 +161,23 @@ struct files::PinService::State : std::enable_shared_from_this<State> {
   }
 };
 
-files::PinService::PinService(std::filesystem::path path) : m_state(std::make_shared<State>(std::move(path))) {}
-files::PinService::~PinService() { m_state->changed = {}; }
-void files::PinService::setChangedCallback(std::function<void()> callback) { m_state->changed = std::move(callback); }
-void files::PinService::reload() {
+luciole::PinService::PinService(std::filesystem::path path) : m_state(std::make_shared<State>(std::move(path))) {}
+luciole::PinService::~PinService() { m_state->changed = {}; }
+void luciole::PinService::setChangedCallback(std::function<void()> callback) { m_state->changed = std::move(callback); }
+void luciole::PinService::reload() {
   if (!m_state->busy) {
     m_state->run(std::nullopt);
   }
 }
-bool files::PinService::editable() const { return m_state->ready && !m_state->busy; }
-bool files::PinService::busy() const { return m_state->busy; }
-const std::vector<files::Bookmark>& files::PinService::bookmarks() const { return m_state->bookmarks; }
-const std::vector<files::UserPlace>& files::PinService::userPlaces() const { return m_state->places; }
-const std::string& files::PinService::error() const { return m_state->error; }
-bool files::PinService::contains(const Location& location) const {
+bool luciole::PinService::editable() const { return m_state->ready && !m_state->busy; }
+bool luciole::PinService::busy() const { return m_state->busy; }
+const std::vector<luciole::Bookmark>& luciole::PinService::bookmarks() const { return m_state->bookmarks; }
+const std::vector<luciole::UserPlace>& luciole::PinService::userPlaces() const { return m_state->places; }
+const std::string& luciole::PinService::error() const { return m_state->error; }
+bool luciole::PinService::contains(const Location& location) const {
   return std::ranges::any_of(m_state->bookmarks, [&](const auto& pin) { return pin.location == location; });
 }
-bool files::PinService::save(std::vector<Bookmark> bookmarks) {
+bool luciole::PinService::save(std::vector<Bookmark> bookmarks) {
   if (!editable()) {
     return false;
   }
@@ -186,7 +186,7 @@ bool files::PinService::save(std::vector<Bookmark> bookmarks) {
   }
   return true;
 }
-bool files::PinService::add(std::vector<Bookmark> bookmarks, std::size_t before) {
+bool luciole::PinService::add(std::vector<Bookmark> bookmarks, std::size_t before) {
   if (!editable() || std::ranges::any_of(bookmarks, [](const auto& bookmark) {
         return bookmark.location.isTrash() && bookmark.location != Location::trash();
       })) {
@@ -217,8 +217,8 @@ bool files::PinService::add(std::vector<Bookmark> bookmarks, std::size_t before)
   proposed.insert(proposed.begin() + static_cast<std::ptrdiff_t>(before), incoming.begin(), incoming.end());
   return save(std::move(proposed));
 }
-bool files::PinService::remove(const Location& location) { return removeMany({location}); }
-bool files::PinService::removeMany(const std::vector<Location>& locations) {
+bool luciole::PinService::remove(const Location& location) { return removeMany({location}); }
+bool luciole::PinService::removeMany(const std::vector<Location>& locations) {
   if (std::ranges::any_of(locations, [](const auto& location) { return location.isTrash(); })) {
     return false;
   }
@@ -226,7 +226,7 @@ bool files::PinService::removeMany(const std::vector<Location>& locations) {
   std::erase_if(proposed, [&](const auto& pin) { return std::ranges::contains(locations, pin.location); });
   return save(std::move(proposed));
 }
-bool files::PinService::move(const Location& location, std::size_t position) {
+bool luciole::PinService::move(const Location& location, std::size_t position) {
   auto proposed = m_state->bookmarks;
   const auto found = std::ranges::find(proposed, location, &Bookmark::location);
   if (found == proposed.end()) {
@@ -238,7 +238,7 @@ bool files::PinService::move(const Location& location, std::size_t position) {
   proposed.insert(proposed.begin() + static_cast<std::ptrdiff_t>(position), std::move(bookmark));
   return save(std::move(proposed));
 }
-bool files::PinService::rename(const Bookmark& expected, std::string label) {
+bool luciole::PinService::rename(const Bookmark& expected, std::string label) {
   if (!editable() || expected.location.isTrash() || bookmarkLabelProblem(label)) {
     return false;
   }

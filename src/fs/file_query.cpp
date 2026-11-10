@@ -7,7 +7,7 @@
 #include <memory>
 #include <utility>
 
-files::FileDetails files::readFileDetails(const Location& location, const CancelToken& token) {
+luciole::FileDetails luciole::readFileDetails(const Location& location, const CancelToken& token) {
   GError* rawError = nullptr;
   const GioPtr<GFileInfo> info(g_file_query_info(
       gioFile(location).get(),
@@ -65,7 +65,7 @@ files::FileDetails files::readFileDetails(const Location& location, const Cancel
   return details;
 }
 
-void files::queryFileDetails(
+void luciole::queryFileDetails(
     const Location& location, const CancelToken& token,
     std::move_only_function<void(std::expected<FileDetails, FileError>)> done
 ) {
@@ -79,7 +79,7 @@ void files::queryFileDetails(
   );
 }
 
-void files::queryFileType(
+void luciole::queryFileType(
     const Location& location, const CancelToken& token,
     std::move_only_function<void(std::expected<FileType, FileError>)> done
 ) {
@@ -105,7 +105,7 @@ void files::queryFileType(
   );
 }
 
-std::optional<files::FileError> files::enumerateChildren(
+std::optional<luciole::FileError> luciole::enumerateChildren(
     const Location& parent, const CancelToken& token, const std::function<bool(const ChildInfo&)>& visit
 ) {
   auto* cancellable = gioCancellable(token);

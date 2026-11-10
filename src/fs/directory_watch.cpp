@@ -4,12 +4,12 @@
 
 #include <utility>
 
-struct files::DirectoryWatch::State {
+struct luciole::DirectoryWatch::State {
   GioPtr<GFileMonitor> monitor;
   std::function<void(const std::filesystem::path&)> changed;
 };
 
-std::unique_ptr<files::DirectoryWatch> files::DirectoryWatch::start(
+std::unique_ptr<luciole::DirectoryWatch> luciole::DirectoryWatch::start(
     const std::filesystem::path& directory, std::function<void(const std::filesystem::path&)> changed
 ) {
   const GioPtr<GFile> file(g_file_new_for_path(directory.c_str()));
@@ -36,9 +36,9 @@ std::unique_ptr<files::DirectoryWatch> files::DirectoryWatch::start(
   return std::unique_ptr<DirectoryWatch>(new DirectoryWatch(std::move(state)));
 }
 
-files::DirectoryWatch::DirectoryWatch(std::unique_ptr<State> state) : m_state(std::move(state)) {}
+luciole::DirectoryWatch::DirectoryWatch(std::unique_ptr<State> state) : m_state(std::move(state)) {}
 
-files::DirectoryWatch::~DirectoryWatch() {
+luciole::DirectoryWatch::~DirectoryWatch() {
   g_signal_handlers_disconnect_by_data(m_state->monitor.get(), m_state.get());
   g_file_monitor_cancel(m_state->monitor.get());
 }

@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace files {
+namespace luciole {
   // Largest encoded image file or data URI payload read into memory.
   inline constexpr std::size_t kMaxEncodedImageBytes = 64U * 1024U * 1024U;
   // Default decoded pixel budget for images shown in the UI.
@@ -13,4 +13,4 @@ namespace files {
   inline constexpr int kMaxImageSide = 8192;
   inline constexpr double kMaxSvgSourceSide = 32768.0;
   inline constexpr int kMaxSvgRasterSide = 4096;
-} // namespace files
+} // namespace luciole

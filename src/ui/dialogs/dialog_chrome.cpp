@@ -2,7 +2,7 @@
 
 #include "ui/builders.h"
 
-namespace files {
+namespace luciole {
 
   void applyDialogStyle(Flex& root) {
     root.setFill(colorSpecFromRole(ColorRole::Surface));
@@ -40,4 +40,4 @@ namespace files {
     );
   }
 
-} // namespace files
+} // namespace luciole

@@ -27,20 +27,20 @@ void ExecutionController::cancel() {
   m_launch.cancel();
 }
 void ExecutionController::closeScripts() { m_listing.cancel(); }
-bool ExecutionController::current(const files::ActionRequest& request) const {
-  return m_page.visible() && m_page.requestCurrent(request, files::ActionScope::Targets);
+bool ExecutionController::current(const luciole::ActionRequest& request) const {
+  return m_page.visible() && m_page.requestCurrent(request, luciole::ActionScope::Targets);
 }
 
-void ExecutionController::run(const files::ActionRequest& request, bool terminal) {
+void ExecutionController::run(const luciole::ActionRequest& request, bool terminal) {
   if (!current(request) || request.targets.size() != 1 || busy()) {
     return;
   }
-  m_launch = files::CancelToken{};
+  m_launch = luciole::CancelToken{};
   const auto token = m_launch;
   ++m_pending;
   const std::weak_ptr<int> lifetime = m_lifetime;
-  files::runJob<files::PreparedProgram>(
-      token, [location = request.targets.front().location, token] { return files::prepareProgram(location, token); },
+  luciole::runJob<luciole::PreparedProgram>(
+      token, [location = request.targets.front().location, token] { return luciole::prepareProgram(location, token); },
       [this, lifetime, request, terminal, token](auto result) {
         if (lifetime.expired()) {
           return;
@@ -60,10 +60,10 @@ void ExecutionController::run(const files::ActionRequest& request, bool terminal
   );
 }
 
-void ExecutionController::confirm(const files::ActionRequest& request, files::PreparedProgram program) {
+void ExecutionController::confirm(const luciole::ActionRequest& request, luciole::PreparedProgram program) {
   auto root = ui::column({.align = FlexAlign::Stretch});
-  files::applyDialogStyle(*root);
-  root->addChild(files::dialogHeader("Run application launcher?", "player-play", [this] { m_page.dismissMenu(); }));
+  luciole::applyDialogStyle(*root);
+  root->addChild(luciole::dialogHeader("Run application launcher?", "player-play", [this] { m_page.dismissMenu(); }));
   const auto text = [&](const std::string& value, int lines) {
     root->addChild(ui::label({.text = value, .maxLines = lines, .configure = [](Label& label) {
                                 label.setUseMarkup(false);
@@ -106,15 +106,15 @@ void ExecutionController::confirm(const files::ActionRequest& request, files::Pr
 }
 
 void ExecutionController::launch(
-    const files::ActionRequest& request, files::PreparedProgram program, bool terminal, bool script
+    const luciole::ActionRequest& request, luciole::PreparedProgram program, bool terminal, bool script
 ) {
   if (!current(request) || busy()) {
     return;
   }
-  m_launch = files::CancelToken{};
+  m_launch = luciole::CancelToken{};
   const auto token = m_launch;
   const auto folder = request.folder ? *request.folder : *request.targets.front().location.parent();
-  std::vector<files::Location> arguments;
+  std::vector<luciole::Location> arguments;
   arguments.reserve(script ? request.targets.size() : 0);
   if (script) {
     for (const auto& target : request.targets) {
@@ -123,7 +123,7 @@ void ExecutionController::launch(
   }
   ++m_pending;
   const std::weak_ptr<int> lifetime = m_lifetime;
-  m_connection.extension<files::DesktopIntegration>().requestActivation(
+  m_connection.extension<luciole::DesktopIntegration>().requestActivation(
       m_page.surface().wlSurface(), m_connection.lastInputSerial(), {},
       [this, lifetime, request, program = std::move(program), folder, arguments = std::move(arguments), terminal,
        token](std::string activation) mutable {
@@ -134,11 +134,11 @@ void ExecutionController::launch(
           --m_pending;
           return;
         }
-        files::runJob<bool>(
+        luciole::runJob<bool>(
             token,
             [program = std::move(program), folder, arguments = std::move(arguments), terminal,
              activation = std::move(activation), token] {
-              files::launchProgram(program, folder, arguments, terminal, activation, token);
+              luciole::launchProgram(program, folder, arguments, terminal, activation, token);
               return true;
             },
             [this, lifetime, request, token](auto result) {
@@ -154,11 +154,13 @@ void ExecutionController::launch(
   );
 }
 
-void ExecutionController::showScripts(const files::ActionRequest& request, files::ScriptListing listing, bool loading) {
+void ExecutionController::showScripts(
+    const luciole::ActionRequest& request, luciole::ScriptListing listing, bool loading
+) {
   if (!current(request)) {
     return;
   }
-  auto programs = std::make_shared<std::vector<files::PreparedProgram>>(std::move(listing.items));
+  auto programs = std::make_shared<std::vector<luciole::PreparedProgram>>(std::move(listing.items));
   std::vector<ContextMenuControlEntry> entries;
   entries.reserve(programs->size() + 4);
   for (std::size_t index = 0; index < programs->size(); ++index) {
@@ -193,19 +195,19 @@ void ExecutionController::showScripts(const files::ActionRequest& request, files
   );
 }
 
-void ExecutionController::scripts(const files::ActionRequest& request) {
+void ExecutionController::scripts(const luciole::ActionRequest& request) {
   if (!current(request)) {
     return;
   }
   closeScripts();
-  m_listing = files::CancelToken{};
+  m_listing = luciole::CancelToken{};
   const auto token = m_listing;
   showScripts(request, {}, true);
   const auto generation = m_submenus.generation();
   const std::weak_ptr<int> lifetime = m_lifetime;
   ++m_pending;
-  files::runJob<files::ScriptListing>(
-      token, [token] { return files::listScripts(token); },
+  luciole::runJob<luciole::ScriptListing>(
+      token, [token] { return luciole::listScripts(token); },
       [this, lifetime, request, generation, token](auto result) {
         if (!lifetime.expired()) {
           --m_pending;
@@ -221,13 +223,13 @@ void ExecutionController::scripts(const files::ActionRequest& request) {
   );
 }
 
-void ExecutionController::openScriptsFolder(const files::ActionRequest& request) {
+void ExecutionController::openScriptsFolder(const luciole::ActionRequest& request) {
   const std::weak_ptr<int> lifetime = m_lifetime;
-  m_launch = files::CancelToken{};
+  m_launch = luciole::CancelToken{};
   const auto token = m_launch;
   ++m_pending;
-  files::runJob<files::Location>(
-      token, [token] { return files::ensureScriptsDirectory(token); },
+  luciole::runJob<luciole::Location>(
+      token, [token] { return luciole::ensureScriptsDirectory(token); },
       [this, lifetime, request](auto result) {
         if (!lifetime.expired()) {
           --m_pending;

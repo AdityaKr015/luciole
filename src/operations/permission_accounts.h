@@ -4,7 +4,7 @@
 #include <string>
 #include <string_view>
 
-namespace files {
+namespace luciole {
   enum class AccountKind : std::uint8_t { User, Group };
 
   // Worker-only passwd/group lookups; failures throw FileErrorException.
@@ -14,4 +14,4 @@ namespace files {
   std::uint32_t accountId(const std::string& text, AccountKind kind, std::string_view userRole = "Owner");
   // The effective group or one of the supplementary groups.
   bool memberOfGroup(std::uint32_t group);
-} // namespace files
+} // namespace luciole

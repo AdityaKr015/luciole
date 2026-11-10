@@ -22,7 +22,7 @@ namespace {
   }
 } // namespace
 
-namespace files::archive_work {
+namespace luciole::archive_work {
   std::uint64_t decodedContainerBudget(const ArchiveLimits& limits) {
     // TAR headers, alignment, PAX metadata and bounded trailing padding.
     std::uint64_t budget = limits.maxExpandedBytes;
@@ -61,7 +61,7 @@ namespace files::archive_work {
         info.st_mtim.tv_nsec, info.st_ctim.tv_sec, info.st_ctim.tv_nsec
     );
   }
-  Work workFor(ArchiveLimits limits, const CancelToken& cancel, files::archive_work::Progress& progress) {
+  Work workFor(ArchiveLimits limits, const CancelToken& cancel, luciole::archive_work::Progress& progress) {
     return {limits, cancel, progress, Clock::now() + limits.maxTime, {}, 0, 0};
   }
   std::string bounded(const char* text) {
@@ -228,8 +228,8 @@ namespace files::archive_work {
       archiveError(value, work);
     }
   }
-} // namespace files::archive_work
-std::optional<files::FileError> files::archive_work::cleanup(const std::vector<std::string>& paths) {
+} // namespace luciole::archive_work
+std::optional<luciole::FileError> luciole::archive_work::cleanup(const std::vector<std::string>& paths) {
   std::optional<FileError> error;
   for (const auto& path : paths) {
     std::error_code result;

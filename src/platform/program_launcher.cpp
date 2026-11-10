@@ -15,7 +15,7 @@
 #include <unistd.h>
 #include <utility>
 
-struct files::ProgramData {
+struct luciole::ProgramData {
   Location location;
   Fd descriptor;
   struct stat stamp, pathStamp;
@@ -25,7 +25,7 @@ struct files::ProgramData {
 };
 
 namespace {
-  using namespace files;
+  using namespace luciole;
   void check(const CancelToken& token) {
     if (token.cancelled()) {
       throwFileError(FileErrorKind::Cancelled, "Launch cancelled.");
@@ -120,7 +120,7 @@ namespace {
             uri += '%';
           }
         }
-        const files::GString escaped(g_shell_quote(uri.c_str()));
+        const luciole::GString escaped(g_shell_quote(uri.c_str()));
         result += escaped.get();
       } else {
         result += value;
@@ -136,8 +136,8 @@ namespace {
       const GErrorPtr error(raw);
       throwFileError(FileErrorKind::InvalidArgument, error->message);
     }
-    const files::GString type(g_key_file_get_string(key.get(), "Desktop Entry", "Type", nullptr));
-    const files::GString command(g_key_file_get_string(key.get(), "Desktop Entry", "Exec", nullptr));
+    const luciole::GString type(g_key_file_get_string(key.get(), "Desktop Entry", "Type", nullptr));
+    const luciole::GString command(g_key_file_get_string(key.get(), "Desktop Entry", "Exec", nullptr));
     if (!type
         || std::string_view(type.get()) != "Application"
         || !command
@@ -178,7 +178,7 @@ namespace {
   }
 } // namespace
 
-files::PreparedProgram files::prepareProgram(const Location& location, const CancelToken& token) {
+luciole::PreparedProgram luciole::prepareProgram(const Location& location, const CancelToken& token) {
   check(token);
   const auto stamp = pathStamp(location);
   if (!S_ISREG(stamp.st_mode) && !S_ISLNK(stamp.st_mode)) {
@@ -215,7 +215,7 @@ files::PreparedProgram files::prepareProgram(const Location& location, const Can
   return result;
 }
 
-void files::launchProgram(
+void luciole::launchProgram(
     const PreparedProgram& program, const Location& workingDirectory, const std::vector<Location>& arguments,
     bool terminal, const std::string& activationToken, const CancelToken& token
 ) {
@@ -289,15 +289,15 @@ void files::launchProgram(
   }
 }
 
-files::Location files::scriptsDirectory() {
+luciole::Location luciole::scriptsDirectory() {
   const std::filesystem::path base(g_get_user_data_dir());
   if (!base.is_absolute()) {
     throwFileError(FileErrorKind::InvalidArgument, "The XDG data directory must be absolute.");
   }
-  return Location::fromPath((base / "noctalia-files/scripts").native());
+  return Location::fromPath((base / "luciole/scripts").native());
 }
 
-files::ScriptListing files::listScripts(const CancelToken& token) {
+luciole::ScriptListing luciole::listScripts(const CancelToken& token) {
   ScriptListing result;
   try {
     check(token);
@@ -346,7 +346,7 @@ files::ScriptListing files::listScripts(const CancelToken& token) {
   return result;
 }
 
-files::Location files::ensureScriptsDirectory(const CancelToken& token) {
+luciole::Location luciole::ensureScriptsDirectory(const CancelToken& token) {
   check(token);
   const auto root = scriptsDirectory();
   const auto parent = *root.parent();

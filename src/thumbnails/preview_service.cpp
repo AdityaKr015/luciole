@@ -20,7 +20,7 @@ namespace {
         || mime == "application/toml"
         || mime == "application/x-nix";
   }
-  bool sameSource(const files::DirectoryEntry& a, const files::DirectoryEntry& b) {
+  bool sameSource(const luciole::DirectoryEntry& a, const luciole::DirectoryEntry& b) {
     return a.id == b.id
         && a.location == b.location
         && a.displayName == b.displayName
@@ -45,8 +45,8 @@ namespace {
     std::string text, message;
     bool error = false;
   };
-  TextResult readText(const files::DirectoryEntry& entry, GCancellable* cancel) {
-    using namespace files;
+  TextResult readText(const luciole::DirectoryEntry& entry, GCancellable* cancel) {
+    using namespace luciole;
     const auto path = entry.location.nativePath();
     if (!path) {
       return {{}, "Text previews are available for local files."};
@@ -165,7 +165,7 @@ namespace {
   }
 } // namespace
 
-struct files::PreviewService::State : std::enable_shared_from_this<State> {
+struct luciole::PreviewService::State : std::enable_shared_from_this<State> {
   PreviewSnapshot view;
   ThumbnailService thumbnails{ThumbnailPurpose::Preview};
   PreviewMetadataService metadata;
@@ -245,7 +245,7 @@ struct files::PreviewService::State : std::enable_shared_from_this<State> {
     });
   }
 };
-files::PreviewService::PreviewService() : m_state(std::make_shared<State>()) {
+luciole::PreviewService::PreviewService() : m_state(std::make_shared<State>()) {
   const std::weak_ptr<State> weak = m_state;
   m_state->metadata.setChangedCallback([weak] {
     if (const auto state = weak.lock(); state && state->alive && state->view.entry) {
@@ -262,12 +262,12 @@ files::PreviewService::PreviewService() : m_state(std::make_shared<State>()) {
     state->notify();
   });
 }
-files::PreviewService::~PreviewService() {
+luciole::PreviewService::~PreviewService() {
   clear();
   m_state->alive = false;
   m_state->changed = {};
 }
-void files::PreviewService::clear() {
+void luciole::PreviewService::clear() {
   m_state->metadata.clear();
   if (!m_state->view.entry && !m_state->pendingImage && !m_state->pending && m_state->thumbnails.reservedBytes() == 0) {
     return;
@@ -275,7 +275,7 @@ void files::PreviewService::clear() {
   m_state->resetSelection();
   m_state->thumbnails.invalidate();
 }
-void files::PreviewService::show(
+void luciole::PreviewService::show(
     std::optional<DirectoryEntry> entry, int pixels, ThumbnailOptions options,
     std::shared_ptr<const FileIconImage> prepared
 ) {
@@ -315,8 +315,8 @@ void files::PreviewService::show(
   state.metadata.show(*entry, options);
   state.view.metadata = state.metadata.fields();
   state.view.status = PreviewStatus::Unavailable;
-  state.view.message = entry->type == files::FileType::Directory ? "Folder" : "No preview available for this file.";
-  if (entry->type == files::FileType::Regular && !entry->symlink && entry->access.read != false) {
+  state.view.message = entry->type == luciole::FileType::Directory ? "Folder" : "No preview available for this file.";
+  if (entry->type == luciole::FileType::Regular && !entry->symlink && entry->access.read != false) {
     state.view.status = PreviewStatus::Loading;
     state.view.message = "Loading preview…";
     if (textType(entry->contentType.value_or(""))) {
@@ -340,11 +340,11 @@ void files::PreviewService::show(
   }
   state.notify();
 }
-void files::PreviewService::setChangedCallback(std::function<void()> callback) {
+void luciole::PreviewService::setChangedCallback(std::function<void()> callback) {
   m_state->changed = std::move(callback);
 }
-const files::PreviewSnapshot& files::PreviewService::snapshot() const { return m_state->view; }
-bool files::PreviewService::busy() const {
+const luciole::PreviewSnapshot& luciole::PreviewService::snapshot() const { return m_state->view; }
+bool luciole::PreviewService::busy() const {
   return m_state->metadata.busy()
       || m_state->running
       || m_state->pending

@@ -43,18 +43,18 @@ enum class RenameReplay : std::uint8_t { None, Undo, Redo };
 class OperationJob : public std::enable_shared_from_this<OperationJob> {
 public:
   using Service = std::variant<
-      std::unique_ptr<files::TransferService>, std::unique_ptr<files::ArchiveService>,
-      std::unique_ptr<files::TrashService>, std::unique_ptr<files::RestoreService>,
-      std::unique_ptr<files::EmptyTrashService>, std::unique_ptr<files::RenameService>,
-      std::unique_ptr<files::BatchRenameService>, std::unique_ptr<files::PermissionService>,
-      std::unique_ptr<files::CreateService>>;
+      std::unique_ptr<luciole::TransferService>, std::unique_ptr<luciole::ArchiveService>,
+      std::unique_ptr<luciole::TrashService>, std::unique_ptr<luciole::RestoreService>,
+      std::unique_ptr<luciole::EmptyTrashService>, std::unique_ptr<luciole::RenameService>,
+      std::unique_ptr<luciole::BatchRenameService>, std::unique_ptr<luciole::PermissionService>,
+      std::unique_ptr<luciole::CreateService>>;
 
-  OperationJob(files::JobId id, Service service);
+  OperationJob(luciole::JobId id, Service service);
   ~OperationJob();
   OperationJob(const OperationJob&) = delete;
   OperationJob& operator=(const OperationJob&) = delete;
 
-  files::JobId id() const { return m_id; }
+  luciole::JobId id() const { return m_id; }
   JobKind kind() const { return static_cast<JobKind>(m_service.index()); }
   template <typename T> T& service() { return *std::get<std::unique_ptr<T>>(m_service); }
   template <typename T> const T& service() const { return *std::get<std::unique_ptr<T>>(m_service); }
@@ -71,8 +71,8 @@ public:
   bool cancellable() const;
   void cancel();
   // The restore, archive or transfer conflict waiting for an answer.
-  std::optional<files::TransferConflict> conflict() const;
-  bool resolve(std::uint64_t id, files::TransferConflictChoice choice, bool applyToAll = false);
+  std::optional<luciole::TransferConflict> conflict() const;
+  bool resolve(std::uint64_t id, luciole::TransferConflictChoice choice, bool applyToAll = false);
   // True the first time it is called after a run ends: the owner reports each outcome once.
   bool takeResult() { return !std::exchange(m_resultTaken, true); }
   // Runs `callback` once the current run ends, or when the hub goes away first.
@@ -81,7 +81,7 @@ public:
 private:
   friend class OperationHub;
 
-  files::JobId m_id;
+  luciole::JobId m_id;
   Service m_service;
   bool m_running = false, m_ran = false, m_resultTaken = false;
   bool m_mutationStarted = false;
@@ -102,7 +102,7 @@ public:
     // A job this page owns changed, or the page just took it over.
     virtual void jobChanged(OperationJob& job) = 0;
     // All pages observe completed transfers, including providers without directory monitors.
-    virtual void transfersFinished(const std::vector<files::TransferResult>& results) = 0;
+    virtual void transfersFinished(const std::vector<luciole::TransferResult>& results) = 0;
     virtual void activityChanged() {}
 
   protected:
@@ -112,27 +112,27 @@ public:
     ~Owner() = default;
   };
 
-  explicit OperationHub(const files::TabWorkspace& workspace);
+  explicit OperationHub(const luciole::TabWorkspace& workspace);
   ~OperationHub();
   OperationHub(const OperationHub&) = delete;
   OperationHub& operator=(const OperationHub&) = delete;
 
-  void attach(files::TabId page, Owner& owner);
-  void detach(files::TabId page);
+  void attach(luciole::TabId page, Owner& owner);
+  void detach(luciole::TabId page);
 
   // A new idle job owned by `page`; start its service right away. The hub drops the job once it is idle and only
   // the hub holds it.
   template <typename Service>
-  std::shared_ptr<OperationJob> create(files::TabId page, JobScope scope = JobScope::Follow) {
+  std::shared_ptr<OperationJob> create(luciole::TabId page, JobScope scope = JobScope::Follow) {
     return add(page, std::make_unique<Service>(), scope);
   }
   // Lets a page-scoped job move with its window from now on, as a job that applies changes does.
   void follow(const OperationJob& job) { m_routing.follow(job.id()); }
-  files::TabId owner(const OperationJob& job) const { return m_routing.owner(job.id()); }
+  luciole::TabId owner(const OperationJob& job) const { return m_routing.owner(job.id()); }
   // True while `page` belongs to a window; a page that left keeps no job.
-  bool attached(files::TabId page) const { return m_workspace.owner(page).has_value(); }
+  bool attached(luciole::TabId page) const { return m_workspace.owner(page).has_value(); }
   // The newest or oldest job `page` owns that `accept` takes, or null.
-  template <typename Predicate> OperationJob* newest(files::TabId page, Predicate accept) const {
+  template <typename Predicate> OperationJob* newest(luciole::TabId page, Predicate accept) const {
     for (const auto& [id, job] : std::views::reverse(m_jobs)) {
       if (m_routing.owner(id) == page && accept(*job)) {
         return job.get();
@@ -140,7 +140,7 @@ public:
     }
     return nullptr;
   }
-  template <typename Predicate> OperationJob* oldest(files::TabId page, Predicate accept) const {
+  template <typename Predicate> OperationJob* oldest(luciole::TabId page, Predicate accept) const {
     for (const auto& [id, job] : m_jobs) {
       if (m_routing.owner(id) == page && accept(*job)) {
         return job.get();
@@ -148,11 +148,11 @@ public:
     }
     return nullptr;
   }
-  OperationJob* find(files::JobId id) const;
+  OperationJob* find(luciole::JobId id) const;
 
   // Main loop: hands the jobs of pages that left their window to another page and cancels their page-scoped jobs,
   // starts prepared moves to Trash, then drops finished jobs.
-  void update(std::optional<files::WindowId> preferred);
+  void update(std::optional<luciole::WindowId> preferred);
   // Cancels every job, including prepared moves to Trash; the application exits once they stop.
   void shutdown();
   // True while any job runs.
@@ -160,35 +160,35 @@ public:
   bool renameReplayBusy() const;
   bool canUndoRename() const;
   bool canRedoRename() const;
-  bool replayRename(files::TabId page, bool redo);
-  std::vector<files::JobActivity> activities() const;
-  std::shared_ptr<const std::string> activityReport(files::JobId id) const;
-  bool cancelActivity(files::JobId id);
+  bool replayRename(luciole::TabId page, bool redo);
+  std::vector<luciole::JobActivity> activities() const;
+  std::shared_ptr<const std::string> activityReport(luciole::JobId id) const;
+  bool cancelActivity(luciole::JobId id);
   void clearFinishedActivities();
 
 private:
-  std::shared_ptr<OperationJob> add(files::TabId page, OperationJob::Service service, JobScope scope);
+  std::shared_ptr<OperationJob> add(luciole::TabId page, OperationJob::Service service, JobScope scope);
   void changed(OperationJob& job);
-  void notify(files::TabId page, OperationJob& job);
+  void notify(luciole::TabId page, OperationJob& job);
   bool retained(const OperationJob& job) const;
   void recordRename(const OperationJob& job);
   void notifyActivity();
 
-  const files::TabWorkspace& m_workspace;
-  files::JobRouting m_routing;
-  std::map<files::JobId, std::shared_ptr<OperationJob>> m_jobs;
-  std::map<files::TabId, Owner*> m_owners;
-  files::JobId m_next = 0;
-  std::shared_ptr<const files::RenameReceipt> m_renameReceipt;
+  const luciole::TabWorkspace& m_workspace;
+  luciole::JobRouting m_routing;
+  std::map<luciole::JobId, std::shared_ptr<OperationJob>> m_jobs;
+  std::map<luciole::TabId, Owner*> m_owners;
+  luciole::JobId m_next = 0;
+  std::shared_ptr<const luciole::RenameReceipt> m_renameReceipt;
   std::uint64_t m_historyGeneration = 0;
   bool m_renameRedo = false;
-  std::deque<files::JobActivity> m_finishedActivities;
+  std::deque<luciole::JobActivity> m_finishedActivities;
 };
 
 // One page's view of the hub: the jobs it starts and the ones it owns now.
 class PageJobs {
 public:
-  PageJobs(OperationHub& hub, files::TabId page) : m_hub(hub), m_page(page) {}
+  PageJobs(OperationHub& hub, luciole::TabId page) : m_hub(hub), m_page(page) {}
 
   template <typename Service> std::shared_ptr<OperationJob> create(JobScope scope = JobScope::Follow) {
     return m_hub.create<Service>(m_page, scope);
@@ -198,7 +198,7 @@ public:
   // False once the page left its window (closed tab or pane, closed window): its dialogs close for good.
   bool attached() const { return m_hub.attached(m_page); }
   // An owned job by id, or null.
-  OperationJob* find(files::JobId id) const {
+  OperationJob* find(luciole::JobId id) const {
     auto* job = m_hub.find(id);
     return job && owns(*job) ? job : nullptr;
   }
@@ -215,5 +215,5 @@ public:
 
 private:
   OperationHub& m_hub;
-  files::TabId m_page;
+  luciole::TabId m_page;
 };

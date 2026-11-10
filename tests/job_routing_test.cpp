@@ -5,18 +5,18 @@
 #include <stdexcept>
 
 namespace {
-  files::TabId active(const files::TabWorkspace& workspace, files::WindowId window) {
+  luciole::TabId active(const luciole::TabWorkspace& workspace, luciole::WindowId window) {
     return workspace.windows().at(window).active;
   }
 
   void staysWithItsPage() {
-    files::TabWorkspace workspace;
+    luciole::TabWorkspace workspace;
     const auto first = workspace.addWindow();
     const auto second = workspace.addWindow();
     const auto origin = workspace.addTab(first);
     const auto other = workspace.addTab(first);
     (void)workspace.addTab(second);
-    files::JobRouting routing;
+    luciole::JobRouting routing;
     routing.add(1, origin, workspace);
     TEST_CHECK(routing.owner(1) == origin);
     TEST_CHECK(workspace.select(first, other));
@@ -34,13 +34,13 @@ namespace {
   }
 
   void movesToActiveTabOfSameWindow() {
-    files::TabWorkspace workspace;
+    luciole::TabWorkspace workspace;
     const auto first = workspace.addWindow();
     const auto second = workspace.addWindow();
     const auto origin = workspace.addTab(first);
     const auto sibling = workspace.addTab(first);
     const auto elsewhere = workspace.addTab(second);
-    files::JobRouting routing;
+    luciole::JobRouting routing;
     routing.add(1, origin, workspace);
     routing.add(2, origin, workspace);
     routing.add(3, elsewhere, workspace);
@@ -52,26 +52,26 @@ namespace {
   }
 
   void splitPaneHandsOverToTheOtherPane() {
-    files::TabWorkspace workspace;
+    luciole::TabWorkspace workspace;
     const auto window = workspace.addWindow();
     const auto primary = workspace.addTab(window);
     const auto pane = workspace.addPane(window);
     TEST_CHECK(pane != 0 && active(workspace, window) == pane);
-    files::JobRouting routing;
+    luciole::JobRouting routing;
     routing.add(1, pane, workspace);
     TEST_CHECK(workspace.closePane(window, pane));
     TEST_CHECK(routing.update(workspace).size() == 1 && routing.owner(1) == primary);
   }
 
   void windowGoneUsesPreferredThenAnyWindow() {
-    files::TabWorkspace workspace;
+    luciole::TabWorkspace workspace;
     const auto first = workspace.addWindow();
     const auto second = workspace.addWindow();
     const auto third = workspace.addWindow();
     const auto origin = workspace.addTab(first);
     const auto inSecond = workspace.addTab(second);
     const auto inThird = workspace.addTab(third);
-    files::JobRouting routing;
+    luciole::JobRouting routing;
     routing.add(1, origin, workspace);
     routing.add(2, inSecond, workspace);
     TEST_CHECK(workspace.close(origin) && workspace.removeWindow(first));
@@ -82,10 +82,10 @@ namespace {
   }
 
   void waitsForAWindow() {
-    files::TabWorkspace workspace;
+    luciole::TabWorkspace workspace;
     const auto window = workspace.addWindow();
     const auto origin = workspace.addTab(window);
-    files::JobRouting routing;
+    luciole::JobRouting routing;
     routing.add(1, origin, workspace);
     TEST_CHECK(workspace.close(origin) && workspace.removeWindow(window));
     auto moves = routing.update(workspace);
@@ -102,11 +102,11 @@ namespace {
   }
 
   void pageBoundJobsStay() {
-    files::TabWorkspace workspace;
+    luciole::TabWorkspace workspace;
     const auto window = workspace.addWindow();
     const auto origin = workspace.addTab(window);
     const auto sibling = workspace.addTab(window);
-    files::JobRouting routing;
+    luciole::JobRouting routing;
     routing.add(1, origin, workspace, false);
     routing.add(2, origin, workspace, false);
     TEST_CHECK(!routing.following(1));

@@ -2,18 +2,18 @@
 
 #include "fs/gio_interop.h"
 
-struct files::TerminalLauncher::State {
+struct luciole::TerminalLauncher::State {
   GioPtr<GCancellable> cancellable{g_cancellable_new()};
   GString helper{g_find_program_in_path("xdg-terminal-exec")};
   bool active = true;
 };
-files::TerminalLauncher::TerminalLauncher() : m_state(std::make_shared<State>()) {}
-files::TerminalLauncher::~TerminalLauncher() {
+luciole::TerminalLauncher::TerminalLauncher() : m_state(std::make_shared<State>()) {}
+luciole::TerminalLauncher::~TerminalLauncher() {
   m_state->active = false;
   g_cancellable_cancel(m_state->cancellable.get());
 }
-bool files::TerminalLauncher::available() const { return m_state->helper != nullptr; }
-void files::TerminalLauncher::open(const Location& folder, std::function<void(std::string)> completed) {
+bool luciole::TerminalLauncher::available() const { return m_state->helper != nullptr; }
+void luciole::TerminalLauncher::open(const Location& folder, std::function<void(std::string)> completed) {
   struct Request {
     std::shared_ptr<State> state;
     Location folder;

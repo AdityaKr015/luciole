@@ -16,7 +16,7 @@
 
 namespace {
   namespace fs = std::filesystem;
-  using files::FolderTotalsPhase;
+  using luciole::FolderTotalsPhase;
   void pumpUntil(const std::function<bool()>& done) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
     while (!done()) {
@@ -30,9 +30,9 @@ namespace {
     const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(150);
     pumpUntil([&] { return std::chrono::steady_clock::now() >= end; });
   }
-  files::DirectoryEntry entry(const fs::path& path) {
-    files::DirectoryEntry result{
-        .location = files::Location::fromPath(path.native()),
+  luciole::DirectoryEntry entry(const fs::path& path) {
+    luciole::DirectoryEntry result{
+        .location = luciole::Location::fromPath(path.native()),
         .name = {},
         .displayName = {},
         .size = {},
@@ -40,16 +40,16 @@ namespace {
         .etag = {},
         .parentDisplayName = {}
     };
-    const auto facts = files::readFileDetails(result.location, {});
+    const auto facts = luciole::readFileDetails(result.location, {});
     result.type = facts.type;
-    result.symlink = facts.type == files::FileType::Symlink;
+    result.symlink = facts.type == luciole::FileType::Symlink;
     result.identity = facts.identity;
     result.etag = facts.etag;
     result.contentRevision = facts.contentRevision;
     return result;
   }
-  auto walk(std::vector<files::DirectoryEntry> roots, files::FolderTotalsLimits limits = {}) {
-    return files::walkFolderTotals(std::move(roots), {}, [](const auto&) {}, limits);
+  auto walk(std::vector<luciole::DirectoryEntry> roots, luciole::FolderTotalsLimits limits = {}) {
+    return luciole::walkFolderTotals(std::move(roots), {}, [](const auto&) {}, limits);
   }
   void basic(const fs::path& root) {
     fs::create_directory(root / "empty");
@@ -81,7 +81,7 @@ namespace {
     const auto broken = walk({entry(tree / "broken")});
     TEST_CHECK(!broken.partial() && broken.links == 1 && broken.bytes == 7);
     auto stale = source;
-    stale.identity = files::FileIdentity{"wrong", "wrong"};
+    stale.identity = luciole::FileIdentity{"wrong", "wrong"};
     const auto changed = walk({stale});
     TEST_CHECK(changed.changed == 1 && changed.bytes == 0 && changed.partial());
     auto removed = entry(tree / ".hidden");
@@ -89,9 +89,9 @@ namespace {
     const auto missing = walk({removed});
     TEST_CHECK(missing.unavailable == 1 && missing.partial());
     auto remote = source;
-    remote.location = files::Location::fromUri("sftp://example.invalid/folder");
+    remote.location = luciole::Location::fromUri("sftp://example.invalid/folder");
     auto trash = source;
-    trash.location = files::Location::trash();
+    trash.location = luciole::Location::trash();
     const auto unsupported = walk({remote, trash});
     TEST_CHECK(unsupported.unsupported == 2 && unsupported.partial() && unsupported.bytes == 0);
   }
@@ -102,9 +102,9 @@ namespace {
       std::ofstream(tree / std::to_string(i)) << 'x';
     }
     const auto source = entry(tree);
-    files::CancelToken cancel;
+    luciole::CancelToken cancel;
     std::uint64_t previous = 0;
-    const auto stopped = files::walkFolderTotals({source}, cancel, [&](const auto& progress) {
+    const auto stopped = luciole::walkFolderTotals({source}, cancel, [&](const auto& progress) {
       TEST_CHECK(progress.files >= previous);
       previous = progress.files;
       if (progress.files >= 64) {
@@ -114,7 +114,7 @@ namespace {
     TEST_CHECK(stopped.phase == FolderTotalsPhase::Cancelled && stopped.partial());
     TEST_CHECK(stopped.files >= 64 && stopped.files < 1000 && stopped.bytes == stopped.files);
     bool replaced = false;
-    const auto changed = files::walkFolderTotals({source}, {}, [&](const auto& progress) {
+    const auto changed = luciole::walkFolderTotals({source}, {}, [&](const auto& progress) {
       if (!replaced && progress.files >= 64) {
         replaced = true;
         fs::rename(tree, root / "held-tree");
@@ -150,7 +150,7 @@ namespace {
     TEST_CHECK(::chmod(path.c_str(), 0700) == 0);
   }
   void lifecycle(const fs::path& root) {
-    files::FolderTotalsService service;
+    luciole::FolderTotalsService service;
     int changes = 0;
     service.setChangedCallback([&] { ++changes; });
     TEST_CHECK(!service.busy() && service.snapshot().phase == FolderTotalsPhase::Idle);
@@ -174,17 +174,17 @@ namespace {
     const int before = changes;
     pumpUntil([&] { return !service.busy(); });
     TEST_CHECK(changes == before && service.snapshot().phase == FolderTotalsPhase::Idle);
-    const std::vector<files::DirectoryEntry> many(4100, targets.front());
+    const std::vector<luciole::DirectoryEntry> many(4100, targets.front());
     TEST_CHECK(service.start(many));
     pumpUntil([&] { return !service.busy(); });
     TEST_CHECK(service.snapshot().limited && service.snapshot().files == 1000);
     {
-      files::FolderTotalsService retiring;
+      luciole::FolderTotalsService retiring;
       retiring.setChangedCallback([] { TEST_CHECK(false); });
       TEST_CHECK(retiring.start(targets));
     }
     drain();
-    auto owner = std::make_unique<files::FolderTotalsService>();
+    auto owner = std::make_unique<luciole::FolderTotalsService>();
     owner->setChangedCallback([&] { owner.reset(); });
     TEST_CHECK(owner->start(targets));
     pumpUntil([&] { return !owner; });
@@ -193,7 +193,7 @@ namespace {
 } // namespace
 
 int main() {
-  const files::GString temporary(g_dir_make_tmp("noctalia-folder-totals-XXXXXX", nullptr));
+  const luciole::GString temporary(g_dir_make_tmp("luciole-folder-totals-XXXXXX", nullptr));
   TEST_CHECK(temporary);
   const fs::path root(temporary.get());
   basic(root);

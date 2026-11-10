@@ -43,7 +43,7 @@ FileMetadataView::FileMetadataView() {
   setParticipatesInLayout(false);
 }
 
-void FileMetadataView::sync(std::span<const files::MetadataField> fields, float width, bool previewOnly) {
+void FileMetadataView::sync(std::span<const luciole::MetadataField> fields, float width, bool previewOnly) {
   const float keyWidth = std::min(88.0F, width * 0.36F);
   std::size_t count = 0;
   for (const auto& field : fields) {

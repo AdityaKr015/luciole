@@ -7,7 +7,7 @@
 #include <atomic>
 #include <cstring>
 
-namespace files::archive_work {
+namespace luciole::archive_work {
   struct Progress {
     std::atomic<std::uint64_t> bytes{0};
     std::atomic<std::size_t> items{0};
@@ -48,4 +48,4 @@ namespace files::archive_work {
       Progress& progress, const Passwords& passwords = {}
   );
   std::optional<FileError> cleanup(const std::vector<std::string>& paths);
-} // namespace files::archive_work
+} // namespace luciole::archive_work

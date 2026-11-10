@@ -11,7 +11,7 @@
 #include <format>
 
 namespace {
-  using Tag = files::AclTag;
+  using Tag = luciole::AclTag;
   bool named(Tag tag) { return tag == Tag::User || tag == Tag::Group; }
   std::string permissions(std::uint32_t value) {
     return std::string{(value & 4) != 0 ? 'r' : '-', (value & 2) != 0 ? 'w' : '-', (value & 1) != 0 ? 'x' : '-'};
@@ -51,16 +51,16 @@ void AclEditor::changed(bool layout) {
   }
   m_changed();
 }
-void AclEditor::sync(const files::PermissionSnapshot& snapshot) {
+void AclEditor::sync(const luciole::PermissionSnapshot& snapshot) {
   const auto actual = snapshot.info ? snapshot.info->acl : nullptr;
   const bool preserve = m_draft
       && snapshot.aclOperation
-      && (snapshot.phase == files::PermissionPhase::Saving || (snapshot.error.has_value() && !snapshot.applied));
-  const bool editable = snapshot.phase == files::PermissionPhase::Ready && actual && actual->editable;
+      && (snapshot.phase == luciole::PermissionPhase::Saving || (snapshot.error.has_value() && !snapshot.applied));
+  const bool editable = snapshot.phase == luciole::PermissionPhase::Ready && actual && actual->editable;
   if (actual != m_actual || editable != m_editable) {
     if (!preserve) {
-      m_access = actual ? actual->access : std::vector<files::AclEntry>{};
-      m_defaults = actual ? actual->defaults : std::vector<files::AclEntry>{};
+      m_access = actual ? actual->access : std::vector<luciole::AclEntry>{};
+      m_defaults = actual ? actual->defaults : std::vector<luciole::AclEntry>{};
       m_draft = false;
     }
     m_actual = actual;
@@ -70,13 +70,13 @@ void AclEditor::sync(const files::PermissionSnapshot& snapshot) {
   m_reason->setText(actual ? actual->message : "ACL inspection is available for one native regular file or folder.");
   const auto message = snapshot.aclOperation ? permissionStatusText(snapshot) : "";
   m_status->setText(
-      snapshot.aclOperation && snapshot.phase == files::PermissionPhase::Saving ? "Saving access control…" : message
+      snapshot.aclOperation && snapshot.phase == luciole::PermissionPhase::Saving ? "Saving access control…" : message
   );
   m_status->setColor(colorSpecFromRole(snapshot.failed() ? ColorRole::Error : ColorRole::OnSurfaceVariant));
   m_reason->setColor(colorSpecFromRole(ColorRole::OnSurfaceVariant));
 }
-files::AclEdit AclEditor::edit() const {
-  files::AclEdit value;
+luciole::AclEdit AclEditor::edit() const {
+  luciole::AclEdit value;
   if (m_actual && m_access != m_actual->access) {
     value.access = m_access;
   }
@@ -97,7 +97,7 @@ void AclEditor::updateEffective() {
       continue;
     }
     const auto& row = rows[key.second];
-    const auto mask = std::ranges::find(rows, Tag::Mask, &files::AclEntry::tag);
+    const auto mask = std::ranges::find(rows, Tag::Mask, &luciole::AclEntry::tag);
     const auto effective = (named(row.tag) || row.tag == Tag::OwningGroup) && mask != rows.end()
         ? row.permissions & mask->permissions
         : row.permissions;
@@ -112,10 +112,10 @@ void AclEditor::recalculate(bool defaults) {
       value |= row.permissions;
     }
   }
-  auto mask = std::ranges::find(rows, Tag::Mask, &files::AclEntry::tag);
+  auto mask = std::ranges::find(rows, Tag::Mask, &luciole::AclEntry::tag);
   if (mask != rows.end()) {
     mask->permissions = value;
-  } else if (rows.size() < files::maxAclEntries) {
+  } else if (rows.size() < luciole::maxAclEntries) {
     rows.push_back({Tag::Mask, {}, value});
   }
   changed(true);
@@ -230,12 +230,12 @@ void AclEditor::rebuild() {
       actions->addChild(
           ui::button(
               {.text = user ? "Add user" : "Add group",
-               .enabled = m_editable && rows.size() + (mask ? 1 : 2) <= files::maxAclEntries,
+               .enabled = m_editable && rows.size() + (mask ? 1 : 2) <= luciole::maxAclEntries,
                .variant = ButtonVariant::Ghost,
                .onClick = [this, defaults, user] {
                  auto& values = defaults ? m_defaults : m_access;
                  if (std::ranges::none_of(values, [](const auto& row) { return row.tag == Tag::Mask; })) {
-                   const auto group = std::ranges::find(values, Tag::OwningGroup, &files::AclEntry::tag);
+                   const auto group = std::ranges::find(values, Tag::OwningGroup, &luciole::AclEntry::tag);
                    values.push_back({Tag::Mask, {}, group == values.end() ? 0 : group->permissions});
                  }
                  values.push_back({user ? Tag::User : Tag::Group, {}, 0});
@@ -247,7 +247,7 @@ void AclEditor::rebuild() {
     actions->addChild(
         ui::button(
             {.text = "Recalculate mask",
-             .enabled = m_editable && (mask || rows.size() < files::maxAclEntries),
+             .enabled = m_editable && (mask || rows.size() < luciole::maxAclEntries),
              .variant = ButtonVariant::Ghost,
              .onClick = [this, defaults] { recalculate(defaults); }}
         )

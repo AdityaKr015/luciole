@@ -5,4 +5,4 @@
 class OperationJob;
 
 // Main-thread snapshots of service facts only. Never performs filesystem I/O or provider queries.
-std::optional<files::JobActivity> jobActivity(const OperationJob& job, bool details = false);
+std::optional<luciole::JobActivity> jobActivity(const OperationJob& job, bool details = false);

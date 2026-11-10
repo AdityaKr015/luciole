@@ -8,11 +8,11 @@
 #include <string>
 #include <vector>
 
-namespace files {
+namespace luciole {
   class FileIconCache;
   class FileLauncher;
   struct DirectoryEntry;
-} // namespace files
+} // namespace luciole
 
 struct KeyboardEvent;
 class ArchiveView;
@@ -25,13 +25,13 @@ class WaylandConnection;
 class ArchiveController {
 public:
   ArchiveController(
-      PageContext& page, files::FileLauncher& launcher, files::FileIconCache& icons, WaylandConnection& connection
+      PageContext& page, luciole::FileLauncher& launcher, luciole::FileIconCache& icons, WaylandConnection& connection
   );
 
-  void compress(const std::vector<files::DirectoryEntry>& targets);
-  void extractTo(const files::Location& archive);
-  void extractHere(const files::Location& archive);
-  void browse(const files::Location& archive);
+  void compress(const std::vector<luciole::DirectoryEntry>& targets);
+  void extractTo(const luciole::Location& archive);
+  void extractHere(const luciole::Location& archive);
+  void browse(const luciole::Location& archive);
   // Owned archive job change: opens an extracted member, reports a finished operation and syncs the archive
   // browser on the next frame.
   void changed(OperationJob& job);
@@ -47,9 +47,10 @@ public:
   void layout(Renderer& renderer, LayoutRect bounds);
 
 private:
-  static files::Location destination(const files::Location& source);
-  void openDialog(std::vector<files::Location> sources, std::vector<std::string> selected, bool compress);
-  bool extract(const files::Location& source, const files::Location& destination, std::vector<std::string> selected);
+  static luciole::Location destination(const luciole::Location& source);
+  void openDialog(std::vector<luciole::Location> sources, std::vector<std::string> selected, bool compress);
+  bool
+  extract(const luciole::Location& source, const luciole::Location& destination, std::vector<std::string> selected);
   // The job the archive browser shows: the newest running archive job of the page, else its own.
   OperationJob* shown() const;
   void deferClose();
@@ -63,11 +64,11 @@ private:
   PageContext& m_page;
   // The archive browser's job: reads the catalog and opens members. Compress and extract jobs are separate.
   std::shared_ptr<OperationJob> m_browser;
-  files::FileLauncher& m_launcher;
-  files::FileIconCache& m_icons;
+  luciole::FileLauncher& m_launcher;
+  luciole::FileIconCache& m_icons;
   WaylandConnection& m_connection;
   ArchiveView* m_view = nullptr;
-  std::optional<files::Location> m_source;
+  std::optional<luciole::Location> m_source;
   bool m_wanted = false;
   bool m_dirty = false;
   std::shared_ptr<int> m_lifetime = std::make_shared<int>(0);

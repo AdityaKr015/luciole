@@ -8,22 +8,22 @@ namespace {
   bool mutating(const OperationJob& job) {
     switch (job.kind()) {
     case JobKind::Rename:
-      return job.service<files::RenameService>().snapshot().status == files::RenameStatus::Renaming;
+      return job.service<luciole::RenameService>().snapshot().status == luciole::RenameStatus::Renaming;
     case JobKind::Create:
-      return job.service<files::CreateService>().snapshot().status == files::CreateStatus::Creating;
+      return job.service<luciole::CreateService>().snapshot().status == luciole::CreateStatus::Creating;
     case JobKind::Permission:
-      return job.service<files::PermissionService>().snapshot().phase == files::PermissionPhase::Saving;
+      return job.service<luciole::PermissionService>().snapshot().phase == luciole::PermissionPhase::Saving;
     case JobKind::BatchRename:
-      return job.service<files::BatchRenameService>().applying();
+      return job.service<luciole::BatchRenameService>().applying();
     case JobKind::Trash:
-      return job.service<files::TrashService>().snapshot().status == files::TrashStatus::Trashing;
+      return job.service<luciole::TrashService>().snapshot().status == luciole::TrashStatus::Trashing;
     case JobKind::EmptyTrash:
-      return job.service<files::EmptyTrashService>().snapshot().status == files::EmptyTrashStatus::Emptying;
+      return job.service<luciole::EmptyTrashService>().snapshot().status == luciole::EmptyTrashStatus::Emptying;
     case JobKind::Archive: {
-      const auto phase = job.service<files::ArchiveService>().phase();
-      return phase == files::ArchivePhase::Compressing
-          || phase == files::ArchivePhase::Extracting
-          || phase == files::ArchivePhase::Transferring;
+      const auto phase = job.service<luciole::ArchiveService>().phase();
+      return phase == luciole::ArchivePhase::Compressing
+          || phase == luciole::ArchivePhase::Extracting
+          || phase == luciole::ArchivePhase::Transferring;
     }
     case JobKind::Transfer:
     case JobKind::Restore:
@@ -33,7 +33,7 @@ namespace {
   }
 } // namespace
 
-OperationJob::OperationJob(files::JobId id, Service service) : m_id(id), m_service(std::move(service)) {}
+OperationJob::OperationJob(luciole::JobId id, Service service) : m_id(id), m_service(std::move(service)) {}
 
 OperationJob::~OperationJob() {
   std::visit([](auto& service) { service->setChangedCallback({}); }, m_service);
@@ -46,11 +46,11 @@ bool OperationJob::running() const {
 bool OperationJob::pending() const {
   switch (kind()) {
   case JobKind::Trash: {
-    const auto& trash = service<files::TrashService>();
+    const auto& trash = service<luciole::TrashService>();
     return trash.busy() || trash.canTrash();
   }
   case JobKind::EmptyTrash:
-    return service<files::EmptyTrashService>().pending();
+    return service<luciole::EmptyTrashService>().pending();
   default:
     return running();
   }
@@ -59,7 +59,7 @@ bool OperationJob::pending() const {
 bool OperationJob::cancellable() const {
   switch (kind()) {
   case JobKind::BatchRename:
-    return service<files::BatchRenameService>().applying();
+    return service<luciole::BatchRenameService>().applying();
   case JobKind::Transfer:
   case JobKind::Archive:
   case JobKind::Trash:
@@ -67,7 +67,7 @@ bool OperationJob::cancellable() const {
   case JobKind::EmptyTrash:
     return running();
   case JobKind::Permission:
-    return running() && service<files::PermissionService>().snapshot().phase == files::PermissionPhase::Saving;
+    return running() && service<luciole::PermissionService>().snapshot().phase == luciole::PermissionPhase::Saving;
   default:
     return false;
   }
@@ -77,33 +77,33 @@ void OperationJob::cancel() {
   std::visit([](auto& service) { service->cancel(); }, m_service);
 }
 
-std::optional<files::TransferConflict> OperationJob::conflict() const {
+std::optional<luciole::TransferConflict> OperationJob::conflict() const {
   switch (kind()) {
   case JobKind::Transfer:
-    return service<files::TransferService>().conflict();
+    return service<luciole::TransferService>().conflict();
   case JobKind::Archive:
-    return service<files::ArchiveService>().conflict();
+    return service<luciole::ArchiveService>().conflict();
   case JobKind::Restore:
-    return service<files::RestoreService>().conflict();
+    return service<luciole::RestoreService>().conflict();
   default:
     return std::nullopt;
   }
 }
 
-bool OperationJob::resolve(std::uint64_t id, files::TransferConflictChoice choice, bool applyToAll) {
+bool OperationJob::resolve(std::uint64_t id, luciole::TransferConflictChoice choice, bool applyToAll) {
   switch (kind()) {
   case JobKind::Transfer:
-    return service<files::TransferService>().resolve(id, choice, applyToAll);
+    return service<luciole::TransferService>().resolve(id, choice, applyToAll);
   case JobKind::Archive:
-    return service<files::ArchiveService>().resolve(id, choice);
+    return service<luciole::ArchiveService>().resolve(id, choice);
   case JobKind::Restore:
-    return service<files::RestoreService>().resolve(id, choice);
+    return service<luciole::RestoreService>().resolve(id, choice);
   default:
     return false;
   }
 }
 
-OperationHub::OperationHub(const files::TabWorkspace& workspace) : m_workspace(workspace) {}
+OperationHub::OperationHub(const luciole::TabWorkspace& workspace) : m_workspace(workspace) {}
 
 OperationHub::~OperationHub() {
   m_owners.clear();
@@ -116,16 +116,16 @@ OperationHub::~OperationHub() {
   }
 }
 
-void OperationHub::attach(files::TabId page, Owner& owner) { m_owners.insert_or_assign(page, &owner); }
+void OperationHub::attach(luciole::TabId page, Owner& owner) { m_owners.insert_or_assign(page, &owner); }
 
-void OperationHub::detach(files::TabId page) { m_owners.erase(page); }
+void OperationHub::detach(luciole::TabId page) { m_owners.erase(page); }
 
-OperationJob* OperationHub::find(files::JobId id) const {
+OperationJob* OperationHub::find(luciole::JobId id) const {
   const auto found = m_jobs.find(id);
   return found == m_jobs.end() ? nullptr : found->second.get();
 }
 
-std::shared_ptr<OperationJob> OperationHub::add(files::TabId page, OperationJob::Service service, JobScope scope) {
+std::shared_ptr<OperationJob> OperationHub::add(luciole::TabId page, OperationJob::Service service, JobScope scope) {
   const auto id = ++m_next;
   auto job = std::make_shared<OperationJob>(id, std::move(service));
   std::visit(
@@ -175,12 +175,12 @@ void OperationHub::changed(OperationJob& job) {
   if (finished && job.kind() == JobKind::Transfer) {
     for (const auto& [page, owner] : m_owners) {
       (void)page;
-      owner->transfersFinished(job.service<files::TransferService>().results());
+      owner->transfersFinished(job.service<luciole::TransferService>().results());
     }
   }
 }
 
-void OperationHub::notify(files::TabId page, OperationJob& job) {
+void OperationHub::notify(luciole::TabId page, OperationJob& job) {
   if (const auto found = m_owners.find(page); found != m_owners.end()) {
     found->second->jobChanged(job);
   }
@@ -197,7 +197,7 @@ bool OperationHub::retained(const OperationJob& job) const {
       == &job;
 }
 
-void OperationHub::update(std::optional<files::WindowId> preferred) {
+void OperationHub::update(std::optional<luciole::WindowId> preferred) {
   for (const auto& move : m_routing.update(m_workspace, preferred)) {
     const auto found = m_jobs.find(move.job);
     if (found == m_jobs.end()) {
@@ -213,12 +213,12 @@ void OperationHub::update(std::optional<files::WindowId> preferred) {
   std::vector<std::shared_ptr<OperationJob>> prepared;
   for (const auto& [id, job] : m_jobs) {
     (void)id;
-    if (job->kind() == JobKind::Trash && job->service<files::TrashService>().canTrash()) {
+    if (job->kind() == JobKind::Trash && job->service<luciole::TrashService>().canTrash()) {
       prepared.push_back(job);
     }
   }
   for (const auto& job : prepared) {
-    (void)job->service<files::TrashService>().trash();
+    (void)job->service<luciole::TrashService>().trash();
   }
   const auto removed = std::erase_if(m_jobs, [this](const auto& item) {
     const auto& job = *item.second;
@@ -237,7 +237,7 @@ void OperationHub::shutdown() {
   for (auto& [id, job] : m_jobs) {
     (void)id;
     if (job->kind() == JobKind::Archive) {
-      job->service<files::ArchiveService>().shutdown();
+      job->service<luciole::ArchiveService>().shutdown();
     } else {
       job->cancel();
     }
@@ -257,35 +257,35 @@ bool OperationHub::renameReplayBusy() const {
 bool OperationHub::canUndoRename() const { return m_renameReceipt && !m_renameRedo && !busy(); }
 bool OperationHub::canRedoRename() const { return m_renameReceipt && m_renameRedo && !busy(); }
 
-bool OperationHub::replayRename(files::TabId page, bool redo) {
+bool OperationHub::replayRename(luciole::TabId page, bool redo) {
   if (!attached(page) || !(redo ? canRedoRename() : canUndoRename())) {
     return false;
   }
-  auto job = create<files::RenameService>(page);
+  auto job = create<luciole::RenameService>(page);
   job->m_renameReplay = redo ? RenameReplay::Redo : RenameReplay::Undo;
-  return job->service<files::RenameService>().replay(m_renameReceipt);
+  return job->service<luciole::RenameService>().replay(m_renameReceipt);
 }
 
 void OperationHub::recordRename(const OperationJob& job) {
   if (job.m_historyGeneration != m_historyGeneration) {
     return;
   }
-  const auto& snapshot = job.service<files::RenameService>().snapshot();
-  if (snapshot.status == files::RenameStatus::Succeeded) {
+  const auto& snapshot = job.service<luciole::RenameService>().snapshot();
+  if (snapshot.status == luciole::RenameStatus::Succeeded) {
     m_renameReceipt = snapshot.receipt;
     m_renameRedo = job.renameReplay() == RenameReplay::Undo;
   } else if (
       snapshot.error
-      && (snapshot.error->kind == files::FileErrorKind::Changed
-          || snapshot.error->kind == files::FileErrorKind::Missing
-          || snapshot.error->kind == files::FileErrorKind::NotDirectory)
+      && (snapshot.error->kind == luciole::FileErrorKind::Changed
+          || snapshot.error->kind == luciole::FileErrorKind::Missing
+          || snapshot.error->kind == luciole::FileErrorKind::NotDirectory)
   ) {
     m_renameReceipt.reset();
   }
 }
 
-std::vector<files::JobActivity> OperationHub::activities() const {
-  std::vector<files::JobActivity> result;
+std::vector<luciole::JobActivity> OperationHub::activities() const {
+  std::vector<luciole::JobActivity> result;
   result.reserve(m_jobs.size() + m_finishedActivities.size());
   for (const auto& [id, job] : std::views::reverse(m_jobs)) {
     (void)id;
@@ -301,14 +301,14 @@ std::vector<files::JobActivity> OperationHub::activities() const {
         && !job->running()
         && !renameReplayBusy()
         && !newest(owner(*job), [](const OperationJob& pending) { return pending.pending(); })
-        && job->service<files::TransferService>().retryable() > 0;
+        && job->service<luciole::TransferService>().retryable() > 0;
     result.push_back(std::move(activity));
   }
   return result;
 }
 
-std::shared_ptr<const std::string> OperationHub::activityReport(files::JobId id) const {
-  const auto found = std::ranges::find(m_finishedActivities, id, &files::JobActivity::id);
+std::shared_ptr<const std::string> OperationHub::activityReport(luciole::JobId id) const {
+  const auto found = std::ranges::find(m_finishedActivities, id, &luciole::JobActivity::id);
   if (found != m_finishedActivities.end()) {
     return found->report;
   }
@@ -317,7 +317,7 @@ std::shared_ptr<const std::string> OperationHub::activityReport(files::JobId id)
   return activity ? activity->report : nullptr;
 }
 
-bool OperationHub::cancelActivity(files::JobId id) {
+bool OperationHub::cancelActivity(luciole::JobId id) {
   auto* job = find(id);
   if (!job || !job->cancellable()) {
     return false;
@@ -332,7 +332,7 @@ void OperationHub::clearFinishedActivities() {
 }
 
 void OperationHub::notifyActivity() {
-  const std::vector<std::pair<files::TabId, Owner*>> owners(m_owners.begin(), m_owners.end());
+  const std::vector<std::pair<luciole::TabId, Owner*>> owners(m_owners.begin(), m_owners.end());
   for (const auto& [page, owner] : owners) {
     const auto current = m_owners.find(page);
     if (current != m_owners.end() && current->second == owner) {

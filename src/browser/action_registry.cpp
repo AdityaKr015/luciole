@@ -7,13 +7,13 @@
 #include <array>
 
 namespace {
-  using A = files::BrowserAction;
-  using S = files::ActionScope;
-  using C = files::ActionContext;
-  using R = files::ActionRequest;
-  using State = files::ActionState;
-  using files::DirectoryEntry;
-  using files::FileType;
+  using A = luciole::BrowserAction;
+  using S = luciole::ActionScope;
+  using C = luciole::ActionContext;
+  using R = luciole::ActionRequest;
+  using State = luciole::ActionState;
+  using luciole::DirectoryEntry;
+  using luciole::FileType;
 
   State unavailable(std::string_view reason) { return {.enabled = false, .reason = reason}; }
   State require(bool ok, std::string_view reason) { return ok ? State{} : unavailable(reason); }
@@ -26,7 +26,7 @@ namespace {
   }
   bool ready(const C& c) {
     const auto status = c.model.snapshot().status;
-    return status == files::DirectoryStatus::Ready || status == files::DirectoryStatus::Loading;
+    return status == luciole::DirectoryStatus::Ready || status == luciole::DirectoryStatus::Loading;
   }
   bool native(const R& r) { return r.folder && r.folder->nativePath().has_value(); }
   State writable(const C& c) {
@@ -119,14 +119,14 @@ namespace {
     if (const auto state = writable(c); !state.enabled) {
       return state;
     }
-    if (r.folder != files::Location::trash() || !c.query.empty() || !ready(c)) {
+    if (r.folder != luciole::Location::trash() || !c.query.empty() || !ready(c)) {
       return unavailable("Select items directly in Trash first.");
     }
     if (!all(c, r, [](const DirectoryEntry& entry) {
           const auto parent = entry.location.parent();
           return entry.location.isTrash()
               && parent
-              && *parent == files::Location::trash()
+              && *parent == luciole::Location::trash()
               && entry.identity
               && entry.access.remove.value_or(true);
         })) {
@@ -157,7 +157,7 @@ namespace {
     } else if (!single(r) || !all(c, r, [](const DirectoryEntry& entry) {
                  return entry.type == FileType::Regular
                      && !entry.symlink
-                     && files::isSupportedArchive(entry.location, entry.contentType);
+                     && luciole::isSupportedArchive(entry.location, entry.contentType);
                })) {
       return unavailable("Select one ZIP or TAR archive.");
     }
@@ -293,9 +293,9 @@ namespace {
         "Select readable files."
     );
   }
-  bool sortField(const C& c, files::SortField field) { return c.model.sort().field == field; }
+  bool sortField(const C& c, luciole::SortField field) { return c.model.sort().field == field; }
 
-  constexpr auto kActions = std::to_array<files::ActionDefinition>({
+  constexpr auto kActions = std::to_array<luciole::ActionDefinition>({
       {.action = A::Back,
        .label = "Back",
        .shortcut = "Alt+Left",
@@ -316,22 +316,22 @@ namespace {
        .shortcut = "",
        .rule =
            [](const C& c, const R&) {
-             return require(c.model.snapshot().status == files::DirectoryStatus::Loading, "Nothing is loading.");
+             return require(c.model.snapshot().status == luciole::DirectoryStatus::Loading, "Nothing is loading.");
            }},
       {.action = A::EditLocation, .label = "Edit location", .shortcut = "Ctrl+L"},
       {.action = A::Search, .label = "Search files", .shortcut = "Ctrl+F", .rule = openFolder},
       {.action = A::Grid,
        .label = "Grid view",
        .shortcut = "Ctrl+1",
-       .rule = [](const C& c, const R&) { return checked(c.viewMode == files::ViewMode::Grid); }},
+       .rule = [](const C& c, const R&) { return checked(c.viewMode == luciole::ViewMode::Grid); }},
       {.action = A::List,
        .label = "List view",
        .shortcut = "Ctrl+2",
-       .rule = [](const C& c, const R&) { return checked(c.viewMode == files::ViewMode::List); }},
+       .rule = [](const C& c, const R&) { return checked(c.viewMode == luciole::ViewMode::List); }},
       {.action = A::Miller,
        .label = "Column view",
        .shortcut = "Ctrl+3",
-       .rule = [](const C& c, const R&) { return checked(c.viewMode == files::ViewMode::Miller); }},
+       .rule = [](const C& c, const R&) { return checked(c.viewMode == luciole::ViewMode::Miller); }},
       {.action = A::ShowHidden,
        .label = "Show hidden files",
        .shortcut = "Ctrl+H",
@@ -353,43 +353,43 @@ namespace {
       {.action = A::SortName,
        .label = "Name",
        .shortcut = "",
-       .rule = [](const C& c, const R&) { return checked(sortField(c, files::SortField::Name)); }},
+       .rule = [](const C& c, const R&) { return checked(sortField(c, luciole::SortField::Name)); }},
       {.action = A::SortType,
        .label = "Type",
        .shortcut = "",
-       .rule = [](const C& c, const R&) { return checked(sortField(c, files::SortField::Type)); }},
+       .rule = [](const C& c, const R&) { return checked(sortField(c, luciole::SortField::Type)); }},
       {.action = A::SortSize,
        .label = "Size",
        .shortcut = "",
-       .rule = [](const C& c, const R&) { return checked(sortField(c, files::SortField::Size)); }},
+       .rule = [](const C& c, const R&) { return checked(sortField(c, luciole::SortField::Size)); }},
       {.action = A::SortModified,
        .label = "Modified",
        .shortcut = "",
-       .rule = [](const C& c, const R&) { return checked(sortField(c, files::SortField::Modified)); }},
+       .rule = [](const C& c, const R&) { return checked(sortField(c, luciole::SortField::Modified)); }},
       {.action = A::SortAccessed,
        .label = "Accessed",
        .shortcut = "",
-       .rule = [](const C& c, const R&) { return checked(sortField(c, files::SortField::Accessed)); }},
+       .rule = [](const C& c, const R&) { return checked(sortField(c, luciole::SortField::Accessed)); }},
       {.action = A::SortCreated,
        .label = "Created",
        .shortcut = "",
-       .rule = [](const C& c, const R&) { return checked(sortField(c, files::SortField::Created)); }},
+       .rule = [](const C& c, const R&) { return checked(sortField(c, luciole::SortField::Created)); }},
       {.action = A::SortOwner,
        .label = "Owner",
        .shortcut = "",
-       .rule = [](const C& c, const R&) { return checked(sortField(c, files::SortField::Owner)); }},
+       .rule = [](const C& c, const R&) { return checked(sortField(c, luciole::SortField::Owner)); }},
       {.action = A::SortGroup,
        .label = "Group",
        .shortcut = "",
-       .rule = [](const C& c, const R&) { return checked(sortField(c, files::SortField::Group)); }},
+       .rule = [](const C& c, const R&) { return checked(sortField(c, luciole::SortField::Group)); }},
       {.action = A::SortPermissions,
        .label = "Permissions",
        .shortcut = "",
-       .rule = [](const C& c, const R&) { return checked(sortField(c, files::SortField::Permissions)); }},
+       .rule = [](const C& c, const R&) { return checked(sortField(c, luciole::SortField::Permissions)); }},
       {.action = A::SortLocation,
        .label = "Location",
        .shortcut = "",
-       .rule = [](const C& c, const R&) { return checked(sortField(c, files::SortField::Location)); }},
+       .rule = [](const C& c, const R&) { return checked(sortField(c, luciole::SortField::Location)); }},
       {.action = A::Ascending,
        .label = "Ascending",
        .shortcut = "",
@@ -506,7 +506,7 @@ namespace {
        .rule = visibleRows},
       {.action = A::ClearSelection, .label = "Clear selection", .shortcut = "Escape", .scope = S::Selection},
       {.action = A::Settings, .label = "Settings…", .shortcut = "Ctrl+,"},
-      {.action = A::About, .label = "About Noctalia Files", .shortcut = ""},
+      {.action = A::About, .label = "About Luciole", .shortcut = ""},
       {.action = A::MenuBack, .label = "Back", .shortcut = ""},
       {.action = A::SortMenu, .label = "Sort…", .shortcut = ""},
       {.action = A::SelectionMenu, .label = "Selection…", .shortcut = ""},
@@ -555,20 +555,20 @@ namespace {
        .scope = S::Targets,
        .rule = targetTerminal},
   });
-  static_assert(files::actionTableInOrder(kActions));
+  static_assert(luciole::actionTableInOrder(kActions));
 } // namespace
 
-std::span<const files::ActionDefinition> files::ActionRegistry::definitions() { return kActions; }
-const files::ActionDefinition& files::ActionRegistry::definition(BrowserAction action) {
+std::span<const luciole::ActionDefinition> luciole::ActionRegistry::definitions() { return kActions; }
+const luciole::ActionDefinition& luciole::ActionRegistry::definition(BrowserAction action) {
   return kActions[std::to_underlying(action)];
 }
-std::optional<files::BrowserAction> files::ActionRegistry::fromMenuId(int id) {
+std::optional<luciole::BrowserAction> luciole::ActionRegistry::fromMenuId(int id) {
   if (id < 0 || static_cast<std::size_t>(id) >= kActions.size()) {
     return std::nullopt;
   }
   return kActions[static_cast<std::size_t>(id)].action;
 }
-files::ActionRequest files::ActionRegistry::capture(const ActionContext& context) {
+luciole::ActionRequest luciole::ActionRegistry::capture(const ActionContext& context) {
   ActionRequest request{context.context, context.model.snapshot().location, std::string(context.query), {}};
   for (const auto id : context.model.selectedIds()) {
     if (const auto* entry = context.model.entry(id)) {
@@ -577,7 +577,7 @@ files::ActionRequest files::ActionRegistry::capture(const ActionContext& context
   }
   return request;
 }
-bool files::ActionRegistry::current(const ActionContext& context, const ActionRequest& request, ActionScope scope) {
+bool luciole::ActionRegistry::current(const ActionContext& context, const ActionRequest& request, ActionScope scope) {
   if (scope == ActionScope::Global) {
     return true;
   }
@@ -593,7 +593,8 @@ bool files::ActionRegistry::current(const ActionContext& context, const ActionRe
                && std::ranges::contains(context.model.rows(), target.id);
          });
 }
-files::ActionState files::ActionRegistry::state(BrowserAction action, const ActionContext& c, const ActionRequest& r) {
+luciole::ActionState
+luciole::ActionRegistry::state(BrowserAction action, const ActionContext& c, const ActionRequest& r) {
   const auto& row = definition(action);
   if (!current(c, r, row.scope)) {
     return unavailable("The folder or targets changed. Open the menu again.");

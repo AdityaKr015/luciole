@@ -1,4 +1,4 @@
-# Noctalia Files documentation
+# Luciole documentation
 
 - [User guide](user/index.md): installation, browsing, settings and file actions.
 - [Design notes](design/README.md): architecture, ownership and implementation contracts.

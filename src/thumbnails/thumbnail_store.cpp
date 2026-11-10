@@ -30,7 +30,7 @@ namespace {
     if (::mkdir(path.c_str(), 0700) < 0 && errno != EEXIST) {
       return false;
     }
-    const files::Fd directory(::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW));
+    const luciole::Fd directory(::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW));
     struct stat info{};
     return directory.valid()
         && ::fstat(directory.get(), &info) == 0
@@ -87,19 +87,19 @@ namespace {
 
 } // namespace
 
-files::ThumbnailStore::ThumbnailStore() : m_root(cacheHome() / "thumbnails") {
-  m_index = m_root.parent_path() / "noctalia-files/thumbnail-index.json";
+luciole::ThumbnailStore::ThumbnailStore() : m_root(cacheHome() / "thumbnails") {
+  m_index = m_root.parent_path() / "luciole/thumbnail-index.json";
 }
-int files::ThumbnailStore::sizeClass(int pixels) {
+int luciole::ThumbnailStore::sizeClass(int pixels) {
   return pixels <= 128 ? 128 : pixels <= 256 ? 256 : pixels <= 512 ? 512 : 1024;
 }
-std::string files::ThumbnailStore::filename(const std::string& uri) {
+std::string luciole::ThumbnailStore::filename(const std::string& uri) {
   const GString hash(g_compute_checksum_for_string(G_CHECKSUM_MD5, uri.c_str(), static_cast<gssize>(uri.size())));
   return std::string(hash.get()) + ".png";
 }
 std::optional<std::vector<std::uint8_t>>
-files::readThumbnailFile(const std::filesystem::path& path, std::size_t maximum) {
-  const files::Fd file(::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK));
+luciole::readThumbnailFile(const std::filesystem::path& path, std::size_t maximum) {
+  const luciole::Fd file(::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK));
   struct stat info{};
   if (!file.valid()
       || ::fstat(file.get(), &info) < 0
@@ -122,7 +122,7 @@ files::readThumbnailFile(const std::filesystem::path& path, std::size_t maximum)
   }
   return bytes;
 }
-std::optional<files::ThumbnailPng> files::ThumbnailStore::read(
+std::optional<luciole::ThumbnailPng> luciole::ThumbnailStore::read(
     const std::string& uri, int side, std::uint64_t mtime, std::optional<std::uint64_t> size, const std::string& stamp
 ) {
   const auto leaf = filename(uri);
@@ -145,9 +145,7 @@ std::optional<files::ThumbnailPng> files::ThumbnailStore::read(
     if (size && image->text.contains("Thumb::Size") && image->text.at("Thumb::Size") != std::to_string(*size)) {
       continue;
     }
-    if (!stamp.empty()
-        && image->text.contains("X-Noctalia-Files::Stamp")
-        && image->text.at("X-Noctalia-Files::Stamp") != stamp) {
+    if (!stamp.empty() && image->text.contains("X-Luciole::Stamp") && image->text.at("X-Luciole::Stamp") != stamp) {
       continue;
     }
     if (std::max(image->image.width, image->image.height) > side) {
@@ -189,12 +187,12 @@ std::optional<files::ThumbnailPng> files::ThumbnailStore::read(
   }
   return std::nullopt;
 }
-void files::ThumbnailStore::write(ThumbnailPng thumbnail, int side, std::uint64_t budget, GCancellable* cancellable) {
-  thumbnail.text["Software"] = "Noctalia Files";
+void luciole::ThumbnailStore::write(ThumbnailPng thumbnail, int side, std::uint64_t budget, GCancellable* cancellable) {
+  thumbnail.text["Software"] = "Luciole";
   const std::array entries{ThumbnailCacheWrite{.thumbnail = std::move(thumbnail), .side = side}};
   writeBatch(entries, budget, cancellable);
 }
-void files::ThumbnailStore::writeBatch(
+void luciole::ThumbnailStore::writeBatch(
     std::span<const ThumbnailCacheWrite> thumbnails, std::uint64_t budget, GCancellable* cancellable
 ) {
   if (thumbnails.empty() || thumbnails.size() > 8 || g_cancellable_is_cancelled(cancellable)) {
@@ -264,8 +262,8 @@ void files::ThumbnailStore::writeBatch(
               }
               prepared[classIndex] = true;
             }
-            std::string pattern = (m_root / directory(entry.side) / ".noctalia-XXXXXX").native();
-            const files::Fd file(::mkstemp(pattern.data()));
+            std::string pattern = (m_root / directory(entry.side) / ".luciole-XXXXXX").native();
+            const luciole::Fd file(::mkstemp(pattern.data()));
             if (!file.valid()) {
               return std::unexpected("cannot create thumbnail cache file");
             }
@@ -307,8 +305,8 @@ void files::ThumbnailStore::writeBatch(
     }
   }
 }
-std::string files::ThumbnailStore::clear() { return prune(0); }
-std::string files::ThumbnailStore::prune(std::uint64_t budget) {
+std::string luciole::ThumbnailStore::clear() { return prune(0); }
+std::string luciole::ThumbnailStore::prune(std::uint64_t budget) {
   const auto result = updateTextFileAtomic(
       m_index, [&](const std::optional<std::string>& text) -> std::expected<std::optional<std::string>, std::string> {
         try {

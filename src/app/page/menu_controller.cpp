@@ -35,7 +35,7 @@
 #include <utility>
 #include <vector>
 
-using Action = files::BrowserAction;
+using Action = luciole::BrowserAction;
 
 namespace {
   // File menu entries that are not browser actions.
@@ -62,8 +62,8 @@ namespace {
 } // namespace
 
 MenuController::MenuController(
-    PageContext& page, files::PinService& pins, TransferController& transferController,
-    files::TerminalLauncher& terminal, files::PathCompletion& siblingCompletion, CreateController& creator,
+    PageContext& page, luciole::PinService& pins, TransferController& transferController,
+    luciole::TerminalLauncher& terminal, luciole::PathCompletion& siblingCompletion, CreateController& creator,
     SubmenuController& submenus, RenameController& renamer, PropertiesController& properties,
     DetailsHeaderController& columns, LocationBarController& locationBar, ExecutionController& execution
 )
@@ -72,11 +72,11 @@ MenuController::MenuController(
       m_properties(properties), m_columns(columns), m_locationBar(locationBar), m_execution(execution) {}
 
 ContextMenuControlEntry
-MenuController::actionEntry(Action action, const files::ActionRequest& request, bool radio) const {
-  const auto& definition = files::ActionRegistry::definition(action);
+MenuController::actionEntry(Action action, const luciole::ActionRequest& request, bool radio) const {
+  const auto& definition = luciole::ActionRegistry::definition(action);
   const auto state = m_page.actionState(action, request);
   return {
-      .id = files::ActionRegistry::menuId(action),
+      .id = luciole::ActionRegistry::menuId(action),
       .label = std::string(definition.label),
       .enabled = state.enabled,
       .checkmark = !radio && state.checked != -1,
@@ -87,7 +87,7 @@ MenuController::actionEntry(Action action, const files::ActionRequest& request, 
   };
 }
 
-std::vector<ContextMenuControlEntry> MenuController::folderMenuEntries(const files::ActionRequest& request) const {
+std::vector<ContextMenuControlEntry> MenuController::folderMenuEntries(const luciole::ActionRequest& request) const {
   std::vector<ContextMenuControlEntry> entries;
   const auto add = [&](Action action) { entries.push_back(actionEntry(action, request)); };
   if (m_page.hasOtherPane()) {
@@ -118,13 +118,13 @@ std::vector<ContextMenuControlEntry> MenuController::folderMenuEntries(const fil
   return entries;
 }
 
-std::vector<ContextMenuControlEntry> MenuController::itemMenuEntries(const files::ActionRequest& request) const {
+std::vector<ContextMenuControlEntry> MenuController::itemMenuEntries(const luciole::ActionRequest& request) const {
   std::vector<ContextMenuControlEntry> entries;
   const auto add = [&](Action action) { entries.push_back(actionEntry(action, request)); };
   const auto& model = m_page.browser().model();
   const bool one = request.targets.size() == 1;
   const auto* single = one ? model.entry(request.targets.front().id) : nullptr;
-  const bool singleFolder = single != nullptr && single->type == files::FileType::Directory;
+  const bool singleFolder = single != nullptr && single->type == luciole::FileType::Directory;
   const bool trash = request.targets.front().location.isTrash();
 
   add(Action::Open);
@@ -132,7 +132,7 @@ std::vector<ContextMenuControlEntry> MenuController::itemMenuEntries(const files
   if (single
       && single->location.isNative()
       && !trash
-      && (single->type == files::FileType::Regular || single->symlink)
+      && (single->type == luciole::FileType::Regular || single->symlink)
       && (single->access.execute == true || single->location.basename().value_or("").ends_with(".desktop"))) {
     add(Action::RunProgram);
     if (!single->location.basename().value_or("").ends_with(".desktop")) {
@@ -157,7 +157,7 @@ std::vector<ContextMenuControlEntry> MenuController::itemMenuEntries(const files
         {.id = PasteInto,
          .label = "Paste into Folder",
          .enabled = !m_page.operationsBusy()
-             && files::transferLocationSupported(single->location)
+             && luciole::transferLocationSupported(single->location)
              && single->access.write != false}
     );
   }
@@ -168,7 +168,7 @@ std::vector<ContextMenuControlEntry> MenuController::itemMenuEntries(const files
   entries.push_back({.id = CopyLocation, .label = "Copy Location", .hasSubmenu = true});
   addSeparator(entries);
   if (single != nullptr) {
-    if (files::isSupportedArchive(single->location, single->contentType)) {
+    if (luciole::isSupportedArchive(single->location, single->contentType)) {
       add(Action::BrowseArchive);
       add(Action::ExtractHere);
       add(Action::ExtractTo);
@@ -184,7 +184,7 @@ std::vector<ContextMenuControlEntry> MenuController::itemMenuEntries(const files
   addSeparator(entries);
   const bool folders = std::ranges::all_of(request.targets, [&model](const auto& target) {
     const auto* entry = model.entry(target.id);
-    return entry->type == files::FileType::Directory && !entry->location.isTrash();
+    return entry->type == luciole::FileType::Directory && !entry->location.isTrash();
   });
   if (folders) {
     if (std::ranges::any_of(request.targets, [this](const auto& target) {
@@ -212,7 +212,7 @@ std::vector<ContextMenuControlEntry> MenuController::itemMenuEntries(const files
   return entries;
 }
 
-void MenuController::openFileMenu(std::optional<files::EntryId> id, float x, float y) {
+void MenuController::openFileMenu(std::optional<luciole::EntryId> id, float x, float y) {
   m_page.setActionMessage({});
   const auto request = m_page.actionRequest(id.has_value());
   if (id && request.targets.empty()) {
@@ -228,21 +228,21 @@ void MenuController::openFileMenu(std::optional<files::EntryId> id, float x, flo
   showContextMenu(
       std::move(entries),
       [this, request, x, y](int action) {
-        if (action == files::ActionRegistry::menuId(Action::SortMenu)) {
+        if (action == luciole::ActionRegistry::menuId(Action::SortMenu)) {
           openSortMenu(LayoutRect{x, y, 1, 1}, false);
         } else if (action == ClosePane) {
           m_page.requestWorkspace(WorkspaceCommand::ClosePane, std::nullopt, std::nullopt);
         } else if (action == PasteInto) {
-          if (m_page.requestCurrent(request, files::ActionScope::Targets) && !m_page.operationsBusy()) {
+          if (m_page.requestCurrent(request, luciole::ActionScope::Targets) && !m_page.operationsBusy()) {
             m_transferController.pasteInto(request);
           }
         } else if (action == CopyToOther || action == MoveToOther) {
-          if (m_page.requestCurrent(request, files::ActionScope::Targets)) {
+          if (m_page.requestCurrent(request, luciole::ActionScope::Targets)) {
             m_page.requestWorkspace(
                 action == CopyToOther ? WorkspaceCommand::CopyOther : WorkspaceCommand::MoveOther, std::nullopt, request
             );
           }
-        } else if (const auto browserAction = files::ActionRegistry::fromMenuId(action)) {
+        } else if (const auto browserAction = luciole::ActionRegistry::fromMenuId(action)) {
           m_page.dispatchAction(*browserAction, request);
         }
       },
@@ -252,12 +252,12 @@ void MenuController::openFileMenu(std::optional<files::EntryId> id, float x, flo
     return;
   }
   for (const auto& [row, entryId] : submenus) {
-    if (entryId == files::ActionRegistry::menuId(Action::NewDocument)) {
+    if (entryId == luciole::ActionRegistry::menuId(Action::NewDocument)) {
       m_submenus.attach(
           row, entryId, [this, request] { m_creator.openDocumentMenu(request); },
           [this] { m_creator.documentMenuClosed(); }
       );
-    } else if (entryId == files::ActionRegistry::menuId(Action::Scripts)) {
+    } else if (entryId == luciole::ActionRegistry::menuId(Action::Scripts)) {
       m_submenus.attach(
           row, entryId, [this, request] { m_execution.scripts(request); }, [this] { m_execution.closeScripts(); }
       );
@@ -271,7 +271,7 @@ void MenuController::openFileMenu(std::optional<files::EntryId> id, float x, flo
   }
 }
 
-void MenuController::showOpenInMenu(const files::ActionRequest& request) {
+void MenuController::showOpenInMenu(const luciole::ActionRequest& request) {
   std::vector<ContextMenuControlEntry> entries{
       {.id = NewTab, .label = "New Tab"},
       // Without a second pane, the workspace splits the window to open one.
@@ -285,11 +285,11 @@ void MenuController::showOpenInMenu(const files::ActionRequest& request) {
   m_submenus.show(
       std::move(entries),
       [this, request](int id) {
-        if (const auto action = files::ActionRegistry::fromMenuId(id)) {
+        if (const auto action = luciole::ActionRegistry::fromMenuId(id)) {
           m_page.dispatchAction(*action, request);
           return;
         }
-        if (!m_page.requestCurrent(request, files::ActionScope::Targets)) {
+        if (!m_page.requestCurrent(request, luciole::ActionScope::Targets)) {
           return;
         }
         m_page.requestWorkspace(
@@ -303,7 +303,7 @@ void MenuController::showOpenInMenu(const files::ActionRequest& request) {
   );
 }
 
-void MenuController::showCopyLocationMenu(const files::ActionRequest& request, bool targets) {
+void MenuController::showCopyLocationMenu(const luciole::ActionRequest& request, bool targets) {
   auto path = actionEntry(targets ? Action::CopyTargetPath : Action::CopyPath, request);
   path.label = "Path";
   auto uri = actionEntry(targets ? Action::CopyTargetUri : Action::CopyUri, request);
@@ -311,7 +311,7 @@ void MenuController::showCopyLocationMenu(const files::ActionRequest& request, b
   m_submenus.show(
       {std::move(path), std::move(uri)},
       [this, request](int id) {
-        if (const auto action = files::ActionRegistry::fromMenuId(id)) {
+        if (const auto action = luciole::ActionRegistry::fromMenuId(id)) {
           m_page.dispatchAction(*action, request);
         }
       },
@@ -319,11 +319,11 @@ void MenuController::showCopyLocationMenu(const files::ActionRequest& request, b
   );
 }
 
-void MenuController::openPlaceMenu(const files::Bookmark& bookmark, float x, float y) {
+void MenuController::openPlaceMenu(const luciole::Bookmark& bookmark, float x, float y) {
   std::vector<ContextMenuControlEntry> entries{{.id = 1, .label = "Open"}};
   {
     const auto& pins = m_pins.bookmarks();
-    const auto found = std::ranges::find(pins, bookmark.location, &files::Bookmark::location);
+    const auto found = std::ranges::find(pins, bookmark.location, &luciole::Bookmark::location);
     const auto index = static_cast<std::size_t>(found - pins.begin());
     entries.push_back({.label = "", .separator = true});
     if (!bookmark.location.isTrash()) {
@@ -334,7 +334,7 @@ void MenuController::openPlaceMenu(const files::Bookmark& bookmark, float x, flo
     entries.push_back({.id = 4, .label = "Move down", .enabled = m_pins.editable() && index + 1 < pins.size()});
   }
   entries.push_back({.label = "", .separator = true});
-  if (bookmark.location == files::Location::trash()) {
+  if (bookmark.location == luciole::Location::trash()) {
     entries.push_back(
         {.id = 7,
          .label = "Empty Trash…",
@@ -355,13 +355,13 @@ void MenuController::openPlaceMenu(const files::Bookmark& bookmark, float x, flo
           m_page.browser().open(bookmark.location);
         } else if (action == 2) {
           m_pins.remove(bookmark.location);
-        } else if (action == 7 && bookmark.location == files::Location::trash()) {
+        } else if (action == 7 && bookmark.location == luciole::Location::trash()) {
           m_page.dispatchAction(Action::EmptyTrash);
         } else if (action == 6) {
           m_renamer.openPlaceRename(bookmark);
         } else if (action == 3 || action == 4) {
           const auto& pins = m_pins.bookmarks();
-          const auto found = std::ranges::find(pins, bookmark.location, &files::Bookmark::location);
+          const auto found = std::ranges::find(pins, bookmark.location, &luciole::Bookmark::location);
           const auto index = static_cast<std::size_t>(found - pins.begin());
           m_pins.move(
               bookmark.location, action == 3 ? (index > 0 ? index - 1 : 0) : std::min(index + 1, pins.size() - 1)
@@ -371,7 +371,7 @@ void MenuController::openPlaceMenu(const files::Bookmark& bookmark, float x, flo
               {{.location = bookmark.location,
                 .name = bookmark.label,
                 .displayName = bookmark.label,
-                .type = files::FileType::Directory,
+                .type = luciole::FileType::Directory,
                 .size = std::nullopt,
                 .modifiedSeconds = std::nullopt,
                 .etag = std::nullopt,
@@ -384,11 +384,11 @@ void MenuController::openPlaceMenu(const files::Bookmark& bookmark, float x, flo
   );
 }
 
-void MenuController::openBreadcrumbMenu(const files::Location& target, LayoutRect anchor) {
+void MenuController::openBreadcrumbMenu(const luciole::Location& target, LayoutRect anchor) {
   const auto context = m_page.browser().contextSerial();
-  auto targets = std::make_shared<std::vector<files::Location>>();
+  auto targets = std::make_shared<std::vector<luciole::Location>>();
   std::vector<ContextMenuControlEntry> entries;
-  for (const auto& crumb : files::locationBreadcrumbs(target)) {
+  for (const auto& crumb : luciole::locationBreadcrumbs(target)) {
     const auto index = targets->size();
     targets->push_back(crumb.location);
     entries.push_back({.id = static_cast<int>(index), .label = crumb.label});
@@ -397,7 +397,7 @@ void MenuController::openBreadcrumbMenu(const files::Location& target, LayoutRec
   const auto request = m_page.actionRequest(false);
   for (const auto action : {Action::CopyPath, Action::CopyUri, Action::Terminal}) {
     auto entry = actionEntry(action, request);
-    entry.id = -1 - files::ActionRegistry::menuId(action);
+    entry.id = -1 - luciole::ActionRegistry::menuId(action);
     if (action == Action::Terminal) {
       entry.enabled = target.nativePath().has_value() && m_terminal.available();
     }
@@ -416,7 +416,7 @@ void MenuController::openBreadcrumbMenu(const files::Location& target, LayoutRec
       }
       return;
     }
-    const auto action = files::ActionRegistry::fromMenuId(-1 - id);
+    const auto action = luciole::ActionRegistry::fromMenuId(-1 - id);
     if (!action) {
       return;
     }
@@ -431,7 +431,9 @@ void MenuController::openBreadcrumbMenu(const files::Location& target, LayoutRec
         }
       });
     } else if (m_page.clipboard().available()) {
-      m_page.clipboard().setClipboardText(*action == Action::CopyUri ? target.uri() : files::locationEditText(target));
+      m_page.clipboard().setClipboardText(
+          *action == Action::CopyUri ? target.uri() : luciole::locationEditText(target)
+      );
     }
   };
   showContextMenu(entries, activate, anchor);
@@ -440,7 +442,7 @@ void MenuController::openBreadcrumbMenu(const files::Location& target, LayoutRec
   m_siblingCompletion.children(
       siblingParent, m_page.browser().model().filter().showHidden,
       [this, context, generation, anchor, targets, entries = std::move(entries),
-       activate](const files::PathSuggestions& suggestions) mutable {
+       activate](const luciole::PathSuggestions& suggestions) mutable {
         if (context != m_page.browser().contextSerial()
             || generation != m_page.activeDialog().generation()
             || !m_page.menuSurface()) {
@@ -569,26 +571,26 @@ void MenuController::showContextMenu(
   m_scroll = scroll;
 }
 
-void MenuController::openColumnsMenu(const LayoutRect& anchor, std::optional<files::DetailsColumn> column) {
+void MenuController::openColumnsMenu(const LayoutRect& anchor, std::optional<luciole::DetailsColumn> column) {
   std::vector<ContextMenuControlEntry> entries{
       {.label = "Name", .enabled = false, .checkmark = true, .toggleState = 1}
   };
   for (const auto candidate : m_columns.columnOrder()) {
     entries.push_back(
         {.id = static_cast<int>(candidate) + 1,
-         .label = std::string(files::detailsColumnLabel(candidate)),
+         .label = std::string(luciole::detailsColumnLabel(candidate)),
          .checkmark = true,
-         .toggleState = files::detailsColumnVisible(m_columns.columnVisibility(), candidate) ? 1 : 0}
+         .toggleState = luciole::detailsColumnVisible(m_columns.columnVisibility(), candidate) ? 1 : 0}
     );
   }
   entries.push_back({.label = "", .separator = true});
   entries.push_back(
-      {.id = 100, .label = "Show all columns", .enabled = m_columns.columnVisibility() != files::allDetailsColumns()}
+      {.id = 100, .label = "Show all columns", .enabled = m_columns.columnVisibility() != luciole::allDetailsColumns()}
   );
   entries.push_back(
       {.id = 106,
        .label = "Reset column visibility",
-       .enabled = m_columns.columnVisibility() != files::DetailsColumnVisibility{}}
+       .enabled = m_columns.columnVisibility() != luciole::DetailsColumnVisibility{}}
   );
   const int left = Style::rtl() ? 1 : -1;
   if (column) {
@@ -604,39 +606,39 @@ void MenuController::openColumnsMenu(const LayoutRect& anchor, std::optional<fil
   entries.push_back(
       {.id = 103,
        .label = "Reset column order",
-       .enabled = m_columns.columnOrder() != files::kDefaultDetailsColumnOrder}
+       .enabled = m_columns.columnOrder() != luciole::kDefaultDetailsColumnOrder}
   );
   const std::size_t widthIndex = column ? static_cast<std::size_t>(*column) + 1 : 0;
   entries.push_back(
       {.id = 104,
        .label = "Reset column width",
-       .enabled = m_columns.columnWidths()[widthIndex] != files::kDefaultDetailsColumnWidths[widthIndex]}
+       .enabled = m_columns.columnWidths()[widthIndex] != luciole::kDefaultDetailsColumnWidths[widthIndex]}
   );
   entries.push_back(
       {.id = 105,
        .label = "Reset all column widths",
-       .enabled = m_columns.columnWidths() != files::kDefaultDetailsColumnWidths}
+       .enabled = m_columns.columnWidths() != luciole::kDefaultDetailsColumnWidths}
   );
   showContextMenu(
       std::move(entries),
       [this, column, left, widthIndex](int id) {
         if (id == 104 || id == 105) {
-          auto widths = id == 105 ? files::kDefaultDetailsColumnWidths : m_columns.columnWidths();
-          widths[widthIndex] = files::kDefaultDetailsColumnWidths[widthIndex];
+          auto widths = id == 105 ? luciole::kDefaultDetailsColumnWidths : m_columns.columnWidths();
+          widths[widthIndex] = luciole::kDefaultDetailsColumnWidths[widthIndex];
           m_columns.setDetailsColumnWidths(widths);
         } else if ((id == 101 || id == 102) && column) {
           if (const auto order = m_columns.movedColumnOrder(*column, id == 101 ? left : -left)) {
             m_columns.setDetailsColumnOrder(*order);
           }
         } else if (id == 103) {
-          m_columns.setDetailsColumnOrder(files::kDefaultDetailsColumnOrder);
+          m_columns.setDetailsColumnOrder(luciole::kDefaultDetailsColumnOrder);
         } else {
           auto visibility = m_columns.columnVisibility();
-          if (id >= 1 && id <= static_cast<int>(files::kDetailsColumnCount)) {
-            auto& flag = files::detailsColumnFlag(visibility, static_cast<files::DetailsColumn>(id - 1));
+          if (id >= 1 && id <= static_cast<int>(luciole::kDetailsColumnCount)) {
+            auto& flag = luciole::detailsColumnFlag(visibility, static_cast<luciole::DetailsColumn>(id - 1));
             flag = !flag;
           } else if (id == 100) {
-            visibility = files::allDetailsColumns();
+            visibility = luciole::allDetailsColumns();
           } else if (id == 106) {
             visibility = {};
           }
@@ -668,7 +670,7 @@ void MenuController::showActionMenu(
   showContextMenu(
       std::move(entries),
       [this, request](int id) {
-        const auto action = files::ActionRegistry::fromMenuId(id);
+        const auto action = luciole::ActionRegistry::fromMenuId(id);
         if (!action) {
           return;
         }
@@ -717,7 +719,7 @@ void MenuController::openMenu() {
   }
   entries.push_back({.label = "", .separator = true});
   entries.push_back(actionEntry(
-      m_page.browser().model().snapshot().status == files::DirectoryStatus::Loading ? Action::Stop : Action::Refresh,
+      m_page.browser().model().snapshot().status == luciole::DirectoryStatus::Loading ? Action::Stop : Action::Refresh,
       request
   ));
   for (const auto action :
@@ -738,7 +740,7 @@ void MenuController::openMenu() {
                                : WorkspaceCommand::Split,
               std::nullopt, std::nullopt
           );
-        } else if (const auto action = files::ActionRegistry::fromMenuId(id)) {
+        } else if (const auto action = luciole::ActionRegistry::fromMenuId(id)) {
           m_page.dispatchAction(*action, request);
         }
       },

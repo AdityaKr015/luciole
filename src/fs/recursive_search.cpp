@@ -31,7 +31,7 @@ namespace {
   }
 } // namespace
 
-struct files::RecursiveSearch::State : std::enable_shared_from_this<State> {
+struct luciole::RecursiveSearch::State : std::enable_shared_from_this<State> {
   struct Folder {
     Location location;
     unsigned int depth = 0;
@@ -224,17 +224,19 @@ struct files::RecursiveSearch::State : std::enable_shared_from_this<State> {
   }
 };
 
-files::RecursiveSearch::RecursiveSearch() : m_state(std::make_shared<State>()) {}
-files::RecursiveSearch::~RecursiveSearch() {
+luciole::RecursiveSearch::RecursiveSearch() : m_state(std::make_shared<State>()) {}
+luciole::RecursiveSearch::~RecursiveSearch() {
   m_state->changed = {};
   m_state->cancel();
 }
-void files::RecursiveSearch::setChangedCallback(std::function<void()> callback) {
+void luciole::RecursiveSearch::setChangedCallback(std::function<void()> callback) {
   m_state->changed = std::move(callback);
 }
-const files::DirectorySnapshot& files::RecursiveSearch::snapshot() const { return m_state->snapshot; }
-std::size_t files::RecursiveSearch::skippedFolders() const { return m_state->skipped; }
-void files::RecursiveSearch::start(const Location& root, const std::string& query, bool showHidden, bool showBackups) {
+const luciole::DirectorySnapshot& luciole::RecursiveSearch::snapshot() const { return m_state->snapshot; }
+std::size_t luciole::RecursiveSearch::skippedFolders() const { return m_state->skipped; }
+void luciole::RecursiveSearch::start(
+    const Location& root, const std::string& query, bool showHidden, bool showBackups
+) {
   const auto destination = root; // NOLINT(performance-unnecessary-copy-initialization)
   const auto state = m_state;
   state->cancel();
@@ -258,7 +260,7 @@ void files::RecursiveSearch::start(const Location& root, const std::string& quer
   state->notify();
   state->next(scan);
 }
-void files::RecursiveSearch::cancel() {
+void luciole::RecursiveSearch::cancel() {
   m_state->cancel();
   m_state->snapshot.status = DirectoryStatus::Cancelled;
   m_state->notify();

@@ -7,7 +7,7 @@
 #include <span>
 #include <string_view>
 
-namespace files {
+namespace luciole {
   struct MetadataField {
     std::string label;
     std::string value;
@@ -37,4 +37,4 @@ namespace files {
 
   // Private metadata helper: MIME type and encoded-byte limit. Input is descriptor 3, output is JSON on stdout.
   int runPreviewMetadataWorker(std::span<const std::string_view> args);
-} // namespace files
+} // namespace luciole

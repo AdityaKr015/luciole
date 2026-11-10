@@ -12,7 +12,7 @@
 
 namespace {
   namespace fs = std::filesystem;
-  using namespace files;
+  using namespace luciole;
   using Json = nlohmann::json;
   void write(const fs::path& path, const std::string& data, bool executable = false) {
     std::ofstream(path) << data;
@@ -131,7 +131,7 @@ namespace {
     fails(FileErrorKind::Denied, [&] { (void)prepareProgram(Location::fromPath(file.native()), {}); });
     write(file, "plain text, even with the executable bit", true);
     fails(FileErrorKind::Unsupported, [&] { (void)prepareProgram(Location::fromPath(file.native()), {}); });
-    write(file, "#!/noctalia-execution-test-missing-interpreter\n", true);
+    write(file, "#!/luciole-execution-test-missing-interpreter\n", true);
     fails(FileErrorKind::Other, [&] { f.run(prepareProgram(Location::fromPath(file.native()), {})); });
     for (const auto& item :
          {Location::fromUri("sftp://example.invalid/file"), Location::trash(), f.cwd,
@@ -168,7 +168,7 @@ namespace {
         )
     );
     fails(FileErrorKind::Unsupported, [&] { f.run(program, {}, true); });
-    write(file, "[Desktop Entry]\nType=Application\nName=Changed\nExec=/noctalia-test-missing\n");
+    write(file, "[Desktop Entry]\nType=Application\nName=Changed\nExec=/luciole-test-missing\n");
     fails(FileErrorKind::Changed, [&] { f.run(program); });
     for (const auto& text :
          {"not a desktop file", "[Desktop Entry]\nType=Link\nURL=https://example.invalid\n",
@@ -220,15 +220,15 @@ namespace {
 } // namespace
 
 int main() {
-  char temporary[] = "/tmp/noctalia-program-test-XXXXXX";
+  char temporary[] = "/tmp/luciole-program-test-XXXXXX";
   TEST_CHECK(mkdtemp(temporary));
   const fs::path root(temporary);
-  const files::GString python(g_find_program_in_path("python3"));
+  const luciole::GString python(g_find_program_in_path("python3"));
   TEST_CHECK(python);
   g_setenv("HOME", temporary, true);
   g_setenv("XDG_DATA_HOME", (root / "data").c_str(), true);
   g_setenv("XDG_CONFIG_HOME", (root / "config").c_str(), true);
-  g_setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/noctalia-program-test-missing-bus", true);
+  g_setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/luciole-program-test-missing-bus", true);
   g_setenv("NF_EXEC_TEST_LOG", (root / "launches.jsonl").c_str(), true);
   g_setenv("XDG_ACTIVATION_TOKEN", "must-not-inherit", true);
   g_setenv("DESKTOP_STARTUP_ID", "must-not-inherit", true);

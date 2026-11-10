@@ -4,7 +4,7 @@
 
 #include <algorithm>
 
-namespace files {
+namespace luciole {
   inline float treePrefixWidth(std::size_t depth, float nameWidth, float iconSize) {
     return std::min(static_cast<float>(depth) * 16.0F, std::max(0.0F, nameWidth - iconSize - 80.0F)) + 20.0F;
   }
@@ -36,4 +36,4 @@ namespace files {
   inline float fileRowIconSize(BrowsePresentation presentation) {
     return presentation.density == ViewDensity::Comfortable ? 28.0F : 24.0F;
   }
-} // namespace files
+} // namespace luciole

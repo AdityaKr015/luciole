@@ -34,7 +34,7 @@ namespace {
   }
 } // namespace
 
-int files::runThumbnailWorker(std::span<const std::string_view> arguments) {
+int luciole::runThumbnailWorker(std::span<const std::string_view> arguments) {
   if (arguments.size() != 5) {
     return 2;
   }
@@ -96,7 +96,7 @@ int files::runThumbnailWorker(std::span<const std::string_view> arguments) {
 }
 
 std::expected<LoadedImageFile, std::string>
-files::readThumbnailWorkerResult(std::vector<std::uint8_t> bytes, int maxSide) {
+luciole::readThumbnailWorkerResult(std::vector<std::uint8_t> bytes, int maxSide) {
   if (bytes.size() > 4
       && bytes.size() <= 1024
       && bytes[0] == 'N'

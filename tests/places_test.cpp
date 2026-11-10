@@ -15,7 +15,7 @@ namespace {
   struct Fixture {
     fs::path root;
     Fixture() {
-      const files::GString path(g_dir_make_tmp("noctalia-places-XXXXXX", nullptr));
+      const luciole::GString path(g_dir_make_tmp("luciole-places-XXXXXX", nullptr));
       TEST_CHECK(path != nullptr);
       root = path.get();
       fs::create_directories(root / "home");
@@ -31,10 +31,10 @@ namespace {
           << "\"\n";
     }
     ~Fixture() { fs::remove_all(root); }
-    files::Location location(const std::string& name) const {
-      return files::Location::fromPath((root / name).native());
+    luciole::Location location(const std::string& name) const {
+      return luciole::Location::fromPath((root / name).native());
     }
-    files::Bookmark pin(const std::string& name) const { return {name, location(name)}; }
+    luciole::Bookmark pin(const std::string& name) const { return {name, location(name)}; }
   };
   class Pump {
   public:
@@ -49,7 +49,7 @@ namespace {
         m_source.dispatch(fds, start);
       }
     }
-    void ready(const files::PinService& service) {
+    void ready(const luciole::PinService& service) {
       until([&] { return !service.busy(); });
       TEST_CHECK(service.editable());
     }
@@ -61,20 +61,20 @@ namespace {
     Fixture fixture;
     Pump pump;
     const auto path = fixture.root / "state.toml";
-    files::StateStore state(path);
+    luciole::StateStore state(path);
     TEST_CHECK(state.load());
-    const std::vector<files::SavedWindow> windows{
+    const std::vector<luciole::SavedWindow> windows{
         {.tabs = {{.primary = fixture.location("home"), .secondary = std::nullopt}}}
     };
-    TEST_CHECK(state.saveWindows(windows) == files::AtomicWriteState::Durable);
-    files::PinService service(path);
+    TEST_CHECK(state.saveWindows(windows) == luciole::AtomicWriteState::Durable);
+    luciole::PinService service(path);
     service.reload();
     pump.ready(service);
     const auto& places = service.userPlaces();
     TEST_CHECK(
         places.size() == 8
         && places.front().bookmark.label == "Home"
-        && places.back().bookmark.location == files::Location::fromPath("/")
+        && places.back().bookmark.location == luciole::Location::fromPath("/")
     );
     const auto documents =
         std::ranges::find_if(places, [](const auto& place) { return place.bookmark.label == "Documents"; });
@@ -102,7 +102,7 @@ namespace {
           << fixture.location("project-two").uri()
           << "'}]\nwindows = []\n";
     }
-    files::PinService existing(existingPath);
+    luciole::PinService existing(existingPath);
     existing.reload();
     pump.ready(existing);
     TEST_CHECK(
@@ -111,16 +111,16 @@ namespace {
         && existing.contains(filesystem.location)
     );
     TEST_CHECK(
-        std::ranges::count(existing.bookmarks(), downloads->bookmark.location, &files::Bookmark::location) == 1
+        std::ranges::count(existing.bookmarks(), downloads->bookmark.location, &luciole::Bookmark::location) == 1
         && existing.bookmarks()[2].label == "My downloads"
         && existing.bookmarks()[places.size()].label == "Project one"
         && existing.bookmarks().back().label == "Project two"
     );
-    files::StateStore observed(existingPath);
+    luciole::StateStore observed(existingPath);
     TEST_CHECK(observed.load() && !observed.state().placesCustomized && observed.state().bookmarks.size() == 3);
     TEST_CHECK(existing.remove(home.location));
     pump.ready(existing);
-    files::PinService existingRestarted(existingPath);
+    luciole::PinService existingRestarted(existingPath);
     existingRestarted.reload();
     pump.ready(existingRestarted);
     TEST_CHECK(
@@ -134,17 +134,17 @@ namespace {
     existingRestarted.reload();
     pump.ready(existingRestarted);
     const auto renamedRoot =
-        std::ranges::find(existingRestarted.bookmarks(), filesystem.location, &files::Bookmark::location);
+        std::ranges::find(existingRestarted.bookmarks(), filesystem.location, &luciole::Bookmark::location);
     TEST_CHECK(renamedRoot != existingRestarted.bookmarks().end() && renamedRoot->label == "Root <files> & storage");
     TEST_CHECK(!existing.rename(filesystem, "stale label") && !existing.busy());
-    const auto renamed = *std::ranges::find(existing.bookmarks(), filesystem.location, &files::Bookmark::location);
+    const auto renamed = *std::ranges::find(existing.bookmarks(), filesystem.location, &luciole::Bookmark::location);
     TEST_CHECK(existing.rename(renamed, renamed.label) && !existing.busy());
     for (const auto& invalid :
          {std::string{}, std::string(257, 'x'), std::string("line\nbreak"), std::string(1, static_cast<char>(0xff))}) {
       TEST_CHECK(!existing.rename(renamed, invalid) && !existing.busy());
     }
     const auto project =
-        *std::ranges::find(existing.bookmarks(), fixture.location("project-one"), &files::Bookmark::location);
+        *std::ranges::find(existing.bookmarks(), fixture.location("project-one"), &luciole::Bookmark::location);
     const auto oldOrder = existing.bookmarks();
     TEST_CHECK(existing.rename(project, "资料 / <b>Project & work</b>"));
     pump.ready(existing);
@@ -161,13 +161,13 @@ namespace {
     pump.ready(existing);
     TEST_CHECK(!existing.rename(project, "recreated"));
     auto externalLabels = existing.bookmarks();
-    std::ranges::find(externalLabels, filesystem.location, &files::Bookmark::location)->label = "Another writer";
-    TEST_CHECK(observed.load() && observed.saveBookmarks(externalLabels) == files::AtomicWriteState::Durable);
+    std::ranges::find(externalLabels, filesystem.location, &luciole::Bookmark::location)->label = "Another writer";
+    TEST_CHECK(observed.load() && observed.saveBookmarks(externalLabels) == luciole::AtomicWriteState::Durable);
     TEST_CHECK(existing.rename(renamed, "My root"));
     pump.ready(existing);
     TEST_CHECK(!existing.error().empty() && existing.bookmarks() == externalLabels);
 
-    const files::Bookmark trash{"Trash", files::Location::trash()};
+    const luciole::Bookmark trash{"Trash", luciole::Location::trash()};
     const auto beforeTrashEdits = service.bookmarks();
     TEST_CHECK(
         !service.remove(trash.location)
@@ -195,7 +195,7 @@ namespace {
     TEST_CHECK(service.add({{"home folder", home.location}}, 1));
     pump.ready(service);
     TEST_CHECK(service.bookmarks()[1] == home);
-    std::vector<files::Location> defaults;
+    std::vector<luciole::Location> defaults;
     for (const auto& pin : service.bookmarks()) {
       if (!pin.location.isTrash()) {
         defaults.push_back(pin.location);
@@ -203,10 +203,10 @@ namespace {
     }
     TEST_CHECK(service.removeMany(defaults));
     pump.ready(service);
-    files::PinService restarted(path);
+    luciole::PinService restarted(path);
     restarted.reload();
     pump.ready(restarted);
-    TEST_CHECK(restarted.bookmarks() == std::vector<files::Bookmark>{trash});
+    TEST_CHECK(restarted.bookmarks() == std::vector<luciole::Bookmark>{trash});
 
     TEST_CHECK(service.add({fixture.pin("a"), fixture.pin("b"), fixture.pin("c")}, 0));
     pump.ready(service);
@@ -226,15 +226,15 @@ namespace {
     pump.ready(service);
     TEST_CHECK(service.bookmarks()[1].label == "line break");
     const auto before = service.bookmarks();
-    TEST_CHECK(service.add({{"private", files::Location::fromUri("sftp://user:secret@example.org/folder")}}, 2));
+    TEST_CHECK(service.add({{"private", luciole::Location::fromUri("sftp://user:secret@example.org/folder")}}, 2));
     pump.ready(service);
     TEST_CHECK(!service.error().empty() && !service.error().contains("secret") && service.bookmarks() == before);
 
-    files::StateStore foreign(path);
+    luciole::StateStore foreign(path);
     TEST_CHECK(foreign.load());
     auto external = foreign.state().bookmarks;
     external.push_back(fixture.pin("external"));
-    TEST_CHECK(foreign.saveBookmarks(external) == files::AtomicWriteState::Durable);
+    TEST_CHECK(foreign.saveBookmarks(external) == luciole::AtomicWriteState::Durable);
     TEST_CHECK(service.add({fixture.pin("not-committed")}, 0));
     pump.ready(service);
     TEST_CHECK(
@@ -253,7 +253,7 @@ namespace {
     std::ifstream invalid(path);
     TEST_CHECK(std::string((std::istreambuf_iterator<char>(invalid)), {}) == "schema_version = 999\n");
 
-    auto dying = std::make_unique<files::PinService>(fixture.root / "other/state.toml");
+    auto dying = std::make_unique<luciole::PinService>(fixture.root / "other/state.toml");
     bool destroyed = false;
     dying->setChangedCallback([&] {
       if (!dying->busy()) {

@@ -11,21 +11,21 @@
 #include <utility>
 
 namespace {
-  using Targets = std::vector<files::TrashItem>;
+  using Targets = std::vector<luciole::TrashItem>;
   struct Size {
     std::optional<std::uint64_t> bytes = 0;
     bool incomplete = false;
   };
-  Size measureSize(const Targets& targets, const files::CancelToken& token) {
+  Size measureSize(const Targets& targets, const luciole::CancelToken& token) {
     struct Folder {
-      files::Location location;
+      luciole::Location location;
       unsigned int depth;
     };
     Size reply;
     std::vector<Folder> pending;
     constexpr const char* attributes = "standard::name,standard::type,standard::is-symlink,standard::size";
-    auto* cancellable = files::gioCancellable(token);
-    const auto inspect = [&](const files::Location& location, GFileInfo* info, unsigned int depth) {
+    auto* cancellable = luciole::gioCancellable(token);
+    const auto inspect = [&](const luciole::Location& location, GFileInfo* info, unsigned int depth) {
       const auto type = g_file_info_get_file_type(info);
       if (type == G_FILE_TYPE_DIRECTORY && !g_file_info_get_is_symlink(info)) {
         if (depth >= 256 || pending.size() >= 65536) {
@@ -49,8 +49,8 @@ namespace {
         reply.incomplete = true;
         return reply;
       }
-      const files::GioPtr<GFileInfo> info(g_file_query_info(
-          files::gioFile(target.location).get(), attributes, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, cancellable, nullptr
+      const luciole::GioPtr<GFileInfo> info(g_file_query_info(
+          luciole::gioFile(target.location).get(), attributes, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, cancellable, nullptr
       ));
       if (info) {
         inspect(target.location, info.get(), 0);
@@ -65,8 +65,8 @@ namespace {
       }
       const auto folder = std::move(pending.back());
       pending.pop_back();
-      const files::GioPtr<GFileEnumerator> enumerator(g_file_enumerate_children(
-          files::gioFile(folder.location).get(), attributes, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, cancellable, nullptr
+      const luciole::GioPtr<GFileEnumerator> enumerator(g_file_enumerate_children(
+          luciole::gioFile(folder.location).get(), attributes, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, cancellable, nullptr
       ));
       if (!enumerator) {
         reply.incomplete = true;
@@ -74,8 +74,8 @@ namespace {
       }
       for (;;) {
         GError* raw = nullptr;
-        const files::GioPtr<GFileInfo> info(g_file_enumerator_next_file(enumerator.get(), cancellable, &raw));
-        const files::GErrorPtr error(raw);
+        const luciole::GioPtr<GFileInfo> info(g_file_enumerator_next_file(enumerator.get(), cancellable, &raw));
+        const luciole::GErrorPtr error(raw);
         if (!info) {
           reply.incomplete = reply.incomplete || error != nullptr;
           break;
@@ -97,16 +97,16 @@ namespace {
     }
     return reply;
   }
-  std::vector<files::EmptyTrashResult> pendingResults(const Targets& targets) {
-    std::vector<files::EmptyTrashResult> results;
+  std::vector<luciole::EmptyTrashResult> pendingResults(const Targets& targets) {
+    std::vector<luciole::EmptyTrashResult> results;
     for (const auto& target : targets) {
-      results.push_back({target.location, target.displayName, files::EmptyTrashOutcome::Cancelled, {}});
+      results.push_back({target.location, target.displayName, luciole::EmptyTrashOutcome::Cancelled, {}});
     }
     return results;
   }
-  files::EmptyTrashOutcome failedDelete(files::FileErrorKind kind) {
-    using Kind = files::FileErrorKind;
-    using Outcome = files::EmptyTrashOutcome;
+  luciole::EmptyTrashOutcome failedDelete(luciole::FileErrorKind kind) {
+    using Kind = luciole::FileErrorKind;
+    using Outcome = luciole::EmptyTrashOutcome;
     switch (kind) {
     case Kind::Missing:
       return Outcome::Skipped;
@@ -122,7 +122,7 @@ namespace {
   }
 } // namespace
 
-struct files::EmptyTrashService::State {
+struct luciole::EmptyTrashService::State {
   EmptyTrashSnapshot snapshot;
   std::shared_ptr<Targets> targets;
   CancelToken token;
@@ -202,22 +202,24 @@ struct files::EmptyTrashService::State {
   static void startEmpty(const std::shared_ptr<State>& owner);
 };
 
-files::EmptyTrashService::EmptyTrashService() : m_state(std::make_shared<State>()) {}
-files::EmptyTrashService::~EmptyTrashService() {
+luciole::EmptyTrashService::EmptyTrashService() : m_state(std::make_shared<State>()) {}
+luciole::EmptyTrashService::~EmptyTrashService() {
   m_state->changed = {};
   cancel();
 }
-void files::EmptyTrashService::setChangedCallback(std::function<void()> callback) {
+void luciole::EmptyTrashService::setChangedCallback(std::function<void()> callback) {
   m_state->changed = std::move(callback);
 }
-bool files::EmptyTrashService::busy() const { return m_state->active; }
-bool files::EmptyTrashService::pending() const { return busy() || m_state->snapshot.status == EmptyTrashStatus::Ready; }
-bool files::EmptyTrashService::canEmpty() const {
+bool luciole::EmptyTrashService::busy() const { return m_state->active; }
+bool luciole::EmptyTrashService::pending() const {
+  return busy() || m_state->snapshot.status == EmptyTrashStatus::Ready;
+}
+bool luciole::EmptyTrashService::canEmpty() const {
   return m_state->snapshot.status == EmptyTrashStatus::Ready && m_state->targets && !m_state->targets->empty();
 }
-std::size_t files::EmptyTrashService::completed() const { return m_state->completed.load(); }
-const files::EmptyTrashSnapshot& files::EmptyTrashService::snapshot() const { return m_state->snapshot; }
-void files::EmptyTrashService::cancel() {
+std::size_t luciole::EmptyTrashService::completed() const { return m_state->completed.load(); }
+const luciole::EmptyTrashSnapshot& luciole::EmptyTrashService::snapshot() const { return m_state->snapshot; }
+void luciole::EmptyTrashService::cancel() {
   m_state->emptyRequested = false;
   m_state->token.cancel();
   m_state->targets.reset();
@@ -225,14 +227,14 @@ void files::EmptyTrashService::cancel() {
     m_state->snapshot.status = EmptyTrashStatus::Cancelled;
   }
 }
-bool files::EmptyTrashService::prepare() { return prepareTargets(std::nullopt); }
-bool files::EmptyTrashService::prepareSelection(std::vector<DirectoryEntry> selection) {
+bool luciole::EmptyTrashService::prepare() { return prepareTargets(std::nullopt); }
+bool luciole::EmptyTrashService::prepareSelection(std::vector<DirectoryEntry> selection) {
   if (selection.empty() || selection.size() > 4096) {
     return false;
   }
   return prepareTargets(std::move(selection));
 }
-bool files::EmptyTrashService::prepareTargets(std::optional<std::vector<DirectoryEntry>> selection) {
+bool luciole::EmptyTrashService::prepareTargets(std::optional<std::vector<DirectoryEntry>> selection) {
   if (busy()) {
     return false;
   }
@@ -272,7 +274,7 @@ bool files::EmptyTrashService::prepareTargets(std::optional<std::vector<Director
   );
   return true;
 }
-bool files::EmptyTrashService::empty() {
+bool luciole::EmptyTrashService::empty() {
   if (!canEmpty()) {
     return false;
   }
@@ -287,7 +289,7 @@ bool files::EmptyTrashService::empty() {
   }
   return true;
 }
-void files::EmptyTrashService::State::startEmpty(const std::shared_ptr<State>& owner) {
+void luciole::EmptyTrashService::State::startEmpty(const std::shared_ptr<State>& owner) {
   launch<std::vector<EmptyTrashResult>>(
       owner,
       [owner, token = owner->token, targets = owner->targets] {

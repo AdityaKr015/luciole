@@ -17,7 +17,7 @@ namespace {
   };
 } // namespace
 
-std::vector<std::string> files::archive_work::Input::discover() const {
+std::vector<std::string> luciole::archive_work::Input::discover() const {
   const int fd = ::openat(m_parent.get(), ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
   if (fd < 0) {
     systemError("Could not inspect split ZIP parts");
@@ -74,7 +74,7 @@ std::vector<std::string> files::archive_work::Input::discover() const {
   return names;
 }
 
-files::archive_work::Input::Input(const Location& source, Work& work)
+luciole::archive_work::Input::Input(const Location& source, Work& work)
     : m_work(work), m_parentPath(std::filesystem::path(native(source)).parent_path().native()),
       m_parent(opened(::open(m_parentPath.c_str(), O_PATH | O_DIRECTORY | O_CLOEXEC))),
       m_parentIdentity(statFd(m_parent.get())) {
@@ -120,7 +120,7 @@ files::archive_work::Input::Input(const Location& source, Work& work)
   unchanged();
 }
 
-std::size_t files::archive_work::Input::read(std::span<char> buffer) {
+std::size_t luciole::archive_work::Input::read(std::span<char> buffer) {
   std::size_t count = 0;
   while (count < buffer.size() && m_position < m_size) {
     m_work.check();
@@ -152,7 +152,7 @@ std::size_t files::archive_work::Input::read(std::span<char> buffer) {
   return count;
 }
 
-std::int64_t files::archive_work::Input::seek(std::int64_t offset, int whence) {
+std::int64_t luciole::archive_work::Input::seek(std::int64_t offset, int whence) {
   m_work.check();
   const auto base = whence == SEEK_SET ? 0U : whence == SEEK_CUR ? m_position : m_size;
   if (whence != SEEK_SET && whence != SEEK_CUR && whence != SEEK_END) {
@@ -175,7 +175,7 @@ std::int64_t files::archive_work::Input::seek(std::int64_t offset, int whence) {
   return static_cast<std::int64_t>(next);
 }
 
-void files::archive_work::Input::unchanged() const {
+void luciole::archive_work::Input::unchanged() const {
   m_work.check();
   struct stat parent{};
   if (::stat(m_parentPath.c_str(), &parent) != 0 || !sameIdentity(parent, m_parentIdentity)) {
@@ -198,7 +198,7 @@ void files::archive_work::Input::unchanged() const {
   }
 }
 
-files::Fd files::archive_work::Input::duplicateSingle() const {
+luciole::Fd luciole::archive_work::Input::duplicateSingle() const {
   if (split() || m_parts.size() != 1) {
     throwFileError(FileErrorKind::Unsupported, "This provider requires one ordinary archive file.");
   }

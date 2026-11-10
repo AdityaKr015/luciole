@@ -9,7 +9,7 @@
 
 using GAppInfo = struct _GAppInfo;
 
-namespace files {
+namespace luciole {
   struct ApplicationChoice {
     std::string id, name;
     FileIconSource icon;
@@ -50,4 +50,4 @@ namespace files {
     struct State;
     std::shared_ptr<State> m_state;
   };
-} // namespace files
+} // namespace luciole

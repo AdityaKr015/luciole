@@ -7,7 +7,7 @@
 #include <functional>
 #include <memory>
 
-namespace files {
+namespace luciole {
   // Worker-owned state for jobs involving a verified GIO remote provider.
   class ProviderTransfer {
   public:
@@ -23,4 +23,4 @@ namespace files {
     struct State;
     std::unique_ptr<State> m_state;
   };
-} // namespace files
+} // namespace luciole

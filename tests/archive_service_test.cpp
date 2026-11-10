@@ -33,7 +33,7 @@ namespace {
   struct Fixture {
     fs::path root;
     Fixture() {
-      std::string pattern = "/tmp/noctalia-archive-test-XXXXXX";
+      std::string pattern = "/tmp/luciole-archive-test-XXXXXX";
       const char* path = ::mkdtemp(pattern.data());
       TEST_CHECK(path);
       root = path;
@@ -71,7 +71,7 @@ namespace {
     std::ifstream file(path, std::ios::binary);
     return {std::istreambuf_iterator<char>(file), {}};
   }
-  files::Location location(const fs::path& path) { return files::Location::fromPath(path.native()); }
+  luciole::Location location(const fs::path& path) { return luciole::Location::fromPath(path.native()); }
   struct Entry {
     std::string name, data, link;
     mode_t kind = AE_IFREG;
@@ -116,7 +116,7 @@ namespace {
   void tar(const fs::path& path, const std::vector<Entry>& entries, int filter = ARCHIVE_FILTER_NONE) {
     makeArchive(path, entries, ARCHIVE_FORMAT_TAR_PAX_RESTRICTED, filter);
   }
-  void wait(files::ArchiveService& service, Pump& pump) {
+  void wait(luciole::ArchiveService& service, Pump& pump) {
     pump.until([&] { return !service.busy(); });
   }
   void testRoundTrips(const Fixture& fixture, Pump& pump) {
@@ -125,10 +125,10 @@ namespace {
     write(src / "hello.txt", "archive content");
     write(src / "café\nnotes.txt", "Unicode and newline");
     fs::create_symlink("hello.txt", src / "link");
-    TEST_CHECK(!files::archiveFormats().empty());
-    for (const auto& format : files::archiveFormats()) {
+    TEST_CHECK(!luciole::archiveFormats().empty());
+    for (const auto& format : luciole::archiveFormats()) {
       const auto archive = fixture.root / ("roundtrip" + std::string(format.suffix));
-      files::ArchiveService service;
+      luciole::ArchiveService service;
       TEST_CHECK(service.compress({location(src)}, location(archive), format.format));
       wait(service, pump);
       if (service.error()) {
@@ -161,20 +161,20 @@ namespace {
   void testConflicts(const Fixture& fixture, Pump& pump) {
     const auto source = fixture.root / "conflict.txt", archive = fixture.root / "conflict.zip";
     write(source, "first");
-    files::ArchiveService service;
-    TEST_CHECK(service.compress({location(source)}, location(archive), files::ArchiveFormat::Zip));
+    luciole::ArchiveService service;
+    TEST_CHECK(service.compress({location(source)}, location(archive), luciole::ArchiveFormat::Zip));
     wait(service, pump);
     const auto original = read(archive);
     write(source, "second content");
     for (const auto choice :
-         {files::TransferConflictChoice::Skip, files::TransferConflictChoice::KeepBoth,
-          files::TransferConflictChoice::Replace}) {
-      TEST_CHECK(service.compress({location(source)}, location(archive), files::ArchiveFormat::Zip));
+         {luciole::TransferConflictChoice::Skip, luciole::TransferConflictChoice::KeepBoth,
+          luciole::TransferConflictChoice::Replace}) {
+      TEST_CHECK(service.compress({location(source)}, location(archive), luciole::ArchiveFormat::Zip));
       pump.until([&] { return service.conflict().has_value(); });
       const auto conflict = service.conflict();
       TEST_CHECK(service.resolve(conflict->id, choice));
       wait(service, pump);
-      if (choice != files::TransferConflictChoice::Replace) {
+      if (choice != luciole::TransferConflictChoice::Replace) {
         TEST_CHECK(read(archive) == original);
       } else {
         TEST_CHECK(!service.error() && read(archive) != original);
@@ -202,7 +202,7 @@ namespace {
       const auto source = fixture.root / ("hostile" + std::to_string(index) + ".tar"),
                  dest = fixture.root / ("rejected" + std::to_string(index++));
       tar(source, entries);
-      files::ArchiveService service;
+      luciole::ArchiveService service;
       TEST_CHECK(service.extract(location(source), location(dest)));
       wait(service, pump);
       TEST_CHECK(service.error() && !fs::exists(dest));
@@ -212,14 +212,14 @@ namespace {
   void testLimitsAndTruncation(const Fixture& fixture, Pump& pump) {
     const auto source = fixture.root / "limits.tar";
     tar(source, {{"a/b/file", std::string(4096, 'x'), {}}});
-    std::vector<files::ArchiveLimits> limits(5);
+    std::vector<luciole::ArchiveLimits> limits(5);
     limits[0].maxExpandedBytes = 100;
     limits[1].maxEntries = 1;
     limits[2].maxDepth = 1;
     limits[3].maxMetadataBytes = 3;
     limits[4].maxArchiveBytes = 8;
     for (std::size_t i = 0; i < limits.size(); ++i) {
-      files::ArchiveService service(limits[i]);
+      luciole::ArchiveService service(limits[i]);
       const auto dest = fixture.root / ("limited" + std::to_string(i));
       TEST_CHECK(service.extract(location(source), location(dest)));
       wait(service, pump);
@@ -228,7 +228,7 @@ namespace {
     const auto truncated = fixture.root / "truncated.tar";
     fs::copy_file(source, truncated);
     fs::resize_file(truncated, 515);
-    files::ArchiveService service;
+    luciole::ArchiveService service;
     const auto dest = fixture.root / "truncated-output";
     TEST_CHECK(service.extract(location(truncated), location(dest)));
     wait(service, pump);
@@ -240,7 +240,7 @@ namespace {
         {{"dir/real", "linked data", {}, AE_IFREG, 04777},
          {"alias", {}, "dir/real", AE_IFREG},
          {"safe", {}, "dir/../dir/real", AE_IFLNK}});
-    files::ArchiveService service;
+    luciole::ArchiveService service;
     TEST_CHECK(service.inspect(location(source)));
     wait(service, pump);
     TEST_CHECK(!service.error());
@@ -263,9 +263,9 @@ namespace {
   void testHardlinkOutputLimit(const Fixture& fixture, Pump& pump) {
     const auto path = fixture.root / "link-limit.tar";
     tar(path, {{"body", "12345", {}}, {"alias", {}, "body"}});
-    files::ArchiveLimits limits;
+    luciole::ArchiveLimits limits;
     limits.maxExpandedBytes = 9;
-    files::ArchiveService service(limits);
+    luciole::ArchiveService service(limits);
     TEST_CHECK(service.extract(location(path), location(fixture.root / "link-limit")));
     wait(service, pump);
     TEST_CHECK(service.error() && !fs::exists(fixture.root / "link-limit"));
@@ -292,9 +292,9 @@ namespace {
     TEST_CHECK(archive_write_data(writer.get(), "secret", 6) == 6);
     TEST_CHECK(archive_write_close(writer.get()) == ARCHIVE_OK);
   }
-  files::ArchivePasswordRequest passwordRequest(files::ArchiveService& service, Pump& pump) {
+  luciole::ArchivePasswordRequest passwordRequest(luciole::ArchiveService& service, Pump& pump) {
     pump.until([&] { return service.passwordRequest().has_value() || !service.busy(); });
-    TEST_CHECK(service.busy() && service.phase() == files::ArchivePhase::WaitingPassword && !service.error());
+    TEST_CHECK(service.busy() && service.phase() == luciole::ArchivePhase::WaitingPassword && !service.error());
     TEST_CHECK(service.passwordRequest());
     return *service.passwordRequest();
   }
@@ -302,7 +302,7 @@ namespace {
     for (const std::string encryption : {"aes256", "zipcrypt"}) {
       const auto path = fixture.root / (encryption + ".zip");
       encryptedZip(path, encryption);
-      files::ArchiveService service;
+      luciole::ArchiveService service;
       TEST_CHECK(service.inspect(location(path)));
       wait(service, pump);
       TEST_CHECK(!service.error() && service.catalog() && service.catalog()->encrypted);
@@ -333,17 +333,17 @@ namespace {
     }
   }
   void testEncryptedCreation(const Fixture& fixture, Pump& pump) {
-    TEST_CHECK(files::archiveEncryptionAvailable());
+    TEST_CHECK(luciole::archiveEncryptionAvailable());
     const auto source = fixture.root / "encrypted-source.txt";
     const auto output = fixture.root / "created-encrypted.zip";
     write(source, "encrypted payload");
-    files::ArchiveService service;
-    TEST_CHECK(!service.compress({location(source)}, location(output), files::ArchiveFormat::Tar, "test password"));
+    luciole::ArchiveService service;
+    TEST_CHECK(!service.compress({location(source)}, location(output), luciole::ArchiveFormat::Tar, "test password"));
     TEST_CHECK(
-        !service.compress({location(source)}, location(output), files::ArchiveFormat::Zip, std::string(1025, 'x'))
+        !service.compress({location(source)}, location(output), luciole::ArchiveFormat::Zip, std::string(1025, 'x'))
     );
     TEST_CHECK(!fs::exists(output));
-    TEST_CHECK(service.compress({location(source)}, location(output), files::ArchiveFormat::Zip, "test password"));
+    TEST_CHECK(service.compress({location(source)}, location(output), luciole::ArchiveFormat::Zip, "test password"));
     wait(service, pump);
     TEST_CHECK(!service.error() && read(source) == "encrypted payload");
     // Read independently through the system provider; the writer must not emit plaintext ZIP data.
@@ -362,7 +362,7 @@ namespace {
     TEST_CHECK(!service.error() && read(destination / source.filename()) == "encrypted payload");
     const auto file = fixture.root / "not-a-folder";
     write(file, "untouched");
-    TEST_CHECK(service.compress({location(file)}, location(file / "failure.tar"), files::ArchiveFormat::Tar));
+    TEST_CHECK(service.compress({location(file)}, location(file / "failure.tar"), luciole::ArchiveFormat::Tar));
     wait(service, pump);
     TEST_CHECK(service.error() && read(file) == "untouched");
   }
@@ -370,14 +370,14 @@ namespace {
     const auto source = fixture.root / "cancel-encrypted.zip";
     encryptedZip(source);
     const auto output = fixture.root / "cancel-encrypted-output";
-    files::ArchiveService service;
+    luciole::ArchiveService service;
     TEST_CHECK(service.extract(location(source), location(output)));
     const auto request = passwordRequest(service, pump);
     TEST_CHECK(fs::is_empty(fixture.root / "tmp") && !fs::exists(output));
     service.cancel();
     wait(service, pump);
     TEST_CHECK(
-        service.error() && service.error()->kind == files::FileErrorKind::Cancelled && !service.passwordRequest()
+        service.error() && service.error()->kind == luciole::FileErrorKind::Cancelled && !service.passwordRequest()
     );
     TEST_CHECK(!service.providePassword(request.id, "test password"));
     TEST_CHECK(service.extract(location(source), location(output)));
@@ -388,7 +388,7 @@ namespace {
     fs::rename(replacement, source);
     TEST_CHECK(service.providePassword(next.id, "test password"));
     wait(service, pump);
-    TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Changed);
+    TEST_CHECK(service.error() && service.error()->kind == luciole::FileErrorKind::Changed);
     TEST_CHECK(!fs::exists(output) && fs::is_empty(fixture.root / "tmp"));
     TEST_CHECK(service.extract(location(source), location(output)));
     const auto cancelAfterAnswer = passwordRequest(service, pump);
@@ -397,7 +397,7 @@ namespace {
     wait(service, pump);
     TEST_CHECK(service.error() && !fs::exists(output) && fs::is_empty(fixture.root / "tmp"));
     {
-      auto owner = std::make_unique<files::ArchiveService>();
+      auto owner = std::make_unique<luciole::ArchiveService>();
       TEST_CHECK(owner->extract(location(source), location(output)));
       (void)passwordRequest(*owner, pump);
       owner.reset();
@@ -407,15 +407,15 @@ namespace {
   void testEncryptedBoundaries(const Fixture& fixture, Pump& pump) {
     const auto hostile = fixture.root / "encrypted-hostile.zip";
     encryptedZip(hostile, "aes256", "../escape");
-    files::ArchiveService service;
+    luciole::ArchiveService service;
     TEST_CHECK(service.extract(location(hostile), location(fixture.root / "hostile-output")));
     wait(service, pump);
     TEST_CHECK(service.error() && !service.passwordRequest() && !fs::exists(fixture.root / "escape"));
     const auto source = fixture.root / "encrypted-limited.zip";
     encryptedZip(source);
-    files::ArchiveLimits limits;
+    luciole::ArchiveLimits limits;
     limits.maxExpandedBytes = 1;
-    files::ArchiveService limited(limits);
+    luciole::ArchiveService limited(limits);
     TEST_CHECK(limited.extract(location(source), location(fixture.root / "limited-output")));
     wait(limited, pump);
     TEST_CHECK(limited.error() && !limited.passwordRequest() && !fs::exists(fixture.root / "limited-output"));
@@ -427,7 +427,7 @@ namespace {
     TEST_CHECK(service.providePassword(request.id, "test password"));
     pump.until([&] { return service.conflict().has_value() || !service.busy(); });
     TEST_CHECK(service.conflict());
-    TEST_CHECK(service.resolve(service.conflict()->id, files::TransferConflictChoice::Cancel));
+    TEST_CHECK(service.resolve(service.conflict()->id, luciole::TransferConflictChoice::Cancel));
     wait(service, pump);
     TEST_CHECK(read(output / "existing") == "preserved" && !fs::exists(output / "secret.txt"));
     TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
@@ -444,7 +444,7 @@ namespace {
     bytes.at(data + 18) = static_cast<char>(static_cast<unsigned char>(bytes.at(data + 18)) ^ 1U);
     write(source, bytes);
     const auto output = fixture.root / "corrupt-encrypted-output";
-    files::ArchiveService service;
+    luciole::ArchiveService service;
     TEST_CHECK(service.extract(location(source), location(output)));
     const auto request = passwordRequest(service, pump);
     TEST_CHECK(service.providePassword(request.id, "test password"));
@@ -470,7 +470,7 @@ namespace {
     bool failed = false;
     try {
       action();
-    } catch (const files::FileErrorException&) {
+    } catch (const luciole::FileErrorException&) {
       failed = true;
     }
     TEST_CHECK(failed);
@@ -481,10 +481,10 @@ namespace {
       bytes += static_cast<char>(i % 251);
     }
     const auto parts = splitZip(fixture.root / "seek-parts", "virtual.zip", bytes, 1024);
-    files::archive_work::Progress progress;
-    files::CancelToken cancel;
-    auto work = files::archive_work::workFor({}, cancel, progress);
-    files::archive_work::Input input(location(parts.front()), work);
+    luciole::archive_work::Progress progress;
+    luciole::CancelToken cancel;
+    auto work = luciole::archive_work::workFor({}, cancel, progress);
+    luciole::archive_work::Input input(location(parts.front()), work);
     TEST_CHECK(input.split() && !input.fingerprint().empty());
     std::array<char, 65536> buffer{};
     TEST_CHECK(input.seek(4093, SEEK_SET) == 4093);
@@ -512,8 +512,8 @@ namespace {
     const auto plain = fixture.root / "split-source.txt";
     write(plain, "payload spanning split ZIP parts");
     const auto archive = fixture.root / "before-splitting.zip";
-    files::ArchiveService service;
-    TEST_CHECK(service.compress({location(plain)}, location(archive), files::ArchiveFormat::Zip));
+    luciole::ArchiveService service;
+    TEST_CHECK(service.compress({location(plain)}, location(archive), luciole::ArchiveFormat::Zip));
     wait(service, pump);
     TEST_CHECK(!service.error());
     if (::geteuid() != 0) {
@@ -527,9 +527,9 @@ namespace {
       TEST_CHECK(::chmod(restricted.c_str(), 0700) == 0);
     }
     const auto parts = splitZip(fixture.root / "zip-parts", "café.ZIP", read(archive), 17);
-    TEST_CHECK(parts.size() > 2 && files::isSupportedArchive(location(parts[0]), {}));
-    TEST_CHECK(!files::isSupportedArchive(location(parts[1]), "application/zip"));
-    TEST_CHECK(files::archiveFolderName(location(parts[0])) == "café");
+    TEST_CHECK(parts.size() > 2 && luciole::isSupportedArchive(location(parts[0]), {}));
+    TEST_CHECK(!luciole::isSupportedArchive(location(parts[1]), "application/zip"));
+    TEST_CHECK(luciole::archiveFolderName(location(parts[0])) == "café");
     TEST_CHECK(service.inspect(location(parts.front())));
     wait(service, pump);
     TEST_CHECK(!service.error() && service.catalog() && service.catalog()->source == location(parts.front()));
@@ -546,7 +546,7 @@ namespace {
     wait(service, pump);
     TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
     write(parts[1], "changed second volume");
-    files::ArchiveService changed;
+    luciole::ArchiveService changed;
     TEST_CHECK(changed.extract(location(parts.front()), location(fixture.root / "stale-split"), {}, known));
     wait(changed, pump);
     TEST_CHECK(changed.error() && !fs::exists(fixture.root / "stale-split"));
@@ -580,11 +580,11 @@ namespace {
         damaged.pop_back();
         write(parts.back(), damaged);
       }
-      files::ArchiveLimits limits;
+      luciole::ArchiveLimits limits;
       if (failure == 8) {
         limits.maxArchiveBytes = bytes.size() - 1;
       }
-      files::ArchiveService service(limits);
+      luciole::ArchiveService service(limits);
       const auto output = folder / "output";
       TEST_CHECK(service.extract(location(parts.front()), location(output)));
       wait(service, pump);
@@ -593,7 +593,7 @@ namespace {
     }
     // A middle part must never be treated as an independently recoverable archive.
     const auto parts = splitZip(fixture.root / "middle-part", "test.zip", bytes, 17);
-    files::ArchiveService middle;
+    luciole::ArchiveService middle;
     TEST_CHECK(middle.inspect(location(parts[1])));
     wait(middle, pump);
     TEST_CHECK(middle.error() && !middle.catalog());
@@ -601,7 +601,7 @@ namespace {
     const auto tarFile = fixture.root / "not-a-zip.tar";
     tar(tarFile, {{"file", "payload", {}}});
     const auto fake = splitZip(fixture.root / "fake-zip", "fake.zip", read(tarFile), 1024);
-    files::ArchiveService fakeZip;
+    luciole::ArchiveService fakeZip;
     TEST_CHECK(fakeZip.inspect(location(fake.front())));
     wait(fakeZip, pump);
     TEST_CHECK(fakeZip.error() && !fakeZip.catalog());
@@ -612,7 +612,7 @@ namespace {
     const auto bytes = read(archive);
     const auto parts = splitZip(fixture.root / "encrypted-parts", "secret.zip", bytes, 17);
     const auto output = fixture.root / "unlocked-parts";
-    files::ArchiveService service;
+    luciole::ArchiveService service;
     TEST_CHECK(service.extract(location(parts.front()), location(output)));
     const auto request = passwordRequest(service, pump);
     TEST_CHECK(service.providePassword(request.id, "wrong"));
@@ -633,10 +633,10 @@ namespace {
     write(parts[1], original);
     TEST_CHECK(service.providePassword(replacement.id, "test password"));
     wait(service, pump);
-    TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Changed);
+    TEST_CHECK(service.error() && service.error()->kind == luciole::FileErrorKind::Changed);
     TEST_CHECK(!fs::exists(fixture.root / "split-replaced") && fs::is_empty(fixture.root / "tmp"));
     const auto newSet = splitZip(fixture.root / "extended-parts", "secret.zip", bytes, 17);
-    files::ArchiveService extended;
+    luciole::ArchiveService extended;
     TEST_CHECK(extended.extract(location(newSet.front()), location(fixture.root / "split-extended")));
     const auto pending = passwordRequest(extended, pump);
     write(newSet.back().parent_path() / std::format("secret.zip.{:03}", newSet.size() + 1), "extra data");
@@ -645,18 +645,18 @@ namespace {
     TEST_CHECK(extended.error() && !fs::exists(fixture.root / "split-extended"));
   }
   struct CompressedTarCase {
-    files::ArchiveFormat format;
-    files::ArchiveCompression compression;
+    luciole::ArchiveFormat format;
+    luciole::ArchiveCompression compression;
     int filter;
     std::string_view suffix, shortSuffix, mime;
   };
   constexpr std::array compressedTars{
       CompressedTarCase{
-          files::ArchiveFormat::TarBzip2, files::ArchiveCompression::Bzip2, ARCHIVE_FILTER_BZIP2, ".tar.bz2", ".tbz2",
-          "application/x-bzip2-compressed-tar"
+          luciole::ArchiveFormat::TarBzip2, luciole::ArchiveCompression::Bzip2, ARCHIVE_FILTER_BZIP2, ".tar.bz2",
+          ".tbz2", "application/x-bzip2-compressed-tar"
       },
       CompressedTarCase{
-          files::ArchiveFormat::TarZstd, files::ArchiveCompression::Zstd, ARCHIVE_FILTER_ZSTD, ".tar.zst", ".tzst",
+          luciole::ArchiveFormat::TarZstd, luciole::ArchiveCompression::Zstd, ARCHIVE_FILTER_ZSTD, ".tar.zst", ".tzst",
           "application/x-zstd-compressed-tar"
       }
   };
@@ -664,22 +664,22 @@ namespace {
     const auto source = fixture.root / "compressed-payload.txt";
     write(source, "compressed TAR payload");
     for (const auto& item : compressedTars) {
-      const bool available = files::archiveCompressionAvailable(item.compression);
+      const bool available = luciole::archiveCompressionAvailable(item.compression);
       TEST_CHECK(
           available
           == (item.filter == ARCHIVE_FILTER_BZIP2 ? archive_bzlib_version() != nullptr
                                                   : archive_libzstd_version() != nullptr)
       );
-      const auto formats = files::archiveFormats();
-      const auto format = std::ranges::find(formats, item.format, &files::ArchiveFormatInfo::format);
+      const auto formats = luciole::archiveFormats();
+      const auto format = std::ranges::find(formats, item.format, &luciole::ArchiveFormatInfo::format);
       TEST_CHECK(available == (format != formats.end()));
       const auto path = fixture.root / ("native" + std::string(item.suffix));
-      TEST_CHECK(files::isSupportedArchive(location(path), {}) == available);
+      TEST_CHECK(luciole::isSupportedArchive(location(path), {}) == available);
       if (!available) {
         continue;
       }
       TEST_CHECK(format->compression == item.compression && format->suffix == item.suffix);
-      files::ArchiveService service;
+      luciole::ArchiveService service;
       TEST_CHECK(!service.compress({location(source)}, location(path), item.format, "not supported"));
       TEST_CHECK(service.compress({location(source)}, location(path), item.format));
       wait(service, pump);
@@ -699,7 +699,7 @@ namespace {
       TEST_CHECK(count == 22 && std::string_view(bytes.data(), static_cast<std::size_t>(count)) == read(source));
       const auto renamed = fixture.root / ("aliased" + std::string(item.shortSuffix));
       fs::copy_file(path, renamed);
-      TEST_CHECK(files::archiveFolderName(location(renamed)) == "aliased");
+      TEST_CHECK(luciole::archiveFolderName(location(renamed)) == "aliased");
       TEST_CHECK(service.inspect(location(renamed)));
       wait(service, pump);
       TEST_CHECK(!service.error() && service.catalog());
@@ -708,10 +708,12 @@ namespace {
       const auto destination = fixture.root / ("stale" + std::string(item.shortSuffix));
       TEST_CHECK(service.extract(location(renamed), location(destination), {}, known));
       wait(service, pump);
-      TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Changed && !fs::exists(destination));
+      TEST_CHECK(
+          service.error() && service.error()->kind == luciole::FileErrorKind::Changed && !fs::exists(destination)
+      );
       TEST_CHECK(service.compress({location(source)}, location(path), item.format));
       pump.until([&] { return service.conflict().has_value() || !service.busy(); });
-      TEST_CHECK(service.conflict() && service.resolve(service.conflict()->id, files::TransferConflictChoice::Skip));
+      TEST_CHECK(service.conflict() && service.resolve(service.conflict()->id, luciole::TransferConflictChoice::Skip));
       wait(service, pump);
       TEST_CHECK(read(path) == original && fs::is_empty(fixture.root / "tmp"));
       const auto cancelled = fixture.root / ("cancelled" + std::string(item.suffix));
@@ -723,7 +725,7 @@ namespace {
   }
   void testCompressedTarFailures(const Fixture& fixture, Pump& pump) {
     for (const auto& item : compressedTars) {
-      if (!files::archiveCompressionAvailable(item.compression)) {
+      if (!luciole::archiveCompressionAvailable(item.compression)) {
         continue;
       }
       for (unsigned failure = 0; failure < 5; ++failure) {
@@ -734,7 +736,7 @@ namespace {
             : failure == 1              ? Entry{"link", {}, "../escaped", AE_IFLNK}
                                         : Entry{"payload", std::string(129536, 'x'), {}};
         tar(source, {entry}, item.filter);
-        files::ArchiveLimits limits;
+        luciole::ArchiveLimits limits;
         if (failure == 2) {
           limits.maxExpandedBytes = 1024;
         } else if (failure == 3) {
@@ -743,7 +745,7 @@ namespace {
           // Incomplete framing after TAR end markers must not publish a prefix.
           fs::resize_file(source, fs::file_size(source) - 1);
         }
-        files::ArchiveService service(limits);
+        luciole::ArchiveService service(limits);
         TEST_CHECK(service.extract(location(source), location(destination)));
         wait(service, pump);
         if (!service.error()) {
@@ -759,7 +761,7 @@ namespace {
     tar(plain, {{"file", "abc", {}}});
     const auto data = read(plain) + std::string(4U * 1024U * 1024U, '\0');
     for (const auto& item : compressedTars) {
-      if (!files::archiveCompressionAvailable(item.compression)) {
+      if (!luciole::archiveCompressionAvailable(item.compression)) {
         continue;
       }
       const auto source = fixture.root / ("padded" + std::string(item.suffix));
@@ -779,15 +781,15 @@ namespace {
       TEST_CHECK(archive_write_header(writer.get(), entry.get()) == ARCHIVE_OK);
       TEST_CHECK(archive_write_data(writer.get(), data.data(), data.size()) == static_cast<la_ssize_t>(data.size()));
       TEST_CHECK(archive_write_close(writer.get()) == ARCHIVE_OK);
-      files::ArchiveLimits limits;
+      luciole::ArchiveLimits limits;
       limits.maxExpandedBytes = 128;
       limits.maxMetadataBytes = 256;
       limits.maxEntries = 4;
-      files::ArchiveService service(limits);
+      luciole::ArchiveService service(limits);
       const auto output = fixture.root / ("padding-rejected" + std::to_string(item.filter));
       TEST_CHECK(service.extract(location(source), location(output)));
       wait(service, pump);
-      TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Unsupported);
+      TEST_CHECK(service.error() && service.error()->kind == luciole::FileErrorKind::Unsupported);
       TEST_CHECK(service.error()->message.contains("decoded-container") && !fs::exists(output));
       TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
     }
@@ -808,14 +810,14 @@ namespace {
     return result;
   }
   std::string digest(std::string_view bytes) {
-    const files::GString value(
+    const luciole::GString value(
         g_compute_checksum_for_data(G_CHECKSUM_SHA256, reinterpret_cast<const guchar*>(bytes.data()), bytes.size())
     );
     TEST_CHECK(value);
     return value.get();
   }
   void testRarProviders(const Fixture& fixture, Pump& pump) {
-    TEST_CHECK(std::ranges::none_of(files::archiveFormats(), [](const auto& format) {
+    TEST_CHECK(std::ranges::none_of(luciole::archiveFormats(), [](const auto& format) {
       return format.suffix == ".rar";
     }));
     for (const auto& reference : rar_fixtures::archives) {
@@ -823,11 +825,11 @@ namespace {
       const auto output = fixture.root / ("rar-extracted-" + std::string(reference.name));
       const auto bytes = fixtureBytes(reference);
       write(source, bytes);
-      files::ArchiveService service;
+      luciole::ArchiveService service;
       TEST_CHECK(service.inspect(location(source)));
       wait(service, pump);
       if (!reference.error.empty()) {
-        TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Unsupported);
+        TEST_CHECK(service.error() && service.error()->kind == luciole::FileErrorKind::Unsupported);
         TEST_CHECK(
             service.error()->message.contains(reference.error) && !service.passwordRequest() && !service.catalog()
         );
@@ -869,7 +871,7 @@ namespace {
       const auto stale = fixture.root / ("rar-stale-" + std::string(reference.name));
       TEST_CHECK(service.extract(location(source), location(stale), {}, known));
       wait(service, pump);
-      TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Changed && !fs::exists(stale));
+      TEST_CHECK(service.error() && service.error()->kind == luciole::FileErrorKind::Changed && !fs::exists(stale));
       service.shutdown();
       wait(service, pump);
       TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
@@ -884,7 +886,7 @@ namespace {
     bytes.replace(20, size + 20, header + payload);
     const auto source = fixture.root / "large-stored.rar";
     write(source, bytes);
-    files::ArchiveService service;
+    luciole::ArchiveService service;
     const auto output = fixture.root / "large-rar-output";
     TEST_CHECK(service.extract(location(source), location(output), {"test.txt"}));
     wait(service, pump);
@@ -903,7 +905,7 @@ namespace {
       const auto source = fixture.root / ("rar-hostile-" + std::to_string(index) + ".rar");
       const auto output = fixture.root / ("rar-hostile-output-" + std::to_string(index++));
       write(source, base64Bytes(encoded));
-      files::ArchiveService service;
+      luciole::ArchiveService service;
       TEST_CHECK(service.extract(location(source), location(output)));
       wait(service, pump);
       if (!service.error()) {
@@ -917,7 +919,7 @@ namespace {
       for (unsigned failure = 0; failure < 6; ++failure) {
         const auto name = std::to_string(index) + "-" + std::to_string(failure);
         auto bad = bytes;
-        files::ArchiveLimits limits;
+        luciole::ArchiveLimits limits;
         if (failure == 0) {
           bad.resize(bad.size() / 2);
         } else if (failure == 1) {
@@ -934,7 +936,7 @@ namespace {
         const auto source = fixture.root / ("bad-rar-" + name + ".rar");
         const auto output = fixture.root / ("rar-rejected-" + name);
         write(source, bad);
-        files::ArchiveService service(limits);
+        luciole::ArchiveService service(limits);
         TEST_CHECK(service.extract(location(source), location(output)));
         wait(service, pump);
         if (!service.error()) {
@@ -947,7 +949,7 @@ namespace {
     const auto bytes = fixtureBytes(rar_fixtures::archives[3]);
     const auto source = fixture.root / "rar-cancel.rar";
     write(source, bytes);
-    files::ArchiveService service;
+    luciole::ArchiveService service;
     TEST_CHECK(service.extract(location(source), location(fixture.root / "rar-cancelled")));
     service.cancel();
     wait(service, pump);
@@ -971,7 +973,7 @@ namespace {
     auto legacyBytes = fixtureBytes(rar_fixtures::archives[0]);
     legacyBytes.resize(legacyBytes.size() - 7);
     write(legacy, legacyBytes);
-    files::ArchiveService legacyService;
+    luciole::ArchiveService legacyService;
     TEST_CHECK(legacyService.extract(location(legacy), location(fixture.root / "rar-legacy-eof")));
     wait(legacyService, pump);
     TEST_CHECK(
@@ -991,36 +993,36 @@ namespace {
     for (std::size_t i = 0; i < invalid.size(); ++i) {
       const auto source = fixture.root / ("invalid-rar-main-" + std::to_string(i) + ".rar");
       write(source, invalid[i]);
-      files::ArchiveService service;
+      luciole::ArchiveService service;
       TEST_CHECK(service.inspect(location(source)));
       wait(service, pump);
       TEST_CHECK(
           service.error()
-          && service.error()->kind == files::FileErrorKind::InvalidArgument
+          && service.error()->kind == luciole::FileErrorKind::InvalidArgument
           && !service.passwordRequest()
       );
     }
     for (const auto& bytes : {encrypted4, rar5Header("\x03\x04\x00\x00")}) {
       const auto source = fixture.root / "encrypted-rar-main.rar";
       write(source, bytes);
-      files::ArchiveService service;
+      luciole::ArchiveService service;
       TEST_CHECK(service.inspect(location(source)));
       wait(service, pump);
-      TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Unsupported);
+      TEST_CHECK(service.error() && service.error()->kind == luciole::FileErrorKind::Unsupported);
       TEST_CHECK(service.error()->message.contains("Encrypted RAR") && !service.passwordRequest());
     }
   }
   void testEncryptedSevenZip(
-      const fs::path& source, const fs::path& destination, files::ArchiveService& service, Pump& pump
+      const fs::path& source, const fs::path& destination, luciole::ArchiveService& service, Pump& pump
   ) {
     const auto known = service.catalog();
     TEST_CHECK(!service.error() && known && known->encrypted && known->entries.size() == 3);
-    TEST_CHECK(std::ranges::count(known->entries, true, &files::ArchiveEntry::encrypted) == 2);
+    TEST_CHECK(std::ranges::count(known->entries, true, &luciole::ArchiveEntry::encrypted) == 2);
     TEST_CHECK(service.extract(location(source), location(destination), {}, known));
     const auto first = passwordRequest(service, pump);
-    TEST_CHECK(first.format == files::ArchiveFormat::SevenZip && !first.retry && !fs::exists(destination));
+    TEST_CHECK(first.format == luciole::ArchiveFormat::SevenZip && !first.retry && !fs::exists(destination));
     for (const auto& invalid : {std::string("line\nbreak"), std::string("line\rbreak"), std::string("\xff")}) {
-      TEST_CHECK(files::archivePasswordProblem(invalid, first.format));
+      TEST_CHECK(luciole::archivePasswordProblem(invalid, first.format));
       TEST_CHECK(!service.providePassword(first.id, invalid));
       TEST_CHECK(service.passwordRequest()->id == first.id);
     }
@@ -1062,7 +1064,7 @@ namespace {
     fs::rename(replacement, source);
     TEST_CHECK(service.providePassword(request.id, "fixture-pass"));
     wait(service, pump);
-    TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Changed);
+    TEST_CHECK(service.error() && service.error()->kind == luciole::FileErrorKind::Changed);
     TEST_CHECK(!service.passwordRequest() && !fs::exists(cancelled));
     service.shutdown();
     wait(service, pump);
@@ -1072,7 +1074,7 @@ namespace {
     const auto source = fixture.root / "literal.7z",
                output = fixture.root / (encryptedHeader ? "literal-header-output" : "literal-output");
     write(source, fixtureBytes(encryptedHeader ? sevenzip_fixtures::literalHeader : sevenzip_fixtures::literal));
-    files::ArchiveService service;
+    luciole::ArchiveService service;
     TEST_CHECK(service.inspect(location(source)));
     if (encryptedHeader) {
       const auto request = passwordRequest(service, pump);
@@ -1093,13 +1095,13 @@ namespace {
     const auto unlisted = fixture.root / (encryptedHeader ? "literal-header-unlisted" : "literal-unlisted");
     TEST_CHECK(
         service.catalog()->entries.end()
-        != std::ranges::find(service.catalog()->entries, "line_break", &files::ArchiveEntry::path)
+        != std::ranges::find(service.catalog()->entries, "line_break", &luciole::ArchiveEntry::path)
     );
     TEST_CHECK(service.extract(location(source), location(unlisted), {"line_break"}));
     auto request = passwordRequest(service, pump);
     TEST_CHECK(service.providePassword(request.id, " café secret "));
     wait(service, pump);
-    TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::InvalidArgument);
+    TEST_CHECK(service.error() && service.error()->kind == luciole::FileErrorKind::InvalidArgument);
     TEST_CHECK(!fs::exists(unlisted));
     TEST_CHECK(service.extract(
         location(source), location(output), {"same.txt", "nested", "@list", "wild*card", "-poption", "café", "empty"}
@@ -1127,13 +1129,13 @@ namespace {
     const auto source = fixture.root / "encrypted-boundary.7z", output = fixture.root / "encrypted-boundary-output";
     const auto bytes = fixtureBytes(sevenzip_fixtures::literal);
     write(source, bytes);
-    files::ArchiveLimits limits;
+    luciole::ArchiveLimits limits;
     limits.maxExpandedBytes = 1;
-    files::ArchiveService limited(limits);
+    luciole::ArchiveService limited(limits);
     TEST_CHECK(limited.extract(location(source), location(output)));
     wait(limited, pump);
     TEST_CHECK(limited.error() && !limited.passwordRequest() && !fs::exists(output));
-    files::ArchiveService service;
+    luciole::ArchiveService service;
     TEST_CHECK(service.extract(location(source), location(output)));
     auto request = passwordRequest(service, pump);
     TEST_CHECK(service.providePassword(request.id, " café secret "));
@@ -1141,7 +1143,7 @@ namespace {
     wait(service, pump);
     TEST_CHECK(service.error() && !service.passwordRequest() && !fs::exists(output));
     {
-      files::ArchiveService closing;
+      luciole::ArchiveService closing;
       TEST_CHECK(closing.extract(location(source), location(output)));
       (void)passwordRequest(closing, pump);
       closing.shutdown();
@@ -1164,10 +1166,10 @@ namespace {
     Fixture fixture;
     const auto source = fixture.root / "source.7z", output = fixture.root / "output";
     write(source, fixtureBytes(sevenzip_fixtures::literal));
-    files::archive_work::Progress progress;
-    files::archive_work::Passwords passwords;
+    luciole::archive_work::Progress progress;
+    luciole::archive_work::Passwords passwords;
     passwords.values.emplace_back(" café secret ");
-    const files::CancelToken cancel;
+    const luciole::CancelToken cancel;
     rlimit previous{};
     TEST_CHECK(::getrlimit(RLIMIT_FSIZE, &previous) == 0);
     const rlimit limit{0, previous.rlim_max};
@@ -1175,12 +1177,12 @@ namespace {
     TEST_CHECK(::setrlimit(RLIMIT_FSIZE, &limit) == 0);
     bool failed = false;
     try {
-      auto prepared = files::archive_work::extract(
+      auto prepared = luciole::archive_work::extract(
           location(source), location(output), {}, {}, false, {}, cancel, progress, passwords
       );
-      (void)files::archive_work::cleanup({prepared.stage});
-    } catch (const files::FileErrorException& error) {
-      failed = error.error().kind != files::FileErrorKind::Denied;
+      (void)luciole::archive_work::cleanup({prepared.stage});
+    } catch (const luciole::FileErrorException& error) {
+      failed = error.error().kind != luciole::FileErrorKind::Denied;
     }
     TEST_CHECK(failed && !progress.passwordNeeded.load() && !fs::exists(output));
     TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
@@ -1198,16 +1200,16 @@ namespace {
          {&sevenzip_fixtures::traversalHeader, &sevenzip_fixtures::duplicateHeader,
           &sevenzip_fixtures::ancestorHeader}) {
       write(source, fixtureBytes(*reference));
-      files::ArchiveService service;
+      luciole::ArchiveService service;
       TEST_CHECK(service.extract(location(source), location(output)));
       const auto request = passwordRequest(service, pump);
       TEST_CHECK(service.providePassword(request.id, "fixture-pass"));
       wait(service, pump);
-      TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::InvalidArgument);
+      TEST_CHECK(service.error() && service.error()->kind == luciole::FileErrorKind::InvalidArgument);
       TEST_CHECK(!service.passwordRequest() && !fs::exists(output) && !fs::exists(fixture.root / "escape"));
     }
     write(source, fixtureBytes(encryptedHeaderFixture()));
-    files::ArchiveService service;
+    luciole::ArchiveService service;
     TEST_CHECK(service.inspect(location(source)));
     auto request = passwordRequest(service, pump);
     service.cancel();
@@ -1220,7 +1222,7 @@ namespace {
     fs::rename(replacement, source);
     TEST_CHECK(service.providePassword(request.id, "fixture-pass"));
     wait(service, pump);
-    TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Changed && !service.catalog());
+    TEST_CHECK(service.error() && service.error()->kind == luciole::FileErrorKind::Changed && !service.catalog());
     TEST_CHECK(service.inspect(location(source)));
     (void)passwordRequest(service, pump);
     service.shutdown();
@@ -1229,7 +1231,7 @@ namespace {
     auto corrupt = fixtureBytes(encryptedHeaderFixture());
     corrupt[80] ^= 0x20;
     write(source, corrupt);
-    files::ArchiveService damaged;
+    luciole::ArchiveService damaged;
     TEST_CHECK(damaged.inspect(location(source)));
     request = passwordRequest(damaged, pump);
     TEST_CHECK(damaged.providePassword(request.id, "fixture-pass"));
@@ -1237,9 +1239,9 @@ namespace {
     TEST_CHECK(retry.retry && !damaged.catalog());
     damaged.cancel();
     wait(damaged, pump);
-    files::ArchiveLimits limits;
+    luciole::ArchiveLimits limits;
     limits.maxMetadataBytes = 1;
-    files::ArchiveService limited(limits);
+    luciole::ArchiveService limited(limits);
     TEST_CHECK(limited.inspect(location(source)));
     wait(limited, pump);
     TEST_CHECK(limited.error() && !limited.passwordRequest() && !limited.catalog());
@@ -1248,7 +1250,7 @@ namespace {
   void testSevenZipCompressedHeader(const Fixture& fixture, Pump& pump) {
     const auto source = fixture.root / "compressed-header.7z", output = fixture.root / "compressed-header-output";
     write(source, fixtureBytes(sevenzip_fixtures::compressedHeader));
-    files::ArchiveService service;
+    luciole::ArchiveService service;
     TEST_CHECK(service.extract(location(source), location(output)));
     const auto request = passwordRequest(service, pump);
     TEST_CHECK(service.providePassword(request.id, "fixture-pass"));
@@ -1261,14 +1263,14 @@ namespace {
     TEST_CHECK(service.providePassword(link.id, "fixture-pass"));
     wait(service, pump);
     TEST_CHECK(
-        service.error() && service.error()->kind == files::FileErrorKind::Unsupported && !service.passwordRequest()
+        service.error() && service.error()->kind == luciole::FileErrorKind::Unsupported && !service.passwordRequest()
     );
     TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
   }
   void testSevenZipClearDataHeader(const Fixture& fixture, Pump& pump) {
     const auto source = fixture.root / "clear-data-header.7z", output = fixture.root / "clear-data-header-output";
     write(source, fixtureBytes(sevenzip_fixtures::clearDataHeader));
-    files::ArchiveService service;
+    luciole::ArchiveService service;
     TEST_CHECK(service.inspect(location(source)));
     auto request = passwordRequest(service, pump);
     TEST_CHECK(service.providePassword(request.id, "fixture-pass"));
@@ -1295,13 +1297,13 @@ namespace {
     const auto source = fixture.root / "native-catalog.7z";
     const auto original = fixtureBytes(encryptedHeaderFixture());
     write(source, original);
-    files::archive_work::Progress progress;
-    files::archive_work::Work work{{}, {}, progress, files::archive_work::Clock::now() + 5s, {}};
-    files::archive_work::Input input(location(source), work);
-    files::archive_work::Passwords passwords;
+    luciole::archive_work::Progress progress;
+    luciole::archive_work::Work work{{}, {}, progress, luciole::archive_work::Clock::now() + 5s, {}};
+    luciole::archive_work::Input input(location(source), work);
+    luciole::archive_work::Passwords passwords;
     passwords.values.emplace_back("fixture-pass");
     const auto stamp = input.fingerprint();
-    const auto catalog = files::archive_work::sevenZipCatalog(input, work, passwords);
+    const auto catalog = luciole::archive_work::sevenZipCatalog(input, work, passwords);
     TEST_CHECK(catalog.size() == 3 && catalog[1].path == "folder/first.txt" && catalog[1].encrypted);
     TEST_CHECK(input.seek(0, SEEK_END) == static_cast<std::int64_t>(original.size()));
     const auto fd = input.duplicateSingle();
@@ -1314,7 +1316,7 @@ namespace {
   void testSevenZipAstral(const Fixture& fixture, Pump& pump) {
     const auto source = fixture.root / "astral.7z", output = fixture.root / "astral-output";
     write(source, fixtureBytes(sevenzip_fixtures::astralHeader));
-    files::ArchiveService service;
+    luciole::ArchiveService service;
     TEST_CHECK(service.extract(location(source), location(output)));
     const auto request = passwordRequest(service, pump);
     TEST_CHECK(service.providePassword(request.id, " fixture-🌙 "));
@@ -1326,10 +1328,10 @@ namespace {
     Pump pump;
     const auto source = fixture.root / "header.7z";
     write(source, fixtureBytes(encryptedHeaderFixture()));
-    files::ArchiveService service;
+    luciole::ArchiveService service;
     TEST_CHECK(service.inspect(location(source)));
     wait(service, pump);
-    TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Unavailable);
+    TEST_CHECK(service.error() && service.error()->kind == luciole::FileErrorKind::Unavailable);
     TEST_CHECK(!service.passwordRequest() && !service.catalog() && fs::is_empty(fixture.root / "tmp"));
     return 0;
   }
@@ -1364,22 +1366,22 @@ case "$NF_SEVENZIP_TEST_MODE" in
 esac
 )sh");
     fs::permissions(tools / "7z", fs::perms::owner_all);
-    TEST_CHECK(::setenv("NOCTALIA_FILES_7Z", (tools / "7z").c_str(), 1) == 0);
+    TEST_CHECK(::setenv("LUCIOLE_7Z", (tools / "7z").c_str(), 1) == 0);
     TEST_CHECK(::setenv("NF_SEVENZIP_TEST_MARKER", marker.c_str(), 1) == 0);
     for (const std::string mode : {"corrupt", "fatal", "memory", "noise", "early", "hang", "cancel", "changed"}) {
       const auto output = fixture.root / (mode + "-output");
       const bool waiting = mode == "hang" || mode == "cancel" || mode == "changed";
       TEST_CHECK(::setenv("NF_SEVENZIP_TEST_MODE", waiting ? "hang" : mode.c_str(), 1) == 0);
       fs::remove(marker);
-      files::archive_work::Progress progress;
-      files::CancelToken cancel;
-      files::archive_work::Passwords passwords;
+      luciole::archive_work::Progress progress;
+      luciole::CancelToken cancel;
+      luciole::archive_work::Passwords passwords;
       passwords.values.emplace_back("fixture-pass");
-      files::archive_work::Work work{{}, cancel, progress, files::archive_work::Clock::now() + 2s, {}};
+      luciole::archive_work::Work work{{}, cancel, progress, luciole::archive_work::Clock::now() + 2s, {}};
       if (mode == "hang") {
-        work.deadline = files::archive_work::Clock::now() + 150ms;
+        work.deadline = luciole::archive_work::Clock::now() + 150ms;
       }
-      files::archive_work::Input input(location(source), work);
+      luciole::archive_work::Input input(location(source), work);
       std::thread interrupt;
       if (mode == "cancel" || mode == "changed") {
         interrupt = std::thread([&] {
@@ -1402,7 +1404,7 @@ esac
       }
       bool failed = false;
       try {
-        files::archive_work::extractSevenZip(input, work, passwords, {"same.txt"}, true, 12, output.native());
+        luciole::archive_work::extractSevenZip(input, work, passwords, {"same.txt"}, true, 12, output.native());
       } catch (const std::exception&) {
         failed = true;
       }
@@ -1419,19 +1421,19 @@ esac
     for (const auto* mode :
          {"fatal", "listing-garbage", "listing-size", "listing-duplicate", "listing-mode", "listing-link"}) {
       TEST_CHECK(::setenv("NF_SEVENZIP_TEST_MODE", mode, 1) == 0);
-      files::archive_work::Progress progress;
-      files::archive_work::Work work{{}, {}, progress, files::archive_work::Clock::now() + 2s, {}};
-      files::archive_work::Input input(location(source), work);
-      files::archive_work::Passwords passwords;
+      luciole::archive_work::Progress progress;
+      luciole::archive_work::Work work{{}, {}, progress, luciole::archive_work::Clock::now() + 2s, {}};
+      luciole::archive_work::Input input(location(source), work);
+      luciole::archive_work::Passwords passwords;
       passwords.values.emplace_back("fixture-pass");
-      std::optional<files::FileErrorKind> rejected;
+      std::optional<luciole::FileErrorKind> rejected;
       try {
-        (void)files::archive_work::sevenZipCatalog(input, work, passwords);
-      } catch (const files::FileErrorException& error) {
+        (void)luciole::archive_work::sevenZipCatalog(input, work, passwords);
+      } catch (const luciole::FileErrorException& error) {
         rejected = error.error().kind;
       }
-      const auto expected = std::string_view(mode) == "listing-link" ? files::FileErrorKind::Unsupported
-                                                                     : files::FileErrorKind::InvalidArgument;
+      const auto expected = std::string_view(mode) == "listing-link" ? luciole::FileErrorKind::Unsupported
+                                                                     : luciole::FileErrorKind::InvalidArgument;
       TEST_CHECK(rejected == expected && !progress.passwordNeeded.load() && fs::is_empty(fixture.root / "tmp"));
     }
     return 0;
@@ -1448,11 +1450,11 @@ esac
       const auto destination = fixture.root / ("sevenzip-" + std::string(reference.name));
       const auto bytes = fixtureBytes(reference);
       write(source, bytes);
-      files::ArchiveService service;
+      luciole::ArchiveService service;
       TEST_CHECK(service.inspect(location(source)));
       if (reference.name == "encrypted-header") {
         const auto request = passwordRequest(service, pump);
-        TEST_CHECK(request.format == files::ArchiveFormat::SevenZip && !service.catalog());
+        TEST_CHECK(request.format == luciole::ArchiveFormat::SevenZip && !service.catalog());
         TEST_CHECK(service.providePassword(request.id, "wrong"));
         const auto retry = passwordRequest(service, pump);
         TEST_CHECK(retry.retry && service.providePassword(retry.id, "fixture-pass"));
@@ -1488,7 +1490,7 @@ esac
       const auto stale = fixture.root / ("sevenzip-stale-" + std::string(reference.name));
       TEST_CHECK(service.extract(location(source), location(stale), {}, known));
       wait(service, pump);
-      TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Changed && !fs::exists(stale));
+      TEST_CHECK(service.error() && service.error()->kind == luciole::FileErrorKind::Changed && !fs::exists(stale));
       service.shutdown();
       wait(service, pump);
       TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
@@ -1499,7 +1501,7 @@ esac
     for (unsigned failure = 0; failure < 9; ++failure) {
       const auto source = fixture.root / ("bad-sevenzip-" + std::to_string(failure) + ".7z");
       auto bad = bytes;
-      files::ArchiveLimits limits;
+      luciole::ArchiveLimits limits;
       if (failure == 0) {
         bad.resize(bad.size() - 1);
       } else if (failure == 1) {
@@ -1520,7 +1522,7 @@ esac
         bad[bad.size() - 1] ^= 1;
       }
       write(source, bad);
-      files::ArchiveService service(limits);
+      luciole::ArchiveService service(limits);
       const auto destination = fixture.root / ("sevenzip-rejected-" + std::to_string(failure));
       TEST_CHECK(service.extract(location(source), location(destination)));
       wait(service, pump);
@@ -1531,7 +1533,7 @@ esac
       TEST_CHECK(fs::is_empty(fixture.root / "tmp"));
     }
     const auto parts = splitZip(fixture.root / "sevenzip-fake-split", "fake.zip", bytes, bytes.size() / 2);
-    files::ArchiveService service;
+    luciole::ArchiveService service;
     TEST_CHECK(service.inspect(location(parts.front())));
     wait(service, pump);
     TEST_CHECK(service.error() && !service.catalog());
@@ -1547,12 +1549,13 @@ esac
     if (!archive_liblzma_version()) {
       return;
     }
-    const auto formats = files::archiveFormats();
-    const auto format = std::ranges::find(formats, files::ArchiveFormat::SevenZip, &files::ArchiveFormatInfo::format);
+    const auto formats = luciole::archiveFormats();
+    const auto format =
+        std::ranges::find(formats, luciole::ArchiveFormat::SevenZip, &luciole::ArchiveFormatInfo::format);
     TEST_CHECK(
-        format != formats.end() && format->suffix == ".7z" && format->compression == files::ArchiveCompression::None
+        format != formats.end() && format->suffix == ".7z" && format->compression == luciole::ArchiveCompression::None
     );
-    files::ArchiveService passwordService;
+    luciole::ArchiveService passwordService;
     TEST_CHECK(!passwordService.compress(
         {location(fixture.root / "unused")}, location(fixture.root / "password.7z"), format->format, "unsupported"
     ));
@@ -1568,7 +1571,7 @@ esac
       const auto source = fixture.root / ("hostile-sevenzip-" + std::to_string(i) + ".7z");
       makeArchive(source, rejected[i], ARCHIVE_FORMAT_7ZIP);
       const auto output = fixture.root / ("hostile-sevenzip-output-" + std::to_string(i));
-      files::ArchiveService service;
+      luciole::ArchiveService service;
       TEST_CHECK(service.extract(location(source), location(output)));
       wait(service, pump);
       TEST_CHECK(service.error() && !fs::exists(output) && fs::is_empty(fixture.root / "tmp"));
@@ -1608,12 +1611,12 @@ esac
     return encoded;
   }
   void testXzTar(const Fixture& fixture, Pump& pump) {
-    TEST_CHECK(files::archiveCompressionAvailable(files::ArchiveCompression::Xz));
-    const auto formats = files::archiveFormats();
-    const auto format = std::ranges::find(formats, files::ArchiveFormat::TarXz, &files::ArchiveFormatInfo::format);
+    TEST_CHECK(luciole::archiveCompressionAvailable(luciole::ArchiveCompression::Xz));
+    const auto formats = luciole::archiveFormats();
+    const auto format = std::ranges::find(formats, luciole::ArchiveFormat::TarXz, &luciole::ArchiveFormatInfo::format);
     TEST_CHECK((format != formats.end()) == (archive_liblzma_version() != nullptr));
     if (format != formats.end()) {
-      TEST_CHECK(format->compression == files::ArchiveCompression::Xz && format->suffix == ".tar.xz");
+      TEST_CHECK(format->compression == luciole::ArchiveCompression::Xz && format->suffix == ".tar.xz");
     }
     const auto plain = fixture.root / "xz-source.tar";
     tar(plain, {{"file", "XZ payload", {}}, {"alias", {}, "file", AE_IFREG}, {"link", {}, "file", AE_IFLNK}});
@@ -1623,7 +1626,7 @@ esac
       const auto source = fixture.root / "xz-writer-payload";
       const auto archive = fixture.root / "xz-writer.tar.xz";
       write(source, "independent reader");
-      files::ArchiveService service;
+      luciole::ArchiveService service;
       TEST_CHECK(!service.compress({location(source)}, location(archive), format->format, "unsupported"));
       TEST_CHECK(service.compress({location(source)}, location(archive), format->format));
       wait(service, pump);
@@ -1650,7 +1653,7 @@ esac
           : variant == 2 ? xz(std::string_view(data).substr(0, 700)) + xz(std::string_view(data).substr(700))
                          : xz({}) + encoded + xz({});
       write(source, bytes);
-      files::ArchiveService service;
+      luciole::ArchiveService service;
       TEST_CHECK(service.inspect(location(source)));
       wait(service, pump);
       TEST_CHECK(!service.error() && service.catalog() && service.catalog()->entries.size() == 3);
@@ -1668,7 +1671,7 @@ esac
       const auto stale = fixture.root / ("xz-stale-" + std::to_string(variant));
       TEST_CHECK(service.extract(location(source), location(stale), {}, known));
       wait(service, pump);
-      TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Changed && !fs::exists(stale));
+      TEST_CHECK(service.error() && service.error()->kind == luciole::FileErrorKind::Changed && !fs::exists(stale));
     }
   }
   void testXzFailures(const Fixture& fixture, Pump& pump) {
@@ -1708,7 +1711,7 @@ esac
     for (std::size_t i = 0; i < rejected.size(); ++i) {
       const auto source = fixture.root / ("bad-xz-" + std::to_string(i) + ".tar.xz");
       write(source, rejected[i]);
-      files::ArchiveLimits limits;
+      luciole::ArchiveLimits limits;
       if (i == 5) {
         limits.maxExpandedBytes = data.size();
         limits.maxMetadataBytes = 256;
@@ -1716,12 +1719,12 @@ esac
       } else if (i == 8) {
         limits.maxExpandedBytes = 1024;
       }
-      files::ArchiveService service(limits);
+      luciole::ArchiveService service(limits);
       TEST_CHECK(service.inspect(location(source)));
       wait(service, pump);
       TEST_CHECK(service.error() && !service.catalog());
       if (i == 4 || i == 5) {
-        TEST_CHECK(service.error()->kind == files::FileErrorKind::Unsupported);
+        TEST_CHECK(service.error()->kind == luciole::FileErrorKind::Unsupported);
         TEST_CHECK(service.error()->message.contains(i == 4 ? "128 MiB" : "decoded-container"));
       }
       const auto destination = fixture.root / ("xz-rejected-" + std::to_string(i));
@@ -1731,13 +1734,13 @@ esac
     }
     TEST_CHECK(!fs::exists(fixture.root / "escaped-xz"));
     const auto split = splitZip(fixture.root / "xz-fake-split", "fake.zip", valid, valid.size() / 2);
-    files::ArchiveService splitService;
+    luciole::ArchiveService splitService;
     TEST_CHECK(splitService.inspect(location(split.front())));
     wait(splitService, pump);
     TEST_CHECK(splitService.error() && !splitService.catalog());
     const auto source = fixture.root / "xz-cancel.tar.xz";
     write(source, valid);
-    files::ArchiveService service;
+    luciole::ArchiveService service;
     TEST_CHECK(service.extract(location(source), location(fixture.root / "xz-cancelled")));
     service.cancel();
     wait(service, pump);
@@ -1772,11 +1775,11 @@ esac
     TEST_CHECK(archive_write_header(writer.get(), entry.get()) == ARCHIVE_OK);
     TEST_CHECK(archive_write_data(writer.get(), "abc", 3) == 3);
     TEST_CHECK(archive_write_close(writer.get()) == ARCHIVE_OK);
-    files::ArchiveLimits limits;
+    luciole::ArchiveLimits limits;
     limits.maxExpandedBytes = 256U * 1024U * 1024U;
     limits.maxMetadataBytes = 256;
     limits.maxEntries = 4;
-    files::ArchiveService service(limits);
+    luciole::ArchiveService service(limits);
     TEST_CHECK(service.inspect(location(source)));
     wait(service, pump);
     TEST_CHECK(!service.error() && service.catalog());
@@ -1793,21 +1796,21 @@ esac
     tar(plain, {{"file", std::string(256U * 1024U, 'x'), {}}});
     const auto source = fixture.root / "xz-worker.tar.xz";
     write(source, xz(read(plain)));
-    files::ArchiveLimits limits;
-    files::CancelToken cancel;
-    files::archive_work::Progress progress;
-    auto work = files::archive_work::workFor(limits, cancel, progress);
-    files::archive_work::Input input(location(source), work);
-    TEST_CHECK(files::archive_work::XzInput::recognizes(input));
-    files::archive_work::XzInput decoder(input, work);
+    luciole::ArchiveLimits limits;
+    luciole::CancelToken cancel;
+    luciole::archive_work::Progress progress;
+    auto work = luciole::archive_work::workFor(limits, cancel, progress);
+    luciole::archive_work::Input input(location(source), work);
+    TEST_CHECK(luciole::archive_work::XzInput::recognizes(input));
+    luciole::archive_work::XzInput decoder(input, work);
     std::array<char, 512> bytes{};
     TEST_CHECK(decoder.read(bytes) == bytes.size());
     cancel.cancel();
     bool cancelled = false;
     try {
       decoder.finish();
-    } catch (const files::FileErrorException& error) {
-      cancelled = error.error().kind == files::FileErrorKind::Cancelled;
+    } catch (const luciole::FileErrorException& error) {
+      cancelled = error.error().kind == luciole::FileErrorKind::Cancelled;
     }
     TEST_CHECK(cancelled);
   }
@@ -1816,10 +1819,10 @@ esac
     Pump pump;
     const auto source = fixture.root / "payload";
     write(source, "no helper program");
-    for (const auto& item : files::archiveFormats()) {
+    for (const auto& item : luciole::archiveFormats()) {
       const auto archive = fixture.root / ("no-tools" + std::string(item.suffix));
       const auto destination = fixture.root / ("no-tools" + std::to_string(static_cast<int>(item.format)));
-      files::ArchiveService service;
+      luciole::ArchiveService service;
       TEST_CHECK(service.compress({location(source)}, location(archive), item.format));
       wait(service, pump);
       TEST_CHECK(!service.error());
@@ -1837,13 +1840,13 @@ esac
         std::ranges::find(sevenzip_fixtures::archives, "encrypted-data", &sevenzip_fixtures::Fixture::name);
     TEST_CHECK(reference != sevenzip_fixtures::archives.end());
     write(source, fixtureBytes(*reference));
-    files::ArchiveService service;
+    luciole::ArchiveService service;
     TEST_CHECK(service.inspect(location(source)));
     wait(service, pump);
-    TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Unavailable && !service.catalog());
+    TEST_CHECK(service.error() && service.error()->kind == luciole::FileErrorKind::Unavailable && !service.catalog());
     TEST_CHECK(service.extract(location(source), location(destination)));
     wait(service, pump);
-    TEST_CHECK(service.error() && service.error()->kind == files::FileErrorKind::Unavailable);
+    TEST_CHECK(service.error() && service.error()->kind == luciole::FileErrorKind::Unavailable);
     TEST_CHECK(!service.passwordRequest() && !fs::exists(destination) && fs::is_empty(fixture.root / "tmp"));
     return 0;
   }
@@ -1862,19 +1865,19 @@ esac
     std::signal(SIGXFSZ, SIG_IGN);
     const rlimit limit{1024, 1024};
     TEST_CHECK(::setrlimit(RLIMIT_FSIZE, &limit) == 0);
-    const files::CancelToken cancel;
-    for (const auto& format : files::archiveFormats()) {
-      files::archive_work::Progress progress;
-      files::archive_work::Passwords passwords;
-      if (format.format == files::ArchiveFormat::Zip) {
+    const luciole::CancelToken cancel;
+    for (const auto& format : luciole::archiveFormats()) {
+      luciole::archive_work::Progress progress;
+      luciole::archive_work::Passwords passwords;
+      if (format.format == luciole::ArchiveFormat::Zip) {
         passwords.values.emplace_back("test password");
       }
       bool failed = false;
       try {
-        auto prepared = files::archive_work::compress(
+        auto prepared = luciole::archive_work::compress(
             {location(source)}, location(fixture.root / "failed-output"), format.format, {}, cancel, progress, passwords
         );
-        (void)files::archive_work::cleanup({prepared.stage});
+        (void)luciole::archive_work::cleanup({prepared.stage});
       } catch (const std::exception&) {
         failed = true;
       }
@@ -1885,14 +1888,14 @@ esac
   void testCancelAndDestruction(const Fixture& fixture, Pump& pump) {
     const auto source = fixture.root / "cancel.txt", output = fixture.root / "cancel.zip";
     write(source, std::string(1024 * 1024, 'x'));
-    files::ArchiveService service;
-    TEST_CHECK(service.compress({location(source)}, location(output), files::ArchiveFormat::Zip));
+    luciole::ArchiveService service;
+    TEST_CHECK(service.compress({location(source)}, location(output), luciole::ArchiveFormat::Zip));
     service.cancel();
     wait(service, pump);
     TEST_CHECK(!fs::exists(output) && service.error());
     write(output, "keep me");
-    auto owner = std::make_unique<files::ArchiveService>();
-    TEST_CHECK(owner->compress({location(source)}, location(output), files::ArchiveFormat::Zip));
+    auto owner = std::make_unique<luciole::ArchiveService>();
+    TEST_CHECK(owner->compress({location(source)}, location(output), luciole::ArchiveFormat::Zip));
     pump.until([&] { return owner->conflict().has_value(); });
     owner.reset();
     pump.until([&] { return fs::is_empty(fixture.root / "tmp"); });
@@ -1959,29 +1962,29 @@ int main(int argc, char** argv) {
     testSplitFailures(fixture, pump);
     testSplitPasswordAndChanges(fixture, pump);
     testCancelAndDestruction(fixture, pump);
-    files::GioPtr<GSubprocess> child(
+    luciole::GioPtr<GSubprocess> child(
         g_subprocess_new(G_SUBPROCESS_FLAGS_NONE, nullptr, "/proc/self/exe", "--bounded-write-failure", nullptr)
     );
     TEST_CHECK(child && g_subprocess_wait_check(child.get(), nullptr, nullptr));
-    const files::GioPtr<GSubprocessLauncher> launcher(g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_NONE));
-    g_subprocess_launcher_setenv(launcher.get(), "PATH", "/noctalia-files-no-helper-tools", TRUE);
-    files::GioPtr<GSubprocess> native(
+    const luciole::GioPtr<GSubprocessLauncher> launcher(g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_NONE));
+    g_subprocess_launcher_setenv(launcher.get(), "PATH", "/luciole-no-helper-tools", TRUE);
+    luciole::GioPtr<GSubprocess> native(
         g_subprocess_launcher_spawn(launcher.get(), nullptr, "/proc/self/exe", "--compressed-without-tools", nullptr)
     );
     TEST_CHECK(native && g_subprocess_wait_check(native.get(), nullptr, nullptr));
-    files::GioPtr<GSubprocess> missing(
+    luciole::GioPtr<GSubprocess> missing(
         g_subprocess_launcher_spawn(launcher.get(), nullptr, "/proc/self/exe", "--encrypted-without-tools", nullptr)
     );
     TEST_CHECK(missing && g_subprocess_wait_check(missing.get(), nullptr, nullptr));
-    files::GioPtr<GSubprocess> missingHeader(
+    luciole::GioPtr<GSubprocess> missingHeader(
         g_subprocess_launcher_spawn(launcher.get(), nullptr, "/proc/self/exe", "--header-without-tools", nullptr)
     );
     TEST_CHECK(missingHeader && g_subprocess_wait_check(missingHeader.get(), nullptr, nullptr));
-    files::GioPtr<GSubprocess> failures(
+    luciole::GioPtr<GSubprocess> failures(
         g_subprocess_launcher_spawn(launcher.get(), nullptr, "/proc/self/exe", "--sevenzip-provider-failures", nullptr)
     );
     TEST_CHECK(failures && g_subprocess_wait_check(failures.get(), nullptr, nullptr));
-    files::GioPtr<GSubprocess> writeFailure(g_subprocess_new(
+    luciole::GioPtr<GSubprocess> writeFailure(g_subprocess_new(
         G_SUBPROCESS_FLAGS_NONE, nullptr, "/proc/self/exe", "--bounded-encrypted-write-failure", nullptr
     ));
     TEST_CHECK(writeFailure && g_subprocess_wait_check(writeFailure.get(), nullptr, nullptr));

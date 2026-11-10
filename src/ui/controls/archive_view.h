@@ -12,14 +12,14 @@ class Button;
 class ArchiveView final : public Flex {
 public:
   ArchiveView(
-      files::FileIconCache& icons, std::function<std::uint32_t()> modifiers, std::function<void()> close,
+      luciole::FileIconCache& icons, std::function<std::uint32_t()> modifiers, std::function<void()> close,
       std::function<void(std::vector<std::string>)> extract, std::function<void(const std::string&)> open,
       std::function<void()> reload, std::function<void()> cancel
   );
   ~ArchiveView() override;
   void sync(
-      std::shared_ptr<const files::ArchiveCatalog> catalog, files::ArchivePhase phase, std::size_t items,
-      std::uint64_t bytes, const std::optional<files::FileError>& error
+      std::shared_ptr<const luciole::ArchiveCatalog> catalog, luciole::ArchivePhase phase, std::size_t items,
+      std::uint64_t bytes, const std::optional<luciole::FileError>& error
   );
   bool key(std::uint32_t symbol, std::uint32_t modifiers);
   InputArea* focusArea() const;
@@ -33,7 +33,7 @@ private:
   void selectionChanged();
   void doLayout(Renderer& renderer) override;
   std::unique_ptr<Adapter> m_adapter;
-  std::shared_ptr<const files::ArchiveCatalog> m_catalog;
+  std::shared_ptr<const luciole::ArchiveCatalog> m_catalog;
   std::vector<std::size_t> m_rows;
   std::set<std::string> m_selection;
   std::string m_parent;

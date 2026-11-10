@@ -7,7 +7,7 @@
 
 namespace {
   void testRoundTrip() {
-    using namespace files;
+    using namespace luciole;
     const std::string raw = std::string("/tmp/clipboard/space #?%\n") + static_cast<char>(0xff) + ".txt";
     const FilePayload input{{Location::fromPath(raw), Location::fromPath("/tmp/clipboard/日本語.txt")}, true};
     for (const auto mime : {kUriListMime, kGnomeFilesMime}) {
@@ -26,22 +26,22 @@ namespace {
     TEST_CHECK(commented && commented->locations.front().nativePath() == "/tmp/a b");
   }
   void testRemoteRoundTrip() {
-    const files::FilePayload remote{
-        {files::Location::fromUri("sftp://user@example.invalid/path/a%20b%FF.txt"),
-         files::Location::fromUri("smb://server.invalid/share/caf%C3%A9%20%23.txt"),
-         files::Location::fromUri("dav://server.invalid/files/space%20%25.txt"),
-         files::Location::fromUri("davs://server.invalid/files/%E6%97%A5%E6%9C%AC%E8%AA%9E.txt")},
+    const luciole::FilePayload remote{
+        {luciole::Location::fromUri("sftp://user@example.invalid/path/a%20b%FF.txt"),
+         luciole::Location::fromUri("smb://server.invalid/share/caf%C3%A9%20%23.txt"),
+         luciole::Location::fromUri("dav://server.invalid/files/space%20%25.txt"),
+         luciole::Location::fromUri("davs://server.invalid/files/%E6%97%A5%E6%9C%AC%E8%AA%9E.txt")},
         true
     };
-    for (const auto mime : {files::kUriListMime, files::kGnomeFilesMime}) {
-      const auto encoded = files::encodeFilePayload(remote, mime);
+    for (const auto mime : {luciole::kUriListMime, luciole::kGnomeFilesMime}) {
+      const auto encoded = luciole::encodeFilePayload(remote, mime);
       TEST_CHECK(encoded);
-      const auto decoded = files::parseFilePayload(mime, *encoded);
+      const auto decoded = luciole::parseFilePayload(mime, *encoded);
       TEST_CHECK(decoded && decoded->locations == remote.locations);
     }
   }
   void testRejection() {
-    using namespace files;
+    using namespace luciole;
     for (const auto* bytes :
          {"", "# no files\n", "/tmp/plain-path", "file:///tmp/a b", "file:///tmp/a\rgarbage", "file:///tmp/a%00b",
           "file:///tmp/a#fragment", "file:///tmp/a?query", "file:///tmp/a\nfile:///tmp/a",
@@ -61,7 +61,7 @@ namespace {
     TEST_CHECK(!parseFilePayload(kUriListMime, many));
   }
   void testPartialMoves() {
-    using namespace files;
+    using namespace luciole;
     FilePayload selection{{}, true};
     for (int i = 0; i < 7; ++i) {
       selection.locations.push_back(Location::fromPath("/tmp/source/" + std::to_string(i)));
@@ -70,9 +70,9 @@ namespace {
         {selection.locations[0], TransferOutcome::Moved, {}},
         {selection.locations[1], TransferOutcome::Skipped, {}},
         {selection.locations[2], TransferOutcome::Failed,
-         files::FileError{files::FileErrorKind::Other, "fixture failure"}},
+         luciole::FileError{luciole::FileErrorKind::Other, "fixture failure"}},
         {selection.locations[3], TransferOutcome::Partial,
-         files::FileError{files::FileErrorKind::Other, "source removal incomplete"}},
+         luciole::FileError{luciole::FileErrorKind::Other, "source removal incomplete"}},
         {selection.locations[4], TransferOutcome::Cancelled, {}},
         {selection.locations[5], TransferOutcome::Copied, {}},
     };

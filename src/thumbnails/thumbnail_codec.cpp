@@ -34,8 +34,8 @@ namespace {
   }
 } // namespace
 
-std::expected<files::ThumbnailPng, std::string>
-files::readThumbnailPng(std::span<const std::uint8_t> bytes, int maxSide) {
+std::expected<luciole::ThumbnailPng, std::string>
+luciole::readThumbnailPng(std::span<const std::uint8_t> bytes, int maxSide) {
   constexpr std::array<std::uint8_t, 8> signature{137, 80, 78, 71, 13, 10, 26, 10};
   if (maxSide < 1
       || maxSide > 1024
@@ -122,7 +122,7 @@ files::readThumbnailPng(std::span<const std::uint8_t> bytes, int maxSide) {
   return result;
 }
 
-std::expected<std::vector<std::uint8_t>, std::string> files::writeThumbnailPng(const ThumbnailPng& thumbnail) {
+std::expected<std::vector<std::uint8_t>, std::string> luciole::writeThumbnailPng(const ThumbnailPng& thumbnail) {
   const auto& image = thumbnail.image;
   if (image.width < 1
       || image.height < 1

@@ -10,7 +10,7 @@
 #include <sys/stat.h>
 #include <vector>
 
-namespace files {
+namespace luciole {
   bool samePermissions(const struct stat& a, const struct stat& b);
 
   // A captured native item held by an O_PATH descriptor. Worker-only.
@@ -46,4 +46,4 @@ namespace files {
 
   // Opens and identifies a native item outside Trash; throws FileErrorException.
   std::shared_ptr<PermissionTarget> preparePermissionTarget(const DirectoryEntry& entry, bool captureCurrentLocation);
-} // namespace files
+} // namespace luciole

@@ -15,29 +15,29 @@
 
 namespace {
   struct Target {
-    files::Location location;
+    luciole::Location location;
     std::string name;
-    files::Fd item;
-    Target(files::Location location, std::string name, int parent)
+    luciole::Fd item;
+    Target(luciole::Location location, std::string name, int parent)
         : location(std::move(location)), name(std::move(name)),
-          item(files::checkedFd(::openat(parent, this->name.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC))) {}
+          item(luciole::checkedFd(::openat(parent, this->name.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC))) {}
   };
   struct Prepared {
     std::string path;
-    files::Fd parent;
+    luciole::Fd parent;
     std::vector<std::unique_ptr<Target>> targets;
     explicit Prepared(std::string path)
         : path(std::move(path)),
-          parent(files::checkedFd(::open(this->path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC))) {}
+          parent(luciole::checkedFd(::open(this->path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC))) {}
   };
   struct Reply {
     std::shared_ptr<Prepared> prepared;
-    std::vector<files::TrashResult> results;
+    std::vector<luciole::TrashResult> results;
     bool finished = false;
   };
 } // namespace
 
-struct files::TrashService::State {
+struct luciole::TrashService::State {
   TrashSnapshot snapshot;
   std::shared_ptr<Prepared> prepared;
   CancelToken token;
@@ -82,24 +82,26 @@ struct files::TrashService::State {
   }
 };
 
-files::TrashService::TrashService() : m_state(std::make_shared<State>()) {}
-files::TrashService::~TrashService() {
+luciole::TrashService::TrashService() : m_state(std::make_shared<State>()) {}
+luciole::TrashService::~TrashService() {
   m_state->changed = {};
   cancel();
 }
-void files::TrashService::setChangedCallback(std::function<void()> callback) { m_state->changed = std::move(callback); }
-bool files::TrashService::busy() const { return m_state->active; }
-bool files::TrashService::canTrash() const { return !busy() && m_state->prepared != nullptr; }
-std::size_t files::TrashService::completed() const { return m_state->completed.load(); }
-const files::TrashSnapshot& files::TrashService::snapshot() const { return m_state->snapshot; }
-void files::TrashService::cancel() {
+void luciole::TrashService::setChangedCallback(std::function<void()> callback) {
+  m_state->changed = std::move(callback);
+}
+bool luciole::TrashService::busy() const { return m_state->active; }
+bool luciole::TrashService::canTrash() const { return !busy() && m_state->prepared != nullptr; }
+std::size_t luciole::TrashService::completed() const { return m_state->completed.load(); }
+const luciole::TrashSnapshot& luciole::TrashService::snapshot() const { return m_state->snapshot; }
+void luciole::TrashService::cancel() {
   m_state->token.cancel();
   m_state->prepared.reset();
   if (!busy() && m_state->snapshot.status != TrashStatus::Finished) {
     m_state->snapshot.status = TrashStatus::Cancelled;
   }
 }
-bool files::TrashService::prepare(const Location& parent, std::vector<Location> sources) {
+bool luciole::TrashService::prepare(const Location& parent, std::vector<Location> sources) {
   if (busy() || sources.empty()) {
     return false;
   }
@@ -134,7 +136,7 @@ bool files::TrashService::prepare(const Location& parent, std::vector<Location> 
   });
   return true;
 }
-bool files::TrashService::trash() {
+bool luciole::TrashService::trash() {
   if (!canTrash()) {
     return false;
   }

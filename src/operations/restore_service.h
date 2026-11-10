@@ -6,7 +6,7 @@
 
 #include <optional>
 
-namespace files {
+namespace luciole {
   enum class RestoreOutcome { Restored, Skipped, Failed, Cancelled, Unconfirmed };
   struct RestoreResult {
     Location source;
@@ -35,4 +35,4 @@ namespace files {
     struct State;
     std::shared_ptr<State> m_state;
   };
-} // namespace files
+} // namespace luciole

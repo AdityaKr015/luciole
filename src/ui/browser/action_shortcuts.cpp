@@ -9,7 +9,7 @@
 #include <xkbcommon/xkbcommon.h>
 
 namespace {
-  using Chords = std::array<std::optional<KeyChord>, files::kBrowserActionCount>;
+  using Chords = std::array<std::optional<KeyChord>, luciole::kBrowserActionCount>;
 
   std::optional<KeyChord> parseShortcut(std::string_view shortcut) {
     if (shortcut.empty()) {
@@ -30,7 +30,7 @@ namespace {
   const Chords& chords() {
     static const Chords table = [] {
       Chords parsed;
-      for (const auto& definition : files::ActionRegistry::definitions()) {
+      for (const auto& definition : luciole::ActionRegistry::definitions()) {
         parsed[std::to_underlying(definition.action)] = parseShortcut(definition.shortcut);
       }
       return parsed;
@@ -39,9 +39,11 @@ namespace {
   }
 } // namespace
 
-const std::optional<KeyChord>& files::actionChord(BrowserAction action) { return chords()[std::to_underlying(action)]; }
+const std::optional<KeyChord>& luciole::actionChord(BrowserAction action) {
+  return chords()[std::to_underlying(action)];
+}
 
-bool files::shortcutMatches(BrowserAction action, std::uint32_t sym, std::uint32_t modifiers) {
+bool luciole::shortcutMatches(BrowserAction action, std::uint32_t sym, std::uint32_t modifiers) {
   const auto& chord = actionChord(action);
   // Shift turns letter keysyms upper case, so shifted chords accept either case.
   return chord
@@ -49,8 +51,8 @@ bool files::shortcutMatches(BrowserAction action, std::uint32_t sym, std::uint32
       && (chord->sym == sym || ((modifiers & KeyMod::Shift) != 0 && xkb_keysym_to_lower(sym) == chord->sym));
 }
 
-std::optional<files::BrowserAction>
-files::shortcutAction(std::initializer_list<BrowserAction> actions, std::uint32_t sym, std::uint32_t modifiers) {
+std::optional<luciole::BrowserAction>
+luciole::shortcutAction(std::initializer_list<BrowserAction> actions, std::uint32_t sym, std::uint32_t modifiers) {
   for (const auto action : actions) {
     if (shortcutMatches(action, sym, modifiers)) {
       return action;

@@ -26,7 +26,7 @@ namespace {
       }
       setHitTestVisible(false);
     }
-    void bind(const files::PermissionResult& row, bool hovered) {
+    void bind(const luciole::PermissionResult& row, bool hovered) {
       m_name->setText(row.name + " · " + outcomes[static_cast<std::size_t>(row.outcome)]);
       m_metadata->setText(
           row.info ? std::format("Mode {:04o} · Owner {} · Group {}", row.info->mode, row.info->owner, row.info->group)
@@ -38,14 +38,14 @@ namespace {
             + std::format(" · ACL: {} access, {} default", row.info->acl->access.size(), row.info->acl->defaults.size())
         );
       }
-      std::string detail = row.error ? files::fileErrorText(*row.error) : "";
+      std::string detail = row.error ? luciole::fileErrorText(*row.error) : "";
       if (!detail.empty() && !row.message.empty()) {
         detail += ' ';
       }
       detail += row.message;
       m_detail->setText(row.location.uri() + (detail.empty() ? "" : "\n" + detail));
       const bool error =
-          row.outcome == files::PermissionOutcome::Failed || row.outcome == files::PermissionOutcome::Partial;
+          row.outcome == luciole::PermissionOutcome::Failed || row.outcome == luciole::PermissionOutcome::Partial;
       m_name->setColor(colorSpecFromRole(error ? ColorRole::Error : ColorRole::OnSurface));
       m_metadata->setColor(colorSpecFromRole(ColorRole::OnSurfaceVariant));
       m_detail->setColor(colorSpecFromRole(error ? ColorRole::Error : ColorRole::OnSurfaceVariant));
@@ -120,7 +120,7 @@ bool PermissionResultsView::navigate(std::uint32_t key, std::uint32_t modifiers,
   return true;
 }
 PermissionResultsView::~PermissionResultsView() { m_grid->setAdapter(nullptr); }
-void PermissionResultsView::sync(std::shared_ptr<const std::vector<files::PermissionResult>> results) {
+void PermissionResultsView::sync(std::shared_ptr<const std::vector<luciole::PermissionResult>> results) {
   if (results == m_results) {
     return;
   }

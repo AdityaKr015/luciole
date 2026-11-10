@@ -12,15 +12,15 @@
 
 namespace {
   namespace fs = std::filesystem;
-  using files::BrowserController;
-  using files::DirectoryStatus;
-  using files::Location;
-  using files::MillerColumns;
+  using luciole::BrowserController;
+  using luciole::DirectoryStatus;
+  using luciole::Location;
+  using luciole::MillerColumns;
 
   class Fixture {
   public:
     Fixture() {
-      const files::GString name(g_dir_make_tmp("noctalia-miller-XXXXXX", nullptr));
+      const luciole::GString name(g_dir_make_tmp("luciole-miller-XXXXXX", nullptr));
       TEST_CHECK(name != nullptr);
       path = name.get();
       fs::create_directories(path / "a" / "nested");
@@ -72,7 +72,7 @@ namespace {
   private:
     GlibPollSource m_source;
   };
-  files::EntryId entry(const BrowserController& browser, const std::string& name) {
+  luciole::EntryId entry(const BrowserController& browser, const std::string& name) {
     for (const auto& item : browser.model().snapshot().entries) {
       if (item.name == name) {
         return item.id;
@@ -104,7 +104,7 @@ namespace {
     pump.ready(source);
     source.model().select(entry(source, "kept.txt"));
     source.setCaptureViewport([] {
-      return files::BrowseViewport{.mode = files::ViewMode::List, .iconSize = 160, .vertical = 45};
+      return luciole::BrowseViewport{.mode = luciole::ViewMode::List, .iconSize = 160, .vertical = 45};
     });
     MillerColumns columns;
     columns.start(source);
@@ -230,7 +230,9 @@ namespace {
     BrowserController source({}, false);
     source.open(Location::fromPath(fixture.path.native()));
     pump.ready(source);
-    source.setCaptureViewport([] { return files::BrowseViewport{.mode = files::ViewMode::Miller, .iconSize = 192}; });
+    source.setCaptureViewport([] {
+      return luciole::BrowseViewport{.mode = luciole::ViewMode::Miller, .iconSize = 192};
+    });
     MillerColumns columns;
     columns.start(source, false);
     pump.ready(columns.active());
@@ -255,7 +257,7 @@ namespace {
     TEST_CHECK(columns.columns()[1]->location == Location::fromPath((fixture.path / "b").native()));
     TEST_CHECK(columns.columns()[0]->width == 345);
     TEST_CHECK(old->model().snapshot().status == DirectoryStatus::Cancelled);
-    parent.model().select(entry(parent, "a"), files::SelectionMode::Toggle);
+    parent.model().select(entry(parent, "a"), luciole::SelectionMode::Toggle);
     columns.synchronize();
     TEST_CHECK(columns.columns().size() == 1);
     columns.collectRetired();

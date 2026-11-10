@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace files {
+namespace luciole {
   enum class FileErrorKind : std::uint8_t {
     Missing,
     Denied,
@@ -50,4 +50,4 @@ namespace files {
 
   // Inside a catch handler: the in-flight exception as a FileError.
   FileError currentFileError();
-} // namespace files
+} // namespace luciole

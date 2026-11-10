@@ -10,7 +10,7 @@
 #include <optional>
 #include <string>
 
-namespace files {
+namespace luciole {
   enum class CreateKind { Folder, EmptyFile, Document, SymbolicLink, HardLink };
   enum class CreateStatus { Idle, Preparing, Ready, Creating, Succeeded, Partial, Error, Cancelled };
   struct CreateSnapshot {
@@ -44,4 +44,4 @@ namespace files {
     struct State;
     std::shared_ptr<State> m_state;
   };
-} // namespace files
+} // namespace luciole

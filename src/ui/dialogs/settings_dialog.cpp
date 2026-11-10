@@ -11,7 +11,7 @@
 #include <format>
 
 namespace {
-  using P = files::BrowserPreference;
+  using P = luciole::BrowserPreference;
   std::vector<int> widths(int minimum, int maximum, bool automatic = false) {
     std::vector<int> result;
     if (automatic) {
@@ -25,20 +25,20 @@ namespace {
 } // namespace
 
 SettingsDialog::SettingsDialog(
-    std::function<void(files::OverrideEdit)> change, std::function<void()> reset, std::function<void()> close,
+    std::function<void(luciole::OverrideEdit)> change, std::function<void()> reset, std::function<void()> close,
     std::function<void()> clearThumbnails
 )
     : m_change(std::move(change)) {
   setDirection(FlexDirection::Vertical);
   setAlign(FlexAlign::Stretch);
-  files::applyDialogStyle(*this);
-  addChild(files::dialogHeader("Settings", "settings", std::move(close)));
+  luciole::applyDialogStyle(*this);
+  addChild(luciole::dialogHeader("Settings", "settings", std::move(close)));
   auto navigation = ui::column(
       {.out = &m_navigation, .align = FlexAlign::Stretch, .width = 192.0F},
       ui::scrollView(
           {.out = &m_navigationScroll,
            .viewportPaddingH = 0.0F,
-           .viewportPaddingV = files::kSideListViewportPaddingV,
+           .viewportPaddingV = luciole::kSideListViewportPaddingV,
            .fillWidth = true,
            .flexGrow = 1.0F}
       )
@@ -48,7 +48,7 @@ SettingsDialog::SettingsDialog(
   auto body = ui::scrollView(
       {.out = &m_body,
        .viewportPaddingH = 0.0F,
-       .viewportPaddingV = files::kSideListViewportPaddingV,
+       .viewportPaddingV = luciole::kSideListViewportPaddingV,
        .fillWidth = true,
        .flexGrow = 1.0F,
        .configure = [](ScrollView& view) { view.setReserveScrollbarGutter(true); }}
@@ -63,42 +63,42 @@ SettingsDialog::SettingsDialog(
   section("General", "adjustments-horizontal");
   addChoice(
       P::ActivationMode, "Open items",
-      {{"Single click", files::ActivationMode::SingleClick}, {"Double click", files::ActivationMode::DoubleClick}}
+      {{"Single click", luciole::ActivationMode::SingleClick}, {"Double click", luciole::ActivationMode::DoubleClick}}
   );
   addChoice(
       P::TypingMode, "When typing",
-      {{"Search subfolders", files::TypingMode::Search}, {"Select names", files::TypingMode::Typeahead}}
+      {{"Search subfolders", luciole::TypingMode::Search}, {"Select names", luciole::TypingMode::Typeahead}}
   );
   addBool(P::ShowHidden, "Show hidden files");
   addBool(P::ShowBackups, "Show backup files (*~)");
   group("Sorting");
   addChoice(
       P::SortBy, "Sort by",
-      {{"Name", files::SortField::Name},
-       {"Type", files::SortField::Type},
-       {"Size", files::SortField::Size},
-       {"Modified", files::SortField::Modified},
-       {"Accessed", files::SortField::Accessed},
-       {"Created", files::SortField::Created},
-       {"Owner", files::SortField::Owner},
-       {"Group", files::SortField::Group},
-       {"Permissions", files::SortField::Permissions},
-       {"Location", files::SortField::Location}}
+      {{"Name", luciole::SortField::Name},
+       {"Type", luciole::SortField::Type},
+       {"Size", luciole::SortField::Size},
+       {"Modified", luciole::SortField::Modified},
+       {"Accessed", luciole::SortField::Accessed},
+       {"Created", luciole::SortField::Created},
+       {"Owner", luciole::SortField::Owner},
+       {"Group", luciole::SortField::Group},
+       {"Permissions", luciole::SortField::Permissions},
+       {"Location", luciole::SortField::Location}}
   );
   addBool(P::SortDescending, "Reverse order");
   addBool(P::DirectoriesFirst, "Folders first");
   section("Views", "layout-grid");
   addChoice(
       P::ViewMode, "View",
-      {{"Grid", files::ViewMode::Grid}, {"List", files::ViewMode::List}, {"Columns", files::ViewMode::Miller}}
+      {{"Grid", luciole::ViewMode::Grid}, {"List", luciole::ViewMode::List}, {"Columns", luciole::ViewMode::Miller}}
   );
   addChoice(
       P::Density, "Density",
-      {{"Compact", files::ViewDensity::Compact}, {"Comfortable", files::ViewDensity::Comfortable}}
+      {{"Compact", luciole::ViewDensity::Compact}, {"Comfortable", luciole::ViewDensity::Comfortable}}
   );
   addBool(P::ShowEmblems, "Link and read-only emblems");
   group("Grid");
-  addNumber(P::GridIconSize, "Icon size", {files::kGridIconSizes.begin(), files::kGridIconSizes.end()});
+  addNumber(P::GridIconSize, "Icon size", {luciole::kGridIconSizes.begin(), luciole::kGridIconSizes.end()});
   addBool(P::ShowSizeCaption, "File size caption");
   addBool(P::ShowTypeCaption, "File type caption");
   addBool(P::ShowModifiedCaption, "Modified date caption");
@@ -109,10 +109,10 @@ SettingsDialog::SettingsDialog(
   addBool(P::ExpandableFolders, "Expandable folders");
   auto orderLabel = ui::label({.fontSize = Style::fontSizeCaption, .maxWidth = 180.0F});
   auto* orderText = orderLabel.get();
-  addRow<files::DetailsColumnOrder>(
+  addRow<luciole::DetailsColumnOrder>(
       P::ColumnOrder, "Column order",
       [orderText](const auto& order) {
-        orderText->setText(order == files::kDefaultDetailsColumnOrder ? "Default" : "Custom");
+        orderText->setText(order == luciole::kDefaultDetailsColumnOrder ? "Default" : "Custom");
       },
       std::move(orderLabel)
   );
@@ -142,16 +142,16 @@ SettingsDialog::SettingsDialog(
   addBool(P::ShowSidebar, "Show sidebar");
   addBool(P::SidebarTree, "Show folder tree");
   addBool(P::ShowDrives, "Show drives");
-  addNumber(P::SidebarWidth, "Sidebar width", widths(files::kMinSidebarWidth, files::kMaxSidebarWidth));
+  addNumber(P::SidebarWidth, "Sidebar width", widths(luciole::kMinSidebarWidth, luciole::kMaxSidebarWidth));
   group("Preview");
   addBool(P::ShowPreview, "Show preview");
   addNumber(P::PreviewWidth, "Preview width", widths(208, 800));
   section("Thumbnails", "photo");
   addChoice(
       P::ThumbnailPolicy, "Show thumbnails",
-      {{"Never", files::ThumbnailPolicy::Never},
-       {"Local files", files::ThumbnailPolicy::Local},
-       {"All locations", files::ThumbnailPolicy::All}}
+      {{"Never", luciole::ThumbnailPolicy::Never},
+       {"Local files", luciole::ThumbnailPolicy::Local},
+       {"All locations", luciole::ThumbnailPolicy::All}}
   );
   m_section->addChild(
       ui::label(
@@ -203,11 +203,11 @@ void SettingsDialog::section(const std::string& title, const std::string& glyph)
           {.out = &button,
            .text = title,
            .glyph = glyph,
-           .controlHeight = files::kSideListRowHeight,
+           .controlHeight = luciole::kSideListRowHeight,
            .contentAlign = ButtonContentAlign::Start,
            .variant = ButtonVariant::Ghost,
-           .paddingH = files::kSideListRowPaddingH,
-           .gap = files::kSideListRowGap,
+           .paddingH = luciole::kSideListRowPaddingH,
+           .gap = luciole::kSideListRowGap,
            .onClick = [this, index] { selectPage(index); }}
       )
   );
@@ -261,7 +261,7 @@ void SettingsDialog::setCompact(bool compact) {
 }
 template <class T>
 void SettingsDialog::addRow(
-    files::PreferenceKey<T> key, const std::string& title, std::function<void(const T&)> show,
+    luciole::PreferenceKey<T> key, const std::string& title, std::function<void(const T&)> show,
     std::unique_ptr<Node> control
 ) {
   m_section->addChild(
@@ -271,11 +271,11 @@ void SettingsDialog::addRow(
           std::move(control)
       )
   );
-  m_rows[key.id()] = [this, key, show = std::move(show)] { show(files::preferenceValue(m_current, key)); };
+  m_rows[key.id()] = [this, key, show = std::move(show)] { show(luciole::preferenceValue(m_current, key)); };
 }
 
 template <class T>
-void SettingsDialog::addChoice(files::PreferenceKey<T> key, const std::string& title, const Choices<T>& choices) {
+void SettingsDialog::addChoice(luciole::PreferenceKey<T> key, const std::string& title, const Choices<T>& choices) {
   auto control = std::make_unique<Select>();
   auto* select = control.get();
   std::vector<std::string> options;
@@ -297,7 +297,7 @@ void SettingsDialog::addChoice(files::PreferenceKey<T> key, const std::string& t
   addRow<T>(key, title, show, std::move(control));
 }
 
-void SettingsDialog::addBool(files::PreferenceKey<bool> key, const std::string& title) {
+void SettingsDialog::addBool(luciole::PreferenceKey<bool> key, const std::string& title) {
   Toggle* control = nullptr;
   auto row = ui::row(
       {.justify = FlexJustify::End, .width = 180.0F},
@@ -307,7 +307,7 @@ void SettingsDialog::addBool(files::PreferenceKey<bool> key, const std::string& 
 }
 
 void SettingsDialog::addNumber(
-    files::PreferenceKey<int> key, const std::string& title, const std::vector<int>& values, std::string suffix
+    luciole::PreferenceKey<int> key, const std::string& title, const std::vector<int>& values, std::string suffix
 ) {
   auto control = std::make_unique<Stepper>();
   auto* stepper = control.get();
@@ -317,7 +317,7 @@ void SettingsDialog::addNumber(
   stepper->setStep(16);
   stepper->setValueSuffix(std::move(suffix));
   stepper->setOnValueChanged([this, key, stepper, values](int value) {
-    const int previous = files::preferenceValue(m_current, key);
+    const int previous = luciole::preferenceValue(m_current, key);
     if (key == P::GridIconSize && !std::ranges::contains(values, value)) {
       const auto next =
           value > previous ? std::ranges::upper_bound(values, value) : std::ranges::lower_bound(values, value);
@@ -338,19 +338,19 @@ void SettingsDialog::addNumber(
   addRow<int>(key, title, show, std::move(control));
 }
 
-template <class T> void SettingsDialog::send(files::PreferenceKey<T> key, std::optional<T> value) {
+template <class T> void SettingsDialog::send(luciole::PreferenceKey<T> key, std::optional<T> value) {
   // Choosing the inherited value stores no override.
-  if (value && *value == files::preferenceValue(m_inherited, key)) {
+  if (value && *value == luciole::preferenceValue(m_inherited, key)) {
     value.reset();
   }
-  files::preferenceValue(m_current, key) = value.value_or(files::preferenceValue(m_inherited, key));
+  luciole::preferenceValue(m_current, key) = value.value_or(luciole::preferenceValue(m_inherited, key));
   m_rows.at(key.id())();
   m_status->setText("Saving…");
   m_status->setColor(colorSpecFromRole(ColorRole::OnSurfaceVariant));
-  m_change(value ? files::OverrideEdit(key, *value) : files::OverrideEdit(key, std::nullopt));
+  m_change(value ? luciole::OverrideEdit(key, *value) : luciole::OverrideEdit(key, std::nullopt));
 }
 void SettingsDialog::sync(
-    const files::BrowserSettings& settings, const files::BrowserSettings& inherited, bool busy,
+    const luciole::BrowserSettings& settings, const luciole::BrowserSettings& inherited, bool busy,
     const std::string& error, bool clearingThumbnails
 ) {
   m_clearThumbnails->setEnabled(!clearingThumbnails);

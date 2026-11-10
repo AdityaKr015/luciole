@@ -30,10 +30,10 @@ namespace {
         m_source.dispatch(fds, start);
       }
     }
-    void ready(const files::BrowserController& browser) {
-      until([&] { return browser.model().snapshot().status != files::DirectoryStatus::Loading; });
+    void ready(const luciole::BrowserController& browser) {
+      until([&] { return browser.model().snapshot().status != luciole::DirectoryStatus::Loading; });
       const auto& snapshot = browser.model().snapshot();
-      TEST_CHECK(snapshot.status == files::DirectoryStatus::Ready);
+      TEST_CHECK(snapshot.status == luciole::DirectoryStatus::Ready);
     }
 
   private:
@@ -42,7 +42,7 @@ namespace {
   struct Fixture {
     fs::path root;
     Fixture() {
-      const files::GString path(g_dir_make_tmp("noctalia-trash-browse-XXXXXX", nullptr));
+      const luciole::GString path(g_dir_make_tmp("luciole-trash-browse-XXXXXX", nullptr));
       TEST_CHECK(path != nullptr);
       root = path.get();
     }
@@ -52,23 +52,23 @@ namespace {
     }
   };
   void metadataAndPresentation() {
-    files::GioPtr<GFileInfo> info(g_file_info_new());
-    TEST_CHECK(!files::readTrashInfo(info.get()).original && !files::readTrashInfo(info.get()).deletionDate);
+    luciole::GioPtr<GFileInfo> info(g_file_info_new());
+    TEST_CHECK(!luciole::readTrashInfo(info.get()).original && !luciole::readTrashInfo(info.get()).deletionDate);
     g_file_info_set_attribute_string(info.get(), G_FILE_ATTRIBUTE_TRASH_ORIG_PATH, "/wrong-type");
     g_file_info_set_attribute_byte_string(info.get(), G_FILE_ATTRIBUTE_TRASH_DELETION_DATE, "wrong-type");
-    TEST_CHECK(!files::readTrashInfo(info.get()).original && !files::readTrashInfo(info.get()).deletionDate);
+    TEST_CHECK(!luciole::readTrashInfo(info.get()).original && !luciole::readTrashInfo(info.get()).deletionDate);
     g_file_info_set_attribute_byte_string(info.get(), G_FILE_ATTRIBUTE_TRASH_ORIG_PATH, "relative/name");
-    TEST_CHECK(!files::readTrashInfo(info.get()).original);
+    TEST_CHECK(!luciole::readTrashInfo(info.get()).original);
     const auto raw = std::string("/tmp/文 #/raw-") + static_cast<char>(0xff);
     g_file_info_set_attribute_byte_string(info.get(), G_FILE_ATTRIBUTE_TRASH_ORIG_PATH, raw.c_str());
     g_file_info_set_attribute_string(info.get(), G_FILE_ATTRIBUTE_TRASH_DELETION_DATE, "2026-10-29T12:34:56");
-    const auto value = files::readTrashInfo(info.get());
+    const auto value = luciole::readTrashInfo(info.get());
     TEST_CHECK(value.original && value.original->nativePath() == raw && value.deletionDate == "2026-10-29T12:34:56");
-    TEST_CHECK(files::trashOriginalParentText(value) == "/tmp/文 #");
-    const auto root = files::Location::trash();
+    TEST_CHECK(luciole::trashOriginalParentText(value) == "/tmp/文 #");
+    const auto root = luciole::Location::trash();
     TEST_CHECK(root.isTrash() && !root.nativePath());
-    const auto nested = files::Location::fromUri("trash:///a%20b/c%23.txt");
-    const auto crumbs = files::locationBreadcrumbs(nested);
+    const auto nested = luciole::Location::fromUri("trash:///a%20b/c%23.txt");
+    const auto crumbs = luciole::locationBreadcrumbs(nested);
     TEST_CHECK(
         crumbs.size() == 3
         && crumbs.front().label == "Trash"
@@ -77,23 +77,23 @@ namespace {
         && crumbs.back().label == "c#.txt"
         && crumbs.back().location == nested
     );
-    TEST_CHECK(files::locationEditText(nested) == nested.uri());
+    TEST_CHECK(luciole::locationEditText(nested) == nested.uri());
   }
   void unavailableProvider() {
     Pump pump;
-    files::BrowserController browser({}, false);
-    browser.open(files::Location::trash());
-    pump.until([&] { return browser.model().snapshot().status == files::DirectoryStatus::Error; });
+    luciole::BrowserController browser({}, false);
+    browser.open(luciole::Location::trash());
+    pump.until([&] { return browser.model().snapshot().status == luciole::DirectoryStatus::Error; });
     TEST_CHECK(
-        browser.model().snapshot().error->kind == files::FileErrorKind::Unsupported && browser.model().rows().empty()
+        browser.model().snapshot().error->kind == luciole::FileErrorKind::Unsupported && browser.model().rows().empty()
     );
     browser.refresh();
-    pump.until([&] { return browser.model().snapshot().status == files::DirectoryStatus::Error; });
+    pump.until([&] { return browser.model().snapshot().status == luciole::DirectoryStatus::Error; });
     Fixture fixture;
-    browser.open(files::Location::fromPath(fixture.root.native()));
+    browser.open(luciole::Location::fromPath(fixture.root.native()));
     pump.ready(browser);
     TEST_CHECK(browser.back());
-    pump.until([&] { return browser.model().snapshot().status == files::DirectoryStatus::Error; });
+    pump.until([&] { return browser.model().snapshot().status == luciole::DirectoryStatus::Error; });
   }
   void concurrentTrashLocations() {
     std::barrier gate(4);
@@ -103,10 +103,10 @@ namespace {
       worker = std::jthread([&] {
         gate.arrive_and_wait();
         for (int iteration = 0; iteration < 10000; ++iteration) {
-          const auto root = files::Location::trash();
-          const auto nested = files::Location::fromUri("trash:///parallel%20folder/item%23.txt");
-          const auto file = files::gioFile(root);
-          const files::GString uri(g_file_get_uri(file.get()));
+          const auto root = luciole::Location::trash();
+          const auto nested = luciole::Location::fromUri("trash:///parallel%20folder/item%23.txt");
+          const auto file = luciole::gioFile(root);
+          const luciole::GString uri(g_file_get_uri(file.get()));
           if (!root.isTrash() || nested.nativePath() || !nested.isTrash() || root.uri() != uri.get()) {
             valid.store(false);
           }
@@ -132,21 +132,21 @@ namespace {
     std::ofstream(a / raw) << "raw";
     for (const auto& path : {a / "same #%.txt", b / "same #%.txt", a / "Folder 文", a / ".hidden", a / raw}) {
       GError* error = nullptr;
-      const bool ok = g_file_trash(files::gioFile(files::Location::fromPath(path.native())).get(), nullptr, &error);
+      const bool ok = g_file_trash(luciole::gioFile(luciole::Location::fromPath(path.native())).get(), nullptr, &error);
       g_clear_error(&error);
       TEST_CHECK(ok);
     }
     Pump pump;
-    files::BrowserController browser({}, false);
+    luciole::BrowserController browser({}, false);
     bool launched = false;
     browser.setFileActivatedCallback([&](const auto&) { launched = true; });
-    browser.open(files::Location::trash());
+    browser.open(luciole::Location::trash());
     pump.ready(browser);
     const auto& entries = browser.model().snapshot().entries;
     TEST_CHECK(entries.size() == 5);
-    TEST_CHECK(std::ranges::count(entries, "same #%.txt", &files::DirectoryEntry::displayName) == 2);
+    TEST_CHECK(std::ranges::count(entries, "same #%.txt", &luciole::DirectoryEntry::displayName) == 2);
     const auto first = std::ranges::find_if(entries, [&](const auto& entry) {
-      return entry.trash.original == files::Location::fromPath((a / "same #%.txt").native());
+      return entry.trash.original == luciole::Location::fromPath((a / "same #%.txt").native());
     });
     TEST_CHECK(
         first != entries.end()
@@ -158,7 +158,7 @@ namespace {
     const auto operation = first->location;
     browser.model().select(id);
     browser.activate(id);
-    TEST_CHECK(!launched && browser.model().snapshot().location == files::Location::trash());
+    TEST_CHECK(!launched && browser.model().snapshot().location == luciole::Location::trash());
     browser.refresh();
     pump.ready(browser);
     TEST_CHECK(
@@ -170,7 +170,7 @@ namespace {
     browser.toggleHidden();
     TEST_CHECK(browser.model().rows().size() == 5);
     const auto folder =
-        std::ranges::find(browser.model().snapshot().entries, "Folder 文", &files::DirectoryEntry::displayName);
+        std::ranges::find(browser.model().snapshot().entries, "Folder 文", &luciole::DirectoryEntry::displayName);
     TEST_CHECK(folder != browser.model().snapshot().entries.end());
     browser.activate(folder->id);
     pump.ready(browser);
@@ -179,18 +179,18 @@ namespace {
     );
     TEST_CHECK(browser.up());
     pump.ready(browser);
-    TEST_CHECK(browser.model().snapshot().location == files::Location::trash() && !browser.canUp());
+    TEST_CHECK(browser.model().snapshot().location == luciole::Location::trash() && !browser.canUp());
     browser.setSearchQuery("inside");
     pump.ready(browser);
     TEST_CHECK(browser.model().rows().size() == 1 && browser.model().snapshot().entries.front().location.isTrash());
     browser.activate(browser.model().rows().front());
     TEST_CHECK(!launched);
     browser.setSearchQuery({});
-    browser.open(files::Location::fromPath(fixture.root.native()));
+    browser.open(luciole::Location::fromPath(fixture.root.native()));
     pump.ready(browser);
     TEST_CHECK(browser.back());
     pump.ready(browser);
-    TEST_CHECK(browser.model().snapshot().location == files::Location::trash());
+    TEST_CHECK(browser.model().snapshot().location == luciole::Location::trash());
   }
 } // namespace
 

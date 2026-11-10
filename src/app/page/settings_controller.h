@@ -8,10 +8,10 @@
 #include <optional>
 #include <string>
 
-namespace files {
+namespace luciole {
   class ThumbnailService;
   class ViewPreferenceWriter;
-} // namespace files
+} // namespace luciole
 
 struct KeyboardEvent;
 struct PointerEvent;
@@ -26,7 +26,7 @@ class WaylandConnection;
 class SettingsController final : public SelectPopupContext {
 public:
   SettingsController(
-      PageContext& page, files::ViewPreferenceWriter& preferences, files::ThumbnailService& thumbnails,
+      PageContext& page, luciole::ViewPreferenceWriter& preferences, luciole::ThumbnailService& thumbnails,
       WaylandConnection& connection, RenderContext& renderer, std::function<void()> clearThumbnails
   );
   ~SettingsController() override;
@@ -60,14 +60,14 @@ private:
   void teardown();
 
   PageContext& m_page;
-  files::ViewPreferenceWriter& m_preferences;
-  files::ThumbnailService& m_thumbnails;
+  luciole::ViewPreferenceWriter& m_preferences;
+  luciole::ThumbnailService& m_thumbnails;
   WaylandConnection& m_connection;
   RenderContext& m_renderer;
   std::function<void()> m_clearThumbnails;
   SettingsDialog* m_view = nullptr;
   std::unique_ptr<SelectDropdownPopup> m_dropdown;
-  std::optional<files::Settings> m_pending;
+  std::optional<luciole::Settings> m_pending;
   std::string m_error;
   bool m_dirty = false;
   // Lives while the view is shown; dropdown callbacks check it.

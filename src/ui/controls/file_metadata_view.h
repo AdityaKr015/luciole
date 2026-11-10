@@ -11,7 +11,7 @@ class Label;
 class FileMetadataView final : public Flex {
 public:
   FileMetadataView();
-  void sync(std::span<const files::MetadataField> fields, float width, bool previewOnly = false);
+  void sync(std::span<const luciole::MetadataField> fields, float width, bool previewOnly = false);
 
 private:
   struct Row {

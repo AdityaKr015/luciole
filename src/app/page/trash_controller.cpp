@@ -26,62 +26,64 @@
 
 TrashController::TrashController(PageContext& page) : m_page(page) {}
 
-bool TrashController::canTrashItems(const std::vector<files::DirectoryEntry>& targets) const {
-  return m_page.actionState(files::BrowserAction::Trash, m_page.requestFor(targets)).enabled;
+bool TrashController::canTrashItems(const std::vector<luciole::DirectoryEntry>& targets) const {
+  return m_page.actionState(luciole::BrowserAction::Trash, m_page.requestFor(targets)).enabled;
 }
 
-void TrashController::trashItems(const std::vector<files::DirectoryEntry>& targets) {
+void TrashController::trashItems(const std::vector<luciole::DirectoryEntry>& targets) {
   if (!canTrashItems(targets) || !m_page.targetsCurrent(targets)) {
     m_page.actionError("This selection cannot be moved to Trash right now.");
     return;
   }
   m_page.cancelDrag();
-  std::vector<files::Location> sources;
+  std::vector<luciole::Location> sources;
   sources.reserve(targets.size());
   for (const auto& target : targets) {
     sources.push_back(target.location);
   }
-  const auto job = m_page.jobs().create<files::TrashService>();
-  if (!job->service<files::TrashService>().prepare(*m_page.browser().model().snapshot().location, std::move(sources))) {
+  const auto job = m_page.jobs().create<luciole::TrashService>();
+  if (!job->service<luciole::TrashService>().prepare(
+          *m_page.browser().model().snapshot().location, std::move(sources)
+      )) {
     m_page.actionError("Another Trash operation is still finishing.");
   }
 }
 
-void TrashController::restore(const std::vector<files::DirectoryEntry>& targets) {
+void TrashController::restore(const std::vector<luciole::DirectoryEntry>& targets) {
   m_page.cancelDrag();
   m_page.setActionMessage({});
-  if (!m_page.jobs().create<files::RestoreService>()->service<files::RestoreService>().start(targets)) {
+  if (!m_page.jobs().create<luciole::RestoreService>()->service<luciole::RestoreService>().start(targets)) {
     m_page.actionError("Could not start restoring the selection.");
   }
 }
 
 void TrashController::restoreChanged(OperationJob& job) {
-  const auto& restore = job.service<files::RestoreService>();
+  const auto& restore = job.service<luciole::RestoreService>();
   if (!restore.busy() && job.takeResult()) {
     const auto& results = restore.results();
-    const auto count = [&](files::RestoreOutcome outcome) {
-      return std::ranges::count(results, outcome, &files::RestoreResult::outcome);
+    const auto count = [&](luciole::RestoreOutcome outcome) {
+      return std::ranges::count(results, outcome, &luciole::RestoreResult::outcome);
     };
-    const auto restored = count(files::RestoreOutcome::Restored);
+    const auto restored = count(luciole::RestoreOutcome::Restored);
     std::string message = std::format("{} item{} restored", restored, restored == 1 ? "" : "s");
     for (const auto& [outcome, label] :
-         {std::pair{files::RestoreOutcome::Skipped, "skipped"}, std::pair{files::RestoreOutcome::Failed, "failed"},
-          std::pair{files::RestoreOutcome::Cancelled, "cancelled"},
-          std::pair{files::RestoreOutcome::Unconfirmed, "could not be confirmed"}}) {
+         {std::pair{luciole::RestoreOutcome::Skipped, "skipped"}, std::pair{luciole::RestoreOutcome::Failed, "failed"},
+          std::pair{luciole::RestoreOutcome::Cancelled, "cancelled"},
+          std::pair{luciole::RestoreOutcome::Unconfirmed, "could not be confirmed"}}) {
       if (const auto amount = count(outcome); amount != 0) {
         message += std::format(" · {} {}", amount, label);
       }
     }
     const auto error = std::ranges::find_if(results, [](const auto& item) { return item.error.has_value(); });
     if (error != results.end()) {
-      message += std::format(" · {}: {}", error->displayName, files::fileErrorText(error->error));
+      message += std::format(" · {}: {}", error->displayName, luciole::fileErrorText(error->error));
     }
     m_page.setActionMessage(std::move(message));
     m_page.browser().refresh();
   }
 }
 
-void TrashController::openEmptyTrash(std::optional<std::vector<files::DirectoryEntry>> selection) {
+void TrashController::openEmptyTrash(std::optional<std::vector<luciole::DirectoryEntry>> selection) {
   if (m_page.jobs().busy()) {
     m_page.actionError("Another file operation is still finishing.");
     return;
@@ -95,7 +97,7 @@ void TrashController::openEmptyTrash(std::optional<std::vector<files::DirectoryE
   Button* confirm = nullptr;
   auto root = ui::column(
       {.align = FlexAlign::Stretch},
-      files::dialogHeader(
+      luciole::dialogHeader(
           selection ? "Delete selected items permanently?" : "Empty Trash?", "trash", [this] { m_page.dismissMenu(); }
       ),
       ui::label(
@@ -130,7 +132,7 @@ void TrashController::openEmptyTrash(std::optional<std::vector<files::DirectoryE
           )
       )
   );
-  files::applyDialogStyle(*root);
+  luciole::applyDialogStyle(*root);
   UiPhaseScope phase(UiPhase::Layout);
   LayoutConstraints constraints;
   constraints.setExactWidth(width);
@@ -148,12 +150,12 @@ void TrashController::openEmptyTrash(std::optional<std::vector<files::DirectoryE
       m_emptyTrashSize = nullptr;
       m_emptyTrashConfirm = nullptr;
     });
-    m_emptyTrash = m_page.jobs().create<files::EmptyTrashService>(JobScope::Page);
+    m_emptyTrash = m_page.jobs().create<luciole::EmptyTrashService>(JobScope::Page);
     m_emptyTrashMessage = message;
     m_emptyTrashSize = size;
     m_emptyTrashConfirm = confirm;
     m_page.menuDispatcher().setFocus(cancel->inputArea());
-    auto& emptyTrash = m_emptyTrash->service<files::EmptyTrashService>();
+    auto& emptyTrash = m_emptyTrash->service<luciole::EmptyTrashService>();
     if (!(selection ? emptyTrash.prepareSelection(std::move(*selection)) : emptyTrash.prepare())) {
       message->setText("Another Trash deletion is still finishing.");
     }
@@ -161,7 +163,7 @@ void TrashController::openEmptyTrash(std::optional<std::vector<files::DirectoryE
 }
 
 void TrashController::confirmEmptyTrash() {
-  if (!m_emptyTrash || !m_emptyTrash->service<files::EmptyTrashService>().empty()) {
+  if (!m_emptyTrash || !m_emptyTrash->service<luciole::EmptyTrashService>().empty()) {
     return;
   }
   m_page.jobs().follow(*m_emptyTrash);
@@ -181,35 +183,35 @@ void TrashController::emptyTrashChanged(OperationJob& job) {
     m_emptyTrashDirty = true;
     return;
   }
-  const auto& snapshot = job.service<files::EmptyTrashService>().snapshot();
-  if (snapshot.status == files::EmptyTrashStatus::Finished && job.takeResult()) {
-    const auto count = [&](files::EmptyTrashOutcome outcome) {
-      return std::ranges::count(snapshot.results, outcome, &files::EmptyTrashResult::outcome);
+  const auto& snapshot = job.service<luciole::EmptyTrashService>().snapshot();
+  if (snapshot.status == luciole::EmptyTrashStatus::Finished && job.takeResult()) {
+    const auto count = [&](luciole::EmptyTrashOutcome outcome) {
+      return std::ranges::count(snapshot.results, outcome, &luciole::EmptyTrashResult::outcome);
     };
-    const auto done = count(files::EmptyTrashOutcome::Deleted);
+    const auto done = count(luciole::EmptyTrashOutcome::Deleted);
     std::string message = std::format("{} item{} permanently deleted", done, done == 1 ? "" : "s");
     for (const auto& [outcome, label] :
-         {std::pair{files::EmptyTrashOutcome::Skipped, "skipped"},
-          std::pair{files::EmptyTrashOutcome::Failed, "failed"},
-          std::pair{files::EmptyTrashOutcome::Cancelled, "cancelled"},
-          std::pair{files::EmptyTrashOutcome::Unconfirmed, "could not be confirmed"}}) {
+         {std::pair{luciole::EmptyTrashOutcome::Skipped, "skipped"},
+          std::pair{luciole::EmptyTrashOutcome::Failed, "failed"},
+          std::pair{luciole::EmptyTrashOutcome::Cancelled, "cancelled"},
+          std::pair{luciole::EmptyTrashOutcome::Unconfirmed, "could not be confirmed"}}) {
       if (const auto amount = count(outcome); amount != 0) {
         message += std::format(" · {} {}", amount, label);
       }
     }
     const auto error = std::ranges::find_if(snapshot.results, [](const auto& item) { return item.error.has_value(); });
     if (error != snapshot.results.end()) {
-      message += std::format(" · {}: {}", error->displayName, files::fileErrorText(error->error));
+      message += std::format(" · {}: {}", error->displayName, luciole::fileErrorText(error->error));
     }
     m_page.actionError(std::move(message));
     auto& browser = m_page.browser();
     if (const auto& location = browser.model().snapshot().location; location && location->isTrash()) {
-      browser.open(files::Location::trash());
+      browser.open(luciole::Location::trash());
     }
-  } else if (snapshot.status == files::EmptyTrashStatus::Error && job.takeResult()) {
+  } else if (snapshot.status == luciole::EmptyTrashStatus::Error && job.takeResult()) {
     m_page.actionError(
         std::string(snapshot.selection ? "Could not delete selected items: " : "Could not empty Trash: ")
-        + files::fileErrorText(snapshot.error)
+        + luciole::fileErrorText(snapshot.error)
     );
   }
 }
@@ -218,9 +220,9 @@ void TrashController::syncEmptyTrash() {
   if (!m_emptyTrash || m_emptyTrashMessage == nullptr) {
     return;
   }
-  const auto& emptyTrash = m_emptyTrash->service<files::EmptyTrashService>();
+  const auto& emptyTrash = m_emptyTrash->service<luciole::EmptyTrashService>();
   const auto& snapshot = emptyTrash.snapshot();
-  if (snapshot.status == files::EmptyTrashStatus::Ready) {
+  if (snapshot.status == luciole::EmptyTrashStatus::Ready) {
     const auto count = snapshot.results.size();
     m_emptyTrashMessage->setText(
         count == 0 ? "Trash is already empty."
@@ -230,13 +232,13 @@ void TrashController::syncEmptyTrash() {
                      )
     );
     m_emptyTrashConfirm->setEnabled(emptyTrash.canEmpty());
-  } else if (snapshot.status == files::EmptyTrashStatus::Error) {
-    m_emptyTrashMessage->setText("Could not read Trash: " + files::fileErrorText(snapshot.error));
+  } else if (snapshot.status == luciole::EmptyTrashStatus::Error) {
+    m_emptyTrashMessage->setText("Could not read Trash: " + luciole::fileErrorText(snapshot.error));
     m_emptyTrashConfirm->setEnabled(false);
   }
   std::string sizeText = "Size: calculating…";
   if (snapshot.size) {
-    const files::GString value(g_format_size_full(*snapshot.size, G_FORMAT_SIZE_IEC_UNITS));
+    const luciole::GString value(g_format_size_full(*snapshot.size, G_FORMAT_SIZE_IEC_UNITS));
     sizeText = std::format("Size: {}{}", snapshot.sizeIncomplete ? "at least " : "", value.get());
   } else if (!emptyTrash.busy()) {
     sizeText = "Size unavailable";
@@ -246,21 +248,23 @@ void TrashController::syncEmptyTrash() {
 }
 
 void TrashController::trashChanged(OperationJob& job) {
-  const auto& trash = job.service<files::TrashService>();
+  const auto& trash = job.service<luciole::TrashService>();
   const auto& snapshot = trash.snapshot();
   // OperationHub::update() starts a prepared move.
   if (trash.busy() || trash.canTrash() || !job.takeResult()) {
     return;
   }
-  if (snapshot.status == files::TrashStatus::Error) {
-    m_page.actionError("Could not move to Trash: " + files::fileErrorText(snapshot.error));
-  } else if (snapshot.status == files::TrashStatus::Cancelled) {
+  if (snapshot.status == luciole::TrashStatus::Error) {
+    m_page.actionError("Could not move to Trash: " + luciole::fileErrorText(snapshot.error));
+  } else if (snapshot.status == luciole::TrashStatus::Cancelled) {
     m_page.actionError("Move to Trash cancelled.");
-  } else if (snapshot.status == files::TrashStatus::Finished) {
-    const auto done = std::ranges::count(snapshot.results, files::TrashOutcome::Trashed, &files::TrashResult::outcome);
-    const auto failed = std::ranges::count(snapshot.results, files::TrashOutcome::Failed, &files::TrashResult::outcome);
+  } else if (snapshot.status == luciole::TrashStatus::Finished) {
+    const auto done =
+        std::ranges::count(snapshot.results, luciole::TrashOutcome::Trashed, &luciole::TrashResult::outcome);
+    const auto failed =
+        std::ranges::count(snapshot.results, luciole::TrashOutcome::Failed, &luciole::TrashResult::outcome);
     const auto cancelled =
-        std::ranges::count(snapshot.results, files::TrashOutcome::Cancelled, &files::TrashResult::outcome);
+        std::ranges::count(snapshot.results, luciole::TrashOutcome::Cancelled, &luciole::TrashResult::outcome);
     std::string message = std::format("{} item{} moved to Trash", done, done == 1 ? "" : "s");
     if (failed != 0) {
       message += std::format(" · {} failed", failed);
@@ -272,7 +276,7 @@ void TrashController::trashChanged(OperationJob& job) {
         std::ranges::find_if(snapshot.results, [](const auto& result) { return result.error.has_value(); });
     if (error != snapshot.results.end()) {
       message +=
-          std::format(" · {}: {}", error->source.displayName().value_or("Item"), files::fileErrorText(*error->error));
+          std::format(" · {}: {}", error->source.displayName().value_or("Item"), luciole::fileErrorText(*error->error));
     }
     m_page.actionError(std::move(message));
     m_page.browser().refresh();

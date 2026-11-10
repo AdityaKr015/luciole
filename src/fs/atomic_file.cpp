@@ -199,8 +199,8 @@ namespace {
   }
 } // namespace
 
-files::AtomicWriteResult
-files::updateTextFileAtomic(const std::filesystem::path& path, const AtomicTransform& transform) {
+luciole::AtomicWriteResult
+luciole::updateTextFileAtomic(const std::filesystem::path& path, const AtomicTransform& transform) {
   if (!path.is_absolute()
       || path.native().contains('\0')
       || path.filename().empty()
@@ -290,7 +290,7 @@ files::updateTextFileAtomic(const std::filesystem::path& path, const AtomicTrans
   return {.state = AtomicWriteState::Durable, .error = {}};
 }
 
-std::expected<std::optional<std::string>, std::string> files::readPrivateTextFile(const std::filesystem::path& path) {
+std::expected<std::optional<std::string>, std::string> luciole::readPrivateTextFile(const std::filesystem::path& path) {
   if (!path.is_absolute()
       || path.native().contains('\0')
       || path.filename().empty()

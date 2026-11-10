@@ -9,7 +9,7 @@
 #include <utility>
 
 namespace {
-  using namespace files;
+  using namespace luciole;
   constexpr const char* kAttributes = "standard::type,standard::is-symlink,standard::size,standard::symlink-target,"
                                       "id::file,id::filesystem,etag::value,time::modified,time::modified-usec,access::"
                                       "can-write,access::can-read,unix::mode";
@@ -54,7 +54,7 @@ namespace {
       return;
     }
     const auto base = name.substr(0, name.find('.'));
-    const files::GString upper(g_ascii_strup(base.data(), static_cast<gssize>(base.size())));
+    const luciole::GString upper(g_ascii_strup(base.data(), static_cast<gssize>(base.size())));
     const std::string_view device(upper.get());
     const bool reserved = device == "CON"
         || device == "PRN"
@@ -98,8 +98,8 @@ namespace {
       if (!g_file_info_has_attribute(expected, attribute)) {
         continue;
       }
-      const files::GString before(g_file_info_get_attribute_as_string(expected, attribute));
-      const files::GString after(g_file_info_get_attribute_as_string(actual, attribute));
+      const luciole::GString before(g_file_info_get_attribute_as_string(expected, attribute));
+      const luciole::GString after(g_file_info_get_attribute_as_string(actual, attribute));
       if (!after || std::string_view(before.get()) != after.get()) {
         throwFileError(FileErrorKind::Changed, "An item changed during the transfer.");
       }
@@ -313,7 +313,7 @@ namespace {
   }
 } // namespace
 
-struct files::ProviderTransfer::State {
+struct luciole::ProviderTransfer::State {
   TransferRequest request;
   std::vector<std::unique_ptr<Node>> roots;
   std::size_t entries = 0;
@@ -459,8 +459,8 @@ struct files::ProviderTransfer::State {
         return;
       }
       // A private sibling stages the entire item before its final name becomes visible.
-      const files::GString uuid(g_uuid_string_random());
-      const auto stage = node.parent.child(std::string(".noctalia-transfer-") + uuid.get());
+      const luciole::GString uuid(g_uuid_string_random());
+      const auto stage = node.parent.child(std::string(".luciole-transfer-") + uuid.get());
       mkdir(stage, token);
       bool retain = false;
       try {
@@ -526,17 +526,17 @@ struct files::ProviderTransfer::State {
   }
 };
 
-files::ProviderTransfer::ProviderTransfer(TransferRequest request)
+luciole::ProviderTransfer::ProviderTransfer(TransferRequest request)
     : m_state(std::make_unique<State>(std::move(request))) {}
-files::ProviderTransfer::~ProviderTransfer() = default;
-std::size_t files::ProviderTransfer::retryable() const {
+luciole::ProviderTransfer::~ProviderTransfer() = default;
+std::size_t luciole::ProviderTransfer::retryable() const {
   std::size_t result = 0;
   for (const auto& node : m_state->roots) {
     result += retries(*node);
   }
   return result;
 }
-std::vector<files::TransferResult> files::ProviderTransfer::run(
+std::vector<luciole::TransferResult> luciole::ProviderTransfer::run(
     const CancelToken& token, std::atomic<std::uint64_t>& bytes, std::atomic<std::size_t>& completed,
     const Choose& choose
 ) {

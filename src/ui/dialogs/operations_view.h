@@ -16,7 +16,7 @@ public:
   explicit OperationsView(Action action);
   ~OperationsView() override;
   // Stages snapshots. Row structure is changed only in Layout; progress updates retain existing controls.
-  bool sync(std::vector<files::JobActivity> activities);
+  bool sync(std::vector<luciole::JobActivity> activities);
   void revealFocus(InputArea* focus);
 
 private:
@@ -27,7 +27,7 @@ private:
   void doArrange(Renderer& renderer, const LayoutRect& rect) override;
   Action m_action;
   ScrollView* m_scroll = nullptr;
-  std::vector<files::JobActivity> m_activities;
+  std::vector<luciole::JobActivity> m_activities;
   std::vector<Row*> m_rows;
   bool m_structureDirty = true;
 };

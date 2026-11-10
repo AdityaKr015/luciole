@@ -13,16 +13,16 @@ class Segmented;
 class RecursivePermissionEditor;
 
 // The snapshot's failure text, or its status message when it did not fail as a whole.
-std::string permissionStatusText(const files::PermissionSnapshot& snapshot);
+std::string permissionStatusText(const luciole::PermissionSnapshot& snapshot);
 
 class PermissionEditor final : public Flex {
 public:
   explicit PermissionEditor(std::function<void()> edited, bool multiple = false, bool folders = false);
-  void sync(const files::PermissionSnapshot& snapshot);
+  void sync(const luciole::PermissionSnapshot& snapshot);
   bool canApply() const;
-  files::PermissionEdit edit() const;
+  luciole::PermissionEdit edit() const;
   bool recursive() const;
-  files::RecursivePermissionEdit recursiveEdit() const;
+  luciole::RecursivePermissionEdit recursiveEdit() const;
   const Node* messageNode() const;
 
 private:
@@ -37,7 +37,7 @@ private:
   RecursivePermissionEditor* m_tree = nullptr;
   Input *m_owner = nullptr, *m_group = nullptr;
   Label *m_mode = nullptr, *m_reason = nullptr, *m_message = nullptr, *m_ids = nullptr;
-  files::PermissionSnapshot m_snapshot;
+  luciole::PermissionSnapshot m_snapshot;
   std::string m_initialOwner, m_initialGroup;
   bool m_syncing = false;
   std::function<void()> m_edited;

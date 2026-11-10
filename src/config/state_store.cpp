@@ -36,28 +36,28 @@ namespace {
     return std::nullopt;
   }
 
-  files::ConfigIssue problem(const std::filesystem::path& path, std::string key, std::string message) {
+  luciole::ConfigIssue problem(const std::filesystem::path& path, std::string key, std::string message) {
     return {.file = path, .key = std::move(key), .message = std::move(message)};
   }
 
-  files::ConfigIssues validate(const files::SessionState& state, const std::filesystem::path& path) {
-    files::ConfigIssues issues;
+  luciole::ConfigIssues validate(const luciole::SessionState& state, const std::filesystem::path& path) {
+    luciole::ConfigIssues issues;
     const auto add = [&](std::string key, std::string message) {
       issues.push_back(problem(path, std::move(key), std::move(message)));
     };
-    const auto location = [&](const files::Location& value, const std::string& key) {
+    const auto location = [&](const luciole::Location& value, const std::string& key) {
       if (const auto error = uriProblem(value.uri())) {
         add(key, *error);
       }
     };
-    if (state.bookmarks.size() > files::StateStore::bookmarkLimit) {
+    if (state.bookmarks.size() > luciole::StateStore::bookmarkLimit) {
       add("bookmarks", "at most 256 bookmarks are supported");
     }
     std::unordered_set<std::string> uris;
     for (std::size_t i = 0; i < state.bookmarks.size(); ++i) {
       const auto& bookmark = state.bookmarks[i];
       const auto key = std::format("bookmarks[{}]", i);
-      if (const auto error = files::bookmarkLabelProblem(bookmark.label)) {
+      if (const auto error = luciole::bookmarkLabelProblem(bookmark.label)) {
         add(key + ".label", *error);
       }
       location(bookmark.location, key + ".uri");
@@ -84,8 +84,8 @@ namespace {
         if (tab.secondary) {
           location(*tab.secondary, tabKey + ".secondary_uri");
         }
-        if ((tab.activePane != files::ActivePane::Primary && tab.activePane != files::ActivePane::Secondary)
-            || (tab.activePane == files::ActivePane::Secondary && !tab.secondary)) {
+        if ((tab.activePane != luciole::ActivePane::Primary && tab.activePane != luciole::ActivePane::Secondary)
+            || (tab.activePane == luciole::ActivePane::Secondary && !tab.secondary)) {
           add(tabKey + ".active_pane", "active pane must exist and be primary or secondary");
         }
       }
@@ -94,11 +94,12 @@ namespace {
   }
 
   // Shape checks retain source positions; cross-record checks retain key paths.
-  class Decoder : public files::TomlDecoder {
+  class Decoder : public luciole::TomlDecoder {
   public:
     using TomlDecoder::TomlDecoder;
 
-    std::optional<files::Location> location(const toml::table& table, std::string_view field, const std::string& key) {
+    std::optional<luciole::Location>
+    location(const toml::table& table, std::string_view field, const std::string& key) {
       const auto uri = text(table, field, key);
       if (!uri) {
         return std::nullopt;
@@ -108,14 +109,14 @@ namespace {
         return std::nullopt;
       }
       try {
-        return files::Location::fromUri(*uri);
+        return luciole::Location::fromUri(*uri);
       } catch (const std::invalid_argument&) {
         issue(*table.get(field), key, "expected an absolute operation URI");
         return std::nullopt;
       }
     }
 
-    std::optional<files::SavedTab> tab(const toml::node& node, const std::string& key) {
+    std::optional<luciole::SavedTab> tab(const toml::node& node, const std::string& key) {
       const auto* table = node.as_table();
       if (table == nullptr) {
         issue(node, key, "expected a tab table");
@@ -123,7 +124,7 @@ namespace {
       }
       unknownKeys(*table, key + ".", {"primary_uri", "secondary_uri", "active_pane"}, "unknown state field");
       auto primary = location(*table, "primary_uri", key + ".primary_uri");
-      std::optional<files::Location> secondary;
+      std::optional<luciole::Location> secondary;
       if (table->contains("secondary_uri")) {
         secondary = location(*table, "secondary_uri", key + ".secondary_uri");
       }
@@ -134,21 +135,21 @@ namespace {
       if (!primary || !active) {
         return std::nullopt;
       }
-      return files::SavedTab{
+      return luciole::SavedTab{
           .primary = std::move(*primary),
           .secondary = std::move(secondary),
-          .activePane = *active == "secondary" ? files::ActivePane::Secondary : files::ActivePane::Primary
+          .activePane = *active == "secondary" ? luciole::ActivePane::Secondary : luciole::ActivePane::Primary
       };
     }
 
-    std::optional<files::SavedWindow> window(const toml::node& node, const std::string& key) {
+    std::optional<luciole::SavedWindow> window(const toml::node& node, const std::string& key) {
       const auto* table = node.as_table();
       if (table == nullptr) {
         issue(node, key, "expected a window table");
         return std::nullopt;
       }
       unknownKeys(*table, key + ".", {"tabs", "active_tab"}, "unknown state field");
-      files::SavedWindow result;
+      luciole::SavedWindow result;
       const auto* active = table->get("active_tab");
       if (active == nullptr
           || !active->is_integer()
@@ -169,12 +170,12 @@ namespace {
     }
   };
 
-  std::expected<files::SessionState, files::ConfigIssues>
+  std::expected<luciole::SessionState, luciole::ConfigIssues>
   parseState(const std::optional<std::string>& text, const std::filesystem::path& path) {
     if (!text) {
-      return files::SessionState{};
+      return luciole::SessionState{};
     }
-    auto table = files::parseToml(*text, path);
+    auto table = luciole::parseToml(*text, path);
     if (!table) {
       return std::unexpected(std::move(table.error()));
     }
@@ -183,13 +184,13 @@ namespace {
         *table, "", {"schema_version", "places_customized", "bookmarks", "windows"}, "unknown state field"
     );
     const auto* version = table->get("schema_version");
-    if (version == nullptr || !files::isSchemaVersion(*version)) {
+    if (version == nullptr || !luciole::isSchemaVersion(*version)) {
       decoder.issue(
           version != nullptr ? *version : *table, "schema_version",
-          std::format("expected integer state schema version {}", files::kSchemaVersion)
+          std::format("expected integer state schema version {}", luciole::kSchemaVersion)
       );
     }
-    files::SessionState state;
+    luciole::SessionState state;
     if (const auto* customized = table->get("places_customized")) {
       if (!customized->is_boolean()) {
         decoder.issue(*customized, "places_customized", "expected a boolean");
@@ -197,8 +198,9 @@ namespace {
         state.placesCustomized = customized->as_boolean()->get();
       }
     }
-    if (const auto* bookmarks =
-            decoder.array(*table, "bookmarks", "bookmarks", files::StateStore::bookmarkLimit, state.placesCustomized)) {
+    if (const auto* bookmarks = decoder.array(
+            *table, "bookmarks", "bookmarks", luciole::StateStore::bookmarkLimit, state.placesCustomized
+        )) {
       for (std::size_t i = 0; i < bookmarks->size(); ++i) {
         const auto key = std::format("bookmarks[{}]", i);
         const auto* bookmark = bookmarks->get(i)->as_table();
@@ -225,11 +227,11 @@ namespace {
       return std::unexpected(std::move(decoder.issues));
     }
     auto issues = validate(state, path);
-    return issues.empty() ? std::expected<files::SessionState, files::ConfigIssues>(std::move(state))
+    return issues.empty() ? std::expected<luciole::SessionState, luciole::ConfigIssues>(std::move(state))
                           : std::unexpected(std::move(issues));
   }
 
-  std::string formatState(const files::SessionState& state) {
+  std::string formatState(const luciole::SessionState& state) {
     toml::array bookmarks;
     for (const auto& bookmark : state.bookmarks) {
       bookmarks.push_back(toml::table{{"label", bookmark.label}, {"uri", bookmark.location.uri()}});
@@ -240,7 +242,7 @@ namespace {
       for (const auto& tab : window.tabs) {
         toml::table value{
             {"primary_uri", tab.primary.uri()},
-            {"active_pane", tab.activePane == files::ActivePane::Primary ? "primary" : "secondary"}
+            {"active_pane", tab.activePane == luciole::ActivePane::Primary ? "primary" : "secondary"}
         };
         if (tab.secondary) {
           value.insert("secondary_uri", tab.secondary->uri());
@@ -252,7 +254,7 @@ namespace {
       );
     }
     const toml::table document{
-        {"schema_version", files::kSchemaVersion},
+        {"schema_version", luciole::kSchemaVersion},
         {"places_customized", state.placesCustomized},
         {"bookmarks", std::move(bookmarks)},
         {"windows", std::move(windows)}
@@ -270,7 +272,7 @@ namespace {
   }
 } // namespace
 
-std::optional<std::string> files::bookmarkLabelProblem(std::string_view label) {
+std::optional<std::string> luciole::bookmarkLabelProblem(std::string_view label) {
   if (label.empty()) {
     return "Enter a label.";
   }
@@ -286,15 +288,15 @@ std::optional<std::string> files::bookmarkLabelProblem(std::string_view label) {
   return std::nullopt;
 }
 
-files::StateStore::StateStore(std::filesystem::path path) : m_path(std::move(path)) {}
+luciole::StateStore::StateStore(std::filesystem::path path) : m_path(std::move(path)) {}
 
-std::filesystem::path files::StateStore::pathFromEnvironment() { return stateHome() / "noctalia-files/state.toml"; }
+std::filesystem::path luciole::StateStore::pathFromEnvironment() { return stateHome() / "luciole/state.toml"; }
 
-bool files::StateStore::validPath() const {
+bool luciole::StateStore::validPath() const {
   return m_path.is_absolute() && !m_path.native().contains('\0') && m_path.filename() == "state.toml";
 }
 
-bool files::StateStore::load() {
+bool luciole::StateStore::load() {
   m_issues.clear();
   if (!validPath()) {
     m_issues.push_back(problem(m_path, {}, "expected an absolute state.toml path"));
@@ -315,20 +317,20 @@ bool files::StateStore::load() {
   return true;
 }
 
-files::AtomicWriteState files::StateStore::saveBookmarks(std::vector<Bookmark> bookmarks) {
+luciole::AtomicWriteState luciole::StateStore::saveBookmarks(std::vector<Bookmark> bookmarks) {
   auto proposed = m_state;
   proposed.bookmarks = std::move(bookmarks);
   proposed.placesCustomized = true;
   return save(std::move(proposed), true);
 }
 
-files::AtomicWriteState files::StateStore::saveWindows(std::vector<SavedWindow> windows) {
+luciole::AtomicWriteState luciole::StateStore::saveWindows(std::vector<SavedWindow> windows) {
   auto proposed = m_state;
   proposed.windows = std::move(windows);
   return save(std::move(proposed), false);
 }
 
-files::AtomicWriteState files::StateStore::save(SessionState proposed, bool bookmarks) {
+luciole::AtomicWriteState luciole::StateStore::save(SessionState proposed, bool bookmarks) {
   m_issues.clear();
   if (!m_loaded || !validPath()) {
     m_issues.push_back(problem(m_path, {}, "load a valid state snapshot before saving"));

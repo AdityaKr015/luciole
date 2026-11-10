@@ -11,13 +11,13 @@
 #include <string_view>
 
 namespace {
-  using files::ActivityState;
-  using files::JobActivity;
+  using luciole::ActivityState;
+  using luciole::JobActivity;
   constexpr std::size_t kReportBytes = 64 * 1024;
   std::string bounded(std::string_view text) {
     constexpr std::string_view suffix = "\nReport truncated.\n";
     const auto count = std::min(text.size(), kReportBytes);
-    const files::GString valid(g_utf8_make_valid(text.data(), static_cast<gssize>(count)));
+    const luciole::GString valid(g_utf8_make_valid(text.data(), static_cast<gssize>(count)));
     std::string result(valid.get());
     if (result.size() > kReportBytes - suffix.size() || text.size() > count) {
       auto limit = std::min(result.size(), kReportBytes - suffix.size());
@@ -30,14 +30,14 @@ namespace {
     return result;
   }
   std::string sizeText(std::uint64_t bytes) {
-    const files::GString text(g_format_size_full(bytes, G_FORMAT_SIZE_IEC_UNITS));
+    const luciole::GString text(g_format_size_full(bytes, G_FORMAT_SIZE_IEC_UNITS));
     return text.get();
   }
-  std::string itemName(const files::Location& location) { return location.displayName().value_or("Item"); }
+  std::string itemName(const luciole::Location& location) { return location.displayName().value_or("Item"); }
   struct Report {
     std::string text;
     std::size_t rows = 0;
-    void add(const std::string& name, const std::string& outcome, const std::optional<files::FileError>& error = {}) {
+    void add(const std::string& name, const std::string& outcome, const std::optional<luciole::FileError>& error = {}) {
       if (rows++ >= 2048 || text.size() >= kReportBytes) {
         return;
       }
@@ -81,32 +81,32 @@ namespace {
       activity.progress = std::clamp(static_cast<float>(done) / static_cast<float>(total), 0.0F, 1.0F);
     }
   }
-  void transferResults(JobActivity& activity, const std::vector<files::TransferResult>& results, bool details) {
+  void transferResults(JobActivity& activity, const std::vector<luciole::TransferResult>& results, bool details) {
     constexpr std::array names{"Moved", "Copied", "Skipped", "Failed", "Cancelled", "Partial", "Linked"};
     Counts counts;
     Report report;
     for (const auto& result : results) {
       switch (result.outcome) {
-      case files::TransferOutcome::Moved:
-      case files::TransferOutcome::Copied:
-      case files::TransferOutcome::Linked:
+      case luciole::TransferOutcome::Moved:
+      case luciole::TransferOutcome::Copied:
+      case luciole::TransferOutcome::Linked:
         ++counts.done;
         break;
-      case files::TransferOutcome::Skipped:
+      case luciole::TransferOutcome::Skipped:
         ++counts.skipped;
         break;
-      case files::TransferOutcome::Failed:
+      case luciole::TransferOutcome::Failed:
         ++counts.failed;
         break;
-      case files::TransferOutcome::Cancelled:
+      case luciole::TransferOutcome::Cancelled:
         ++counts.cancelled;
         break;
-      case files::TransferOutcome::Partial:
+      case luciole::TransferOutcome::Partial:
         counts.partial = true;
         break;
       }
       if (details) {
-        const auto append = [&](auto&& self, const files::TransferResult& item, unsigned depth) -> void {
+        const auto append = [&](auto&& self, const luciole::TransferResult& item, unsigned depth) -> void {
           if (report.rows >= 2048 || report.text.size() >= kReportBytes || depth > 128) {
             report.rows = 2049;
             return;
@@ -124,14 +124,14 @@ namespace {
   }
   void simple(
       JobActivity& activity, bool running, bool ready, bool succeeded, bool cancelled,
-      const std::optional<files::FileError>& error, bool details, const std::string& name = ""
+      const std::optional<luciole::FileError>& error, bool details, const std::string& name = ""
   ) {
     activity.finished = !running && !ready;
-    activity.state = error && error->kind != files::FileErrorKind::Cancelled     ? ActivityState::Failed
-        : cancelled || (error && error->kind == files::FileErrorKind::Cancelled) ? ActivityState::Cancelled
-        : succeeded                                                              ? ActivityState::Succeeded
-        : ready                                                                  ? ActivityState::Waiting
-                                                                                 : ActivityState::Preparing;
+    activity.state = error && error->kind != luciole::FileErrorKind::Cancelled     ? ActivityState::Failed
+        : cancelled || (error && error->kind == luciole::FileErrorKind::Cancelled) ? ActivityState::Cancelled
+        : succeeded                                                                ? ActivityState::Succeeded
+        : ready                                                                    ? ActivityState::Waiting
+                                                                                   : ActivityState::Preparing;
     activity.summary = error ? error->message
         : cancelled          ? "Cancelled"
         : succeeded          ? "Completed"
@@ -148,10 +148,10 @@ namespace {
     report.publish(activity, details);
   }
   void transfer(const OperationJob& job, JobActivity& activity, bool details) {
-    const auto& service = job.service<files::TransferService>();
-    activity.title = service.action() == files::TransferAction::Copy ? "Copy files"
-        : service.action() == files::TransferAction::Move            ? "Move files"
-                                                                     : "Create links";
+    const auto& service = job.service<luciole::TransferService>();
+    activity.title = service.action() == luciole::TransferAction::Copy ? "Copy files"
+        : service.action() == luciole::TransferAction::Move            ? "Move files"
+                                                                       : "Create links";
     if (job.running()) {
       activity.state = service.bytes() || service.completed() ? ActivityState::Working : ActivityState::Preparing;
       activity.summary = std::format(
@@ -166,30 +166,30 @@ namespace {
     }
   }
   void archive(const OperationJob& job, JobActivity& activity, bool details) {
-    const auto& service = job.service<files::ArchiveService>();
+    const auto& service = job.service<luciole::ArchiveService>();
     activity.title = "Archive operation";
     if (job.running()) {
       switch (service.phase()) {
-      case files::ArchivePhase::Reading:
+      case luciole::ArchivePhase::Reading:
         activity.summary = "Reading archive…";
         break;
-      case files::ArchivePhase::Compressing:
+      case luciole::ArchivePhase::Compressing:
         activity.summary = "Compressing…";
         break;
-      case files::ArchivePhase::Extracting:
+      case luciole::ArchivePhase::Extracting:
         activity.summary = "Extracting…";
         break;
-      case files::ArchivePhase::Transferring:
+      case luciole::ArchivePhase::Transferring:
         activity.summary = "Publishing output…";
         break;
-      case files::ArchivePhase::Cleaning:
+      case luciole::ArchivePhase::Cleaning:
         activity.summary = "Cleaning up…";
         break;
-      case files::ArchivePhase::WaitingPassword:
+      case luciole::ArchivePhase::WaitingPassword:
         activity.summary = "Waiting for a password";
         activity.canReview = true;
         break;
-      case files::ArchivePhase::Idle:
+      case luciole::ArchivePhase::Idle:
         activity.summary = "Preparing…";
         break;
       }
@@ -203,8 +203,8 @@ namespace {
     if (service.error()) {
       const bool hasResults = !service.results().empty();
       if (!hasResults || !activity.failed()) {
-        activity.state =
-            service.error()->kind == files::FileErrorKind::Cancelled ? ActivityState::Cancelled : ActivityState::Failed;
+        activity.state = service.error()->kind == luciole::FileErrorKind::Cancelled ? ActivityState::Cancelled
+                                                                                    : ActivityState::Failed;
       }
       activity.summary = (hasResults ? activity.summary + " · " : "") + service.error()->message;
       if (details) {
@@ -216,37 +216,37 @@ namespace {
   }
   void single(const OperationJob& job, JobActivity& activity, bool details) {
     if (job.kind() == JobKind::Rename) {
-      const auto& service = job.service<files::RenameService>();
+      const auto& service = job.service<luciole::RenameService>();
       const auto& snapshot = service.snapshot();
       activity.title = job.renameReplay() == RenameReplay::Undo ? "Undo rename"
           : job.renameReplay() == RenameReplay::Redo            ? "Redo rename"
                                                                 : "Rename item";
       simple(
-          activity, job.running(), service.canRename(), snapshot.status == files::RenameStatus::Succeeded,
-          snapshot.status == files::RenameStatus::Cancelled, snapshot.error, details,
+          activity, job.running(), service.canRename(), snapshot.status == luciole::RenameStatus::Succeeded,
+          snapshot.status == luciole::RenameStatus::Cancelled, snapshot.error, details,
           snapshot.source ? itemName(*snapshot.source) : ""
       );
-      if (snapshot.status == files::RenameStatus::Renaming) {
+      if (snapshot.status == luciole::RenameStatus::Renaming) {
         activity.state = ActivityState::Working;
         activity.summary = "Renaming…";
       }
     } else {
-      const auto& service = job.service<files::CreateService>();
+      const auto& service = job.service<luciole::CreateService>();
       const auto& snapshot = service.snapshot();
-      activity.title = snapshot.kind == files::CreateKind::Folder ? "Create folder"
-          : snapshot.kind == files::CreateKind::EmptyFile         ? "Create file"
-          : snapshot.kind == files::CreateKind::Document          ? "Create document"
-                                                                  : "Create link";
+      activity.title = snapshot.kind == luciole::CreateKind::Folder ? "Create folder"
+          : snapshot.kind == luciole::CreateKind::EmptyFile         ? "Create file"
+          : snapshot.kind == luciole::CreateKind::Document          ? "Create document"
+                                                                    : "Create link";
       simple(
-          activity, job.running(), service.canCreate(), snapshot.status == files::CreateStatus::Succeeded,
-          snapshot.status == files::CreateStatus::Cancelled, snapshot.error, details,
+          activity, job.running(), service.canCreate(), snapshot.status == luciole::CreateStatus::Succeeded,
+          snapshot.status == luciole::CreateStatus::Cancelled, snapshot.error, details,
           snapshot.destination ? itemName(*snapshot.destination) : ""
       );
-      if (snapshot.status == files::CreateStatus::Creating) {
+      if (snapshot.status == luciole::CreateStatus::Creating) {
         activity.state = ActivityState::Working;
         activity.summary = "Creating…";
       }
-      if (snapshot.status == files::CreateStatus::Partial) {
+      if (snapshot.status == luciole::CreateStatus::Partial) {
         activity.state = ActivityState::Partial;
       }
     }
@@ -255,78 +255,78 @@ namespace {
     Counts counts;
     Report report;
     if (job.kind() == JobKind::Trash) {
-      const auto& service = job.service<files::TrashService>();
+      const auto& service = job.service<luciole::TrashService>();
       const auto& snapshot = service.snapshot();
       activity.title = "Move to Trash";
       simple(
-          activity, job.running(), service.canTrash(), snapshot.status == files::TrashStatus::Finished,
-          snapshot.status == files::TrashStatus::Cancelled, snapshot.error, false
+          activity, job.running(), service.canTrash(), snapshot.status == luciole::TrashStatus::Finished,
+          snapshot.status == luciole::TrashStatus::Cancelled, snapshot.error, false
       );
-      if (job.running() && snapshot.status == files::TrashStatus::Trashing) {
+      if (job.running() && snapshot.status == luciole::TrashStatus::Trashing) {
         progress(activity, service.completed(), snapshot.results.size());
       }
       if (!job.running()) {
         for (const auto& result : snapshot.results) {
-          if (result.outcome == files::TrashOutcome::Trashed) {
+          if (result.outcome == luciole::TrashOutcome::Trashed) {
             ++counts.done;
-          } else if (result.outcome == files::TrashOutcome::Failed) {
+          } else if (result.outcome == luciole::TrashOutcome::Failed) {
             ++counts.failed;
           } else {
             ++counts.cancelled;
           }
           if (details) {
             report.add(
-                itemName(result.source), result.outcome == files::TrashOutcome::Trashed ? "Trashed" : "Not trashed",
+                itemName(result.source), result.outcome == luciole::TrashOutcome::Trashed ? "Trashed" : "Not trashed",
                 result.error
             );
           }
         }
       }
-      if (snapshot.status == files::TrashStatus::Finished) {
+      if (snapshot.status == luciole::TrashStatus::Finished) {
         counts.finish(activity);
       }
     } else {
-      const auto& service = job.service<files::EmptyTrashService>();
+      const auto& service = job.service<luciole::EmptyTrashService>();
       const auto& snapshot = service.snapshot();
       activity.title = snapshot.selection ? "Delete from Trash" : "Empty Trash";
       simple(
-          activity, job.running(), service.canEmpty(), snapshot.status == files::EmptyTrashStatus::Finished,
-          snapshot.status == files::EmptyTrashStatus::Cancelled, snapshot.error, false
+          activity, job.running(), service.canEmpty(), snapshot.status == luciole::EmptyTrashStatus::Finished,
+          snapshot.status == luciole::EmptyTrashStatus::Cancelled, snapshot.error, false
       );
-      if (job.running() && snapshot.status == files::EmptyTrashStatus::Emptying) {
+      if (job.running() && snapshot.status == luciole::EmptyTrashStatus::Emptying) {
         progress(activity, service.completed(), snapshot.results.size());
       }
       if (!job.running()) {
         for (const auto& result : snapshot.results) {
-          if (result.outcome == files::EmptyTrashOutcome::Deleted) {
+          if (result.outcome == luciole::EmptyTrashOutcome::Deleted) {
             ++counts.done;
-          } else if (result.outcome == files::EmptyTrashOutcome::Skipped) {
+          } else if (result.outcome == luciole::EmptyTrashOutcome::Skipped) {
             ++counts.skipped;
-          } else if (result.outcome == files::EmptyTrashOutcome::Cancelled) {
+          } else if (result.outcome == luciole::EmptyTrashOutcome::Cancelled) {
             ++counts.cancelled;
           } else {
             ++counts.failed;
-            counts.partial |= result.outcome == files::EmptyTrashOutcome::Unconfirmed;
+            counts.partial |= result.outcome == luciole::EmptyTrashOutcome::Unconfirmed;
           }
           if (details) {
             report.add(
                 result.displayName,
-                result.outcome == files::EmptyTrashOutcome::Deleted           ? "Deleted"
-                    : result.outcome == files::EmptyTrashOutcome::Unconfirmed ? "Deletion unconfirmed"
-                                                                              : "Not deleted",
+                result.outcome == luciole::EmptyTrashOutcome::Deleted           ? "Deleted"
+                    : result.outcome == luciole::EmptyTrashOutcome::Unconfirmed ? "Deletion unconfirmed"
+                                                                                : "Not deleted",
                 result.error
             );
           }
         }
       }
-      if (snapshot.status == files::EmptyTrashStatus::Finished) {
+      if (snapshot.status == luciole::EmptyTrashStatus::Finished) {
         counts.finish(activity);
       }
     }
     report.publish(activity, details);
   }
   void restore(const OperationJob& job, JobActivity& activity, bool details) {
-    const auto& service = job.service<files::RestoreService>();
+    const auto& service = job.service<luciole::RestoreService>();
     activity.title = "Restore from Trash";
     if (job.running()) {
       activity.state = ActivityState::Working;
@@ -336,22 +336,22 @@ namespace {
     Counts counts;
     Report report;
     for (const auto& result : service.results()) {
-      if (result.outcome == files::RestoreOutcome::Restored) {
+      if (result.outcome == luciole::RestoreOutcome::Restored) {
         ++counts.done;
-      } else if (result.outcome == files::RestoreOutcome::Skipped) {
+      } else if (result.outcome == luciole::RestoreOutcome::Skipped) {
         ++counts.skipped;
-      } else if (result.outcome == files::RestoreOutcome::Cancelled) {
+      } else if (result.outcome == luciole::RestoreOutcome::Cancelled) {
         ++counts.cancelled;
       } else {
         ++counts.failed;
-        counts.partial |= result.outcome == files::RestoreOutcome::Unconfirmed;
+        counts.partial |= result.outcome == luciole::RestoreOutcome::Unconfirmed;
       }
       if (details) {
         report.add(
             result.displayName,
-            result.outcome == files::RestoreOutcome::Restored          ? "Restored"
-                : result.outcome == files::RestoreOutcome::Unconfirmed ? "Restoration unconfirmed"
-                                                                       : "Not restored",
+            result.outcome == luciole::RestoreOutcome::Restored          ? "Restored"
+                : result.outcome == luciole::RestoreOutcome::Unconfirmed ? "Restoration unconfirmed"
+                                                                         : "Not restored",
             result.error
         );
       }
@@ -362,7 +362,7 @@ namespace {
   void editing(const OperationJob& job, JobActivity& activity, bool details) {
     activity.state = ActivityState::Working;
     if (job.kind() == JobKind::BatchRename) {
-      const auto& service = job.service<files::BatchRenameService>();
+      const auto& service = job.service<luciole::BatchRenameService>();
       const auto& snapshot = service.snapshot();
       activity.title = "Batch rename";
       if (job.running()) {
@@ -374,21 +374,21 @@ namespace {
         }
       } else {
         simple(
-            activity, false, snapshot.phase == files::BatchRenamePhase::Ready,
-            snapshot.phase == files::BatchRenamePhase::Finished, snapshot.phase == files::BatchRenamePhase::Cancelled,
-            snapshot.error, details
+            activity, false, snapshot.phase == luciole::BatchRenamePhase::Ready,
+            snapshot.phase == luciole::BatchRenamePhase::Finished,
+            snapshot.phase == luciole::BatchRenamePhase::Cancelled, snapshot.error, details
         );
         if (snapshot.results) {
           Counts counts;
           for (const auto& result : *snapshot.results) {
-            if (result.outcome == files::BatchRenameOutcome::Renamed
-                || result.outcome == files::BatchRenameOutcome::Unchanged) {
+            if (result.outcome == luciole::BatchRenameOutcome::Renamed
+                || result.outcome == luciole::BatchRenameOutcome::Unchanged) {
               ++counts.done;
-            } else if (result.outcome == files::BatchRenameOutcome::Cancelled) {
+            } else if (result.outcome == luciole::BatchRenameOutcome::Cancelled) {
               ++counts.cancelled;
             } else {
               ++counts.failed;
-              counts.partial |= result.outcome != files::BatchRenameOutcome::Failed;
+              counts.partial |= result.outcome != luciole::BatchRenameOutcome::Failed;
             }
           }
           counts.finish(activity);
@@ -398,7 +398,7 @@ namespace {
         activity.report = std::make_shared<const std::string>(bounded(snapshot.report));
       }
     } else {
-      const auto& service = job.service<files::PermissionService>();
+      const auto& service = job.service<luciole::PermissionService>();
       const auto& snapshot = service.snapshot();
       activity.title = "Change permissions";
       activity.finished = !job.running();
@@ -425,11 +425,11 @@ namespace {
   }
 } // namespace
 
-std::optional<files::JobActivity> jobActivity(const OperationJob& job, bool details) {
+std::optional<luciole::JobActivity> jobActivity(const OperationJob& job, bool details) {
   if (!job.ran() || (job.kind() == JobKind::Permission && !job.activityStarted())) {
     return {};
   }
-  files::JobActivity activity;
+  luciole::JobActivity activity;
   activity.id = job.id();
   activity.canCancel = job.cancellable();
   switch (job.kind()) {
@@ -456,7 +456,7 @@ std::optional<files::JobActivity> jobActivity(const OperationJob& job, bool deta
     break;
   }
   if (job.conflict()) {
-    activity.state = files::ActivityState::Waiting;
+    activity.state = luciole::ActivityState::Waiting;
     activity.summary = "Waiting for a conflict decision";
     activity.canReview = true;
   }

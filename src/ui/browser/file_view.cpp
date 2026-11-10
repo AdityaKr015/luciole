@@ -30,13 +30,13 @@ namespace {
     if (!date) {
       return "Unknown";
     }
-    const files::GString text(g_date_time_format(date.get(), format));
+    const luciole::GString text(g_date_time_format(date.get(), format));
     return text ? text.get() : "Unknown";
   }
 
-  std::string fileSize(const files::DirectoryEntry& entry) {
+  std::string fileSize(const luciole::DirectoryEntry& entry) {
     std::string size;
-    if (entry.type != files::FileType::Directory && entry.size) {
+    if (entry.type != luciole::FileType::Directory && entry.size) {
       constexpr const char* units[] = {"B", "KiB", "MiB", "GiB", "TiB"};
       auto value = static_cast<double>(*entry.size);
       std::size_t unit = 0;
@@ -45,7 +45,7 @@ namespace {
         ++unit;
       }
       size = unit == 0 ? std::format("{} B", *entry.size) : std::format("{:.1f} {}", value, units[unit]);
-    } else if (entry.type != files::FileType::Directory) {
+    } else if (entry.type != luciole::FileType::Directory) {
       size = "Unknown";
     }
     return size;
@@ -53,10 +53,11 @@ namespace {
   // Adapted from Noctalia's FileEntryRow, with URI-backed entries and model selection.
   class FileRow final : public InputArea {
   public:
-    FileRow(files::FileIconCache& icons, files::ThumbnailService& thumbnails, bool miller = false) : m_miller(miller) {
+    FileRow(luciole::FileIconCache& icons, luciole::ThumbnailService& thumbnails, bool miller = false)
+        : m_miller(miller) {
       setHitTestVisible(false);
       addChild(ui::box({.out = &m_background, .radius = SelectionSurface::cornerRadius}));
-      auto icon = std::make_unique<files::FileIcon>(icons, 24.0F, &thumbnails);
+      auto icon = std::make_unique<luciole::FileIcon>(icons, 24.0F, &thumbnails);
       m_icon = icon.get();
       auto row = ui::row(
           {.out = &m_row,
@@ -83,7 +84,7 @@ namespace {
               )
           )
       );
-      for (const auto column : files::kDefaultDetailsColumnOrder) {
+      for (const auto column : luciole::kDefaultDetailsColumnOrder) {
         row->addChild(
             ui::label(
                 {.out = &m_details[static_cast<std::size_t>(column)],
@@ -98,9 +99,9 @@ namespace {
     }
 
     void bind(
-        const files::DirectoryEntry& entry, std::string_view typeLabel, bool selected, bool focused, bool hovered,
-        files::DetailsColumns columns, files::DetailsColumnOrder order, bool cut, bool path,
-        files::BrowsePresentation presentation, bool readOnly, const files::TreeRowInfo& tree
+        const luciole::DirectoryEntry& entry, std::string_view typeLabel, bool selected, bool focused, bool hovered,
+        luciole::DetailsColumns columns, luciole::DetailsColumnOrder order, bool cut, bool path,
+        luciole::BrowsePresentation presentation, bool readOnly, const luciole::TreeRowInfo& tree
     ) {
       m_tree = tree;
       m_treePrefix->setVisible(tree.enabled);
@@ -114,12 +115,12 @@ namespace {
       for (auto* label : {m_name, m_parent}) {
         label->setOpacity(entry.hidden && !selected ? kHiddenTextOpacity : 1.0F);
       }
-      const bool directory = entry.type == files::FileType::Directory;
+      const bool directory = entry.type == luciole::FileType::Directory;
       m_arrow->setVisible(m_miller && directory);
       m_arrow->setParticipatesInLayout(m_miller && directory);
       m_arrow->setColor(colorSpecFromRole(path ? ColorRole::Primary : ColorRole::OnSurfaceVariant));
       m_icon->bindFile(entry, colorSpecFromRole(ColorRole::OnSurface));
-      m_iconSize = files::fileRowIconSize(presentation);
+      m_iconSize = luciole::fileRowIconSize(presentation);
       m_icon->setIconSize(m_iconSize);
       m_icon->setEmblems(presentation.showEmblems && entry.symlink, presentation.showEmblems && readOnly);
       m_name->setText(tree.status.empty() ? entry.displayName : entry.displayName + " · " + tree.status);
@@ -127,9 +128,9 @@ namespace {
       m_parent->setVisible(!entry.parentDisplayName.empty());
       m_parent->setParticipatesInLayout(!entry.parentDisplayName.empty());
       m_parent->setColor(colorSpecFromRole(ColorRole::OnSurfaceVariant));
-      for (const auto column : files::kDefaultDetailsColumnOrder) {
+      for (const auto column : luciole::kDefaultDetailsColumnOrder) {
         auto* label = m_details[static_cast<std::size_t>(column)];
-        label->setText(columns.visible(column) ? files::entryColumnText(entry, column, typeLabel) : "");
+        label->setText(columns.visible(column) ? luciole::entryColumnText(entry, column, typeLabel) : "");
         label->setOpacity(entry.hidden && !selected ? kHiddenTextOpacity : 1.0F);
         label->setColor(colorSpecFromRole(ColorRole::OnSurfaceVariant));
       }
@@ -154,14 +155,15 @@ namespace {
         m_appliedColumnOrder = m_columnOrder;
       }
       const auto& columns = m_columns;
-      for (const auto column : files::kDefaultDetailsColumnOrder) {
+      for (const auto column : luciole::kDefaultDetailsColumnOrder) {
         auto* label = m_details[static_cast<std::size_t>(column)];
         label->setVisible(columns.visible(column));
         label->setParticipatesInLayout(columns.visible(column));
         label->setMinWidth(columns.width(column));
         label->setMaxWidth(columns.width(column));
       }
-      const float prefix = m_tree.enabled ? files::treePrefixWidth(m_tree.depth, columns.nameWidth, m_iconSize) : 0.0F;
+      const float prefix =
+          m_tree.enabled ? luciole::treePrefixWidth(m_tree.depth, columns.nameWidth, m_iconSize) : 0.0F;
       m_treePrefix->setMinWidth(prefix);
       m_treePrefix->setMaxWidth(prefix);
       const float nameWidth = m_miller
@@ -184,27 +186,28 @@ namespace {
     Flex* m_row = nullptr;
     Flex* m_treePrefix = nullptr;
     Glyph* m_expander = nullptr;
-    files::TreeRowInfo m_tree;
+    luciole::TreeRowInfo m_tree;
     Flex* m_nameColumn = nullptr;
-    files::FileIcon* m_icon = nullptr;
+    luciole::FileIcon* m_icon = nullptr;
     Label* m_name = nullptr;
     Label* m_parent = nullptr;
-    std::array<Label*, files::kDetailsColumnCount> m_details{};
+    std::array<Label*, luciole::kDetailsColumnCount> m_details{};
     Glyph* m_arrow = nullptr;
     bool m_miller;
     float m_iconSize = 24.0F;
-    files::DetailsColumns m_columns;
-    files::DetailsColumnOrder m_columnOrder = files::kDefaultDetailsColumnOrder;
-    files::DetailsColumnOrder m_appliedColumnOrder = files::kDefaultDetailsColumnOrder;
+    luciole::DetailsColumns m_columns;
+    luciole::DetailsColumnOrder m_columnOrder = luciole::kDefaultDetailsColumnOrder;
+    luciole::DetailsColumnOrder m_appliedColumnOrder = luciole::kDefaultDetailsColumnOrder;
   };
 
   // Adapted from Noctalia's FileEntryTile without its picker or thumbnail service.
   class FileTile final : public InputArea {
   public:
-    FileTile(files::FileIconCache& icons, files::ThumbnailService& thumbnails) {
+    FileTile(luciole::FileIconCache& icons, luciole::ThumbnailService& thumbnails) {
       setHitTestVisible(false);
       addChild(ui::box({.out = &m_background, .radius = SelectionSurface::cornerRadius}));
-      m_icon = static_cast<files::FileIcon*>(addChild(std::make_unique<files::FileIcon>(icons, 48.0F, &thumbnails)));
+      m_icon =
+          static_cast<luciole::FileIcon*>(addChild(std::make_unique<luciole::FileIcon>(icons, 48.0F, &thumbnails)));
       addChild(
           ui::label(
               {.out = &m_name,
@@ -238,8 +241,8 @@ namespace {
     }
 
     void bind(
-        const files::DirectoryEntry& entry, std::string_view typeLabel, bool selected, bool focused, bool hovered,
-        float iconSize, bool cut, files::BrowsePresentation presentation, bool readOnly
+        const luciole::DirectoryEntry& entry, std::string_view typeLabel, bool selected, bool focused, bool hovered,
+        float iconSize, bool cut, luciole::BrowsePresentation presentation, bool readOnly
     ) {
       m_icon->setOpacity(cut ? 0.4F : entry.hidden ? kHiddenIconOpacity : 1.0F);
       for (auto* label : {m_name, m_parent, m_captions[0], m_captions[1], m_captions[2]}) {
@@ -281,7 +284,7 @@ namespace {
 
   protected:
     void doLayout(Renderer& renderer) override {
-      const auto metrics = files::gridMetrics(m_iconSize, m_presentation, m_parent->visible());
+      const auto metrics = luciole::gridMetrics(m_iconSize, m_presentation, m_parent->visible());
       const float labelWidth = std::max(1.0F, width() - metrics.inset * 2);
       m_background->arrange(renderer, {0, 0, width(), height()});
       m_icon->arrange(renderer, {(width() - m_iconSize) * 0.5F, metrics.inset, m_iconSize, m_iconSize});
@@ -310,32 +313,32 @@ namespace {
 
   private:
     Box* m_background = nullptr;
-    files::FileIcon* m_icon = nullptr;
+    luciole::FileIcon* m_icon = nullptr;
     Label* m_name = nullptr;
     Label* m_parent = nullptr;
     float m_iconSize = 48.0F;
-    files::BrowsePresentation m_presentation;
+    luciole::BrowsePresentation m_presentation;
     std::array<Label*, 3> m_captions{};
   };
 } // namespace
 
-files::FileViewAdapter::FileViewAdapter(
+luciole::FileViewAdapter::FileViewAdapter(
     BrowserController& browser, FileIconCache& icons, ThumbnailService& thumbnails, ViewMode mode,
     std::function<std::uint32_t()> modifiers, std::function<bool()> focused
 )
     : m_browser(browser), m_icons(icons), m_thumbnails(thumbnails), m_mode(mode), m_modifiers(std::move(modifiers)),
       m_focused(std::move(focused)) {}
 
-std::size_t files::FileViewAdapter::itemCount() const { return m_browser.model().rows().size(); }
-std::unique_ptr<Node> files::FileViewAdapter::createTile() {
+std::size_t luciole::FileViewAdapter::itemCount() const { return m_browser.model().rows().size(); }
+std::unique_ptr<Node> luciole::FileViewAdapter::createTile() {
   if (m_mode == ViewMode::Grid) {
     return std::make_unique<FileTile>(m_icons, m_thumbnails);
   }
   return std::make_unique<FileRow>(m_icons, m_thumbnails, m_mode == ViewMode::Miller);
 }
 
-std::unique_ptr<Node> files::FileViewAdapter::createDecoration() { return std::make_unique<SelectionSurface>(); }
-void files::FileViewAdapter::bindDecoration(Node& decoration, const VirtualGridDecorationLayout& layout) {
+std::unique_ptr<Node> luciole::FileViewAdapter::createDecoration() { return std::make_unique<SelectionSurface>(); }
+void luciole::FileViewAdapter::bindDecoration(Node& decoration, const VirtualGridDecorationLayout& layout) {
   const auto& model = m_browser.model();
   std::vector<std::uint8_t> selected(((layout.itemCount + layout.columns - 1) / layout.columns) * layout.columns, 0);
   for (std::size_t i = 0; i < layout.itemCount && layout.firstIndex + i < model.rows().size(); ++i) {
@@ -351,7 +354,7 @@ void files::FileViewAdapter::bindDecoration(Node& decoration, const VirtualGridD
       );
 }
 
-std::string files::FileViewAdapter::itemTooltip(std::size_t index) const {
+std::string luciole::FileViewAdapter::itemTooltip(std::size_t index) const {
   const auto& model = m_browser.model();
   if (m_mode == ViewMode::Grid || index >= model.rows().size()) {
     return {};
@@ -361,21 +364,21 @@ std::string files::FileViewAdapter::itemTooltip(std::size_t index) const {
   return entry != nullptr ? std::format("{}\n{}", entry->displayName, model.typeLabel(id)) : std::string{};
 }
 
-void files::FileViewAdapter::setTileVisible(Node& tile, bool visible) {
+void luciole::FileViewAdapter::setTileVisible(Node& tile, bool visible) {
   if (m_mode == ViewMode::Grid) {
     static_cast<FileTile&>(tile).setThumbnailVisible(visible);
   } else {
     static_cast<FileRow&>(tile).setThumbnailVisible(visible);
   }
 }
-void files::FileViewAdapter::releaseTile(Node& tile, Renderer& renderer) {
+void luciole::FileViewAdapter::releaseTile(Node& tile, Renderer& renderer) {
   if (m_mode == ViewMode::Grid) {
     static_cast<FileTile&>(tile).releaseFile(renderer);
   } else {
     static_cast<FileRow&>(tile).releaseFile(renderer);
   }
 }
-void files::FileViewAdapter::bindTile(Node& tile, std::size_t index, bool, bool hovered) {
+void luciole::FileViewAdapter::bindTile(Node& tile, std::size_t index, bool, bool hovered) {
   const auto& model = m_browser.model();
   if (index >= model.rows().size()) {
     return;
@@ -401,7 +404,7 @@ void files::FileViewAdapter::bindTile(Node& tile, std::size_t index, bool, bool 
   }
 }
 
-bool files::FileViewAdapter::onPointerPress(std::size_t index, float x, float, float width, float) {
+bool luciole::FileViewAdapter::onPointerPress(std::size_t index, float x, float, float width, float) {
   if (index >= itemCount()) {
     return true;
   }
@@ -433,7 +436,7 @@ bool files::FileViewAdapter::onPointerPress(std::size_t index, float x, float, f
   return true;
 }
 
-bool files::FileViewAdapter::onPointerDrag(std::optional<std::size_t>, float, float, float, float) {
+bool luciole::FileViewAdapter::onPointerDrag(std::optional<std::size_t>, float, float, float, float) {
   if (m_expanderPress) {
     m_expanderPress.reset();
     m_pressed.reset();
@@ -447,7 +450,7 @@ bool files::FileViewAdapter::onPointerDrag(std::optional<std::size_t>, float, fl
   return false;
 }
 
-VirtualGridAdapter::PointerReleaseResult files::FileViewAdapter::onPointerRelease(std::optional<std::size_t> index) {
+VirtualGridAdapter::PointerReleaseResult luciole::FileViewAdapter::onPointerRelease(std::optional<std::size_t> index) {
   if (const auto expander = std::exchange(m_expanderPress, std::nullopt)) {
     m_lastClick.reset();
     if (index && *index < itemCount() && m_browser.model().rows()[*index] == *expander) {
@@ -481,7 +484,7 @@ VirtualGridAdapter::PointerReleaseResult files::FileViewAdapter::onPointerReleas
   m_lastClick = twice ? std::nullopt : pressed;
   m_lastClickTime = now;
   const auto* entry = m_browser.model().entry(*pressed);
-  const bool columnFolder = m_mode == ViewMode::Miller && entry && entry->type == files::FileType::Directory;
+  const bool columnFolder = m_mode == ViewMode::Miller && entry && entry->type == luciole::FileType::Directory;
   return {
       .rebind = true,
       .activateIndex =
@@ -489,7 +492,7 @@ VirtualGridAdapter::PointerReleaseResult files::FileViewAdapter::onPointerReleas
   };
 }
 
-void files::FileViewAdapter::onPointerCancel() {
+void luciole::FileViewAdapter::onPointerCancel() {
   const bool dragged = std::exchange(m_dragged, false);
   m_pressed.reset();
   m_expanderPress.reset();
@@ -502,16 +505,16 @@ void files::FileViewAdapter::onPointerCancel() {
   }
 }
 
-void files::FileViewAdapter::setContextCallback(std::function<void(std::optional<EntryId>, float, float)> callback) {
+void luciole::FileViewAdapter::setContextCallback(std::function<void(std::optional<EntryId>, float, float)> callback) {
   m_context = std::move(callback);
 }
-void files::FileViewAdapter::setDragCallback(
+void luciole::FileViewAdapter::setDragCallback(
     std::function<void(const std::vector<EntryId>&)> start, std::function<void()> cancel
 ) {
   m_drag = std::move(start);
   m_cancelDrag = std::move(cancel);
 }
-void files::FileViewAdapter::onSecondaryActivate(std::size_t index, float x, float y) {
+void luciole::FileViewAdapter::onSecondaryActivate(std::size_t index, float x, float y) {
   auto& model = m_browser.model();
   if (index >= model.rows().size()) {
     return;
@@ -526,13 +529,13 @@ void files::FileViewAdapter::onSecondaryActivate(std::size_t index, float x, flo
     m_context(id, x, y);
   }
 }
-void files::FileViewAdapter::onBackgroundSecondaryActivate(float x, float y) {
+void luciole::FileViewAdapter::onBackgroundSecondaryActivate(float x, float y) {
   if (m_context) {
     m_context(std::nullopt, x, y);
   }
 }
 
-bool files::FileViewAdapter::onBackgroundPointerPress() {
+bool luciole::FileViewAdapter::onBackgroundPointerPress() {
   onPointerCancel();
   auto& model = m_browser.model();
   m_areaRows = model.rows();
@@ -548,7 +551,7 @@ bool files::FileViewAdapter::onBackgroundPointerPress() {
   return true;
 }
 
-bool files::FileViewAdapter::onAreaSelection(const std::vector<std::size_t>& indices) {
+bool luciole::FileViewAdapter::onAreaSelection(const std::vector<std::size_t>& indices) {
   auto& model = m_browser.model();
   if (!areaSelectionCurrent()) {
     return false;
@@ -573,12 +576,12 @@ bool files::FileViewAdapter::onAreaSelection(const std::vector<std::size_t>& ind
   return model.replaceSelection(ids);
 }
 
-bool files::FileViewAdapter::areaSelectionCurrent() const {
+bool luciole::FileViewAdapter::areaSelectionCurrent() const {
   const auto& model = m_browser.model();
   return m_areaSelection && model.snapshot().generation == m_areaGeneration && model.rows() == m_areaRows;
 }
 
-bool files::FileViewAdapter::itemHitTest(std::size_t, float x, float y, float width, float height) const {
+bool luciole::FileViewAdapter::itemHitTest(std::size_t, float x, float y, float width, float height) const {
   if (m_mode != ViewMode::Grid) {
     return true;
   }
@@ -592,7 +595,7 @@ bool files::FileViewAdapter::itemHitTest(std::size_t, float x, float y, float wi
   return icon || label;
 }
 
-void files::FileViewAdapter::onActivate(std::size_t index) {
+void luciole::FileViewAdapter::onActivate(std::size_t index) {
   Logger("file-launch").debug("File-view activation received");
   if (index < itemCount()) {
     if (m_activate) {

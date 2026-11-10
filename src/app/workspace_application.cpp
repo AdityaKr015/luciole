@@ -47,10 +47,10 @@ volatile std::sig_atomic_t g_stopRequested = 0;
 
 WorkspaceApplication::WorkspaceApplication(
     WaylandConnection& connection, RenderContext& renderer, TextInputService& input,
-    files::WaylandTextClipboard& clipboard, files::BrowserSettings settings
+    luciole::WaylandTextClipboard& clipboard, luciole::BrowserSettings settings
 )
     : m_connection(connection), m_renderer(renderer), m_input(input), m_clipboard(clipboard), m_defaults(settings),
-      m_preferences(files::ConfigPaths::fromEnvironment()), m_pins(files::StateStore::pathFromEnvironment()) {
+      m_preferences(luciole::ConfigPaths::fromEnvironment()), m_pins(luciole::StateStore::pathFromEnvironment()) {
   m_preferences.setChangedCallback([this](const std::string& error) {
     if (m_preferences.settings()) {
       m_defaults = m_preferences.settings()->browser;
@@ -69,7 +69,7 @@ WorkspaceApplication::WorkspaceApplication(
   m_clipboard.setDropCallbacks(
       [this](wl_surface* surface, float x, float y) {
         clearExternalDrops();
-        const std::vector<files::Bookmark>* pins = nullptr;
+        const std::vector<luciole::Bookmark>* pins = nullptr;
         for (const auto& [id, page] : m_pages) {
           (void)id;
           if (const auto* folders = page->draggedFolders()) {
@@ -85,7 +85,7 @@ WorkspaceApplication::WorkspaceApplication(
           }
           const auto found = m_model.windows().find(windowId);
           if (found == m_model.windows().end()) {
-            return files::FileDropTarget{};
+            return luciole::FileDropTarget{};
           }
           for (const auto& [tab, button] : host->buttons) {
             if (host->tabScroll->containsScenePoint(x, y) && button->containsScenePoint(x, y)) {
@@ -108,7 +108,7 @@ WorkspaceApplication::WorkspaceApplication(
             return m_pages.at(found->second.active)->externalDrop(x, y, pins);
           }
         }
-        return files::FileDropTarget{};
+        return luciole::FileDropTarget{};
       },
       [this] { clearExternalDrops(); }
   );
@@ -168,23 +168,23 @@ WorkspaceApplication::~WorkspaceApplication() {
 void WorkspaceApplication::start(const std::optional<std::string>& initial) {
   const auto id = newWindow();
   if (!id) {
-    throw std::runtime_error("Cannot create a Files window.");
+    throw std::runtime_error("Cannot create a Luciole window.");
   }
-  std::optional<files::Location> location;
+  std::optional<luciole::Location> location;
   if (initial) {
     // Relative arguments (`xdg-open .`) name paths under the launching shell's directory.
-    const files::GString cwd(g_get_current_dir());
-    location = files::resolveLocationText(*initial, files::Location::fromPath(cwd.get()));
+    const luciole::GString cwd(g_get_current_dir());
+    location = luciole::resolveLocationText(*initial, luciole::Location::fromPath(cwd.get()));
   }
   newTab(id, std::move(location));
 }
 
-void WorkspaceApplication::show(const files::FileManagerRequest& request) {
-  std::vector<std::pair<files::Location, std::vector<files::Location>>> groups;
+void WorkspaceApplication::show(const luciole::FileManagerRequest& request) {
+  std::vector<std::pair<luciole::Location, std::vector<luciole::Location>>> groups;
   for (const auto& location : request.locations) {
-    auto parent = request.kind == files::FileManagerRequest::Kind::Folders ? std::nullopt : location.parent();
+    auto parent = request.kind == luciole::FileManagerRequest::Kind::Folders ? std::nullopt : location.parent();
     if (!parent) {
-      groups.emplace_back(location, std::vector<files::Location>{});
+      groups.emplace_back(location, std::vector<luciole::Location>{});
       continue;
     }
     auto folder = std::move(*parent);
@@ -197,9 +197,9 @@ void WorkspaceApplication::show(const files::FileManagerRequest& request) {
   }
   const auto window = newWindow();
   if (!window) {
-    throw std::runtime_error("Cannot create a Files window.");
+    throw std::runtime_error("Cannot create a Luciole window.");
   }
-  files::TabId first = 0;
+  luciole::TabId first = 0;
   for (auto& [folder, items] : groups) {
     const auto tab = newTab(window, folder);
     if (!tab) {
@@ -207,7 +207,7 @@ void WorkspaceApplication::show(const files::FileManagerRequest& request) {
     }
     first = first ? first : tab;
     if (!items.empty()) {
-      m_pages.at(tab)->revealItems(std::move(items), request.kind == files::FileManagerRequest::Kind::ItemProperties);
+      m_pages.at(tab)->revealItems(std::move(items), request.kind == luciole::FileManagerRequest::Kind::ItemProperties);
     }
   }
   if (first) {
@@ -316,7 +316,7 @@ bool WorkspaceApplication::running() {
     busy |= page->busy();
   }
   // Closed pages go now: their jobs belong to the hub, which already handed them to another page.
-  std::vector<files::TabId> retired;
+  std::vector<luciole::TabId> retired;
   for (auto& [id, page] : m_pages) {
     const auto tab = m_model.tabFor(id);
     const bool referenced = tab
@@ -334,7 +334,7 @@ bool WorkspaceApplication::running() {
     m_pages.erase(id);
   }
   if (live) {
-    std::vector<files::WindowId> retiredHosts;
+    std::vector<luciole::WindowId> retiredHosts;
     for (const auto& [id, host] : m_hosts) {
       if (host->closed && std::ranges::none_of(m_pages, [&](const auto& item) {
             return item.second->boundSurface() == &host->surface;
@@ -700,7 +700,7 @@ void WorkspaceApplication::dispatch(InputDispatcher& dispatcher, const PointerEv
   }
 }
 
-files::WindowId WorkspaceApplication::newWindow() {
+luciole::WindowId WorkspaceApplication::newWindow() {
   const auto id = m_model.addWindow();
   if (!id) {
     return 0;
@@ -725,7 +725,7 @@ files::WindowId WorkspaceApplication::newWindow() {
     raw->surface.requestLayout();
   });
   host->dispatcher.setCursorShapeCallback([this](auto serial, auto shape) {
-    m_connection.extension<files::DesktopIntegration>().setCursorShape(serial, shape);
+    m_connection.extension<luciole::DesktopIntegration>().setCursorShape(serial, shape);
   });
   host->dispatcher.setFocusChangeCallback([this, raw](InputArea*, InputArea* focused) { focusChanged(*raw, focused); });
   if (!host->surface.initialize(
@@ -734,10 +734,10 @@ files::WindowId WorkspaceApplication::newWindow() {
            .height = 720,
            .minWidth = 620,
            .minHeight = 400,
-           .title = "Noctalia Files",
-           .appId = "dev.noctalia.Files"}
+           .title = "Luciole",
+           .appId = "dev.noctalia.luciole"}
       )) {
-    throw std::runtime_error("Cannot initialize a Files window.");
+    throw std::runtime_error("Cannot initialize a Luciole window.");
   }
   host->dispatcher.setTextInputContext(host->surface.wlSurface(), &m_input);
   m_hosts.emplace(id, std::move(host));
@@ -745,8 +745,9 @@ files::WindowId WorkspaceApplication::newWindow() {
   return id;
 }
 
-files::TabId
-WorkspaceApplication::newTab(files::WindowId window, std::optional<files::Location> location, files::TabId duplicate) {
+luciole::TabId WorkspaceApplication::newTab(
+    luciole::WindowId window, std::optional<luciole::Location> location, luciole::TabId duplicate
+) {
   if (m_pages.size() >= 64) {
     return 0;
   }
@@ -758,8 +759,9 @@ WorkspaceApplication::newTab(files::WindowId window, std::optional<files::Locati
   return createPage(window, id, std::move(location), duplicate, previous);
 }
 
-files::TabId
-WorkspaceApplication::newPane(files::WindowId window, std::optional<files::Location> location, files::TabId duplicate) {
+luciole::TabId WorkspaceApplication::newPane(
+    luciole::WindowId window, std::optional<luciole::Location> location, luciole::TabId duplicate
+) {
   if (m_pages.size() >= 64) {
     return 0;
   }
@@ -771,9 +773,9 @@ WorkspaceApplication::newPane(files::WindowId window, std::optional<files::Locat
   return createPage(window, id, std::move(location), duplicate, previous);
 }
 
-files::TabId WorkspaceApplication::createPage(
-    files::WindowId window, files::TabId id, std::optional<files::Location> location, files::TabId duplicate,
-    files::TabId previous
+luciole::TabId WorkspaceApplication::createPage(
+    luciole::WindowId window, luciole::TabId id, std::optional<luciole::Location> location, luciole::TabId duplicate,
+    luciole::TabId previous
 ) {
   auto& host = *m_hosts.at(window);
   const auto settings = duplicate              ? m_pages.at(duplicate)->options()
@@ -787,12 +789,12 @@ files::TabId WorkspaceApplication::createPage(
     const auto owner = m_model.owner(id);
     return owner && m_model.other(*owner).has_value();
   });
-  page->setWorkspaceRequest([this, id](WorkspaceCommand command, std::optional<files::Location> destination) {
+  page->setWorkspaceRequest([this, id](WorkspaceCommand command, std::optional<luciole::Location> destination) {
     if (auto owner = m_model.owner(id)) {
       defer(*owner, id, command, std::move(destination));
     }
   });
-  page->setOperationRequest([this](files::JobId target, bool retry) {
+  page->setOperationRequest([this](luciole::JobId target, bool retry) {
     const std::weak_ptr<int> lifetime = m_lifetime;
     DeferredCall::callLater([this, lifetime, target, retry] {
       if (lifetime.expired()) {
@@ -824,7 +826,7 @@ files::TabId WorkspaceApplication::createPage(
     }
     return true;
   });
-  page->setForeignDrop([this, id](float x, float y) -> std::optional<std::pair<files::Location, LayoutRect>> {
+  page->setForeignDrop([this, id](float x, float y) -> std::optional<std::pair<luciole::Location, LayoutRect>> {
     const auto owner = m_model.owner(id);
     if (!owner) {
       return std::nullopt;
@@ -858,7 +860,7 @@ files::TabId WorkspaceApplication::createPage(
   return id;
 }
 
-void WorkspaceApplication::select(files::WindowId window, files::TabId tab) {
+void WorkspaceApplication::select(luciole::WindowId window, luciole::TabId tab) {
   if (m_model.select(window, tab)) {
     m_hosts.at(window)->surface.requestLayout();
     m_focused = window;
@@ -866,7 +868,7 @@ void WorkspaceApplication::select(files::WindowId window, files::TabId tab) {
 }
 
 void WorkspaceApplication::defer(
-    files::WindowId window, files::TabId tab, WorkspaceCommand command, std::optional<files::Location> location
+    luciole::WindowId window, luciole::TabId tab, WorkspaceCommand command, std::optional<luciole::Location> location
 ) {
   if ((command == WorkspaceCommand::CopyOther || command == WorkspaceCommand::MoveOther) && !location) {
     if (auto other = m_model.other(window)) {
@@ -882,8 +884,8 @@ void WorkspaceApplication::defer(
 }
 
 void WorkspaceApplication::execute(
-    files::WindowId window, files::TabId tab, WorkspaceCommand command,
-    const std::optional<files::Location>& destination
+    luciole::WindowId window, luciole::TabId tab, WorkspaceCommand command,
+    const std::optional<luciole::Location>& destination
 ) {
   auto& host = *m_hosts.at(window);
   const auto logical = m_model.tabFor(tab);
@@ -944,7 +946,7 @@ void WorkspaceApplication::execute(
   }
   case WorkspaceCommand::Detach:
   case WorkspaceCommand::MoveWindow: {
-    files::WindowId destinationWindow = 0;
+    luciole::WindowId destinationWindow = 0;
     if (command == WorkspaceCommand::Detach) {
       destinationWindow = newWindow();
     } else {
@@ -964,7 +966,7 @@ void WorkspaceApplication::execute(
       }
     }
     if (destinationWindow) {
-      std::vector<files::TabId> pages;
+      std::vector<luciole::TabId> pages;
       for (const auto& [pageId, value] : m_pages) {
         (void)value;
         if (m_model.tabFor(pageId) == logical) {
@@ -1038,7 +1040,7 @@ void WorkspaceApplication::releaseChrome(Host& host) {
   host.chromeOwner = 0;
 }
 
-void WorkspaceApplication::tabMenu(Host& host, files::TabId tab, float x, float y) {
+void WorkspaceApplication::tabMenu(Host& host, luciole::TabId tab, float x, float y) {
   auto& page = *m_pages.at(m_model.windows().at(host.id).active);
   std::vector<ContextMenuControlEntry> entries{
       {.id = 0, .label = "New Tab", .shortcut = "Ctrl+T"},
@@ -1081,8 +1083,8 @@ Button::ButtonPalette WorkspaceApplication::closeTabPalette(ColorRole foreground
   return palette;
 }
 
-void WorkspaceApplication::rebuildStrip(Host& host, const files::TabWindow& window) {
-  std::vector<std::pair<files::TabId, std::string>> labels;
+void WorkspaceApplication::rebuildStrip(Host& host, const luciole::TabWindow& window) {
+  std::vector<std::pair<luciole::TabId, std::string>> labels;
   labels.reserve(window.tabs.size());
   for (auto id : window.tabs) {
     labels.emplace_back(id, m_pages.at(m_model.layout(id)->active)->title());
@@ -1250,7 +1252,7 @@ void WorkspaceApplication::syncTooltip(Host& host) {
     host.tooltip->dismiss();
     return;
   }
-  std::optional<files::FileTooltipTarget> file;
+  std::optional<luciole::FileTooltipTarget> file;
   for (auto tab : host.mounted) {
     file = m_pages.at(tab)->fileTooltipAt(host.pointerX, host.pointerY);
     if (file) {
@@ -1375,7 +1377,7 @@ void WorkspaceApplication::prepare(Host& host) {
   }
   rebuildStrip(host, window);
   host.splitButton->setSelected(window.secondary.has_value());
-  std::vector<files::TabId> visible{window.primary};
+  std::vector<luciole::TabId> visible{window.primary};
   if (window.secondary && !active.overlay()) {
     visible.push_back(*window.secondary);
   }

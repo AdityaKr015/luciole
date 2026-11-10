@@ -15,7 +15,7 @@
 #include <utility>
 
 StatusBarController::StatusBarController(
-    PageContext& page, files::PinService& pins, SettingsController& settings, FileKeyboardController& keys
+    PageContext& page, luciole::PinService& pins, SettingsController& settings, FileKeyboardController& keys
 )
     : m_page(page), m_pins(pins), m_settings(settings), m_keys(keys) {}
 
@@ -86,7 +86,7 @@ std::unique_ptr<Flex> StatusBarController::buildNotice() {
 void StatusBarController::sync(bool miller) {
   const auto& model = m_page.browser().model();
   const auto& snapshot = model.snapshot();
-  const bool loading = snapshot.status == files::DirectoryStatus::Loading;
+  const bool loading = snapshot.status == luciole::DirectoryStatus::Loading;
   std::string status;
   // The idle folder count stays hidden; the pill appears only for something worth reading.
   bool needed = true;
@@ -104,9 +104,9 @@ void StatusBarController::sync(bool miller) {
     } else if (!m_page.browser().searchQuery().empty()) {
       status = std::format(
           "{}{} results",
-          loading                                                    ? "Searching… · "
-              : snapshot.status == files::DirectoryStatus::Cancelled ? "Search stopped · "
-                                                                     : "",
+          loading                                                      ? "Searching… · "
+              : snapshot.status == luciole::DirectoryStatus::Cancelled ? "Search stopped · "
+                                                                       : "",
           model.rows().size()
       );
       if (m_page.browser().skippedSearchFolders() != 0) {
@@ -114,7 +114,7 @@ void StatusBarController::sync(bool miller) {
       }
     } else if (loading) {
       status = "Loading folder…";
-    } else if (snapshot.status == files::DirectoryStatus::Cancelled) {
+    } else if (snapshot.status == luciole::DirectoryStatus::Cancelled) {
       status = "Loading stopped.";
     } else {
       needed = false;
@@ -141,7 +141,7 @@ void StatusBarController::sync(bool miller) {
     } else if (summary.files != 0 && summary.unknownSizes == summary.files) {
       status += " · file size unknown";
     } else if (summary.files != 0) {
-      const files::GString size(g_format_size_full(summary.bytes, G_FORMAT_SIZE_IEC_UNITS));
+      const luciole::GString size(g_format_size_full(summary.bytes, G_FORMAT_SIZE_IEC_UNITS));
       status += std::format(
           " · {}{}{}", summary.unknownSizes == 0 ? "" : "at least ", size.get(),
           summary.folders != 0 || summary.others != 0 ? " in files" : ""
@@ -162,7 +162,7 @@ void StatusBarController::sync(bool miller) {
       && snapshot.location
       && !snapshot.location->isTrash();
   if (m_freeSpaceAvailable) {
-    const files::GString size(g_format_size_full(*freeBytes, G_FORMAT_SIZE_IEC_UNITS));
+    const luciole::GString size(g_format_size_full(*freeBytes, G_FORMAT_SIZE_IEC_UNITS));
     m_freeSpace->setText(std::format("{} free", size.get()));
   }
   m_pill->setVisible(m_needed);
@@ -178,7 +178,7 @@ void StatusBarController::sync(bool miller) {
     if (loading) {
       return {"hourglass-empty", status, {}};
     }
-    if (snapshot.status == files::DirectoryStatus::Cancelled
+    if (snapshot.status == luciole::DirectoryStatus::Cancelled
         || !m_page.browser().message().empty()
         || !m_settings.error().empty()) {
       return {"alert-triangle", status, {}};
@@ -187,8 +187,8 @@ void StatusBarController::sync(bool miller) {
       return {"search", "No results", std::format("No files or folders match “{}”.", query)};
     }
     if (snapshot.entries.empty()) {
-      return snapshot.location == files::Location::trash() ? Notice{"trash", "Trash is empty", {}}
-                                                           : Notice{"folder-open", "This folder is empty", {}};
+      return snapshot.location == luciole::Location::trash() ? Notice{"trash", "Trash is empty", {}}
+                                                             : Notice{"folder-open", "This folder is empty", {}};
     }
     return {"eye-off", "No visible items", "Hidden and backup files are not shown."};
   }();

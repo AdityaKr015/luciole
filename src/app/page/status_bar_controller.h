@@ -5,9 +5,9 @@
 #include <memory>
 #include <string>
 
-namespace files {
+namespace luciole {
   class PinService;
-} // namespace files
+} // namespace luciole
 
 class FileKeyboardController;
 class Flex;
@@ -23,7 +23,7 @@ class SettingsController;
 class StatusBarController {
 public:
   StatusBarController(
-      PageContext& page, files::PinService& pins, SettingsController& settings, FileKeyboardController& keys
+      PageContext& page, luciole::PinService& pins, SettingsController& settings, FileKeyboardController& keys
   );
 
   // The last action message; shown alongside search/selection information.
@@ -47,7 +47,7 @@ public:
 
 private:
   PageContext& m_page;
-  files::PinService& m_pins;
+  luciole::PinService& m_pins;
   SettingsController& m_settings;
   FileKeyboardController& m_keys;
   std::string m_actionError;

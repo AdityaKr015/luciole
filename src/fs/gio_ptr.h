@@ -3,7 +3,7 @@
 #include <glib-object.h>
 #include <memory>
 
-namespace files {
+namespace luciole {
   struct ObjectUnref {
     void operator()(gpointer object) const { g_object_unref(object); }
   };
@@ -21,4 +21,4 @@ namespace files {
   };
 
   using GErrorPtr = std::unique_ptr<GError, GErrorFree>;
-} // namespace files
+} // namespace luciole

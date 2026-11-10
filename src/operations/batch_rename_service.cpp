@@ -23,48 +23,49 @@
 #include <utility>
 
 namespace {
-  using files::FileErrorKind;
+  using luciole::FileErrorKind;
   std::string fdPath(int fd) {
     std::vector<char> buffer(8192);
     const auto count = ::readlink(("/proc/self/fd/" + std::to_string(fd)).c_str(), buffer.data(), buffer.size());
     if (count <= 0 || static_cast<std::size_t>(count) == buffer.size()) {
-      files::throwFileError(FileErrorKind::Unavailable, "The held folder's current path is unavailable.");
+      luciole::throwFileError(FileErrorKind::Unavailable, "The held folder's current path is unavailable.");
     }
     return {buffer.data(), static_cast<std::size_t>(count)};
   }
   struct Item {
-    files::DirectoryEntry entry;
+    luciole::DirectoryEntry entry;
     std::string name;
-    files::Fd fd;
+    luciole::Fd fd;
     struct stat identity;
-    Item(files::DirectoryEntry entry, int parent, std::string name)
+    Item(luciole::DirectoryEntry entry, int parent, std::string name)
         : entry(std::move(entry)), name(std::move(name)),
-          fd(files::checkedFd(::openat(parent, this->name.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC))),
-          identity(files::statFd(fd.get())) {}
+          fd(luciole::checkedFd(::openat(parent, this->name.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC))),
+          identity(luciole::statFd(fd.get())) {}
     bool at(int parent, const std::string& name) const {
       struct stat value{};
-      return ::fstatat(parent, name.c_str(), &value, AT_SYMLINK_NOFOLLOW) == 0 && files::sameIdentity(value, identity);
+      return ::fstatat(parent, name.c_str(), &value, AT_SYMLINK_NOFOLLOW) == 0
+          && luciole::sameIdentity(value, identity);
     }
   };
   struct Prepared {
-    files::Location parent;
+    luciole::Location parent;
     std::string path;
-    files::Fd fd;
+    luciole::Fd fd;
     std::vector<std::unique_ptr<Item>> items;
     long nameLimit;
-    explicit Prepared(files::Location parent)
+    explicit Prepared(luciole::Location parent)
         : parent(std::move(parent)), path(*this->parent.nativePath()),
-          fd(files::checkedFd(::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC))),
+          fd(luciole::checkedFd(::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC))),
           nameLimit(::fpathconf(fd.get(), _PC_NAME_MAX)) {}
     void requireCurrent() const {
-      const auto current = files::checkedFd(::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
-      if (!files::sameIdentity(files::statFd(current.get()), files::statFd(fd.get()))) {
-        files::throwFileError(
+      const auto current = luciole::checkedFd(::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+      if (!luciole::sameIdentity(luciole::statFd(current.get()), luciole::statFd(fd.get()))) {
+        luciole::throwFileError(
             FileErrorKind::Changed, "The containing folder changed. Close this dialog and select the items again."
         );
       }
     }
-    std::optional<files::Location>
+    std::optional<luciole::Location>
     actual(int directory, const std::string& name, const Item& item, bool originalFolder) const {
       if (!item.at(directory, name)) {
         return std::nullopt;
@@ -81,19 +82,20 @@ namespace {
         } else {
           base = fdPath(directory);
         }
-        return files::Location::fromPath((std::filesystem::path(base) / name).native());
+        return luciole::Location::fromPath((std::filesystem::path(base) / name).native());
       } catch (const std::exception&) {
         return std::nullopt;
       }
     }
   };
-  std::shared_ptr<Prepared> prepareItems(std::vector<files::DirectoryEntry> entries, const files::CancelToken& token) {
+  std::shared_ptr<Prepared>
+  prepareItems(std::vector<luciole::DirectoryEntry> entries, const luciole::CancelToken& token) {
     const auto first = entries.front().location.parent();
     if (!first) {
-      files::throwFileError(FileErrorKind::InvalidArgument, "Select entries inside a native folder.");
+      luciole::throwFileError(FileErrorKind::InvalidArgument, "Select entries inside a native folder.");
     }
     if (!first->nativePath()) {
-      files::throwFileError(FileErrorKind::Unsupported, "Batch rename requires a native folder.");
+      luciole::throwFileError(FileErrorKind::Unsupported, "Batch rename requires a native folder.");
     }
     auto prepared = std::make_shared<Prepared>(*first);
     std::set<std::string> names;
@@ -102,40 +104,42 @@ namespace {
         return {};
       }
       if (!entry.location.nativePath() || !entry.identity || entry.location.parent() != first) {
-        files::throwFileError(FileErrorKind::InvalidArgument, "Select identified items from one native folder.");
+        luciole::throwFileError(FileErrorKind::InvalidArgument, "Select identified items from one native folder.");
       }
       const std::string name = entry.location.basename().value_or(std::string{});
       if (name.empty() || name == "." || name == ".." || name != entry.name || !names.insert(name).second) {
-        files::throwFileError(FileErrorKind::InvalidArgument, "The selection contains invalid or repeated names.");
+        luciole::throwFileError(FileErrorKind::InvalidArgument, "The selection contains invalid or repeated names.");
       }
       auto item = std::make_unique<Item>(entry, prepared->fd.get(), name);
-      const files::GioPtr<GFileInfo> info(g_file_query_info(
-          files::gioFile(entry.location).get(),
+      const luciole::GioPtr<GFileInfo> info(g_file_query_info(
+          luciole::gioFile(entry.location).get(),
           "id::file,id::filesystem,standard::type,standard::is-symlink,access::can-rename",
           G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, nullptr
       ));
       if (!info
-          || files::readFileIdentity(info.get()) != entry.identity
-          || files::fileType(g_file_info_get_file_type(info.get())) != entry.type
+          || luciole::readFileIdentity(info.get()) != entry.identity
+          || luciole::fileType(g_file_info_get_file_type(info.get())) != entry.type
           || (g_file_info_get_is_symlink(info.get()) != FALSE) != entry.symlink
           || !item->at(prepared->fd.get(), name)
-          || !files::readFileAccess(info.get()).rename.value_or(true)) {
-        files::throwFileError(FileErrorKind::Changed, "A selected item changed or cannot be renamed. Select it again.");
+          || !luciole::readFileAccess(info.get()).rename.value_or(true)) {
+        luciole::throwFileError(
+            FileErrorKind::Changed, "A selected item changed or cannot be renamed. Select it again."
+        );
       }
       prepared->items.push_back(std::move(item));
     }
     prepared->requireCurrent();
     return prepared;
   }
-  std::shared_ptr<std::vector<files::BatchRenameRow>>
-  validate(const Prepared& plan, const std::vector<std::string>& names, const files::CancelToken& token) {
-    auto rows = std::make_shared<std::vector<files::BatchRenameRow>>();
+  std::shared_ptr<std::vector<luciole::BatchRenameRow>>
+  validate(const Prepared& plan, const std::vector<std::string>& names, const luciole::CancelToken& token) {
+    auto rows = std::make_shared<std::vector<luciole::BatchRenameRow>>();
     std::map<std::string, std::size_t> sources, targets;
     for (std::size_t i = 0; i < names.size(); ++i) {
       sources.emplace(plan.items[i]->name, i);
       rows->push_back(
           {plan.items[i]->entry.displayName,
-           files::filenameDisplayText(names[i]),
+           luciole::filenameDisplayText(names[i]),
            names[i],
            {},
            names[i] != plan.items[i]->name}
@@ -149,7 +153,7 @@ namespace {
         row.error = "Source changed. Close and select it again.";
       }
       if (row.changed) {
-        if (const auto problem = files::filenameProblem(row.name)) {
+        if (const auto problem = luciole::filenameProblem(row.name)) {
           row.error = *problem;
         }
         if (plan.nameLimit >= 0 && row.name.size() > static_cast<std::size_t>(plan.nameLimit)) {
@@ -175,23 +179,23 @@ namespace {
     }
     return rows;
   }
-  bool applicable(const std::vector<files::BatchRenameRow>& rows) {
+  bool applicable(const std::vector<luciole::BatchRenameRow>& rows) {
     return std::ranges::any_of(rows, [](const auto& row) { return row.changed; })
         && std::ranges::none_of(rows, [](const auto& row) { return !row.error.empty(); });
   }
   class Stage {
   public:
     explicit Stage(const Prepared& plan) : m_parent(plan.fd.get()) {
-      const files::GString uuid(g_uuid_string_random());
-      m_name = ".noctalia-rename-" + std::string(uuid.get());
+      const luciole::GString uuid(g_uuid_string_random());
+      m_name = ".luciole-rename-" + std::string(uuid.get());
       if (::mkdirat(m_parent, m_name.c_str(), 0700) != 0) {
-        files::throwErrno(errno);
+        luciole::throwErrno(errno);
       }
-      files::Fd fd(::openat(m_parent, m_name.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+      luciole::Fd fd(::openat(m_parent, m_name.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
       if (!fd.valid()) {
         const int code = errno;
         (void)::unlinkat(m_parent, m_name.c_str(), AT_REMOVEDIR);
-        files::throwErrno(code);
+        luciole::throwErrno(code);
       }
       m_fd = std::move(fd);
     }
@@ -200,7 +204,7 @@ namespace {
       if (m_fd.valid()
           && ::fstat(m_fd.get(), &held) == 0
           && ::fstatat(m_parent, m_name.c_str(), &current, AT_SYMLINK_NOFOLLOW) == 0
-          && files::sameIdentity(current, held)) {
+          && luciole::sameIdentity(current, held)) {
         // Never remove contents: incomplete recovery must remain available for inspection.
         (void)::unlinkat(m_parent, m_name.c_str(), AT_REMOVEDIR);
       }
@@ -212,18 +216,18 @@ namespace {
   private:
     int m_parent;
     std::string m_name;
-    files::Fd m_fd;
+    luciole::Fd m_fd;
   };
   void move(const Item& item, int from, const std::string& oldName, int to, const std::string& newName) {
     if (!item.at(from, oldName)) {
-      files::throwFileError(FileErrorKind::Changed, "An item changed during the operation.");
+      luciole::throwFileError(FileErrorKind::Changed, "An item changed during the operation.");
     }
     if (::syscall(SYS_renameat2, from, oldName.c_str(), to, newName.c_str(), RENAME_NOREPLACE) != 0) {
-      files::throwErrno(errno);
+      luciole::throwErrno(errno);
     }
   }
   std::vector<std::vector<std::size_t>>
-  components(const Prepared& plan, const std::vector<files::BatchRenameRow>& rows) {
+  components(const Prepared& plan, const std::vector<luciole::BatchRenameRow>& rows) {
     std::map<std::string, std::size_t> old;
     std::vector<std::vector<std::size_t>> edges(rows.size()), groups;
     for (std::size_t i = 0; i < rows.size(); ++i) {
@@ -260,19 +264,19 @@ namespace {
   }
   enum class Position { Original, Staged, Published, Unknown };
   // Adds a sentence to a result's error, or starts one of kind.
-  void appendError(std::optional<files::FileError>& error, FileErrorKind kind, const std::string& text) {
+  void appendError(std::optional<luciole::FileError>& error, FileErrorKind kind, const std::string& text) {
     if (error) {
       error->message += " " + text;
     } else {
-      error = files::FileError{.kind = kind, .message = text};
+      error = luciole::FileError{.kind = kind, .message = text};
     }
   }
-  std::shared_ptr<std::vector<files::BatchRenameResult>> execute(
-      const Prepared& plan, const std::vector<files::BatchRenameRow>& rows, const files::CancelToken& token,
+  std::shared_ptr<std::vector<luciole::BatchRenameResult>> execute(
+      const Prepared& plan, const std::vector<luciole::BatchRenameRow>& rows, const luciole::CancelToken& token,
       std::atomic<std::size_t>& completed
   ) {
-    using O = files::BatchRenameOutcome;
-    auto results = std::make_shared<std::vector<files::BatchRenameResult>>();
+    using O = luciole::BatchRenameOutcome;
+    auto results = std::make_shared<std::vector<luciole::BatchRenameResult>>();
     std::vector<Position> positions(rows.size(), Position::Original);
     for (std::size_t i = 0; i < rows.size(); ++i) {
       results->push_back(
@@ -287,7 +291,7 @@ namespace {
       if (token.cancelled()) {
         break;
       }
-      std::optional<files::FileError> problem;
+      std::optional<luciole::FileError> problem;
       try {
         plan.requireCurrent();
         if (!stage) {
@@ -315,7 +319,7 @@ namespace {
           continue;
         }
       } catch (const std::exception&) {
-        problem = files::currentFileError();
+        problem = luciole::currentFileError();
       }
       // Recover an incomplete connected group without replacing any intervening entry.
       for (const auto index : std::views::reverse(group)) {
@@ -338,7 +342,7 @@ namespace {
             move(*plan.items[index], stage->fd(), std::to_string(index), plan.fd.get(), plan.items[index]->name);
             positions[index] = Position::Original;
           } catch (const std::exception&) {
-            const auto failure = files::currentFileError();
+            const auto failure = luciole::currentFileError();
             result.outcome = O::NeedsAttention;
             appendError(result.error, failure.kind, "Original name could not be restored: " + failure.message);
           }
@@ -364,7 +368,7 @@ namespace {
       if (staged && result.actual) {
         appendError(
             result.error, FileErrorKind::Other,
-            "Retained at " + files::filenameDisplayText(*result.actual->nativePath())
+            "Retained at " + luciole::filenameDisplayText(*result.actual->nativePath())
         );
       }
       if (!result.actual && result.outcome != O::Unconfirmed) {
@@ -377,7 +381,7 @@ namespace {
 } // namespace
 
 std::string
-files::batchRenameName(const std::string& name, bool directory, std::size_t index, const BatchRenameOptions& o) {
+luciole::batchRenameName(const std::string& name, bool directory, std::size_t index, const BatchRenameOptions& o) {
   if (o.pattern.size() > 4096
       || o.find.size() > 4096
       || o.replacement.size() > 4096
@@ -442,7 +446,7 @@ files::batchRenameName(const std::string& name, bool directory, std::size_t inde
   return result;
 }
 
-struct files::BatchRenameService::State {
+struct luciole::BatchRenameService::State {
   BatchRenameSnapshot snapshot;
   BatchRenameOptions options;
   std::shared_ptr<Prepared> prepared;
@@ -518,21 +522,21 @@ struct files::BatchRenameService::State {
     });
   }
 };
-files::BatchRenameService::BatchRenameService() : m_state(std::make_shared<State>()) {}
-files::BatchRenameService::~BatchRenameService() {
+luciole::BatchRenameService::BatchRenameService() : m_state(std::make_shared<State>()) {}
+luciole::BatchRenameService::~BatchRenameService() {
   m_state->changed = {};
   cancel();
 }
-bool files::BatchRenameService::busy() const { return m_state->active; }
-bool files::BatchRenameService::applying() const {
+bool luciole::BatchRenameService::busy() const { return m_state->active; }
+bool luciole::BatchRenameService::applying() const {
   return m_state->snapshot.phase == BatchRenamePhase::Applying && busy();
 }
-std::size_t files::BatchRenameService::completed() const { return m_state->completed.load(); }
-const files::BatchRenameSnapshot& files::BatchRenameService::snapshot() const { return m_state->snapshot; }
-void files::BatchRenameService::setChangedCallback(std::function<void()> callback) {
+std::size_t luciole::BatchRenameService::completed() const { return m_state->completed.load(); }
+const luciole::BatchRenameSnapshot& luciole::BatchRenameService::snapshot() const { return m_state->snapshot; }
+void luciole::BatchRenameService::setChangedCallback(std::function<void()> callback) {
   m_state->changed = std::move(callback);
 }
-void files::BatchRenameService::cancel() {
+void luciole::BatchRenameService::cancel() {
   m_state->token.cancel();
   m_state->previewToken.cancel();
   m_state->snapshot.canApply = false;
@@ -543,7 +547,7 @@ void files::BatchRenameService::cancel() {
     }
   }
 }
-bool files::BatchRenameService::prepare(std::vector<DirectoryEntry> entries) {
+bool luciole::BatchRenameService::prepare(std::vector<DirectoryEntry> entries) {
   if (busy() || entries.size() < 2 || entries.size() > 4096) {
     return false;
   }
@@ -559,7 +563,7 @@ bool files::BatchRenameService::prepare(std::vector<DirectoryEntry> entries) {
   });
   return true;
 }
-bool files::BatchRenameService::preview(BatchRenameOptions options) {
+bool luciole::BatchRenameService::preview(BatchRenameOptions options) {
   if (applying()
       || m_state->token.cancelled()
       || (!m_state->prepared && m_state->snapshot.phase != BatchRenamePhase::Preparing)) {
@@ -577,7 +581,7 @@ bool files::BatchRenameService::preview(BatchRenameOptions options) {
   }
   return true;
 }
-bool files::BatchRenameService::apply() {
+bool luciole::BatchRenameService::apply() {
   if (busy() || !m_state->snapshot.canApply || !m_state->prepared) {
     return false;
   }

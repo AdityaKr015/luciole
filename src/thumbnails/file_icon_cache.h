@@ -8,7 +8,7 @@
 #include <memory>
 #include <optional>
 
-namespace files {
+namespace luciole {
   struct FileIconImage {
     std::shared_ptr<const LoadedImageFile> pixels;
     std::string path;
@@ -37,4 +37,4 @@ namespace files {
     struct State;
     std::shared_ptr<State> m_state;
   };
-} // namespace files
+} // namespace luciole

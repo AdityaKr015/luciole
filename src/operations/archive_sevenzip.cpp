@@ -12,8 +12,8 @@
 #include <unistd.h>
 
 namespace {
-  using namespace files;
-  using namespace files::archive_work;
+  using namespace luciole;
+  using namespace luciole::archive_work;
   // 7-Zip exit status for fatal errors, including wrong passwords and damaged encrypted data.
   constexpr int fatalStatus = 2;
   // A listing record carries ~200 bytes of fixed fields besides its path.
@@ -21,14 +21,14 @@ namespace {
 
   std::string program() {
     // Explicit override supports isolated provider fixtures.
-    if (const auto* override = g_getenv("NOCTALIA_FILES_7Z")) {
+    if (const auto* override = g_getenv("LUCIOLE_7Z")) {
       if (!std::filesystem::path(override).is_absolute()) {
         throwFileError(FileErrorKind::Unavailable, "The 7-Zip command path must be absolute.");
       }
       return override;
     }
     for (const auto* name : {"7zz", "7z", "7za"}) {
-      if (const files::GString found(g_find_program_in_path(name)); found) {
+      if (const luciole::GString found(g_find_program_in_path(name)); found) {
         return found.get();
       }
     }
@@ -53,7 +53,7 @@ namespace {
       argv.push_back(argument.c_str());
     }
     argv.push_back(nullptr);
-    const auto output = opened(::memfd_create("noctalia-files-7z-output", MFD_CLOEXEC));
+    const auto output = opened(::memfd_create("luciole-7z-output", MFD_CLOEXEC));
     const auto status = runArchiveProvider(input, work, password, argv, output.get(), outputLimit, fileLimit);
     std::string text(static_cast<std::size_t>(statFd(output.get()).st_size), '\0');
     std::size_t offset = 0;
@@ -178,8 +178,8 @@ namespace {
   }
 } // namespace
 
-std::vector<files::archive_work::SevenZipMember>
-files::archive_work::sevenZipCatalog(Input& input, Work& work, const Passwords& passwords) {
+std::vector<luciole::archive_work::SevenZipMember>
+luciole::archive_work::sevenZipCatalog(Input& input, Work& work, const Passwords& passwords) {
   // No catalog fits below one minimal record; fail before any password prompt.
   if (work.limits.maxMetadataBytes < 32 || work.limits.maxEntries == 0) {
     throwFileError(FileErrorKind::Unsupported, "The 7z catalog exceeds its metadata limit.");
@@ -200,7 +200,7 @@ files::archive_work::sevenZipCatalog(Input& input, Work& work, const Passwords& 
   requestPassword(work, "Could not unlock the 7z header.");
 }
 
-void files::archive_work::extractSevenZip(
+void luciole::archive_work::extractSevenZip(
     Input& input, Work& work, const Passwords& passwords, const std::vector<std::string>& names, bool encrypted,
     std::uint64_t largest, const std::string& directory
 ) {

@@ -11,7 +11,7 @@
 #include <utility>
 #include <vector>
 
-namespace files {
+namespace luciole {
   enum class TransferConflictChoice { Replace, Skip, KeepBoth, Cancel, Merge };
   struct TransferConflict {
     std::uint64_t id;
@@ -63,4 +63,4 @@ namespace files {
     struct State;
     std::shared_ptr<State> m_state;
   };
-} // namespace files
+} // namespace luciole

@@ -41,7 +41,7 @@ namespace {
   }
 } // namespace
 
-struct files::DirectorySession::State : std::enable_shared_from_this<State> {
+struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
   std::size_t entryLimit = 0;
   struct Scan {
     GioPtr<GCancellable> cancellable{g_cancellable_new()};
@@ -394,16 +394,16 @@ struct files::DirectorySession::State : std::enable_shared_from_this<State> {
   }
 };
 
-files::DirectorySession::DirectorySession(std::size_t entryLimit) : m_state(std::make_shared<State>()) {
+luciole::DirectorySession::DirectorySession(std::size_t entryLimit) : m_state(std::make_shared<State>()) {
   m_state->entryLimit = entryLimit;
 }
 
-files::DirectorySession::~DirectorySession() {
+luciole::DirectorySession::~DirectorySession() {
   m_state->changed = {};
   m_state->stop();
 }
 
-void files::DirectorySession::open(const Location& location) {
+void luciole::DirectorySession::open(const Location& location) {
   const auto state = m_state;
   state->stop();
   state->identities.clear();
@@ -414,7 +414,7 @@ void files::DirectorySession::open(const Location& location) {
   state->begin();
 }
 
-void files::DirectorySession::refresh() {
+void luciole::DirectorySession::refresh() {
   const auto state = m_state;
   if (state->snapshot.location) {
     if (!state->monitor) {
@@ -427,7 +427,7 @@ void files::DirectorySession::refresh() {
   }
 }
 
-void files::DirectorySession::cancel() {
+void luciole::DirectorySession::cancel() {
   const auto state = m_state;
   state->stop();
   state->identities.clear();
@@ -438,8 +438,8 @@ void files::DirectorySession::cancel() {
   state->notify();
 }
 
-void files::DirectorySession::setChangedCallback(std::function<void()> callback) {
+void luciole::DirectorySession::setChangedCallback(std::function<void()> callback) {
   m_state->changed = std::move(callback);
 }
 
-const files::DirectorySnapshot& files::DirectorySession::snapshot() const { return m_state->snapshot; }
+const luciole::DirectorySnapshot& luciole::DirectorySession::snapshot() const { return m_state->snapshot; }

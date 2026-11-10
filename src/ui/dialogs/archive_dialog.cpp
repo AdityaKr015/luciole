@@ -11,14 +11,15 @@
 
 ArchiveDialog::ArchiveDialog(
     bool compress, std::string name, std::string destination,
-    std::function<std::string(const std::string&, const std::string&, files::ArchiveFormat, const std::string&)> submit,
+    std::function<std::string(const std::string&, const std::string&, luciole::ArchiveFormat, const std::string&)>
+        submit,
     std::function<void()> cancel
 )
     : m_submit(std::move(submit)) {
   setDirection(FlexDirection::Vertical);
   setAlign(FlexAlign::Stretch);
-  files::applyDialogStyle(*this);
-  addChild(files::dialogHeader(compress ? "Compress" : "Extract Archive", compress ? "file-zip" : "archive", cancel));
+  luciole::applyDialogStyle(*this);
+  addChild(luciole::dialogHeader(compress ? "Compress" : "Extract Archive", compress ? "file-zip" : "archive", cancel));
   auto scroll =
       ui::scrollView({.out = &m_scroll, .viewportPaddingH = 0.0F, .viewportPaddingV = 0.0F, .flexGrow = 1.0F});
   scroll->setReserveScrollbarGutter(true);
@@ -31,7 +32,7 @@ ArchiveDialog::ArchiveDialog(
                                 this->submit();
                               }}));
     std::vector<ui::SegmentedOption> options;
-    for (const auto& format : files::archiveFormats()) {
+    for (const auto& format : luciole::archiveFormats()) {
       options.push_back({.label = std::string(format.label), .glyph = {}, .tooltip = std::string(format.suffix)});
     }
     body->addChild(
@@ -40,7 +41,7 @@ ArchiveDialog::ArchiveDialog(
              .compact = true,
              .equalSegmentWidths = true,
              .onChange = [this](std::size_t index) {
-               const auto formats = files::archiveFormats();
+               const auto formats = luciole::archiveFormats();
                std::string value = m_name->value();
                const auto old = formats[m_format].suffix;
                if (value.ends_with(old)) {
@@ -52,7 +53,7 @@ ArchiveDialog::ArchiveDialog(
                if (m_passwordSection) {
                  m_password->setValue("");
                  m_confirmation->setValue("");
-                 showPassword(formats[index].format == files::ArchiveFormat::Zip);
+                 showPassword(formats[index].format == luciole::ArchiveFormat::Zip);
                }
              }}
         )
@@ -74,7 +75,7 @@ ArchiveDialog::ArchiveDialog(
         )
     );
   }
-  if (compress && files::archiveEncryptionAvailable()) {
+  if (compress && luciole::archiveEncryptionAvailable()) {
     auto section = ui::column({.out = &m_passwordSection, .align = FlexAlign::Stretch, .gap = Style::spaceSm});
     section->addChild(ui::label({.text = "Password (optional)"}));
     section->addChild(ui::input({.out = &m_password, .passwordMode = true, .onSubmit = [this](const std::string&) {
@@ -93,8 +94,8 @@ ArchiveDialog::ArchiveDialog(
         )
     );
     body->addChild(std::move(section));
-    const auto formats = files::archiveFormats();
-    showPassword(m_format < formats.size() && formats[m_format].format == files::ArchiveFormat::Zip);
+    const auto formats = luciole::archiveFormats();
+    showPassword(m_format < formats.size() && formats[m_format].format == luciole::ArchiveFormat::Zip);
   }
   scroll->content()->addChild(std::move(body));
   addChild(std::move(scroll));
@@ -112,7 +113,7 @@ ArchiveDialog::ArchiveDialog(
 void ArchiveDialog::submit() {
   if (m_passwordSection && m_passwordSection->visible()) {
     const auto& password = m_password->value();
-    if (const auto problem = files::archivePasswordProblem(password)) {
+    if (const auto problem = luciole::archivePasswordProblem(password)) {
       m_error->setText(*problem);
       return;
     }
@@ -123,7 +124,7 @@ void ArchiveDialog::submit() {
   }
   const auto error = m_submit(
       m_name ? m_name->value() : "", m_destination->value(),
-      files::archiveFormats().empty() ? files::ArchiveFormat::Zip : files::archiveFormats()[m_format].format,
+      luciole::archiveFormats().empty() ? luciole::ArchiveFormat::Zip : luciole::archiveFormats()[m_format].format,
       m_passwordSection && m_passwordSection->visible() ? m_password->value() : ""
   );
   m_error->setText(error);
@@ -143,19 +144,19 @@ void ArchiveDialog::reveal(const Node* node) { m_scroll->requestScrollIntoView(n
 
 ArchivePasswordDialog::ArchivePasswordDialog(
     std::string name, bool retry, std::function<bool(std::string)> submit, std::function<void()> cancel,
-    files::ArchiveFormat format
+    luciole::ArchiveFormat format
 )
     : m_submit(std::move(submit)), m_format(format) {
   setDirection(FlexDirection::Vertical);
   setAlign(FlexAlign::Stretch);
-  files::applyDialogStyle(*this);
-  addChild(files::dialogHeader("Archive password", "lock", cancel));
+  luciole::applyDialogStyle(*this);
+  addChild(luciole::dialogHeader("Archive password", "lock", cancel));
   addChild(ui::label({.text = std::move(name), .maxLines = 2, .configure = [](Label& label) {
                         label.setUseMarkup(false);
                       }}));
   addChild(
       ui::label(
-          {.text = retry ? (format == files::ArchiveFormat::SevenZip
+          {.text = retry ? (format == luciole::ArchiveFormat::SevenZip
                                 ? "Could not unlock the data. Check the password or archive integrity."
                                 : "That password did not unlock all selected files. Try another password.")
                          : "Enter the password to unlock the selected files.",
@@ -180,7 +181,7 @@ void ArchivePasswordDialog::submit() {
   const auto& password = m_password->value();
   if (password.empty()) {
     m_error->setText("Enter a password.");
-  } else if (const auto problem = files::archivePasswordProblem(password, m_format)) {
+  } else if (const auto problem = luciole::archivePasswordProblem(password, m_format)) {
     m_error->setText(*problem);
   } else if (m_submit(password)) {
     m_password->setValue("");

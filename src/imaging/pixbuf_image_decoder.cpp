@@ -11,9 +11,9 @@
 #include <memory>
 
 namespace {
-  using files::kMaxEncodedImageBytes;
-  using files::kMaxImagePixels;
-  using files::kMaxImageSide;
+  using luciole::kMaxEncodedImageBytes;
+  using luciole::kMaxImagePixels;
+  using luciole::kMaxImageSide;
 
   class PixbufImageDecoder final : public ImageDecoder {
   public:
@@ -21,7 +21,7 @@ namespace {
       if (!data || !size || size > kMaxEncodedImageBytes) {
         return std::unexpected("encoded image exceeds its budget");
       }
-      auto image = files::decodeRasterImage({data, size}, kMaxImageSide, kMaxImagePixels, nullptr);
+      auto image = luciole::decodeRasterImage({data, size}, kMaxImageSide, kMaxImagePixels, nullptr);
       if (!image) {
         return std::unexpected(image.error());
       }
@@ -60,15 +60,15 @@ namespace {
       } else {
         const auto extension = std::filesystem::path(path).extension();
         if (extension == ".svg" || extension == ".SVG") {
-          return files::rasterizeSvg(path, targetSize, centerSquareCrop);
+          return luciole::rasterizeSvg(path, targetSize, centerSquareCrop);
         }
-        auto file = files::readEncodedImageFile(path);
+        auto file = luciole::readEncodedImageFile(path);
         if (!file) {
           return std::unexpected(file.error());
         }
         bytes = std::move(*file);
       }
-      auto image = files::decodeRasterImage(
+      auto image = luciole::decodeRasterImage(
           bytes, targetSize > 0 && !centerSquareCrop ? std::min(targetSize, kMaxImageSide) : kMaxImageSide,
           kMaxImagePixels, nullptr
       );
@@ -97,4 +97,4 @@ namespace {
   };
 } // namespace
 
-void files::installPixbufImageDecoder() { setImageDecoder(std::make_unique<PixbufImageDecoder>()); }
+void luciole::installPixbufImageDecoder() { setImageDecoder(std::make_unique<PixbufImageDecoder>()); }

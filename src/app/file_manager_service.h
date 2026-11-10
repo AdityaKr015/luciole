@@ -7,7 +7,7 @@
 #include <gio/gio.h>
 #include <vector>
 
-namespace files {
+namespace luciole {
   // One org.freedesktop.FileManager1 call with its URIs already parsed.
   struct FileManagerRequest {
     enum class Kind : std::uint8_t { Folders, Items, ItemProperties };
@@ -48,4 +48,4 @@ namespace files {
     guint m_timeout = 0;
     bool m_awaiting = false;
   };
-} // namespace files
+} // namespace luciole

@@ -23,10 +23,10 @@ namespace {
   using Acl = std::unique_ptr<std::remove_pointer_t<acl_t>, FreeAcl>;
   constexpr std::array<acl_tag_t, 6> tags{ACL_USER_OBJ, ACL_USER, ACL_GROUP_OBJ, ACL_GROUP, ACL_MASK, ACL_OTHER};
   std::string path(int fd) {
-    const auto value = files::statFd(fd);
+    const auto value = luciole::statFd(fd);
     if (!S_ISREG(value.st_mode) && !S_ISDIR(value.st_mode)) {
-      files::throwFileError(
-          files::FileErrorKind::Unsupported,
+      luciole::throwFileError(
+          luciole::FileErrorKind::Unsupported,
           "ACL editing supports native regular files and folders, without following links."
       );
     }
@@ -34,11 +34,11 @@ namespace {
   }
   void check(int result) {
     if (result != 0) {
-      files::throwErrno(errno);
+      luciole::throwErrno(errno);
     }
   }
   [[noreturn]] void invalid(std::string message) {
-    files::throwFileError(files::FileErrorKind::InvalidArgument, std::move(message));
+    luciole::throwFileError(luciole::FileErrorKind::InvalidArgument, std::move(message));
   }
   std::uint32_t numeric(const std::string& text) {
     std::uint32_t value = 0;
@@ -51,26 +51,26 @@ namespace {
     }
     return value;
   }
-  void sort(std::vector<files::AclEntry>& entries) {
+  void sort(std::vector<luciole::AclEntry>& entries) {
     std::ranges::sort(entries, [](const auto& left, const auto& right) {
       const auto id = [](const auto& entry) { return entry.qualifier.empty() ? 0U : numeric(entry.qualifier); };
       return std::tuple{left.tag, id(left)} < std::tuple{right.tag, id(right)};
     });
   }
-  Acl build(const std::vector<files::AclEntry>& entries) {
-    if (entries.size() > files::maxAclEntries) {
+  Acl build(const std::vector<luciole::AclEntry>& entries) {
+    if (entries.size() > luciole::maxAclEntries) {
       invalid("The ACL editor supports at most 128 entries per list.");
     }
     Acl acl(::acl_init(static_cast<int>(entries.size())));
     if (!acl) {
-      files::throwErrno(errno);
+      luciole::throwErrno(errno);
     }
     for (const auto& value : entries) {
       const auto tag = static_cast<std::size_t>(value.tag);
       if (tag >= tags.size() || value.permissions > 7) {
         invalid("Invalid ACL tag or permissions.");
       }
-      const bool named = value.tag == files::AclTag::User || value.tag == files::AclTag::Group;
+      const bool named = value.tag == luciole::AclTag::User || value.tag == luciole::AclTag::Group;
       if (!named && !value.qualifier.empty()) {
         invalid("Only named user/group entries accept an account.");
       }
@@ -82,7 +82,7 @@ namespace {
       check(::acl_set_tag_type(entry, tags[tag]));
       if (named) {
         const auto id = numeric(value.qualifier);
-        if (value.tag == files::AclTag::User) {
+        if (value.tag == luciole::AclTag::User) {
           const uid_t user = id;
           check(::acl_set_qualifier(entry, &user));
         } else {
@@ -105,33 +105,33 @@ namespace {
     }
     return acl;
   }
-  std::vector<files::AclEntry> read(const std::string& file, acl_type_t type) {
+  std::vector<luciole::AclEntry> read(const std::string& file, acl_type_t type) {
     Acl acl(::acl_get_file(file.c_str(), type));
     if (!acl) {
-      files::throwErrno(errno);
+      luciole::throwErrno(errno);
     }
     const auto count = ::acl_entries(acl.get());
-    if (count < 0 || count > static_cast<int>(files::maxAclEntries)) {
-      files::throwFileError(files::FileErrorKind::Unsupported, "The ACL exceeds the editor's 128-entry limit.");
+    if (count < 0 || count > static_cast<int>(luciole::maxAclEntries)) {
+      luciole::throwFileError(luciole::FileErrorKind::Unsupported, "The ACL exceeds the editor's 128-entry limit.");
     }
-    std::vector<files::AclEntry> entries;
+    std::vector<luciole::AclEntry> entries;
     acl_entry_t entry = nullptr;
     for (int next = ::acl_get_entry(acl.get(), ACL_FIRST_ENTRY, &entry); next != 0;
          next = ::acl_get_entry(acl.get(), ACL_NEXT_ENTRY, &entry)) {
       if (next < 0) {
-        files::throwErrno(errno);
+        luciole::throwErrno(errno);
       }
       acl_tag_t tag = 0;
       check(::acl_get_tag_type(entry, &tag));
       const auto* const found = std::ranges::find(tags, tag);
       if (found == tags.end()) {
-        files::throwFileError(files::FileErrorKind::Unsupported, "Unsupported ACL entry type.");
+        luciole::throwFileError(luciole::FileErrorKind::Unsupported, "Unsupported ACL entry type.");
       }
-      files::AclEntry value{static_cast<files::AclTag>(found - tags.begin()), {}, 0};
+      luciole::AclEntry value{static_cast<luciole::AclTag>(found - tags.begin()), {}, 0};
       if (tag == ACL_USER || tag == ACL_GROUP) {
         const std::unique_ptr<void, FreeAcl> id(::acl_get_qualifier(entry));
         if (!id) {
-          files::throwErrno(errno);
+          luciole::throwErrno(errno);
         }
         value.qualifier =
             std::to_string(tag == ACL_USER ? *static_cast<uid_t*>(id.get()) : *static_cast<gid_t*>(id.get()));
@@ -141,7 +141,7 @@ namespace {
       for (const auto bit : {ACL_READ, ACL_WRITE, ACL_EXECUTE}) {
         const int present = ::acl_get_perm(permissions, bit);
         if (present < 0) {
-          files::throwErrno(errno);
+          luciole::throwErrno(errno);
         }
         if (present != 0) {
           value.permissions |= bit;
@@ -153,7 +153,7 @@ namespace {
     return entries;
   }
 } // namespace
-files::AclInfo files::inspectAcl(int descriptor) {
+luciole::AclInfo luciole::inspectAcl(int descriptor) {
   AclInfo info;
   try {
     const auto file = path(descriptor);
@@ -168,8 +168,8 @@ files::AclInfo files::inspectAcl(int descriptor) {
   }
   return info;
 }
-std::vector<files::AclEntry>
-files::normalizeAcl(std::vector<AclEntry> entries, bool allowEmpty, const AclResolver& resolve) {
+std::vector<luciole::AclEntry>
+luciole::normalizeAcl(std::vector<AclEntry> entries, bool allowEmpty, const AclResolver& resolve) {
   if (!allowEmpty && entries.empty()) {
     invalid("The access ACL cannot be empty.");
   }
@@ -185,7 +185,7 @@ files::normalizeAcl(std::vector<AclEntry> entries, bool allowEmpty, const AclRes
   const auto checked = build(entries);
   return entries;
 }
-files::AclEdit files::normalizeAclEdit(AclEdit edit, const AclResolver& resolve) {
+luciole::AclEdit luciole::normalizeAclEdit(AclEdit edit, const AclResolver& resolve) {
   if (edit.access) {
     edit.access = normalizeAcl(std::move(*edit.access), false, resolve);
   }
@@ -194,7 +194,7 @@ files::AclEdit files::normalizeAclEdit(AclEdit edit, const AclResolver& resolve)
   }
   return edit;
 }
-void files::writeAcl(int descriptor, bool defaults, const std::vector<AclEntry>& entries) {
+void luciole::writeAcl(int descriptor, bool defaults, const std::vector<AclEntry>& entries) {
   const auto file = path(descriptor);
   if (!defaults && entries.empty()) {
     invalid("The access ACL cannot be empty.");
@@ -202,21 +202,21 @@ void files::writeAcl(int descriptor, bool defaults, const std::vector<AclEntry>&
   const auto acl = build(entries);
   check(::acl_set_file(file.c_str(), defaults ? ACL_TYPE_DEFAULT : ACL_TYPE_ACCESS, acl.get()));
 }
-bool files::sameAcl(const AclInfo& left, const AclInfo& right) {
+bool luciole::sameAcl(const AclInfo& left, const AclInfo& right) {
   return left.supported && right.supported && left.access == right.access && left.defaults == right.defaults;
 }
-bool files::satisfiesAcl(const AclInfo& actual, const AclEdit& desired) {
+bool luciole::satisfiesAcl(const AclInfo& actual, const AclEdit& desired) {
   return actual.supported
       && (!desired.access || actual.access == *desired.access)
       && (!desired.defaults || actual.defaults == *desired.defaults);
 }
-bool files::changesAccess(const AclPatchEdit& edit) {
+bool luciole::changesAccess(const AclPatchEdit& edit) {
   return !edit.access.entries.empty() || edit.access.maskPolicy != AclMaskPolicy::Keep;
 }
-bool files::skipsDefaults(const AclInfo& actual, const AclPatchEdit& edit) {
+bool luciole::skipsDefaults(const AclInfo& actual, const AclPatchEdit& edit) {
   return !actual.directory || (edit.defaultPolicy == AclDefaultPolicy::Existing && actual.defaults.empty());
 }
-files::AclPatchEdit files::normalizeAclPatch(AclPatchEdit edit, const AclResolver& resolve) {
+luciole::AclPatchEdit luciole::normalizeAclPatch(AclPatchEdit edit, const AclResolver& resolve) {
   if (edit.defaultPolicy < AclDefaultPolicy::Keep || edit.defaultPolicy > AclDefaultPolicy::Remove) {
     invalid("Invalid default ACL policy.");
   }
@@ -255,7 +255,7 @@ files::AclPatchEdit files::normalizeAclPatch(AclPatchEdit edit, const AclResolve
   }
   return edit;
 }
-files::AclEdit files::patchAcl(const AclInfo& actual, const AclPatchEdit& edit) {
+luciole::AclEdit luciole::patchAcl(const AclInfo& actual, const AclPatchEdit& edit) {
   if (!actual.supported) {
     throwFileError(
         FileErrorKind::Unsupported, actual.message.empty() ? "ACL inspection is unavailable." : actual.message
@@ -333,7 +333,7 @@ files::AclEdit files::patchAcl(const AclInfo& actual, const AclPatchEdit& edit) 
   }
   return result;
 }
-std::string files::describeAcl(const AclInfo& info) {
+std::string luciole::describeAcl(const AclInfo& info) {
   if (!info.supported) {
     return "  " + info.message + "\n";
   }

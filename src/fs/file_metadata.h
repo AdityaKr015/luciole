@@ -4,7 +4,7 @@
 #include <optional>
 #include <string>
 
-namespace files {
+namespace luciole {
   enum class FileType : std::uint8_t { Unknown, Regular, Directory, Symlink, Special, Shortcut, Mountable };
 
   // Provider-reported access facts, not promises that an operation will succeed.
@@ -41,4 +41,4 @@ namespace files {
     FileAccess access;
     FilesystemInfo filesystem;
   };
-} // namespace files
+} // namespace luciole

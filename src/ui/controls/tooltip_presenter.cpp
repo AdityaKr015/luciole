@@ -168,7 +168,7 @@ void TooltipPresenter::place(Renderer& renderer, LayoutSize bounds) {
 
 void TooltipPresenter::sync(
     Renderer& renderer, Node& root, float pointerX, float pointerY, LayoutSize bounds,
-    std::optional<files::FileTooltipTarget> file
+    std::optional<luciole::FileTooltipTarget> file
 ) {
   if (!m_armed) {
     return;
@@ -201,7 +201,7 @@ void TooltipPresenter::sync(
       anchor.height = std::max(1.0F, anchor.height - inset.top - inset.bottom);
     }
   }
-  const bool sameFile = file && m_file && files::sameTooltipFile(*file, *m_file);
+  const bool sameFile = file && m_file && luciole::sameTooltipFile(*file, *m_file);
   const bool changedStaticContent =
       !file && area->tooltipRefreshInterval().count() <= 0 && !sameContent(content, m_controlContent);
   if ((file.has_value() != m_file.has_value())

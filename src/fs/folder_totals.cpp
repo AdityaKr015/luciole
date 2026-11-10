@@ -11,11 +11,11 @@
 namespace {
   struct Progress {
     std::mutex mutex;
-    files::FolderTotalsSnapshot value;
+    luciole::FolderTotalsSnapshot value;
   };
 } // namespace
 
-struct files::FolderTotalsService::State : std::enable_shared_from_this<State> {
+struct luciole::FolderTotalsService::State : std::enable_shared_from_this<State> {
   FolderTotalsSnapshot snapshot;
   CancelToken cancel;
   std::shared_ptr<Progress> progress;
@@ -68,13 +68,13 @@ struct files::FolderTotalsService::State : std::enable_shared_from_this<State> {
   }
 };
 
-files::FolderTotalsService::FolderTotalsService() : m_state(std::make_shared<State>()) {}
-files::FolderTotalsService::~FolderTotalsService() {
+luciole::FolderTotalsService::FolderTotalsService() : m_state(std::make_shared<State>()) {}
+luciole::FolderTotalsService::~FolderTotalsService() {
   m_state->alive = false;
   m_state->changed = {};
   clear();
 }
-bool files::FolderTotalsService::start(std::span<const DirectoryEntry> entries) {
+bool luciole::FolderTotalsService::start(std::span<const DirectoryEntry> entries) {
   const auto state = m_state;
   if (state->running || entries.empty()) {
     return false;
@@ -121,20 +121,20 @@ bool files::FolderTotalsService::start(std::span<const DirectoryEntry> entries) 
   );
   return true;
 }
-void files::FolderTotalsService::cancel() {
+void luciole::FolderTotalsService::cancel() {
   if (m_state->running) {
     m_state->cancel.cancel();
     m_state->snapshot.cancelRequested = true;
   }
 }
-void files::FolderTotalsService::clear() {
+void luciole::FolderTotalsService::clear() {
   ++m_state->serial;
   m_state->cancel.cancel();
   m_state->stopTimer();
   m_state->snapshot = {};
 }
-bool files::FolderTotalsService::busy() const { return m_state->running; }
-const files::FolderTotalsSnapshot& files::FolderTotalsService::snapshot() const { return m_state->snapshot; }
-void files::FolderTotalsService::setChangedCallback(std::function<void()> changed) {
+bool luciole::FolderTotalsService::busy() const { return m_state->running; }
+const luciole::FolderTotalsSnapshot& luciole::FolderTotalsService::snapshot() const { return m_state->snapshot; }
+void luciole::FolderTotalsService::setChangedCallback(std::function<void()> changed) {
   m_state->changed = std::move(changed);
 }

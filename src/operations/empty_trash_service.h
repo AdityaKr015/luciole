@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-namespace files {
+namespace luciole {
   enum class EmptyTrashStatus { Idle, Preparing, Ready, Emptying, Finished, Error, Cancelled };
   enum class EmptyTrashOutcome { Deleted, Skipped, Failed, Cancelled, Unconfirmed };
   struct EmptyTrashResult {
@@ -51,4 +51,4 @@ namespace files {
     struct State;
     std::shared_ptr<State> m_state;
   };
-} // namespace files
+} // namespace luciole

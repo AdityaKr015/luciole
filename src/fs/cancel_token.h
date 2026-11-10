@@ -2,7 +2,7 @@
 
 #include <memory>
 
-namespace files {
+namespace luciole {
   struct CancelTokenAccess;
 
   // Shared cancellation flag for one job. Copies observe the same state; a new
@@ -18,4 +18,4 @@ namespace files {
     struct State;
     std::shared_ptr<State> m_state;
   };
-} // namespace files
+} // namespace luciole

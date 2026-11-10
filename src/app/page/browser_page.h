@@ -72,20 +72,21 @@
 
 class BrowserPage final : public PageContext, public OperationHub::Owner {
 public:
-  using Action = files::BrowserAction;
+  using Action = luciole::BrowserAction;
 
   // `id` is the page's TabId in the workspace; the page shows the jobs `hub` routes to it. `dispatcher` is the input
   // dispatcher of the window that owns `surface`.
   BrowserPage(
       WaylandConnection& connection, RenderContext& renderer, TextInputService& textInput,
-      const files::BrowserSettings& settings, files::WaylandTextClipboard& clipboard, files::WindowSurface& surface,
-      InputDispatcher& dispatcher, AnimationManager& animations, files::PinService& pins, files::DriveMonitor& drives,
-      files::FileIconCache& icons, files::ThumbnailService& thumbnails, files::ViewPreferenceWriter& preferences,
-      OperationHub& hub, files::TabId id
+      const luciole::BrowserSettings& settings, luciole::WaylandTextClipboard& clipboard,
+      luciole::WindowSurface& surface, InputDispatcher& dispatcher, AnimationManager& animations,
+      luciole::PinService& pins, luciole::DriveMonitor& drives, luciole::FileIconCache& icons,
+      luciole::ThumbnailService& thumbnails, luciole::ViewPreferenceWriter& preferences, OperationHub& hub,
+      luciole::TabId id
   );
 
-  files::BrowserController& browser() override;
-  const files::BrowserController& browser() const;
+  luciole::BrowserController& browser() override;
+  const luciole::BrowserController& browser() const;
   void focusMiller(std::size_t index, bool reveal = true);
 
   ~BrowserPage();
@@ -95,7 +96,7 @@ public:
   bool initialize(const std::optional<std::string>& initialLocation);
 
   // Select `items` once the current folder finishes loading; optionally open their Properties.
-  void revealItems(std::vector<files::Location> items, bool properties);
+  void revealItems(std::vector<luciole::Location> items, bool properties);
 
   // True while page-local work that outlives the window runs: launching, saving places or preferences, a paste.
   bool busy() const;
@@ -103,25 +104,25 @@ public:
   // OperationHub::Owner: hands the job to the controller of its kind.
   void jobChanged(OperationJob& job) override;
   void activityChanged() override { m_operations.markDirty(); }
-  void setOperationRequest(std::function<void(files::JobId, bool)> callback) {
+  void setOperationRequest(std::function<void(luciole::JobId, bool)> callback) {
     m_operationRequest = std::move(callback);
   }
-  void reviewOperation(files::JobId id, bool retry);
-  void transfersFinished(const std::vector<files::TransferResult>& results) override;
+  void reviewOperation(luciole::JobId id, bool retry);
+  void transfersFinished(const std::vector<luciole::TransferResult>& results) override;
   // The shared thumbnail service changed.
   void thumbnailsChanged();
 
-  files::BrowserSettings options() const;
-  std::optional<files::Location> location() const;
+  luciole::BrowserSettings options() const;
+  std::optional<luciole::Location> location() const;
   std::string title() const;
-  std::optional<files::FileTooltipTarget> fileTooltipAt(float x, float y) const;
+  std::optional<luciole::FileTooltipTarget> fileTooltipAt(float x, float y) const;
   void preferencesChanged(const std::string& error);
   void placesChanged();
   void clipboardChanged();
   void clearExternalDrop();
-  const std::vector<files::Bookmark>* draggedFolders() const;
-  files::FileDropTarget externalDrop(float x, float y, const std::vector<files::Bookmark>* pins);
-  files::FileDropTarget externalDestination(const files::Location& destination, LayoutRect rect);
+  const std::vector<luciole::Bookmark>* draggedFolders() const;
+  luciole::FileDropTarget externalDrop(float x, float y, const std::vector<luciole::Bookmark>* pins);
+  luciole::FileDropTarget externalDestination(const luciole::Location& destination, LayoutRect rect);
   void iconsReady();
   void reusePlacesFrom(BrowserPage& previous);
   void workspaceError(const std::string& message);
@@ -131,12 +132,12 @@ public:
   bool completeLocationOnTab(std::uint32_t modifiers);
   void stampFocusKeys(Node& node);
   void duplicateFrom(BrowserPage& source);
-  void open(const files::Location& location);
-  void setWorkspaceRequest(std::function<void(WorkspaceCommand, std::optional<files::Location>)> callback);
+  void open(const luciole::Location& location);
+  void setWorkspaceRequest(std::function<void(WorkspaceCommand, std::optional<luciole::Location>)> callback);
   void configurationChanged();
   void setHasOther(std::function<bool()> callback);
   void setPopupAvailable(std::function<bool()> callback);
-  void setForeignDrop(std::function<std::optional<std::pair<files::Location, LayoutRect>>(float, float)> callback);
+  void setForeignDrop(std::function<std::optional<std::pair<luciole::Location, LayoutRect>>(float, float)> callback);
   bool popupOwns(wl_surface* surface) const;
   bool popup() const;
   bool overlay() const override;
@@ -148,9 +149,9 @@ public:
   void layoutNavigation(Renderer& renderer);
   bool dragging() const;
   bool contains(float x, float y) const;
-  files::WindowSurface* boundSurface() const;
+  luciole::WindowSurface* boundSurface() const;
   // Moves the page to another window: its surface and that window's input dispatcher.
-  void rebind(files::WindowSurface& surface, InputDispatcher& dispatcher);
+  void rebind(luciole::WindowSurface& surface, InputDispatcher& dispatcher);
   // `roundCorner`: this pane starts the content plane beside the sidebar and rounds its top-left corner.
   void prepare(LayoutRect bounds, bool active, bool roundCorner);
   void deactivate();
@@ -169,8 +170,8 @@ public:
   float sidebarControlWidth() const;
   void pumpJobs();
   void workspaceMenu(std::vector<ContextMenuControlEntry> entries, std::function<void(int)> callback, float x, float y);
-  void transferTo(const files::Location& destination, bool copy);
-  std::optional<std::pair<files::Location, LayoutRect>> foreignTarget(float x, float y) const;
+  void transferTo(const luciole::Location& destination, bool copy);
+  std::optional<std::pair<luciole::Location, LayoutRect>> foreignTarget(float x, float y) const;
 
   void outputChanged(wl_output* output);
 
@@ -179,29 +180,31 @@ public:
   void keyboard(const KeyboardEvent& event);
 
 private:
-  files::ActionContext actionContext() const;
-  files::ActionRequest actionRequest(bool withTargets) const override;
-  files::ActionRequest requestFor(const std::vector<files::DirectoryEntry>& entries) const override;
-  files::ActionState actionState(Action action, const files::ActionRequest& request) const override;
+  luciole::ActionContext actionContext() const;
+  luciole::ActionRequest actionRequest(bool withTargets) const override;
+  luciole::ActionRequest requestFor(const std::vector<luciole::DirectoryEntry>& entries) const override;
+  luciole::ActionState actionState(Action action, const luciole::ActionRequest& request) const override;
   void dispatchAction(Action action) override;
-  void dispatchAction(Action action, const files::ActionRequest& request) override;
-  void runAction(Action action, const files::ActionRequest& request, const std::vector<files::DirectoryEntry>& targets);
-  void copyFiles(Action action, const std::vector<files::DirectoryEntry>& targets);
-  void copyPaths(Action action, const files::ActionRequest& request, const std::vector<files::DirectoryEntry>& targets);
-  void openTerminal(const files::Location& target);
+  void dispatchAction(Action action, const luciole::ActionRequest& request) override;
+  void
+  runAction(Action action, const luciole::ActionRequest& request, const std::vector<luciole::DirectoryEntry>& targets);
+  void copyFiles(Action action, const std::vector<luciole::DirectoryEntry>& targets);
+  void
+  copyPaths(Action action, const luciole::ActionRequest& request, const std::vector<luciole::DirectoryEntry>& targets);
+  void openTerminal(const luciole::Location& target);
   void sortAction(Action action);
-  void openTargets(const std::vector<files::DirectoryEntry>& targets);
-  void pinTargets(const std::vector<files::DirectoryEntry>& targets);
-  void unpinTargets(const std::vector<files::DirectoryEntry>& targets);
-  void openPatternSelection(const files::ActionRequest& request);
+  void openTargets(const std::vector<luciole::DirectoryEntry>& targets);
+  void pinTargets(const std::vector<luciole::DirectoryEntry>& targets);
+  void unpinTargets(const std::vector<luciole::DirectoryEntry>& targets);
+  void openPatternSelection(const luciole::ActionRequest& request);
 
   void actionError(std::string message) override;
   void setActionMessage(std::string message) override;
-  void revealOnReload(std::vector<files::Location> targets) override;
-  void restorePlaceFocus(files::Location location) override;
+  void revealOnReload(std::vector<luciole::Location> targets) override;
+  void restorePlaceFocus(luciole::Location location) override;
 
-  bool targetsCurrent(const std::vector<files::DirectoryEntry>& targets) override;
-  bool requestCurrent(const files::ActionRequest& request, files::ActionScope scope) const override;
+  bool targetsCurrent(const std::vector<luciole::DirectoryEntry>& targets) override;
+  bool requestCurrent(const luciole::ActionRequest& request, luciole::ActionScope scope) const override;
   bool operationsBusy() const override;
   PageJobs& jobs() override;
   bool visible() const override;
@@ -210,10 +213,10 @@ private:
   bool popupAvailable() override;
   void prepareOverlay() override;
   Node& sceneRoot() override;
-  const files::BrowserSettings& settings() const override;
+  const luciole::BrowserSettings& settings() const override;
   bool hasOtherPane() const override;
   void requestWorkspace(
-      WorkspaceCommand command, std::optional<files::Location> location, std::optional<files::ActionRequest> pending
+      WorkspaceCommand command, std::optional<luciole::Location> location, std::optional<luciole::ActionRequest> pending
   ) override;
   LayoutRect menuAnchor() const override;
   Node& upButton() override;
@@ -223,25 +226,25 @@ private:
   VirtualGridView* fileList() override;
   Flex& filePane() override;
   MillerView& millerView() override;
-  files::ViewMode viewMode() const override;
+  luciole::ViewMode viewMode() const override;
   float gridIconSize() const override;
   void captureViewAnchor() override;
   void resetFileView() override;
 
   void operationProgressTick();
 
-  void showContaining(const files::Location& location);
+  void showContaining(const luciole::Location& location);
 
-  void applySettings(const files::BrowserSettings& settings, bool force) override;
+  void applySettings(const luciole::BrowserSettings& settings, bool force) override;
 
   void showCenteredDialog(std::unique_ptr<Flex> root, float preferredWidth) override;
 
   void cancelDrag() override;
 
-  void setViewMode(files::ViewMode mode);
+  void setViewMode(luciole::ViewMode mode);
   void applyViewMode();
   float gridHeight() const;
-  void changeSort(files::SortOptions options);
+  void changeSort(luciole::SortOptions options);
   void changeGridZoom(int requested);
   bool zoomFromKey(const KeyboardEvent& event);
   bool zoomFromScroll(const PointerEvent& event);
@@ -287,8 +290,8 @@ private:
   ContextMenuControl* contextMenu() override;
   std::uint32_t popupSerial() override;
   float popupMaxHeight() const override;
-  files::WaylandTextClipboard& clipboard() override;
-  files::WindowSurface& surface() override;
+  luciole::WaylandTextClipboard& clipboard() override;
+  luciole::WindowSurface& surface() override;
   InputDispatcher& dispatcher() override;
   void focusFileList() override;
 
@@ -296,37 +299,37 @@ private:
   RenderContext& m_renderer;
   TextInputService& m_textInput;
   AnimationManager& m_animations;
-  files::WindowSurface* m_surface;
+  luciole::WindowSurface* m_surface;
   InputDispatcher* m_dispatcher;
-  files::BrowserController m_browser;
-  files::MillerColumns m_miller;
+  luciole::BrowserController m_browser;
+  luciole::MillerColumns m_miller;
   MillerView* m_millerView = nullptr;
   VirtualGridView* m_regularList = nullptr;
   bool m_millerFocusPending = false;
   bool m_restartMiller = false;
-  const files::BrowserController* m_lastBrowser = nullptr;
-  files::ActivationMode m_activationMode = files::ActivationMode::DoubleClick;
+  const luciole::BrowserController* m_lastBrowser = nullptr;
+  luciole::ActivationMode m_activationMode = luciole::ActivationMode::DoubleClick;
   NameDialog* m_patternEditor = nullptr;
   std::string m_selectionPattern = "*";
-  files::FileIconCache& m_icons;
-  files::ThumbnailService& m_thumbnails;
-  files::PreviewService m_preview;
+  luciole::FileIconCache& m_icons;
+  luciole::ThumbnailService& m_thumbnails;
+  luciole::PreviewService m_preview;
   bool m_thumbnailClearing = false;
   std::string m_thumbnailError;
   std::uint64_t m_thumbnailRevision = 0;
   std::uint64_t m_thumbnailContext = 0;
-  files::FileViewAdapter m_listAdapter;
-  files::FileViewAdapter m_gridAdapter;
-  files::ViewPreferenceWriter& m_preferences;
-  files::BrowserSettings m_savedSettings;
+  luciole::FileViewAdapter m_listAdapter;
+  luciole::FileViewAdapter m_gridAdapter;
+  luciole::ViewPreferenceWriter& m_preferences;
+  luciole::BrowserSettings m_savedSettings;
   std::optional<float> m_dialogHeight;
   float m_dialogWidth = 588.0F;
   std::optional<std::pair<int, int>> m_dialogPosition;
   bool m_dialogResizePending = false;
-  files::PinService& m_pins;
-  files::DriveMonitor& m_drives;
-  files::FileLauncher m_launcher;
-  std::vector<files::Location> m_revealTargets;
+  luciole::PinService& m_pins;
+  luciole::DriveMonitor& m_drives;
+  luciole::FileLauncher m_launcher;
+  std::vector<luciole::Location> m_revealTargets;
   bool m_revealProperties = false;
   float m_pointerX = 0;
   float m_pointerY = 0;
@@ -338,13 +341,13 @@ private:
   RenameController m_renameController{*this, m_pins};
   PropertiesController m_propertiesController{*this, m_icons};
   BatchRenameController m_batchRename{*this};
-  files::TemplateCatalog m_templates;
+  luciole::TemplateCatalog m_templates;
   SubmenuController m_submenus{*this, m_connection, m_renderer, m_animations};
   ExecutionController m_execution{*this, m_submenus, m_connection};
   CreateController m_createController{*this, m_templates, m_submenus};
   ArchiveController m_archiveController{*this, m_launcher, m_icons, m_connection};
   TransferController m_transferController{*this, [this] { operationProgressTick(); }};
-  OperationsController m_operations{*this, m_hub, [this](files::JobId id, bool retry) {
+  OperationsController m_operations{*this, m_hub, [this](luciole::JobId id, bool retry) {
                                       if (m_operationRequest) {
                                         m_operationRequest(id, retry);
                                       }
@@ -379,14 +382,14 @@ private:
   StatusBarController m_statusBar{*this, m_pins, m_settingsController, m_fileKeys};
   std::size_t m_gridZoom = 1;
   double m_zoomScroll = 0;
-  files::ViewMode m_viewMode;
-  files::WaylandTextClipboard& m_clipboard;
-  files::TerminalLauncher m_terminal;
-  files::PathCompletion m_siblingCompletion;
-  std::optional<files::ViewMode> m_appliedViewMode;
-  std::optional<files::EntryId> m_viewAnchor;
+  luciole::ViewMode m_viewMode;
+  luciole::WaylandTextClipboard& m_clipboard;
+  luciole::TerminalLauncher m_terminal;
+  luciole::PathCompletion m_siblingCompletion;
+  std::optional<luciole::ViewMode> m_appliedViewMode;
+  std::optional<luciole::EntryId> m_viewAnchor;
   std::uint64_t m_visitSerial = 0;
-  std::optional<files::BrowseViewport> m_pendingHistoryViewport;
+  std::optional<luciole::BrowseViewport> m_pendingHistoryViewport;
   Node* m_root = nullptr;
   std::unique_ptr<Node> m_detachedRoot;
   Flex* m_body = nullptr;
@@ -395,16 +398,16 @@ private:
   Flex* m_toolbar = nullptr;
   LayoutRect m_pageBounds{};
   std::optional<InputDispatcher::TabFocusSnapshot> m_stashedFocus;
-  std::optional<files::BrowseViewport> m_inactiveViewport;
-  std::function<void(WorkspaceCommand, std::optional<files::Location>)> m_workspaceRequest;
+  std::optional<luciole::BrowseViewport> m_inactiveViewport;
+  std::function<void(WorkspaceCommand, std::optional<luciole::Location>)> m_workspaceRequest;
   bool m_visible = false, m_active = false;
   bool m_pendingProviderRefresh = false;
-  files::TabId m_workspaceId;
+  luciole::TabId m_workspaceId;
   std::uint64_t m_nextFocusKey = 0;
   std::function<bool()> m_popupAvailable, m_hasOther;
-  std::optional<files::ActionRequest> m_pendingWorkspaceRequest;
-  std::function<void(files::JobId, bool)> m_operationRequest;
-  std::optional<std::pair<files::JobId, bool>> m_pendingOperation;
+  std::optional<luciole::ActionRequest> m_pendingWorkspaceRequest;
+  std::function<void(luciole::JobId, bool)> m_operationRequest;
+  std::optional<std::pair<luciole::JobId, bool>> m_pendingOperation;
 
   Flex* m_titlebar = nullptr;
   Flex* m_paneContentFrame = nullptr;

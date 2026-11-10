@@ -6,7 +6,7 @@
 #include <span>
 #include <string>
 
-namespace files {
+namespace luciole {
   // Rasterizes an SVG file with librsvg, optionally center-cropped to a square, at most targetSize pixels per side.
   std::expected<LoadedImageFile, std::string>
   rasterizeSvg(const std::string& path, int targetSize, bool centerSquareCrop);
@@ -14,4 +14,4 @@ namespace files {
   std::expected<LoadedImageFile, std::string> rasterizeSvg(
       std::span<const std::uint8_t> bytes, int targetSize, bool centerSquareCrop, std::uint64_t maxSourcePixels
   );
-} // namespace files
+} // namespace luciole

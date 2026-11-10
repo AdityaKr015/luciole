@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-namespace files {
+namespace luciole {
   enum class DirectoryStatus : std::uint8_t { Idle, Loading, Ready, Error, Cancelled };
   struct DirectoryEntry {
     std::uint64_t id = 0;
@@ -71,4 +71,4 @@ namespace files {
     struct State;
     std::shared_ptr<State> m_state;
   };
-} // namespace files
+} // namespace luciole

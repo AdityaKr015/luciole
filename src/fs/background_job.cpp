@@ -4,7 +4,7 @@
 
 #include <gio/gio.h>
 
-void files::detail::runInThread(std::move_only_function<void()> work, std::move_only_function<void()> done) {
+void luciole::detail::runInThread(std::move_only_function<void()> work, std::move_only_function<void()> done) {
   struct Request {
     std::move_only_function<void()> work;
     std::move_only_function<void()> done;

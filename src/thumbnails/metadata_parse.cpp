@@ -12,9 +12,9 @@
 
 namespace {
   using Json = nlohmann::json;
-  using files::MetadataFields;
+  using luciole::MetadataFields;
   std::string literal(std::string_view value) {
-    const files::GString valid(
+    const luciole::GString valid(
         g_utf8_make_valid(value.data(), static_cast<gssize>(std::min<std::size_t>(value.size(), 2048)))
     );
     std::string result;
@@ -142,7 +142,7 @@ namespace {
   }
 } // namespace
 
-files::MetadataFields files::parseMediaMetadata(std::string_view data) {
+luciole::MetadataFields luciole::parseMediaMetadata(std::string_view data) {
   if (data.empty() || data.size() > 65536) {
     return {};
   }
@@ -191,7 +191,7 @@ files::MetadataFields files::parseMediaMetadata(std::string_view data) {
     const auto tags = format->find("tags");
     if (tags != format->end() && tags->is_object()) {
       for (const auto& [name, value] : tags->items()) {
-        const files::GString lower(g_ascii_strdown(name.c_str(), -1));
+        const luciole::GString lower(g_ascii_strdown(name.c_str(), -1));
         const std::string_view key(lower.get());
         const char* label = key == "title" ? "Title"
             : key == "artist"              ? "Artist"
@@ -208,7 +208,7 @@ files::MetadataFields files::parseMediaMetadata(std::string_view data) {
   return fields;
 }
 
-files::MetadataFields files::parsePdfMetadata(std::string_view data) {
+luciole::MetadataFields luciole::parsePdfMetadata(std::string_view data) {
   if (data.size() > 65536) {
     return {};
   }

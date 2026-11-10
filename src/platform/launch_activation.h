@@ -11,7 +11,7 @@ struct wl_surface;
 struct xdg_activation_v1;
 struct xdg_activation_token_v1;
 
-namespace files {
+namespace luciole {
   // Owns an independent activation binding and bounded asynchronous launch requests.
   class LaunchActivation {
   public:
@@ -31,4 +31,4 @@ namespace files {
     bool m_closing = false;
     std::map<xdg_activation_token_v1*, std::unique_ptr<Pending>> m_pending;
   };
-} // namespace files
+} // namespace luciole

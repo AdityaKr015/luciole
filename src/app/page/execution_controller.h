@@ -15,22 +15,22 @@ class ExecutionController {
 public:
   ExecutionController(PageContext& page, SubmenuController& submenus, WaylandConnection& connection);
   ~ExecutionController();
-  void run(const files::ActionRequest& request, bool terminal);
-  void scripts(const files::ActionRequest& request);
+  void run(const luciole::ActionRequest& request, bool terminal);
+  void scripts(const luciole::ActionRequest& request);
   void closeScripts();
   void cancel();
   bool busy() const { return m_pending != 0; }
 
 private:
-  void confirm(const files::ActionRequest& request, files::PreparedProgram program);
-  void launch(const files::ActionRequest& request, files::PreparedProgram program, bool terminal, bool script);
-  void showScripts(const files::ActionRequest& request, files::ScriptListing listing, bool loading);
-  void openScriptsFolder(const files::ActionRequest& request);
-  bool current(const files::ActionRequest& request) const;
+  void confirm(const luciole::ActionRequest& request, luciole::PreparedProgram program);
+  void launch(const luciole::ActionRequest& request, luciole::PreparedProgram program, bool terminal, bool script);
+  void showScripts(const luciole::ActionRequest& request, luciole::ScriptListing listing, bool loading);
+  void openScriptsFolder(const luciole::ActionRequest& request);
+  bool current(const luciole::ActionRequest& request) const;
   PageContext& m_page;
   SubmenuController& m_submenus;
   WaylandConnection& m_connection;
-  files::CancelToken m_listing, m_launch;
+  luciole::CancelToken m_listing, m_launch;
   std::size_t m_pending = 0;
   std::shared_ptr<int> m_lifetime = std::make_shared<int>(0);
 };

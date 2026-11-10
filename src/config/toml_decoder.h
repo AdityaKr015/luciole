@@ -11,7 +11,7 @@
 #include <string_view>
 #include <toml++/toml.hpp>
 
-namespace files {
+namespace luciole {
   // Schema version written to and required in config.toml, settings.toml and state.toml.
   inline constexpr std::int64_t kSchemaVersion = 1;
 
@@ -40,4 +40,4 @@ namespace files {
   private:
     std::filesystem::path m_file;
   };
-} // namespace files
+} // namespace luciole

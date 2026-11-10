@@ -144,8 +144,9 @@ namespace {
       wl_display_destroy_clients(m_server);
       wl_display_destroy(m_server);
     }
-    auto service() { return std::make_unique<files::LaunchActivation>(std::exchange(m_manager, nullptr)); }
-    void request(files::LaunchActivation& service, std::function<void(std::string)> reply, std::uint32_t serial = 42) {
+    auto service() { return std::make_unique<luciole::LaunchActivation>(std::exchange(m_manager, nullptr)); }
+    void
+    request(luciole::LaunchActivation& service, std::function<void(std::string)> reply, std::uint32_t serial = 42) {
       service.request(m_surface, m_seat, serial, "org.example.Viewer.desktop", std::move(reply));
     }
     void pump() {
@@ -235,9 +236,9 @@ namespace {
   void contexts() {
     g_setenv("XDG_ACTIVATION_TOKEN", "inherited-stale", true);
     g_setenv("DESKTOP_STARTUP_ID", "inherited-startup", true);
-    const auto first = files::launchContext("fresh-one"), second = files::launchContext("fresh-two"),
-               fallback = files::launchContext({});
-    const files::GioPtr<GAppInfo> app(
+    const auto first = luciole::launchContext("fresh-one"), second = luciole::launchContext("fresh-two"),
+               fallback = luciole::launchContext({});
+    const luciole::GioPtr<GAppInfo> app(
         g_app_info_create_from_commandline("true %U", "fixture", G_APP_INFO_CREATE_SUPPORTS_URIS, nullptr)
     );
     TEST_CHECK(app);

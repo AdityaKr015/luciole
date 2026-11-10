@@ -14,12 +14,12 @@
 #include <unistd.h>
 
 namespace {
-  files::MetadataFields imageInfo(std::span<const std::uint8_t> bytes, std::string_view mime) {
+  luciole::MetadataFields imageInfo(std::span<const std::uint8_t> bytes, std::string_view mime) {
     int width = 0, height = 0;
     std::string format;
     if (mime == "image/svg+xml" || mime == "image/svg+xml-compressed") {
-      auto image = files::rasterizeSvg(
-          bytes, 1, false, static_cast<std::uint64_t>(files::kMaxSvgSourceSide * files::kMaxSvgSourceSide)
+      auto image = luciole::rasterizeSvg(
+          bytes, 1, false, static_cast<std::uint64_t>(luciole::kMaxSvgSourceSide * luciole::kMaxSvgSourceSide)
       );
       if (!image) {
         return {};
@@ -32,14 +32,14 @@ namespace {
       if (!info || width <= 0 || height <= 0) {
         return {};
       }
-      const files::GString name(gdk_pixbuf_format_get_name(info));
+      const luciole::GString name(gdk_pixbuf_format_get_name(info));
       if (!name || std::string_view(name.get()) == "svg") {
         return {};
       }
-      const files::GString upper(g_ascii_strup(name.get(), -1));
+      const luciole::GString upper(g_ascii_strup(name.get(), -1));
       format = upper.get();
     }
-    files::MetadataFields fields{{"Format", format}, {"Pixel size", std::format("{} × {} px", width, height)}};
+    luciole::MetadataFields fields{{"Format", format}, {"Pixel size", std::format("{} × {} px", width, height)}};
     const auto orientation = exifOrientation(bytes.data(), bytes.size());
     constexpr std::array<std::string_view, 9> orientations{
         "",
@@ -76,7 +76,7 @@ namespace {
   }
 } // namespace
 
-int files::runPreviewMetadataWorker(std::span<const std::string_view> args) {
+int luciole::runPreviewMetadataWorker(std::span<const std::string_view> args) {
   if (args.size() != 2 || !args[0].starts_with("image/")) {
     return 2;
   }

@@ -24,13 +24,14 @@
 #include <string>
 
 SidebarController::SidebarController(
-    PageContext& page, files::PinService& pins, files::DriveMonitor& drives, files::ViewPreferenceWriter& preferences,
-    AnimationManager& animations, MenuController& menus, RenameController& renamer, DragDropController& drags
+    PageContext& page, luciole::PinService& pins, luciole::DriveMonitor& drives,
+    luciole::ViewPreferenceWriter& preferences, AnimationManager& animations, MenuController& menus,
+    RenameController& renamer, DragDropController& drags
 )
     : m_page(page), m_pins(pins), m_drives(drives), m_preferences(preferences), m_animations(animations),
       m_menus(menus), m_renamer(renamer), m_drags(drags) {}
 
-void SidebarController::load(const files::BrowserSettings& settings) {
+void SidebarController::load(const luciole::BrowserSettings& settings) {
   m_sidebarWidth = settings.sidebarWidth;
   m_showSidebar = settings.showSidebar;
   m_sidebarTree = settings.sidebarTree;
@@ -38,7 +39,7 @@ void SidebarController::load(const files::BrowserSettings& settings) {
 }
 
 void SidebarController::applySettings(
-    const files::BrowserSettings& before, const files::BrowserSettings& settings, bool force
+    const luciole::BrowserSettings& before, const luciole::BrowserSettings& settings, bool force
 ) {
   if (force || before.showSidebar != settings.showSidebar) {
     setVisible(settings.showSidebar, false);
@@ -93,13 +94,13 @@ float SidebarController::controlWidth() const { return m_showSidebar ? width() -
 
 int SidebarController::maximumWidth() const {
   return std::clamp(
-      static_cast<int>(m_page.surface().width()) - 320 - static_cast<int>(kWorkspaceInset * 3), files::kMinSidebarWidth,
-      files::kMaxSidebarWidth
+      static_cast<int>(m_page.surface().width()) - 320 - static_cast<int>(kWorkspaceInset * 3),
+      luciole::kMinSidebarWidth, luciole::kMaxSidebarWidth
   );
 }
 
 void SidebarController::resize(int width, bool persist) {
-  const int bounded = std::clamp(width, files::kMinSidebarWidth, maximumWidth());
+  const int bounded = std::clamp(width, luciole::kMinSidebarWidth, maximumWidth());
   if (bounded == m_sidebarWidth) {
     return;
   }
@@ -142,16 +143,16 @@ void SidebarController::configureCallbacks() {
   m_places->setChangedCallback([this] { m_page.requestSync(); });
   m_places->setTreeEnabled(m_sidebarTree);
   m_places->setShowDrives(m_showDrives);
-  m_places->setOpenCallback([this](const files::Location& location) {
+  m_places->setOpenCallback([this](const luciole::Location& location) {
     m_page.setActionMessage({});
     m_page.browser().open(location);
     m_page.dispatcher().setFocus(m_page.fileList()->focusArea());
   });
-  m_places->setContextCallback([this](const files::Bookmark& bookmark, float x, float y) {
+  m_places->setContextCallback([this](const luciole::Bookmark& bookmark, float x, float y) {
     m_menus.openPlaceMenu(bookmark, x, y);
   });
-  m_places->setDragCallback([this](const files::Bookmark& bookmark) { m_drags.startPlaceDrag(bookmark); });
-  m_places->setRenameCallback([this](const files::Bookmark& bookmark) { m_renamer.openPlaceRename(bookmark); });
+  m_places->setDragCallback([this](const luciole::Bookmark& bookmark) { m_drags.startPlaceDrag(bookmark); });
+  m_places->setRenameCallback([this](const luciole::Bookmark& bookmark) { m_renamer.openPlaceRename(bookmark); });
   m_places->setDriveOpenCallback([this](const std::string& key) { openDrive(key); });
   m_places->setDriveRemoveCallback([this](const std::string& key) { removeDrive(key); });
   m_places->setDriveContextCallback([this](const std::string& key, float x, float y) { openDriveMenu(key, x, y); });
@@ -160,7 +161,7 @@ void SidebarController::configureCallbacks() {
 void SidebarController::openDrive(const std::string& key) {
   m_page.setActionMessage({});
   m_drives.mount(
-      key, [this, lifetime = std::weak_ptr(m_lifetime)](std::optional<files::Location> root, std::string error) {
+      key, [this, lifetime = std::weak_ptr(m_lifetime)](std::optional<luciole::Location> root, std::string error) {
         if (lifetime.expired()) {
           return;
         }
@@ -185,7 +186,7 @@ void SidebarController::removeDrive(const std::string& key) {
   const auto& current = m_page.browser().model().snapshot().location;
   if (current && (*current == *drive->root || current->uri().starts_with(drive->root->uri() + "/"))) {
     if (const char* home = g_get_home_dir(); home != nullptr && g_path_is_absolute(home)) {
-      m_page.browser().open(files::Location::fromPath(home));
+      m_page.browser().open(luciole::Location::fromPath(home));
     }
   }
   const bool eject = drive->ejectable;
@@ -218,7 +219,7 @@ void SidebarController::openDriveMenu(const std::string& key, float x, float y) 
   );
 }
 
-void SidebarController::pinFolders(std::vector<files::Bookmark> bookmarks, std::size_t before) {
+void SidebarController::pinFolders(std::vector<luciole::Bookmark> bookmarks, std::size_t before) {
   if (!m_pins.add(std::move(bookmarks), before)) {
     m_page.actionError(
         m_pins.busy() ? "Pins are being saved. Try again shortly." : "Reload valid pins before editing them."
@@ -227,7 +228,7 @@ void SidebarController::pinFolders(std::vector<files::Bookmark> bookmarks, std::
 }
 
 std::unique_ptr<Node> SidebarController::buildPlaces() {
-  auto places = std::make_unique<files::PlacesSidebar>(m_pins, m_drives);
+  auto places = std::make_unique<luciole::PlacesSidebar>(m_pins, m_drives);
   m_places = places.get();
   configureCallbacks();
   return places;
@@ -276,7 +277,7 @@ std::unique_ptr<Node> SidebarController::buildResizeHandle() {
                const int direction = KeySymbol::isRight(key.sym) != Style::rtl() ? 1 : -1;
                resize(static_cast<int>(std::lround(m_places->width())) + direction * step, true);
              } else if (KeySymbol::isHome(key.sym) && key.modifiers == 0) {
-               resize(files::kDefaultSidebarWidth, true);
+               resize(luciole::kDefaultSidebarWidth, true);
              }
            },
        .onFocusGain = [this] { m_page.surface().requestUpdate(); },
@@ -328,7 +329,7 @@ void SidebarController::showDropLine(Renderer& renderer, std::size_t slot) {
   m_placeDropLine->arrange(renderer, m_places->dropLine(slot));
 }
 
-void SidebarController::sync(const std::optional<files::Location>& location) {
+void SidebarController::sync(const std::optional<luciole::Location>& location) {
   m_places->setShowHidden(m_page.browser().model().filter().showHidden);
   m_places->sync(location);
 }

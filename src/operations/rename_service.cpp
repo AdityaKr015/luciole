@@ -16,21 +16,21 @@
 namespace {
   struct Target {
     std::string parentPath, name;
-    files::Fd parent, item;
+    luciole::Fd parent, item;
     explicit Target(const std::string& path)
         : parentPath(std::filesystem::path(path).parent_path().native()),
           name(std::filesystem::path(path).filename().native()),
-          parent(files::checkedFd(::open(parentPath.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC))),
-          item(files::checkedFd(::openat(parent.get(), name.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC))) {}
+          parent(luciole::checkedFd(::open(parentPath.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC))),
+          item(luciole::checkedFd(::openat(parent.get(), name.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC))) {}
   };
   struct Reply {
     std::shared_ptr<Target> target;
-    std::optional<files::Location> destination;
-    std::shared_ptr<const files::RenameReceipt> receipt;
+    std::optional<luciole::Location> destination;
+    std::shared_ptr<const luciole::RenameReceipt> receipt;
   };
 } // namespace
 
-struct files::RenameService::State {
+struct luciole::RenameService::State {
   RenameSnapshot snapshot;
   std::shared_ptr<Target> target;
   CancelToken token;
@@ -73,25 +73,25 @@ struct files::RenameService::State {
     owner->notify();
   }
 };
-files::RenameService::RenameService() : m_state(std::make_shared<State>()) {}
-files::RenameService::~RenameService() {
+luciole::RenameService::RenameService() : m_state(std::make_shared<State>()) {}
+luciole::RenameService::~RenameService() {
   m_state->changed = {};
   cancel();
 }
-void files::RenameService::setChangedCallback(std::function<void()> callback) {
+void luciole::RenameService::setChangedCallback(std::function<void()> callback) {
   m_state->changed = std::move(callback);
 }
-bool files::RenameService::busy() const { return m_state->active; }
-bool files::RenameService::canRename() const { return !busy() && m_state->target != nullptr; }
-const files::RenameSnapshot& files::RenameService::snapshot() const { return m_state->snapshot; }
-void files::RenameService::cancel() {
+bool luciole::RenameService::busy() const { return m_state->active; }
+bool luciole::RenameService::canRename() const { return !busy() && m_state->target != nullptr; }
+const luciole::RenameSnapshot& luciole::RenameService::snapshot() const { return m_state->snapshot; }
+void luciole::RenameService::cancel() {
   m_state->token.cancel();
   m_state->target.reset();
   if (!busy() && m_state->snapshot.status != RenameStatus::Succeeded) {
     m_state->snapshot.status = RenameStatus::Cancelled;
   }
 }
-bool files::RenameService::prepare(const Location& source) {
+bool luciole::RenameService::prepare(const Location& source) {
   if (busy()) {
     return false;
   }
@@ -112,7 +112,7 @@ bool files::RenameService::prepare(const Location& source) {
   });
   return true;
 }
-bool files::RenameService::rename(std::string name) {
+bool luciole::RenameService::rename(std::string name) {
   if (!canRename()) {
     return false;
   }
@@ -167,7 +167,7 @@ bool files::RenameService::rename(std::string name) {
   return true;
 }
 
-bool files::RenameService::replay(std::shared_ptr<const RenameReceipt> receipt) {
+bool luciole::RenameService::replay(std::shared_ptr<const RenameReceipt> receipt) {
   if (busy() || !receipt) {
     return false;
   }

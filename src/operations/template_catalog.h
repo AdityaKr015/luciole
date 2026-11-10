@@ -11,7 +11,7 @@
 #include <sys/stat.h>
 #include <vector>
 
-namespace files {
+namespace luciole {
   struct TemplateRevision {
     std::uint64_t device, inode, size;
     std::int64_t modifiedSeconds, modifiedNanos, changedSeconds, changedNanos;
@@ -43,4 +43,4 @@ namespace files {
     struct State;
     std::shared_ptr<State> m_state;
   };
-} // namespace files
+} // namespace luciole

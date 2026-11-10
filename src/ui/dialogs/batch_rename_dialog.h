@@ -16,12 +16,12 @@ class TooltipPresenter;
 class BatchRenameDialog final : public Flex {
 public:
   BatchRenameDialog(
-      std::size_t count, std::function<void(files::BatchRenameOptions)> preview, std::function<void()> apply,
+      std::size_t count, std::function<void(luciole::BatchRenameOptions)> preview, std::function<void()> apply,
       std::function<void()> cancel, std::function<void()> close, std::function<void()> copyReport,
       std::function<void()> requestUpdate
   );
   ~BatchRenameDialog() override;
-  void sync(const files::BatchRenameSnapshot& snapshot, std::size_t completed, bool clipboardAvailable);
+  void sync(const luciole::BatchRenameSnapshot& snapshot, std::size_t completed, bool clipboardAvailable);
   Input* firstInput() const;
   void reveal(const Node* node);
   void tooltipPointer(float x, float y, bool arm);
@@ -30,10 +30,10 @@ public:
 private:
   class Adapter;
   void changed();
-  files::BatchRenameOptions options() const;
+  luciole::BatchRenameOptions options() const;
   std::unique_ptr<Adapter> m_adapter;
-  files::BatchRenameSnapshot m_snapshot;
-  std::function<void(files::BatchRenameOptions)> m_preview;
+  luciole::BatchRenameSnapshot m_snapshot;
+  std::function<void(luciole::BatchRenameOptions)> m_preview;
   Input *m_pattern = nullptr, *m_find = nullptr, *m_replacement = nullptr;
   Stepper *m_start = nullptr, *m_digits = nullptr;
   Toggle* m_extensions = nullptr;

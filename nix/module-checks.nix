@@ -48,7 +48,7 @@ let
                 };
           }
           {
-            programs.noctalia-files = {
+            programs.luciole = {
               enable = true;
               inherit package settings;
             }
@@ -61,10 +61,10 @@ let
     {
       source =
         if home then
-          config.xdg.configFile."noctalia-files/config.toml".source
+          config.xdg.configFile."luciole/config.toml".source
         else
-          config.xdg.config.files."noctalia-files/config.toml".source;
-      inherit (config.programs.noctalia-files) checkConfig;
+          config.xdg.config.files."luciole/config.toml".source;
+      inherit (config.programs.luciole) checkConfig;
       packages = if home then config.home.packages else config.packages;
     };
   checkedHome = evaluate "home" { };
@@ -94,7 +94,7 @@ assert checkedHome.checkConfig;
 assert checkedHome.source.drvPath != uncheckedHome.source.drvPath;
 assert builtins.length checkedHome.packages == 1;
 assert withoutPackage.packages == [ ];
-pkgs.runCommand "noctalia-files-module-config-check" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+pkgs.runCommand "luciole-module-config-check" { nativeBuildInputs = [ pkgs.python3 ]; } ''
   python3 - ${lib.escapeShellArgs (map (file: "${file}") checked)} <<'PY'
   import sys
   import tomllib

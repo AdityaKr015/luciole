@@ -10,7 +10,7 @@
 #include <limits>
 #include <utility>
 
-bool files::DirectoryModel::applySnapshot(
+bool luciole::DirectoryModel::applySnapshot(
     DirectorySnapshot snapshot, std::unordered_map<EntryId, EntryId> parents, bool preserveRootOrder
 ) {
   if (snapshot.generation < m_snapshot.generation) {
@@ -40,17 +40,17 @@ bool files::DirectoryModel::applySnapshot(
     const GString sortKey(g_utf8_collate_key_for_filename(key.c_str(), -1));
     std::string typeLabel;
     bool knownType = true;
-    if (entry.symlink || entry.type == files::FileType::Symlink) {
+    if (entry.symlink || entry.type == luciole::FileType::Symlink) {
       typeLabel = "Link";
-    } else if (entry.type == files::FileType::Directory) {
+    } else if (entry.type == luciole::FileType::Directory) {
       typeLabel = "Folder";
-    } else if (entry.type == files::FileType::Special) {
+    } else if (entry.type == luciole::FileType::Special) {
       typeLabel = "Special";
-    } else if (entry.type == files::FileType::Shortcut) {
+    } else if (entry.type == luciole::FileType::Shortcut) {
       typeLabel = "Shortcut";
-    } else if (entry.type == files::FileType::Mountable) {
+    } else if (entry.type == luciole::FileType::Mountable) {
       typeLabel = "Mount";
-    } else if (entry.type == files::FileType::Regular) {
+    } else if (entry.type == luciole::FileType::Regular) {
       knownType = entry.contentType && !g_content_type_is_unknown(entry.contentType->c_str());
       typeLabel = "File";
       if (knownType) {
@@ -99,9 +99,9 @@ bool files::DirectoryModel::applySnapshot(
   return true;
 }
 
-void files::DirectoryModel::setChangedCallback(std::function<void()> callback) { m_changed = std::move(callback); }
+void luciole::DirectoryModel::setChangedCallback(std::function<void()> callback) { m_changed = std::move(callback); }
 
-void files::DirectoryModel::setSort(SortOptions options) {
+void luciole::DirectoryModel::setSort(SortOptions options) {
   if (m_sort == options) {
     return;
   }
@@ -110,7 +110,7 @@ void files::DirectoryModel::setSort(SortOptions options) {
   notify();
 }
 
-void files::DirectoryModel::setFilter(FilterOptions options) {
+void luciole::DirectoryModel::setFilter(FilterOptions options) {
   if (m_filter == options) {
     return;
   }
@@ -120,23 +120,23 @@ void files::DirectoryModel::setFilter(FilterOptions options) {
   notify();
 }
 
-const files::DirectoryEntry* files::DirectoryModel::entry(EntryId id) const {
+const luciole::DirectoryEntry* luciole::DirectoryModel::entry(EntryId id) const {
   const auto it = m_presentations.find(id);
   return it == m_presentations.end() ? nullptr : &m_snapshot.entries[it->second.sourceIndex];
 }
 
-std::string_view files::DirectoryModel::typeLabel(EntryId id) const {
+std::string_view luciole::DirectoryModel::typeLabel(EntryId id) const {
   const auto it = m_presentations.find(id);
   return it == m_presentations.end() ? std::string_view{} : it->second.typeLabel;
 }
 
-bool files::DirectoryModel::less(EntryId left, EntryId right) const {
+bool luciole::DirectoryModel::less(EntryId left, EntryId right) const {
   const auto& leftPresentation = m_presentations.at(left);
   const auto& rightPresentation = m_presentations.at(right);
   const auto& a = m_snapshot.entries[leftPresentation.sourceIndex];
   const auto& b = m_snapshot.entries[rightPresentation.sourceIndex];
-  if (m_sort.directoriesFirst && (a.type == files::FileType::Directory) != (b.type == files::FileType::Directory)) {
-    return a.type == files::FileType::Directory;
+  if (m_sort.directoriesFirst && (a.type == luciole::FileType::Directory) != (b.type == luciole::FileType::Directory)) {
+    return a.type == luciole::FileType::Directory;
   }
   if (m_sort.field == SortField::Type) {
     const auto& first = leftPresentation.typeSortKey;
@@ -180,7 +180,7 @@ bool files::DirectoryModel::less(EntryId left, EntryId right) const {
   return m_sort.descending ? comparison > 0 : comparison < 0;
 }
 
-void files::DirectoryModel::rebuildProjection() {
+void luciole::DirectoryModel::rebuildProjection() {
   m_rows.clear();
   m_rows.reserve(m_snapshot.entries.size());
   for (const auto& entry : m_snapshot.entries) {
@@ -229,11 +229,11 @@ void files::DirectoryModel::rebuildProjection() {
   reconcileSelection();
 }
 
-std::optional<files::EntryId> files::DirectoryModel::treeParent(EntryId id) const {
+std::optional<luciole::EntryId> luciole::DirectoryModel::treeParent(EntryId id) const {
   const auto found = m_treeParents.find(id);
   return found == m_treeParents.end() ? std::nullopt : std::optional(found->second);
 }
-std::size_t files::DirectoryModel::treeDepth(EntryId id) const {
+std::size_t luciole::DirectoryModel::treeDepth(EntryId id) const {
   std::size_t depth = 0;
   while (const auto parent = treeParent(id)) {
     id = *parent;
@@ -244,9 +244,9 @@ std::size_t files::DirectoryModel::treeDepth(EntryId id) const {
   return depth;
 }
 
-bool files::DirectoryModel::canSelect() const { return m_selectionAvailable; }
+bool luciole::DirectoryModel::canSelect() const { return m_selectionAvailable; }
 
-void files::DirectoryModel::reconcileSelection() {
+void luciole::DirectoryModel::reconcileSelection() {
   if (!canSelect()) {
     m_selection = {};
     m_scrollAnchor.reset();
@@ -260,7 +260,7 @@ void files::DirectoryModel::reconcileSelection() {
   }
 }
 
-std::vector<files::EntryId> files::DirectoryModel::selectedIds() const {
+std::vector<luciole::EntryId> luciole::DirectoryModel::selectedIds() const {
   std::vector<EntryId> ids;
   ids.reserve(m_selection.selected.size());
   for (const auto id : m_rows) {
@@ -271,16 +271,16 @@ std::vector<files::EntryId> files::DirectoryModel::selectedIds() const {
   return ids;
 }
 
-files::SelectionSummary files::DirectoryModel::selectionSummary() const {
+luciole::SelectionSummary luciole::DirectoryModel::selectionSummary() const {
   SelectionSummary summary;
   for (const auto id : m_selection.selected) {
     const auto* item = entry(id);
     if (item == nullptr) {
       continue;
     }
-    if (!item->symlink && item->type == files::FileType::Directory) {
+    if (!item->symlink && item->type == luciole::FileType::Directory) {
       ++summary.folders;
-    } else if (!item->symlink && item->type == files::FileType::Regular) {
+    } else if (!item->symlink && item->type == luciole::FileType::Regular) {
       ++summary.files;
       if (!item->size) {
         ++summary.unknownSizes;
@@ -297,7 +297,7 @@ files::SelectionSummary files::DirectoryModel::selectionSummary() const {
   return summary;
 }
 
-bool files::DirectoryModel::select(EntryId id, SelectionMode mode) {
+bool luciole::DirectoryModel::select(EntryId id, SelectionMode mode) {
   if (!canSelect() || !m_positions.contains(id)) {
     return false;
   }
@@ -327,7 +327,7 @@ bool files::DirectoryModel::select(EntryId id, SelectionMode mode) {
   return true;
 }
 
-void files::DirectoryModel::selectAll() {
+void luciole::DirectoryModel::selectAll() {
   if (!canSelect()) {
     return;
   }
@@ -336,7 +336,7 @@ void files::DirectoryModel::selectAll() {
   notify();
 }
 
-bool files::DirectoryModel::invertSelection() {
+bool luciole::DirectoryModel::invertSelection() {
   if (!canSelect()) {
     return false;
   }
@@ -350,7 +350,7 @@ bool files::DirectoryModel::invertSelection() {
   notify();
   return true;
 }
-std::optional<std::string> files::DirectoryModel::selectPattern(const std::string& pattern) {
+std::optional<std::string> luciole::DirectoryModel::selectPattern(const std::string& pattern) {
   if (const auto error = selectionPatternProblem(pattern)) {
     return error;
   }
@@ -371,7 +371,7 @@ std::optional<std::string> files::DirectoryModel::selectPattern(const std::strin
   notify();
   return std::nullopt;
 }
-std::optional<files::EntryId> files::DirectoryModel::prefixMatch(const std::string& prefix, bool cycle) const {
+std::optional<luciole::EntryId> luciole::DirectoryModel::prefixMatch(const std::string& prefix, bool cycle) const {
   if (!canSelect() || prefix.empty() || m_rows.empty()) {
     return std::nullopt;
   }
@@ -392,13 +392,13 @@ std::optional<files::EntryId> files::DirectoryModel::prefixMatch(const std::stri
   return std::nullopt;
 }
 
-void files::DirectoryModel::clearSelection() {
+void luciole::DirectoryModel::clearSelection() {
   m_selection.selected.clear();
   m_selection.anchor.reset();
   notify();
 }
 
-bool files::DirectoryModel::replaceSelection(std::span<const EntryId> ids) {
+bool luciole::DirectoryModel::replaceSelection(std::span<const EntryId> ids) {
   if (!canSelect() || std::ranges::any_of(ids, [this](EntryId id) { return !m_positions.contains(id); })) {
     return false;
   }
@@ -415,7 +415,7 @@ bool files::DirectoryModel::replaceSelection(std::span<const EntryId> ids) {
   return true;
 }
 
-bool files::DirectoryModel::setFocus(std::optional<EntryId> id) {
+bool luciole::DirectoryModel::setFocus(std::optional<EntryId> id) {
   if (id && (!canSelect() || !m_positions.contains(*id))) {
     return false;
   }
@@ -424,7 +424,7 @@ bool files::DirectoryModel::setFocus(std::optional<EntryId> id) {
   return true;
 }
 
-bool files::DirectoryModel::setScrollAnchor(std::optional<EntryId> id) {
+bool luciole::DirectoryModel::setScrollAnchor(std::optional<EntryId> id) {
   if (id && (!canSelect() || !m_positions.contains(*id))) {
     return false;
   }
@@ -433,14 +433,14 @@ bool files::DirectoryModel::setScrollAnchor(std::optional<EntryId> id) {
   return true;
 }
 
-void files::DirectoryModel::notify() const {
+void luciole::DirectoryModel::notify() const {
   const auto callback = m_changed;
   if (callback) {
     callback();
   }
 }
 
-void files::DirectoryModel::restoreInteraction(SelectionState selection, std::optional<EntryId> scroll) {
+void luciole::DirectoryModel::restoreInteraction(SelectionState selection, std::optional<EntryId> scroll) {
   if (!m_selectionAvailable) {
     return;
   }

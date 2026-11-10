@@ -24,36 +24,36 @@
 #include <vector>
 
 namespace {
-  bool arrived(const files::TransferResult& result) {
-    return result.outcome == files::TransferOutcome::Moved
-        || result.outcome == files::TransferOutcome::Copied
-        || result.outcome == files::TransferOutcome::Linked;
+  bool arrived(const luciole::TransferResult& result) {
+    return result.outcome == luciole::TransferOutcome::Moved
+        || result.outcome == luciole::TransferOutcome::Copied
+        || result.outcome == luciole::TransferOutcome::Linked;
   }
 } // namespace
 
 TransferController::TransferController(PageContext& page, std::function<void()> progressTick)
     : m_page(page), m_progressTick(std::move(progressTick)) {}
 
-void TransferController::paste(const files::ActionRequest& request) {
+void TransferController::paste(const luciole::ActionRequest& request) {
   if (request.folder) {
-    paste(request, files::ActionScope::Location, *request.folder);
+    paste(request, luciole::ActionScope::Location, *request.folder);
   }
 }
 
-void TransferController::pasteInto(const files::ActionRequest& request) {
+void TransferController::pasteInto(const luciole::ActionRequest& request) {
   if (request.targets.size() == 1) {
-    paste(request, files::ActionScope::Targets, request.targets.front().location);
+    paste(request, luciole::ActionScope::Targets, request.targets.front().location);
   }
 }
 
 void TransferController::paste(
-    const files::ActionRequest& request, files::ActionScope scope, files::Location destination
+    const luciole::ActionRequest& request, luciole::ActionScope scope, luciole::Location destination
 ) {
   m_pendingFilePaste = true;
   const std::weak_ptr<int> lifetime = m_lifetime;
   m_page.clipboard().requestFiles([this, lifetime, request, scope,
                                    destination =
-                                       std::move(destination)](std::optional<files::ClipboardFiles> selection) {
+                                       std::move(destination)](std::optional<luciole::ClipboardFiles> selection) {
     if (lifetime.expired()) {
       return;
     }
@@ -73,7 +73,7 @@ void TransferController::paste(
       return;
     }
     const auto job = startPayloadTransfer(
-        selection->payload, destination, cut ? files::TransferAction::Move : files::TransferAction::Copy
+        selection->payload, destination, cut ? luciole::TransferAction::Move : luciole::TransferAction::Copy
     );
     if (cut) {
       if (job) {
@@ -86,51 +86,51 @@ void TransferController::paste(
 }
 
 void TransferController::transferTo(
-    const files::ActionRequest& request, const files::Location& destination, bool copy
+    const luciole::ActionRequest& request, const luciole::Location& destination, bool copy
 ) {
-  if (!m_page.requestCurrent(request, files::ActionScope::Targets)) {
+  if (!m_page.requestCurrent(request, luciole::ActionScope::Targets)) {
     return;
   }
-  std::vector<files::Location> sources;
+  std::vector<luciole::Location> sources;
   sources.reserve(request.targets.size());
   for (const auto& target : request.targets) {
     sources.push_back(target.location);
   }
   if (!sources.empty()) {
-    transfer(std::move(sources), destination, copy ? files::TransferAction::Copy : files::TransferAction::Move);
+    transfer(std::move(sources), destination, copy ? luciole::TransferAction::Copy : luciole::TransferAction::Move);
   }
 }
 
 void TransferController::transfer(
-    std::vector<files::Location> sources, const files::Location& destination, files::TransferAction action
+    std::vector<luciole::Location> sources, const luciole::Location& destination, luciole::TransferAction action
 ) {
   (void)start({std::move(sources), destination, action});
 }
 
-std::shared_ptr<OperationJob> TransferController::start(files::TransferRequest request) {
-  auto job = m_page.jobs().create<files::TransferService>();
-  if (!job->service<files::TransferService>().start(std::move(request))) {
+std::shared_ptr<OperationJob> TransferController::start(luciole::TransferRequest request) {
+  auto job = m_page.jobs().create<luciole::TransferService>();
+  if (!job->service<luciole::TransferService>().start(std::move(request))) {
     return nullptr;
   }
   return job;
 }
 
-void TransferController::finishMove(OperationJob& job, files::ClipboardFiles selection) {
+void TransferController::finishMove(OperationJob& job, luciole::ClipboardFiles selection) {
   job.whenIdle([&clipboard = m_page.clipboard(), selection = std::move(selection)](OperationJob& done) {
-    clipboard.finishMove(selection, done.service<files::TransferService>().results());
+    clipboard.finishMove(selection, done.service<luciole::TransferService>().results());
   });
 }
 
 void TransferController::receiveDrop(
-    files::FilePayload payload, const files::Location& destination, files::DropOptions options,
-    files::DropCompletion finish
+    luciole::FilePayload payload, const luciole::Location& destination, luciole::DropOptions options,
+    luciole::DropCompletion finish
 ) {
-  if (options.action == files::DragAction::Ask) {
+  if (options.action == luciole::DragAction::Ask) {
     chooseDrop(std::move(payload), destination, std::move(options), std::move(finish));
     return;
   }
   const auto action =
-      options.action == files::DragAction::Move ? files::TransferAction::Move : files::TransferAction::Copy;
+      options.action == luciole::DragAction::Move ? luciole::TransferAction::Move : luciole::TransferAction::Copy;
   if (!options.select || !options.select(action)) {
     finish(false);
     return;
@@ -139,8 +139,8 @@ void TransferController::receiveDrop(
 }
 
 void TransferController::resolvedDrop(
-    files::FilePayload payload, const files::Location& destination, files::TransferAction action,
-    files::DropCompletion finish
+    luciole::FilePayload payload, const luciole::Location& destination, luciole::TransferAction action,
+    luciole::DropCompletion finish
 ) {
   const auto job = startPayloadTransfer(std::move(payload), destination, action);
   if (!job) {
@@ -148,14 +148,14 @@ void TransferController::resolvedDrop(
     return;
   }
   job->whenIdle([finish = std::move(finish)](OperationJob& done) {
-    const auto& results = done.service<files::TransferService>().results();
+    const auto& results = done.service<luciole::TransferService>().results();
     finish(!results.empty() && std::ranges::all_of(results, arrived));
   });
 }
 
 void TransferController::chooseDrop(
-    files::FilePayload payload, const files::Location& destination, files::DropOptions options,
-    files::DropCompletion finish
+    luciole::FilePayload payload, const luciole::Location& destination, luciole::DropOptions options,
+    luciole::DropCompletion finish
 ) {
   if (payload.locations.empty()
       || !m_page.visible()
@@ -165,18 +165,18 @@ void TransferController::chooseDrop(
     finish(false);
     return;
   }
-  if (!files::transferLocationSupported(destination) || std::ranges::any_of(payload.locations, [](const auto& item) {
-        return !files::transferLocationSupported(item);
+  if (!luciole::transferLocationSupported(destination) || std::ranges::any_of(payload.locations, [](const auto& item) {
+        return !luciole::transferLocationSupported(item);
       })) {
     m_page.actionError("File transfers support local and mounted SFTP, SMB or WebDAV folders outside Trash.");
     finish(false);
     return;
   }
   struct Pending {
-    files::FilePayload payload;
-    files::Location destination;
-    files::DropOptions options;
-    files::DropCompletion finish;
+    luciole::FilePayload payload;
+    luciole::Location destination;
+    luciole::DropOptions options;
+    luciole::DropCompletion finish;
     bool chosen = false;
     ~Pending() {
       if (!chosen) {
@@ -193,7 +193,7 @@ void TransferController::chooseDrop(
       std::make_shared<Pending>(std::move(payload), destination, std::move(options), std::move(finish));
   const auto context = m_page.browser().contextSerial();
   const std::weak_ptr<int> lifetime = m_lifetime;
-  const auto choose = [this, lifetime, pending, context](files::TransferAction action) {
+  const auto choose = [this, lifetime, pending, context](luciole::TransferAction action) {
     if (pending->chosen) {
       return;
     }
@@ -215,10 +215,10 @@ void TransferController::chooseDrop(
     resolvedDrop(std::move(pending->payload), pending->destination, action, std::move(pending->finish));
   };
   auto root = ui::column({.align = FlexAlign::Stretch});
-  files::applyDialogStyle(*root);
-  root->addChild(files::dialogHeader("Choose Drop Action", "drag-drop", [this] { m_page.dismissMenu(); }));
+  luciole::applyDialogStyle(*root);
+  root->addChild(luciole::dialogHeader("Choose Drop Action", "drag-drop", [this] { m_page.dismissMenu(); }));
   Button* focus = nullptr;
-  const auto add = [&](const char* label, const char* glyph, files::TransferAction action, bool enabled) {
+  const auto add = [&](const char* label, const char* glyph, luciole::TransferAction action, bool enabled) {
     auto button = ui::button(
         {.text = label,
          .glyph = glyph,
@@ -232,10 +232,10 @@ void TransferController::chooseDrop(
     }
     root->addChild(std::move(button));
   };
-  add("Copy Here", "copy", files::TransferAction::Copy, pending->options.canCopy);
-  add("Move Here", "arrows-move", files::TransferAction::Move, pending->options.canMove);
+  add("Copy Here", "copy", luciole::TransferAction::Copy, pending->options.canCopy);
+  add("Move Here", "arrows-move", luciole::TransferAction::Move, pending->options.canMove);
   add(pending->payload.locations.size() == 1 ? "Create Link Here" : "Create Links Here", "link",
-      files::TransferAction::Link,
+      luciole::TransferAction::Link,
       pending->options.canCopy
           && destination.isNative()
           && std::ranges::all_of(pending->payload.locations, [](const auto& source) { return source.isNative(); }));
@@ -253,7 +253,7 @@ void TransferController::chooseDrop(
 }
 
 void TransferController::transferChanged(OperationJob& job) {
-  const auto& transfers = job.service<files::TransferService>();
+  const auto& transfers = job.service<luciole::TransferService>();
   if (transfers.busy() || !job.takeResult()) {
     return;
   }
@@ -261,14 +261,14 @@ void TransferController::transferChanged(OperationJob& job) {
   const auto done = std::ranges::count_if(results, arrived);
   std::string message = std::format(
       "{} item{} {}", done, done == 1 ? "" : "s",
-      transfers.action() == files::TransferAction::Copy       ? "copied"
-          : transfers.action() == files::TransferAction::Link ? "linked"
-                                                              : "moved"
+      transfers.action() == luciole::TransferAction::Copy       ? "copied"
+          : transfers.action() == luciole::TransferAction::Link ? "linked"
+                                                                : "moved"
   );
   if (const auto error = std::ranges::find_if(results, [](const auto& item) { return item.error.has_value(); });
       error != results.end()) {
     message +=
-        std::format(" · {}: {}", error->source.displayName().value_or("Item"), files::fileErrorText(*error->error));
+        std::format(" · {}: {}", error->source.displayName().value_or("Item"), luciole::fileErrorText(*error->error));
   }
   m_page.setActionMessage(std::move(message));
   m_page.browser().refresh();
@@ -304,7 +304,7 @@ void TransferController::syncConflict() {
                    std::optional<std::uint64_t> modified) {
     std::string description = folder ? "Folder" : "File";
     if (!folder && bytes) {
-      const files::GString size(g_format_size_full(*bytes, G_FORMAT_SIZE_IEC_UNITS));
+      const luciole::GString size(g_format_size_full(*bytes, G_FORMAT_SIZE_IEC_UNITS));
       description += " · " + std::string(size.get());
     }
     std::string date = "Modification time unknown";
@@ -313,7 +313,7 @@ void TransferController::syncConflict() {
           g_date_time_new_from_unix_local(static_cast<gint64>(*modified)), &g_date_time_unref
       );
       if (value) {
-        const files::GString text(g_date_time_format(value.get(), "%Y-%m-%d %H:%M"));
+        const luciole::GString text(g_date_time_format(value.get(), "%Y-%m-%d %H:%M"));
         date = text.get();
       }
     }
@@ -333,10 +333,10 @@ void TransferController::syncConflict() {
     );
   };
   const auto applyToAll = std::make_shared<bool>(false);
-  const auto choose = [this, applyToAll, active](files::TransferConflictChoice choice) {
+  const auto choose = [this, applyToAll, active](luciole::TransferConflictChoice choice) {
     auto* owner = m_page.jobs().find(active.job);
     if (owner
-        && owner->resolve(active.conflict, choice, *applyToAll && choice != files::TransferConflictChoice::Cancel)) {
+        && owner->resolve(active.conflict, choice, *applyToAll && choice != luciole::TransferConflictChoice::Cancel)) {
       m_activeConflict.reset();
       m_page.dismissMenu();
     }
@@ -344,8 +344,8 @@ void TransferController::syncConflict() {
   Button* keepBoth = nullptr;
   auto root = ui::column(
       {.align = FlexAlign::Stretch},
-      files::dialogHeader(
-          "Item already exists", "alert-triangle", [choose] { choose(files::TransferConflictChoice::Cancel); }
+      luciole::dialogHeader(
+          "Item already exists", "alert-triangle", [choose] { choose(luciole::TransferConflictChoice::Cancel); }
       ),
       ui::label(
           {.text = conflict->name,
@@ -354,7 +354,7 @@ void TransferController::syncConflict() {
            .configure = [](Label& name) { name.setUseMarkup(false); }}
       ),
       ui::label(
-          {.text = restore ? files::locationEditText(conflict->destination) : "",
+          {.text = restore ? luciole::locationEditText(conflict->destination) : "",
            .fontSize = Style::fontSizeCaption,
            .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
            .maxWidth = width - 24.0F,
@@ -399,25 +399,25 @@ void TransferController::syncConflict() {
           ui::button(
               {.text = "Cancel",
                .variant = ButtonVariant::Ghost,
-               .onClick = [choose] { choose(files::TransferConflictChoice::Cancel); }}
+               .onClick = [choose] { choose(luciole::TransferConflictChoice::Cancel); }}
           ),
           ui::button(
               {.text = "Skip",
                .variant = ButtonVariant::Ghost,
-               .onClick = [choose] { choose(files::TransferConflictChoice::Skip); }}
+               .onClick = [choose] { choose(luciole::TransferConflictChoice::Skip); }}
           ),
           ui::button(
               {.out = &keepBoth,
                .text = "Keep both",
                .variant = ButtonVariant::Primary,
-               .onClick = [choose] { choose(files::TransferConflictChoice::KeepBoth); }}
+               .onClick = [choose] { choose(luciole::TransferConflictChoice::KeepBoth); }}
           ),
           ui::button(
               {.text = "Merge",
                .variant = ButtonVariant::Ghost,
                .visible = !archive && !restore && conflict->canMerge,
                .participatesInLayout = !archive && !restore && conflict->canMerge,
-               .onClick = [choose] { choose(files::TransferConflictChoice::Merge); }}
+               .onClick = [choose] { choose(luciole::TransferConflictChoice::Merge); }}
           ),
           ui::button(
               {.text = "Replace",
@@ -426,11 +426,11 @@ void TransferController::syncConflict() {
                .tooltip = restore && (conflict->sourceDirectory || conflict->destinationDirectory)
                    ? "Folder replacement is unavailable; keep both or skip."
                    : "Replace the existing item",
-               .onClick = [choose] { choose(files::TransferConflictChoice::Replace); }}
+               .onClick = [choose] { choose(luciole::TransferConflictChoice::Replace); }}
           )
       )
   );
-  files::applyDialogStyle(*root);
+  luciole::applyDialogStyle(*root);
   UiPhaseScope phase(UiPhase::Layout);
   LayoutConstraints constraints;
   constraints.setExactWidth(width);
@@ -445,42 +445,42 @@ void TransferController::syncConflict() {
     m_page.activeDialog().bind(ActiveDialog::Kind::TransferConflict, [this] {
       if (const auto shown = std::exchange(m_activeConflict, std::nullopt)) {
         if (auto* owner = m_page.jobs().find(shown->job)) {
-          (void)owner->resolve(shown->conflict, files::TransferConflictChoice::Cancel);
+          (void)owner->resolve(shown->conflict, luciole::TransferConflictChoice::Cancel);
         }
       }
     });
     m_activeConflict = active;
     m_page.menuDispatcher().setFocus(keepBoth->inputArea());
   } else {
-    (void)job->resolve(conflict->id, files::TransferConflictChoice::Cancel);
+    (void)job->resolve(conflict->id, luciole::TransferConflictChoice::Cancel);
   }
 }
 
-void TransferController::retry(files::JobId target) {
+void TransferController::retry(luciole::JobId target) {
   auto* job = m_page.jobs().find(target);
   if (m_page.operationsBusy()
       || !job
       || job->kind() != JobKind::Transfer
-      || job->service<files::TransferService>().retryable() == 0) {
+      || job->service<luciole::TransferService>().retryable() == 0) {
     return;
   }
-  auto& transfers = job->service<files::TransferService>();
-  if (transfers.action() != files::TransferAction::Move || !m_page.clipboard().hasFiles()) {
+  auto& transfers = job->service<luciole::TransferService>();
+  if (transfers.action() != luciole::TransferAction::Move || !m_page.clipboard().hasFiles()) {
     (void)transfers.retryFailed();
     return;
   }
   const auto id = job->id();
   const auto run = transfers.jobId();
   const std::weak_ptr<int> lifetime = m_lifetime;
-  m_page.clipboard().requestFiles([this, lifetime, id, run](std::optional<files::ClipboardFiles> selection) {
+  m_page.clipboard().requestFiles([this, lifetime, id, run](std::optional<luciole::ClipboardFiles> selection) {
     if (lifetime.expired() || m_page.operationsBusy()) {
       return;
     }
     auto* job = m_page.jobs().find(id);
-    if (!job || job->service<files::TransferService>().jobId() != run) {
+    if (!job || job->service<luciole::TransferService>().jobId() != run) {
       return;
     }
-    auto& transfers = job->service<files::TransferService>();
+    auto& transfers = job->service<luciole::TransferService>();
     const bool claim = selection
         && selection->payload.cut
         && std::ranges::any_of(selection->payload.locations, [&transfers](const auto& location) {
@@ -502,12 +502,12 @@ void TransferController::retry(files::JobId target) {
 }
 
 std::shared_ptr<OperationJob> TransferController::startPayloadTransfer(
-    files::FilePayload payload, const files::Location& destination, files::TransferAction action
+    luciole::FilePayload payload, const luciole::Location& destination, luciole::TransferAction action
 ) {
   if (payload.locations.empty()
-      || !files::transferLocationSupported(destination)
+      || !luciole::transferLocationSupported(destination)
       || std::ranges::any_of(payload.locations, [](const auto& location) {
-           return !files::transferLocationSupported(location);
+           return !luciole::transferLocationSupported(location);
          })) {
     m_page.actionError("File transfers support local and mounted SFTP, SMB or WebDAV folders outside Trash.");
     return nullptr;
@@ -522,7 +522,7 @@ std::shared_ptr<OperationJob> TransferController::startPayloadTransfer(
 
 void TransferController::updateOperationProgress() {
   if (!m_page.jobs().newest([](const OperationJob& job) {
-        return (job.kind() == JobKind::BatchRename && job.service<files::BatchRenameService>().applying())
+        return (job.kind() == JobKind::BatchRename && job.service<luciole::BatchRenameService>().applying())
             || (job.kind() == JobKind::Permission && job.running());
       })) {
     m_operationProgress.stop();

@@ -12,25 +12,25 @@
 #include <unistd.h>
 
 namespace {
-  using files::PermissionOutcome;
-  using files::PermissionTarget;
+  using luciole::PermissionOutcome;
+  using luciole::PermissionTarget;
 
   constexpr std::size_t maxItems = 16384;
   constexpr std::size_t maxDepth = 128;
 
   // Collection is complete before mutations begin. The item and depth limits also
   // bound retained descriptors, result memory and the traversal stack.
-  class CollectionLimit final : public files::FileErrorException {
+  class CollectionLimit final : public luciole::FileErrorException {
   public:
-    using files::FileErrorException::FileErrorException;
+    using luciole::FileErrorException::FileErrorException;
   };
-  [[noreturn]] void limit(files::FileErrorKind kind, const char* message) { throw CollectionLimit({kind, message}); }
+  [[noreturn]] void limit(luciole::FileErrorKind kind, const char* message) { throw CollectionLimit({kind, message}); }
   [[noreturn]] void descriptorLimit(int code) {
-    limit(files::errnoError(code).kind, "Not enough file descriptors to collect this job. Select smaller folders.");
+    limit(luciole::errnoError(code).kind, "Not enough file descriptors to collect this job. Select smaller folders.");
   }
   [[noreturn]] void throwErrnoWithContext(int code, const std::string& context) {
-    auto error = files::errnoError(code);
-    files::throwFileError(error.kind, context + error.message);
+    auto error = luciole::errnoError(code);
+    luciole::throwFileError(error.kind, context + error.message);
   }
   struct CloseDirectory {
     void operator()(DIR* directory) const { ::closedir(directory); }
@@ -39,7 +39,7 @@ namespace {
     struct statx value{};
     if (::statx(fd, "", AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW, STATX_MNT_ID, &value) != 0
         || (value.stx_mask & STATX_MNT_ID) == 0) {
-      files::throwFileError(files::FileErrorKind::Unsupported, "Cannot identify the filesystem mount boundary.");
+      luciole::throwFileError(luciole::FileErrorKind::Unsupported, "Cannot identify the filesystem mount boundary.");
     }
     return value.stx_mnt_id;
   }
@@ -47,7 +47,7 @@ namespace {
   class Walker {
   public:
     Walker(
-        const files::PermissionBatch& roots, files::PermissionBatch& plan, const files::CancelToken& token,
+        const luciole::PermissionBatch& roots, luciole::PermissionBatch& plan, const luciole::CancelToken& token,
         std::atomic<std::size_t>& found
     )
         : m_roots(roots), m_plan(plan), m_token(token), m_found(found) {
@@ -81,15 +81,15 @@ namespace {
     }
 
   private:
-    void append(const files::PermissionResult& row, std::shared_ptr<PermissionTarget> target) {
+    void append(const luciole::PermissionResult& row, std::shared_ptr<PermissionTarget> target) {
       if (m_plan.results->size() >= maxItems) {
-        limit(files::FileErrorKind::Unsupported, "The recursive job exceeds 16384 items. Select smaller folders.");
+        limit(luciole::FileErrorKind::Unsupported, "The recursive job exceeds 16384 items. Select smaller folders.");
       }
       m_plan.results->push_back(row);
       m_plan.targets.push_back(std::move(target));
     }
 
-    void skip(files::PermissionResult& row, std::shared_ptr<PermissionTarget> target, std::string message) {
+    void skip(luciole::PermissionResult& row, std::shared_ptr<PermissionTarget> target, std::string message) {
       row.outcome = PermissionOutcome::Skipped;
       row.message = std::move(message);
       append(row, std::move(target));
@@ -100,9 +100,9 @@ namespace {
         return;
       }
       if (m_found.fetch_add(1) >= maxItems) {
-        limit(files::FileErrorKind::Unsupported, "The recursive job exceeds 16384 items. Select smaller folders.");
+        limit(luciole::FileErrorKind::Unsupported, "The recursive job exceeds 16384 items. Select smaller folders.");
       }
-      files::PermissionResult row{
+      luciole::PermissionResult row{
           .location = target->entry.location,
           .name = target->entry.displayName,
           .info = {},
@@ -129,7 +129,7 @@ namespace {
         if (S_ISDIR(target->baseline.st_mode)) {
           if (depth >= maxDepth) {
             limit(
-                files::FileErrorKind::Unsupported,
+                luciole::FileErrorKind::Unsupported,
                 "The recursive job exceeds 128 folder levels. Select smaller folders."
             );
           }
@@ -145,7 +145,7 @@ namespace {
         throw;
       } catch (const std::exception&) {
         row.outcome = PermissionOutcome::Failed;
-        row.error = files::currentFileError();
+        row.error = luciole::currentFileError();
         append(row, {});
       }
     }
@@ -163,7 +163,7 @@ namespace {
       if (!directory) {
         const int code = errno;
         ::close(descriptor);
-        files::throwErrno(code);
+        luciole::throwErrno(code);
       }
       while (!m_token.cancelled()) {
         errno = 0;
@@ -182,7 +182,7 @@ namespace {
         auto entry = target->entry;
         entry.location = target->entry.location.child(name);
         entry.name = name;
-        entry.displayName = files::filenameDisplayText(name);
+        entry.displayName = luciole::filenameDisplayText(name);
         if (const auto found = m_selected.find(entry.location.uri()); found != m_selected.end()) {
           const auto& captured = m_roots.targets[found->second];
           if (captured) {
@@ -207,7 +207,7 @@ namespace {
                .name = entry.displayName,
                .info = {},
                .outcome = PermissionOutcome::Failed,
-               .error = files::errnoError(errno),
+               .error = luciole::errnoError(errno),
                .message = {}},
               {}
           );
@@ -219,9 +219,9 @@ namespace {
       }
     }
 
-    const files::PermissionBatch& m_roots;
-    files::PermissionBatch& m_plan;
-    const files::CancelToken& m_token;
+    const luciole::PermissionBatch& m_roots;
+    luciole::PermissionBatch& m_plan;
+    const luciole::CancelToken& m_token;
     std::atomic<std::size_t>& m_found;
     std::map<std::string, std::size_t> m_selected;
     std::set<std::string> m_seen;
@@ -229,7 +229,7 @@ namespace {
   };
 } // namespace
 
-void files::collectPermissionTargets(
+void luciole::collectPermissionTargets(
     const PermissionBatch& roots, PermissionBatch& plan, const CancelToken& token, std::atomic<std::size_t>& found
 ) {
   Walker(roots, plan, token, found).run();

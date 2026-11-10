@@ -22,9 +22,9 @@ namespace {
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
   }
-  files::DirectoryEntry entry(const fs::path& path) {
-    files::DirectoryEntry result{
-        .location = files::Location::fromPath(path.native()),
+  luciole::DirectoryEntry entry(const fs::path& path) {
+    luciole::DirectoryEntry result{
+        .location = luciole::Location::fromPath(path.native()),
         .name = {},
         .displayName = {},
         .size = {},
@@ -32,11 +32,11 @@ namespace {
         .etag = {},
         .parentDisplayName = {}
     };
-    const auto details = files::readFileDetails(result.location, {});
+    const auto details = luciole::readFileDetails(result.location, {});
     result.name = path.filename().native();
     result.displayName = result.name;
     result.type = details.type;
-    result.symlink = details.type == files::FileType::Symlink;
+    result.symlink = details.type == luciole::FileType::Symlink;
     result.size = details.size;
     result.identity = details.identity;
     result.etag = details.etag;
@@ -44,7 +44,7 @@ namespace {
     result.details = details.metadata;
     return result;
   }
-  std::string value(const files::SelectionDetailsService& service, const std::string& label) {
+  std::string value(const luciole::SelectionDetailsService& service, const std::string& label) {
     for (const auto& [key, text] : service.fields()) {
       if (key == label) {
         return text;
@@ -53,19 +53,19 @@ namespace {
     return {};
   }
   void typedMetadataChecks() {
-    const files::GioPtr<GFileInfo> info(g_file_info_new());
+    const luciole::GioPtr<GFileInfo> info(g_file_info_new());
     g_file_info_set_attribute_uint64(info.get(), G_FILE_ATTRIBUTE_TIME_CHANGED, 123);
-    auto details = files::readEntryMetadata(info.get());
+    auto details = luciole::readEntryMetadata(info.get());
     TEST_CHECK(!details.createdSeconds && !details.accessedSeconds && !details.mode && !details.owner);
     g_file_info_set_attribute_uint64(info.get(), G_FILE_ATTRIBUTE_TIME_ACCESS, 0);
     g_file_info_set_attribute_uint32(info.get(), G_FILE_ATTRIBUTE_TIME_CREATED, 99);
     g_file_info_set_attribute_uint32(info.get(), G_FILE_ATTRIBUTE_UNIX_MODE, 0100640);
     g_file_info_set_attribute_string(info.get(), G_FILE_ATTRIBUTE_OWNER_USER, "<literal> café");
-    details = files::readEntryMetadata(info.get());
+    details = luciole::readEntryMetadata(info.get());
     TEST_CHECK(details.accessedSeconds == 0 && !details.createdSeconds && details.mode == 0640);
     TEST_CHECK(details.owner == "<literal> café" && !details.group);
-    files::DirectoryEntry source{
-        .location = files::Location::fromPath("/tmp/metadata-only"),
+    luciole::DirectoryEntry source{
+        .location = luciole::Location::fromPath("/tmp/metadata-only"),
         .name = {},
         .displayName = {},
         .size = {},
@@ -74,10 +74,10 @@ namespace {
         .parentDisplayName = {}
     };
     source.details = std::move(details);
-    TEST_CHECK(files::entryColumnText(source, files::DetailsColumn::Created) == "Unknown");
-    TEST_CHECK(files::entryColumnText(source, files::DetailsColumn::Permissions) == "0640");
-    TEST_CHECK(files::entrySortNumber(source, files::SortField::Accessed) == 0);
-    TEST_CHECK(!files::entrySortNumber(source, files::SortField::Created));
+    TEST_CHECK(luciole::entryColumnText(source, luciole::DetailsColumn::Created) == "Unknown");
+    TEST_CHECK(luciole::entryColumnText(source, luciole::DetailsColumn::Permissions) == "0640");
+    TEST_CHECK(luciole::entrySortNumber(source, luciole::SortField::Accessed) == 0);
+    TEST_CHECK(!luciole::entrySortNumber(source, luciole::SortField::Created));
   }
   void selectionChecks(const fs::path& root) {
     fs::create_directory(root / "folder");
@@ -92,7 +92,7 @@ namespace {
         entry(root / "a.txt"), entry(root / "b-café <x>.txt"), entry(root / "folder"), entry(root / "link"),
         entry(root / "pipe")
     };
-    files::SelectionDetailsService service;
+    luciole::SelectionDetailsService service;
     service.show(targets);
     wait([&] { return !service.busy(); });
     TEST_CHECK(value(service, "Inspected") == "5 of 5 items");
@@ -104,7 +104,7 @@ namespace {
     TEST_CHECK(!value(service, "Owner").empty() && value(service, "Owner") != "Mixed");
     TEST_CHECK(!value(service, "Accessed").empty());
     auto stale = targets;
-    stale[0].identity = files::FileIdentity{"wrong", "identity"};
+    stale[0].identity = luciole::FileIdentity{"wrong", "identity"};
     fs::remove(root / "b-café <x>.txt");
     service.show(stale);
     wait([&] { return !service.busy(); });
@@ -120,8 +120,8 @@ namespace {
   }
   void lifecycleChecks(const fs::path& root) {
     const auto source = entry(root / "a.txt");
-    std::vector<files::DirectoryEntry> many(4100, source);
-    files::SelectionDetailsService service;
+    std::vector<luciole::DirectoryEntry> many(4100, source);
+    luciole::SelectionDetailsService service;
     int changed = 0;
     service.setChangedCallback([&] { ++changed; });
     service.show(many);
@@ -139,7 +139,7 @@ namespace {
     wait([&] { return !service.busy(); });
     TEST_CHECK(changed == 2 && value(service, "Inspected") == "1 of 1 items");
     {
-      files::SelectionDetailsService retiring;
+      luciole::SelectionDetailsService retiring;
       retiring.setChangedCallback([] { TEST_CHECK(false); });
       retiring.show(many);
     }
@@ -149,7 +149,7 @@ namespace {
 } // namespace
 
 int main() {
-  const files::GString temporary(g_dir_make_tmp("noctalia-selection-details-XXXXXX", nullptr));
+  const luciole::GString temporary(g_dir_make_tmp("luciole-selection-details-XXXXXX", nullptr));
   TEST_CHECK(temporary);
   const fs::path root(temporary.get());
   typedMetadataChecks();

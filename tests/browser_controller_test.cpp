@@ -14,15 +14,15 @@
 namespace {
   using namespace std::chrono_literals;
   namespace fs = std::filesystem;
-  using files::BrowserController;
-  using files::DirectoryStatus;
-  using files::EntryId;
-  using files::Location;
+  using luciole::BrowserController;
+  using luciole::DirectoryStatus;
+  using luciole::EntryId;
+  using luciole::Location;
 
   struct Fixture {
     fs::path path;
     Fixture() {
-      const files::GString name(g_dir_make_tmp("noctalia-browser-test-XXXXXX", nullptr));
+      const luciole::GString name(g_dir_make_tmp("luciole-browser-test-XXXXXX", nullptr));
       TEST_CHECK(name != nullptr);
       path = name.get();
       fs::create_directory(path / "child");
@@ -157,7 +157,7 @@ namespace {
     browser.open(Location::fromPath((fixture.path / "child").native()));
     pump.ready(browser);
     TEST_CHECK(!launched);
-    auto retiring = std::make_unique<BrowserController>(files::SortOptions{}, false);
+    auto retiring = std::make_unique<BrowserController>(luciole::SortOptions{}, false);
     retiring->open(Location::fromPath(fixture.path.native()));
     pump.ready(*retiring);
     retiring->activate(id(*retiring, "file-link"));
@@ -175,7 +175,7 @@ namespace {
     pump.ready(original);
     original.model().select(id(original, "inside"));
     original.setCaptureViewport([] {
-      return files::BrowseViewport{.mode = files::ViewMode::List, .iconSize = 96, .vertical = 125};
+      return luciole::BrowseViewport{.mode = luciole::ViewMode::List, .iconSize = 96, .vertical = 125};
     });
     duplicate.open(Location::fromPath((fixture.path / "other").native()));
     duplicate.duplicateFrom(original);
@@ -186,7 +186,7 @@ namespace {
         && duplicate.model().entry(duplicate.model().selectedIds().front())->name == "inside"
     );
     const auto viewport = duplicate.takeRestoredViewport();
-    TEST_CHECK(viewport && viewport->mode == files::ViewMode::List && viewport->vertical == 125);
+    TEST_CHECK(viewport && viewport->mode == luciole::ViewMode::List && viewport->vertical == 125);
     duplicate.back();
     pump.ready(duplicate);
     TEST_CHECK(original.model().snapshot().location == Location::fromPath((fixture.path / "child").native()));
@@ -197,7 +197,7 @@ namespace {
     original.open(root);
     pump.ready(original);
     TEST_CHECK(duplicate.searchQuery() == "inside" && duplicate.model().rows().size() == 1);
-    auto closing = std::make_unique<BrowserController>(files::SortOptions{}, false);
+    auto closing = std::make_unique<BrowserController>(luciole::SortOptions{}, false);
     closing->duplicateFrom(duplicate);
     closing.reset();
     pump.drainFor(30ms);
@@ -307,7 +307,7 @@ namespace {
     for (const auto& entry : browser.model().snapshot().entries) {
       targets.insert(entry.location.uri());
       TEST_CHECK(!entry.parentDisplayName.empty() && entry.id != oldId);
-      if (entry.type == files::FileType::Regular && !entry.symlink) {
+      if (entry.type == luciole::FileType::Regular && !entry.symlink) {
         TEST_CHECK(entry.contentType == "text/plain");
       }
     }
@@ -395,14 +395,14 @@ namespace {
     browser.setSearchQuery("target");
     pump.until([&] { return browser.model().snapshot().status == DirectoryStatus::Error; });
     TEST_CHECK(
-        browser.model().snapshot().error && browser.model().snapshot().error->kind == files::FileErrorKind::Missing
+        browser.model().snapshot().error && browser.model().snapshot().error->kind == luciole::FileErrorKind::Missing
     );
   }
 
   void testSearchLifetimeAndPartialFailure() {
     Fixture fixture;
     Pump pump;
-    auto immediate = std::make_unique<files::RecursiveSearch>();
+    auto immediate = std::make_unique<luciole::RecursiveSearch>();
     immediate->setChangedCallback([&] { immediate.reset(); });
     immediate->start(Location::fromPath(fixture.path.native()), "file", false);
     TEST_CHECK(!immediate);
@@ -420,7 +420,7 @@ namespace {
       TEST_CHECK(browser.model().rows().size() == 1 && browser.skippedSearchFolders() == 1);
     }
 
-    auto search = std::make_unique<files::RecursiveSearch>();
+    auto search = std::make_unique<luciole::RecursiveSearch>();
     bool destroyed = false;
     search->setChangedCallback([&] {
       if (!search->snapshot().entries.empty()) {
@@ -443,10 +443,10 @@ namespace {
     Fixture fixture;
     Pump pump;
     BrowserController browser({}, false);
-    files::BrowseViewport viewport{
-        .mode = files::ViewMode::List, .iconSize = 96, .vertical = 123.5F, .horizontal = 42.0F, .withinRow = 9.5F
+    luciole::BrowseViewport viewport{
+        .mode = luciole::ViewMode::List, .iconSize = 96, .vertical = 123.5F, .horizontal = 42.0F, .withinRow = 9.5F
     };
-    browser.setViewDefaults(files::ViewMode::Grid, 48);
+    browser.setViewDefaults(luciole::ViewMode::Grid, 48);
     browser.setCaptureViewport([&] { return viewport; });
     browser.open(Location::fromPath(fixture.path.native()));
     pump.ready(browser);
@@ -458,7 +458,7 @@ namespace {
     viewport.first = selected;
     browser.open(Location::fromPath((fixture.path / "child").native()));
     pump.ready(browser);
-    TEST_CHECK(browser.viewport().mode == files::ViewMode::Grid && browser.viewport().iconSize == 48);
+    TEST_CHECK(browser.viewport().mode == luciole::ViewMode::Grid && browser.viewport().iconSize == 48);
     TEST_CHECK(browser.back());
     pump.ready(browser);
     TEST_CHECK(browser.model().selectedIds() == std::vector{id(browser, "file")} && id(browser, "file") != selected);
@@ -469,7 +469,7 @@ namespace {
     auto restored = browser.takeRestoredViewport();
     TEST_CHECK(
         restored
-        && restored->mode == files::ViewMode::List
+        && restored->mode == luciole::ViewMode::List
         && restored->iconSize == 96
         && restored->first == id(browser, "file")
         && restored->withinRow == 9.5F
@@ -477,7 +477,7 @@ namespace {
         && restored->vertical == 123.5F
     );
     TEST_CHECK(!browser.takeRestoredViewport());
-    browser.model().setSort({.field = files::SortField::Size, .descending = true, .directoriesFirst = false});
+    browser.model().setSort({.field = luciole::SortField::Size, .descending = true, .directoriesFirst = false});
     browser.toggleHidden();
     browser.forward();
     pump.ready(browser);
@@ -487,7 +487,7 @@ namespace {
     browser.back();
     pump.ready(browser);
     TEST_CHECK(browser.model().selectedIds().empty());
-    TEST_CHECK(browser.model().sort().field == files::SortField::Size && browser.model().filter().showHidden);
+    TEST_CHECK(browser.model().sort().field == luciole::SortField::Size && browser.model().filter().showHidden);
     browser.setSearchQuery("inside");
     pump.ready(browser);
     browser.model().select(id(browser, "inside"));
@@ -595,7 +595,7 @@ namespace {
     Fixture fixture;
     Pump pump;
     const auto root = Location::fromPath(fixture.path.native());
-    auto browser = std::make_unique<BrowserController>(files::SortOptions{}, false);
+    auto browser = std::make_unique<BrowserController>(luciole::SortOptions{}, false);
     browser->open(root);
     pump.ready(*browser);
     browser->editSearchQuery("in");
@@ -619,7 +619,7 @@ namespace {
     browser->editSearchQuery("inside");
     browser.reset();
     pump.drainFor(230ms);
-    browser = std::make_unique<BrowserController>(files::SortOptions{}, false);
+    browser = std::make_unique<BrowserController>(luciole::SortOptions{}, false);
     browser->open(root);
     pump.ready(*browser);
     browser->editSearchQuery("inside");
@@ -635,10 +635,10 @@ namespace {
   void testLocationPresentation() {
     const fs::path homePath(g_get_home_dir());
     const auto home = Location::fromPath(homePath.native());
-    const auto homeCrumbs = files::locationBreadcrumbs(home);
+    const auto homeCrumbs = luciole::locationBreadcrumbs(home);
     TEST_CHECK(homeCrumbs.size() == 1 && homeCrumbs.front().label == "Home" && homeCrumbs.front().location == home);
     const auto inside = Location::fromPath((homePath / "space here" / "<literal> café").native());
-    const auto insideCrumbs = files::locationBreadcrumbs(inside);
+    const auto insideCrumbs = luciole::locationBreadcrumbs(inside);
     TEST_CHECK(
         insideCrumbs.size() == 3
         && insideCrumbs.front().location == home
@@ -647,34 +647,34 @@ namespace {
         && insideCrumbs.back().location == inside
         && insideCrumbs.back().label == "<literal> café"
     );
-    TEST_CHECK(files::locationEditText(inside) == (homePath / "space here" / "<literal> café").native());
+    TEST_CHECK(luciole::locationEditText(inside) == (homePath / "space here" / "<literal> café").native());
     const auto homeRaw = Location::fromPath((homePath / ("raw-" + std::string(1, static_cast<char>(0xff)))).native());
-    const auto rawCrumbs = files::locationBreadcrumbs(homeRaw);
+    const auto rawCrumbs = luciole::locationBreadcrumbs(homeRaw);
     TEST_CHECK(rawCrumbs.size() == 2 && rawCrumbs.front().location == home && rawCrumbs.back().location == homeRaw);
-    TEST_CHECK(files::locationEditText(homeRaw) == homeRaw.uri());
+    TEST_CHECK(luciole::locationEditText(homeRaw) == homeRaw.uri());
     if (homePath != "/") {
       const auto sibling =
           Location::fromPath((homePath.parent_path() / (homePath.filename().native() + "-other")).native());
-      const auto siblingCrumbs = files::locationBreadcrumbs(sibling);
+      const auto siblingCrumbs = luciole::locationBreadcrumbs(sibling);
       TEST_CHECK(siblingCrumbs.front().label == "File System" && siblingCrumbs.back().location == sibling);
     }
     const auto path = Location::fromPath("/tmp/space here/<literal>/café");
-    const auto crumbs = files::locationBreadcrumbs(path);
+    const auto crumbs = luciole::locationBreadcrumbs(path);
     TEST_CHECK(
         crumbs.size() == 5
         && crumbs.front().location == Location::fromPath("/")
         && crumbs.back().location == path
         && crumbs[3].label == "<literal>"
     );
-    TEST_CHECK(files::locationEditText(path) == "/tmp/space here/<literal>/café");
+    TEST_CHECK(luciole::locationEditText(path) == "/tmp/space here/<literal>/café");
     const auto raw = Location::fromPath("/tmp/raw-" + std::string(1, static_cast<char>(0xff)));
-    TEST_CHECK(files::locationEditText(raw) == raw.uri() && files::locationBreadcrumbs(raw).back().location == raw);
+    TEST_CHECK(luciole::locationEditText(raw) == raw.uri() && luciole::locationBreadcrumbs(raw).back().location == raw);
     const auto remote = Location::fromUri("sftp://user:secret@example.org/space%20here/leaf");
-    const auto remoteCrumbs = files::locationBreadcrumbs(remote);
+    const auto remoteCrumbs = luciole::locationBreadcrumbs(remote);
     TEST_CHECK(
         remoteCrumbs.back().location == remote
         && remoteCrumbs.front().label == "example.org"
-        && files::locationEditText(remote) == remote.uri()
+        && luciole::locationEditText(remote) == remote.uri()
     );
   }
 

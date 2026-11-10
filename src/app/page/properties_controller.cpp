@@ -35,7 +35,7 @@
 #include <utility>
 #include <vector>
 
-PropertiesController::PropertiesController(PageContext& page, files::FileIconCache& icons)
+PropertiesController::PropertiesController(PageContext& page, luciole::FileIconCache& icons)
     : m_page(page), m_icons(icons) {
   m_selectionMetadata.setChangedCallback([this] {
     m_metadataDirty = true;
@@ -55,12 +55,12 @@ void PropertiesController::changed(OperationJob& job) {
     return;
   }
   // A job whose dialog closed: report its outcome once.
-  const auto& permissions = job.service<files::PermissionService>();
+  const auto& permissions = job.service<luciole::PermissionService>();
   const auto& snapshot = permissions.snapshot();
   if (permissions.busy() || !job.takeResult()) {
     return;
   }
-  if ((snapshot.phase == files::PermissionPhase::Ready || snapshot.phase == files::PermissionPhase::Cancelled)
+  if ((snapshot.phase == luciole::PermissionPhase::Ready || snapshot.phase == luciole::PermissionPhase::Cancelled)
       && snapshot.applied) {
     m_page.browser().refresh();
   }
@@ -82,18 +82,18 @@ void PropertiesController::syncMetadata() {
   if (!m_metadataView || !m_page.menuSurface()) {
     return;
   }
-  auto fields = m_multiple ? files::MetadataFields{} : m_metadata.fields();
+  auto fields = m_multiple ? luciole::MetadataFields{} : m_metadata.fields();
   if (m_multiple) {
     for (const auto& [label, value] : m_selectionMetadata.fields()) {
       fields.push_back({label, value, false});
     }
   }
   if (m_job) {
-    const auto& snapshot = m_job->service<files::PermissionService>().snapshot();
+    const auto& snapshot = m_job->service<luciole::PermissionService>().snapshot();
     if (snapshot.info && snapshot.info->current) {
       const auto& info = *snapshot.info;
       const auto replace = [&](std::string label, std::string value) {
-        const auto found = std::ranges::find(fields, label, &files::MetadataField::label);
+        const auto found = std::ranges::find(fields, label, &luciole::MetadataField::label);
         if (found != fields.end()) {
           found->value = std::move(value);
         } else {
@@ -189,7 +189,7 @@ void PropertiesController::sync() {
   if (!m_job) {
     return;
   }
-  const auto& permissions = m_job->service<files::PermissionService>();
+  const auto& permissions = m_job->service<luciole::PermissionService>();
   const auto& snapshot = permissions.snapshot();
   m_metadataDirty = true;
   if (m_permissionEditor) {
@@ -201,10 +201,10 @@ void PropertiesController::sync() {
       m_bulkAclEditor->sync(snapshot);
     }
     m_permissionSave->setEnabled(canApply() && !m_page.operationsBusy());
-    m_permissionSave->setText(snapshot.phase == files::PermissionPhase::Saving ? "Saving…" : "Apply");
+    m_permissionSave->setText(snapshot.phase == luciole::PermissionPhase::Saving ? "Saving…" : "Apply");
     if (m_permissionResults) {
       m_permissionResults->sync(snapshot.results);
-      const bool saving = snapshot.phase == files::PermissionPhase::Saving;
+      const bool saving = snapshot.phase == luciole::PermissionPhase::Saving;
       m_permissionStatus->setText(
           permissions.busy()
               ? (snapshot.cancelRequested ? "Cancelling…"
@@ -238,7 +238,7 @@ void PropertiesController::sync() {
         m_permissionTabs->setSelectedIndex(m_permissionResultTab);
       }
     }
-    if (snapshot.failed() && !snapshot.finished && snapshot.phase == files::PermissionPhase::Ready) {
+    if (snapshot.failed() && !snapshot.finished && snapshot.phase == luciole::PermissionPhase::Ready) {
       m_permissionTabs->setSelectedIndex(1);
       showAdvanced(snapshot.aclOperation);
       m_permissionScroll->requestScrollIntoView(
@@ -248,7 +248,7 @@ void PropertiesController::sync() {
     }
     m_page.menuSurface()->requestLayout();
   }
-  if ((snapshot.phase == files::PermissionPhase::Ready || snapshot.phase == files::PermissionPhase::Cancelled)
+  if ((snapshot.phase == luciole::PermissionPhase::Ready || snapshot.phase == luciole::PermissionPhase::Cancelled)
       && snapshot.applied) {
     m_page.browser().refresh();
   }
@@ -276,7 +276,7 @@ struct PropertiesController::Body {
 };
 
 PropertiesController::Body
-PropertiesController::buildGeneral(const std::vector<files::DirectoryEntry>& targets, float width, bool editable) {
+PropertiesController::buildGeneral(const std::vector<luciole::DirectoryEntry>& targets, float width, bool editable) {
   auto general = ui::column({.align = FlexAlign::Stretch, .gap = Style::spaceMd});
   auto* generalGroup = general.get();
   const auto literal = [](Label& label) { label.setUseMarkup(false); };
@@ -300,7 +300,7 @@ PropertiesController::buildGeneral(const std::vector<files::DirectoryEntry>& tar
   FileMetadataView* metadataView = nullptr;
   if (targets.size() == 1) {
     const auto& entry = targets.front();
-    auto icon = std::make_unique<files::FileIcon>(m_icons, 48.0F);
+    auto icon = std::make_unique<luciole::FileIcon>(m_icons, 48.0F);
     icon->bind(entry.icon, colorSpecFromRole(ColorRole::OnSurface));
     general->addChild(
         ui::row(
@@ -315,9 +315,9 @@ PropertiesController::buildGeneral(const std::vector<files::DirectoryEntry>& tar
                      .configure = literal}
                 ),
                 ui::label(
-                    {.text = entry.symlink                          ? "Symbolic link"
-                         : entry.type == files::FileType::Directory ? "Folder"
-                                                                    : "File",
+                    {.text = entry.symlink                            ? "Symbolic link"
+                         : entry.type == luciole::FileType::Directory ? "Folder"
+                                                                      : "File",
                      .fontSize = Style::fontSizeCaption,
                      .color = colorSpecFromRole(ColorRole::OnSurfaceVariant)}
                 )
@@ -325,16 +325,16 @@ PropertiesController::buildGeneral(const std::vector<files::DirectoryEntry>& tar
         )
     );
     general->addChild(ui::separator({}));
-    field("Location", files::locationEditText(entry.location));
+    field("Location", luciole::locationEditText(entry.location));
     if (entry.contentType) {
       field("MIME", *entry.contentType);
     }
     if (entry.location.isTrash()) {
-      field("Original", entry.trash.original ? files::locationEditText(*entry.trash.original) : "Unknown");
+      field("Original", entry.trash.original ? luciole::locationEditText(*entry.trash.original) : "Unknown");
       field("Deleted", entry.trash.deletionDate.value_or("Unknown"));
     }
-    if (entry.type != files::FileType::Directory) {
-      const files::GString size(entry.size ? g_format_size_full(*entry.size, G_FORMAT_SIZE_IEC_UNITS) : nullptr);
+    if (entry.type != luciole::FileType::Directory) {
+      const luciole::GString size(entry.size ? g_format_size_full(*entry.size, G_FORMAT_SIZE_IEC_UNITS) : nullptr);
       field("Size", size ? size.get() : "Unknown");
     }
     if (entry.modifiedSeconds && *entry.modifiedSeconds <= static_cast<std::uint64_t>(G_MAXINT64)) {
@@ -342,7 +342,7 @@ PropertiesController::buildGeneral(const std::vector<files::DirectoryEntry>& tar
           g_date_time_new_from_unix_local(static_cast<gint64>(*entry.modifiedSeconds)), &g_date_time_unref
       );
       if (date) {
-        const files::GString text(g_date_time_format(date.get(), "%Y-%m-%d %H:%M:%S"));
+        const luciole::GString text(g_date_time_format(date.get(), "%Y-%m-%d %H:%M:%S"));
         field("Modified", text.get());
       }
     }
@@ -354,7 +354,7 @@ PropertiesController::buildGeneral(const std::vector<files::DirectoryEntry>& tar
   }
   FolderTotalsView* totals = nullptr;
   if (std::ranges::any_of(targets, [](const auto& entry) {
-        return entry.type == files::FileType::Directory && !entry.symlink;
+        return entry.type == luciole::FileType::Directory && !entry.symlink;
       })) {
     auto view = std::make_unique<FolderTotalsView>(targets, [this] {
       m_metadataDirty = true;
@@ -375,7 +375,7 @@ PropertiesController::buildGeneral(const std::vector<files::DirectoryEntry>& tar
 }
 
 PropertiesController::Body PropertiesController::buildBody(
-    const std::vector<files::DirectoryEntry>& targets, float width, bool editable, bool multiple, bool folders,
+    const std::vector<luciole::DirectoryEntry>& targets, float width, bool editable, bool multiple, bool folders,
     bool withResults
 ) {
   ScrollView* scroll = nullptr;
@@ -490,7 +490,7 @@ PropertiesController::Body PropertiesController::buildBody(
   };
 }
 
-void PropertiesController::show(const std::vector<files::DirectoryEntry>& targets, bool captureCurrentLocation) {
+void PropertiesController::show(const std::vector<luciole::DirectoryEntry>& targets, bool captureCurrentLocation) {
   if (targets.empty()) {
     return;
   }
@@ -503,7 +503,7 @@ void PropertiesController::show(const std::vector<files::DirectoryEntry>& target
   const bool editable = !targets.empty() && targets.size() <= 4096;
   const bool multiple = targets.size() > 1;
   const bool folders = std::ranges::any_of(targets, [](const auto& entry) {
-    return entry.type == files::FileType::Directory
+    return entry.type == luciole::FileType::Directory
         && !entry.symlink
         && entry.location.nativePath()
         && !entry.location.isTrash();
@@ -529,7 +529,7 @@ void PropertiesController::show(const std::vector<files::DirectoryEntry>& target
   }
   auto root = ui::column(
       {.align = FlexAlign::Stretch},
-      files::dialogHeader("Properties", "list-details", [this] { m_page.dismissMenu(); }),
+      luciole::dialogHeader("Properties", "list-details", [this] { m_page.dismissMenu(); }),
       ui::segmented(
           {.out = &tabs,
            .options = std::move(propertyTabs),
@@ -560,7 +560,7 @@ void PropertiesController::show(const std::vector<files::DirectoryEntry>& target
       ),
       std::move(body.node)
   );
-  files::applyDialogStyle(*root);
+  luciole::applyDialogStyle(*root);
   if (editable) {
     if (withResults) {
       root->addChild(
@@ -581,7 +581,7 @@ void PropertiesController::show(const std::vector<files::DirectoryEntry>& target
                      [this] {
                        if (m_job) {
                          m_page.clipboard().setClipboardText(
-                             m_job->service<files::PermissionService>().snapshot().report
+                             m_job->service<luciole::PermissionService>().snapshot().report
                          );
                        }
                      }}
@@ -603,7 +603,7 @@ void PropertiesController::show(const std::vector<files::DirectoryEntry>& target
             ui::button(
                 {.out = &save, .text = "Apply", .enabled = false, .variant = ButtonVariant::Primary, .onClick = [this] {
                    if (m_permissionEditor && m_job && !m_page.operationsBusy()) {
-                     auto& permissions = m_job->service<files::PermissionService>();
+                     auto& permissions = m_job->service<luciole::PermissionService>();
                      const bool started = m_aclActive && m_bulkAclEditor
                          ? permissions.applyAclPatch(m_bulkAclEditor->edit())
                          : m_aclActive && m_aclEditor ? permissions.applyAcl(m_aclEditor->edit())
@@ -675,8 +675,8 @@ void PropertiesController::show(const std::vector<files::DirectoryEntry>& target
         m_page.menuSurface()->requestLayout();
       }
     });
-    m_job = m_page.jobs().create<files::PermissionService>(JobScope::Page);
-    auto& permissions = m_job->service<files::PermissionService>();
+    m_job = m_page.jobs().create<luciole::PermissionService>(JobScope::Page);
+    auto& permissions = m_job->service<luciole::PermissionService>();
     if (captureCurrentLocation) {
       (void)permissions.prepare(targets.front().location);
     } else if (multiple) {

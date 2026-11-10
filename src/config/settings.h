@@ -14,7 +14,7 @@
 #include <variant>
 #include <vector>
 
-namespace files {
+namespace luciole {
   struct BrowserSettings {
     SortOptions sort;
     ActivationMode activationMode = ActivationMode::DoubleClick;
@@ -122,16 +122,16 @@ namespace files {
   // each key to its TOML name, codec, bounds, and BrowserSettings field.
   struct BrowserPreference {
     using Id = BrowserPreferenceId;
-    static constexpr PreferenceKey<files::ActivationMode> ActivationMode{Id::ActivationMode};
-    static constexpr PreferenceKey<files::TypingMode> TypingMode{Id::TypingMode};
+    static constexpr PreferenceKey<luciole::ActivationMode> ActivationMode{Id::ActivationMode};
+    static constexpr PreferenceKey<luciole::TypingMode> TypingMode{Id::TypingMode};
     static constexpr PreferenceKey<bool> ShowHidden{Id::ShowHidden};
     static constexpr PreferenceKey<bool> ShowBackups{Id::ShowBackups};
-    static constexpr PreferenceKey<files::SortField> SortBy{Id::SortBy};
+    static constexpr PreferenceKey<luciole::SortField> SortBy{Id::SortBy};
     static constexpr PreferenceKey<bool> SortDescending{Id::SortDescending};
     static constexpr PreferenceKey<bool> DirectoriesFirst{Id::DirectoriesFirst};
-    static constexpr PreferenceKey<files::ViewMode> ViewMode{Id::ViewMode};
+    static constexpr PreferenceKey<luciole::ViewMode> ViewMode{Id::ViewMode};
     static constexpr PreferenceKey<int> GridIconSize{Id::GridIconSize};
-    static constexpr PreferenceKey<files::ViewDensity> Density{Id::Density};
+    static constexpr PreferenceKey<luciole::ViewDensity> Density{Id::Density};
     static constexpr PreferenceKey<bool> ShowSizeCaption{Id::ShowSizeCaption};
     static constexpr PreferenceKey<bool> ShowTypeCaption{Id::ShowTypeCaption};
     static constexpr PreferenceKey<bool> ShowModifiedCaption{Id::ShowModifiedCaption};
@@ -154,7 +154,7 @@ namespace files {
     static constexpr PreferenceKey<bool> ShowGroupColumn{Id::ShowGroupColumn};
     static constexpr PreferenceKey<bool> ShowPermissionsColumn{Id::ShowPermissionsColumn};
     static constexpr PreferenceKey<bool> ShowLocationColumn{Id::ShowLocationColumn};
-    static constexpr PreferenceKey<files::DetailsColumnOrder> ColumnOrder{Id::ColumnOrder};
+    static constexpr PreferenceKey<luciole::DetailsColumnOrder> ColumnOrder{Id::ColumnOrder};
     static constexpr PreferenceKey<int> NameColumnWidth{Id::NameColumnWidth};
     static constexpr PreferenceKey<int> TypeColumnWidth{Id::TypeColumnWidth};
     static constexpr PreferenceKey<int> SizeColumnWidth{Id::SizeColumnWidth};
@@ -165,7 +165,7 @@ namespace files {
     static constexpr PreferenceKey<int> GroupColumnWidth{Id::GroupColumnWidth};
     static constexpr PreferenceKey<int> PermissionsColumnWidth{Id::PermissionsColumnWidth};
     static constexpr PreferenceKey<int> LocationColumnWidth{Id::LocationColumnWidth};
-    static constexpr PreferenceKey<files::ThumbnailPolicy> ThumbnailPolicy{Id::ThumbnailPolicy};
+    static constexpr PreferenceKey<luciole::ThumbnailPolicy> ThumbnailPolicy{Id::ThumbnailPolicy};
     static constexpr PreferenceKey<int> ThumbnailMaxFileMib{Id::ThumbnailMaxFileMib};
     static constexpr PreferenceKey<int> ThumbnailMaxMegapixels{Id::ThumbnailMaxMegapixels};
     static constexpr PreferenceKey<int> ThumbnailCacheMib{Id::ThumbnailCacheMib};
@@ -222,4 +222,4 @@ namespace files {
     Settings m_settings;
     ConfigIssues m_issues;
   };
-} // namespace files
+} // namespace luciole

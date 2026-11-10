@@ -6,7 +6,7 @@
 #include <functional>
 #include <memory>
 
-namespace files {
+namespace luciole {
   struct FileTooltipTarget {
     std::string context;
     DirectoryEntry entry;
@@ -31,4 +31,4 @@ namespace files {
     struct State;
     std::shared_ptr<State> m_state;
   };
-} // namespace files
+} // namespace luciole

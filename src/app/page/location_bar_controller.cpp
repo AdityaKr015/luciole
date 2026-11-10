@@ -283,7 +283,7 @@ bool LocationBarController::escapeKey(const KeyboardEvent& event) {
   return false;
 }
 
-bool LocationBarController::syncLocation(const std::optional<files::Location>& location) {
+bool LocationBarController::syncLocation(const std::optional<luciole::Location>& location) {
   const auto uri = location ? location->uri() : std::string{};
   if (uri == m_displayedLocation) {
     return false;
@@ -303,7 +303,7 @@ bool LocationBarController::syncLocation(const std::optional<files::Location>& l
   m_breadcrumbScroll->setParticipatesInLayout(true);
   m_breadcrumbsDirty = true;
   m_displayedLocation = uri;
-  m_location->setValue(location ? files::locationEditText(*location) : std::string{});
+  m_location->setValue(location ? luciole::locationEditText(*location) : std::string{});
   m_locationInvalid = false;
   return true;
 }
@@ -366,7 +366,7 @@ void LocationBarController::requestCompletions(const std::string& text) {
   const auto context = m_page.browser().contextSerial();
   m_pathCompletion.complete(
       text, *m_page.browser().model().snapshot().location, m_page.browser().model().filter().showHidden,
-      [this, text, context](files::PathSuggestions suggestions) {
+      [this, text, context](luciole::PathSuggestions suggestions) {
         if (!m_editingLocation
             || context != m_page.browser().contextSerial()
             || m_location->value() != text
@@ -500,7 +500,7 @@ void LocationBarController::beginLocationEdit() {
   m_locationInvalid = false;
   m_location->setValue(
       m_page.browser().model().snapshot().location
-          ? files::locationEditText(*m_page.browser().model().snapshot().location)
+          ? luciole::locationEditText(*m_page.browser().model().snapshot().location)
           : std::string{}
   );
   m_location->setVisible(true);
@@ -526,7 +526,7 @@ void LocationBarController::endLocationEdit(bool focusFiles) {
   m_page.requestSync();
 }
 
-void LocationBarController::breadcrumbClick(const files::Location& target, const InputArea::PointerData* pointer) {
+void LocationBarController::breadcrumbClick(const luciole::Location& target, const InputArea::PointerData* pointer) {
   m_lastBreadcrumb = pointer != nullptr ? std::optional(target) : std::nullopt;
   if (pointer != nullptr) {
     m_breadcrumbClickTime = std::chrono::steady_clock::now();
@@ -544,7 +544,7 @@ void LocationBarController::openBreadcrumbOverflow() {
   m_lastBreadcrumb.reset();
   m_blankLocationClick.reset();
   const auto context = m_page.browser().contextSerial();
-  std::vector<files::Location> targets;
+  std::vector<luciole::Location> targets;
   std::vector<ContextMenuControlEntry> entries;
   for (std::size_t index = 0; index < m_firstBreadcrumb; ++index) {
     const auto& part = m_breadcrumbParts[index];
@@ -648,7 +648,7 @@ void LocationBarController::rebuildBreadcrumbs() {
   if (!location) {
     return;
   }
-  const auto crumbs = files::locationBreadcrumbs(*location);
+  const auto crumbs = luciole::locationBreadcrumbs(*location);
   m_breadcrumbs->addChild(
       ui::button(
           {.out = &m_breadcrumbOverflow,

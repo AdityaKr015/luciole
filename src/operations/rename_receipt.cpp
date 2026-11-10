@@ -11,14 +11,14 @@
 #include <unistd.h>
 #include <utility>
 
-struct files::RenameIdentity {
+struct luciole::RenameIdentity {
   Fd parent, item;
   struct stat stamp;
 };
 
 namespace {
   bool sameRevision(const struct stat& a, const struct stat& b) {
-    return files::sameIdentity(a, b)
+    return luciole::sameIdentity(a, b)
         && a.st_size == b.st_size
         && a.st_mode == b.st_mode
         && a.st_uid == b.st_uid
@@ -29,38 +29,38 @@ namespace {
         && a.st_ctim.tv_sec == b.st_ctim.tv_sec
         && a.st_ctim.tv_nsec == b.st_ctim.tv_nsec;
   }
-  std::pair<std::string, std::string> names(const files::Location& source, const files::Location& destination) {
+  std::pair<std::string, std::string> names(const luciole::Location& source, const luciole::Location& destination) {
     if (!source.isNative()
         || !destination.isNative()
         || source.parent() != destination.parent()
         || source == destination
         || source.isTrash()
         || destination.isTrash()) {
-      files::throwFileError(files::FileErrorKind::InvalidArgument, "Invalid rename history entry.");
+      luciole::throwFileError(luciole::FileErrorKind::InvalidArgument, "Invalid rename history entry.");
     }
     const auto before = std::filesystem::path(*source.nativePath()).filename().native();
     const auto after = std::filesystem::path(*destination.nativePath()).filename().native();
     if (before.empty() || before == "." || before == ".." || after.empty() || after == "." || after == "..") {
-      files::throwFileError(files::FileErrorKind::InvalidArgument, "Invalid rename history name.");
+      luciole::throwFileError(luciole::FileErrorKind::InvalidArgument, "Invalid rename history name.");
     }
     return {before, after};
   }
   struct stat namedStamp(int parent, const std::string& name) {
     struct stat stamp{};
     if (::fstatat(parent, name.c_str(), &stamp, AT_SYMLINK_NOFOLLOW) < 0) {
-      files::throwErrno(errno);
+      luciole::throwErrno(errno);
     }
     return stamp;
   }
 } // namespace
 
-files::RenameReceipt::RenameReceipt(
+luciole::RenameReceipt::RenameReceipt(
     Location source, Location destination, std::shared_ptr<const RenameIdentity> identity
 )
     : m_source(std::move(source)), m_destination(std::move(destination)), m_identity(std::move(identity)) {}
 
-std::shared_ptr<const files::RenameReceipt>
-files::RenameReceipt::capture(const Location& source, const Location& destination, int parent, int item) {
+std::shared_ptr<const luciole::RenameReceipt>
+luciole::RenameReceipt::capture(const Location& source, const Location& destination, int parent, int item) {
   const auto [before, after] = names(source, destination);
   const auto stamp = statFd(item);
   if (!sameRevision(stamp, namedStamp(parent, after))) {
@@ -77,7 +77,7 @@ files::RenameReceipt::capture(const Location& source, const Location& destinatio
   return std::make_shared<RenameReceipt>(source, destination, std::move(identity));
 }
 
-std::shared_ptr<const files::RenameReceipt> files::RenameReceipt::reverse(const CancelToken& token) const {
+std::shared_ptr<const luciole::RenameReceipt> luciole::RenameReceipt::reverse(const CancelToken& token) const {
   if (!m_identity) {
     throwFileError(FileErrorKind::InvalidArgument, "Invalid rename history entry.");
   }

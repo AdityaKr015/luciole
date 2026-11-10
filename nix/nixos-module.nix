@@ -1,14 +1,14 @@
 { config, lib, ... }:
 let
-  cfg = config.programs.noctalia-files;
+  cfg = config.programs.luciole;
 in
 {
-  options.programs.noctalia-files = {
-    enable = lib.mkEnableOption "Noctalia Files";
+  options.programs.luciole = {
+    enable = lib.mkEnableOption "Luciole";
     package = lib.mkOption {
       type = lib.types.nullOr lib.types.package;
       default = null;
-      description = "Noctalia Files package to install.";
+      description = "Luciole package to install.";
     };
   };
 

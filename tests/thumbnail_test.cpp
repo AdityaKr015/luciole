@@ -29,7 +29,7 @@
 namespace {
   namespace fs = std::filesystem;
   using namespace std::chrono_literals;
-  using files::GioPtr;
+  using luciole::GioPtr;
   class Pump {
   public:
     void until(const std::function<bool()>& done) {
@@ -54,7 +54,7 @@ namespace {
   struct Fixture {
     fs::path root;
     Fixture() {
-      const files::GString temporary(g_dir_make_tmp("noctalia-thumbnails-test-XXXXXX", nullptr));
+      const luciole::GString temporary(g_dir_make_tmp("luciole-thumbnails-test-XXXXXX", nullptr));
       TEST_CHECK(temporary != nullptr);
       root = temporary.get();
       fs::create_directory(root / "home");
@@ -62,8 +62,8 @@ namespace {
       ::setenv("XDG_CACHE_HOME", (root / "cache").c_str(), 1);
       ::setenv("XDG_CONFIG_HOME", (root / "config").c_str(), 1);
       ::setenv("XDG_DATA_HOME", (root / "data").c_str(), 1);
-      ::setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/noctalia-thumbnail-test-no-session", 1);
-      ::setenv("DBUS_SYSTEM_BUS_ADDRESS", "unix:path=/noctalia-thumbnail-test-no-system", 1);
+      ::setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/luciole-thumbnail-test-no-session", 1);
+      ::setenv("DBUS_SYSTEM_BUS_ADDRESS", "unix:path=/luciole-thumbnail-test-no-system", 1);
     }
     ~Fixture() {
       std::error_code ignored;
@@ -93,15 +93,15 @@ namespace {
     TEST_CHECK(static_cast<bool>(stream));
   }
   std::vector<std::uint8_t> png(const LoadedImageFile& image) {
-    auto bytes = files::writeThumbnailPng({.image = image, .text = {}});
+    auto bytes = luciole::writeThumbnailPng({.image = image, .text = {}});
     TEST_CHECK(bytes.has_value());
     return std::move(*bytes);
   }
-  files::DirectoryEntry source(const fs::path& path, Pump& pump) {
-    files::DirectorySession session;
-    session.open(files::Location::fromPath(path.parent_path().native()));
-    pump.until([&] { return session.snapshot().status != files::DirectoryStatus::Loading; });
-    TEST_CHECK(session.snapshot().status == files::DirectoryStatus::Ready);
+  luciole::DirectoryEntry source(const fs::path& path, Pump& pump) {
+    luciole::DirectorySession session;
+    session.open(luciole::Location::fromPath(path.parent_path().native()));
+    pump.until([&] { return session.snapshot().status != luciole::DirectoryStatus::Loading; });
+    TEST_CHECK(session.snapshot().status == luciole::DirectoryStatus::Ready);
     for (const auto& entry : session.snapshot().entries) {
       if (entry.name == path.filename().native()) {
         return entry;
@@ -113,29 +113,29 @@ namespace {
     const GioPtr<GCancellable> cancel(g_cancellable_new());
     const auto original = picture();
     auto data = png(original);
-    auto decoded = files::decodeRasterImage(data, 128, 1000000, cancel.get());
+    auto decoded = luciole::decodeRasterImage(data, 128, 1000000, cancel.get());
     TEST_CHECK(decoded && decoded->rgba == original.rgba && decoded->width == 32 && decoded->height == 16);
-    TEST_CHECK(!files::decodeRasterImage(data, 128, 100, cancel.get()));
-    auto small = files::decodeRasterImage(data, 8, 1000000, cancel.get());
+    TEST_CHECK(!luciole::decodeRasterImage(data, 128, 100, cancel.get()));
+    auto small = luciole::decodeRasterImage(data, 8, 1000000, cancel.get());
     TEST_CHECK(small && small->width == 8 && small->height == 4 && small->rgba[3] >= 127 && small->rgba[3] <= 129);
     // Exercise the full-size output allowed by system loaders, independently of their scaling support.
     const GioPtr<GdkPixbuf> fullSize(gdk_pixbuf_new(GDK_COLORSPACE_RGB, true, 8, 1600, 900));
     gdk_pixbuf_fill(fullSize.get(), 0x20408080U);
-    auto fitted = files::fitRasterPixels(fullSize.get(), 512, 2'000'000);
+    auto fitted = luciole::fitRasterPixels(fullSize.get(), 512, 2'000'000);
     TEST_CHECK(
         fitted && fitted->width == 512 && fitted->height == 288 && fitted->rgba[0] == 32 && fitted->rgba[3] == 128
     );
-    TEST_CHECK(!files::fitRasterPixels(fullSize.get(), 512, 1'000'000));
+    TEST_CHECK(!luciole::fitRasterPixels(fullSize.get(), 512, 1'000'000));
     const std::string svg =
         "<svg xmlns='http://www.w3.org/2000/svg'><image href='https://invalid.example/a.png'/></svg>";
-    TEST_CHECK(!files::decodeRasterImage(
+    TEST_CHECK(!luciole::decodeRasterImage(
         {reinterpret_cast<const std::uint8_t*>(svg.data()), svg.size()}, 128, 1000000, cancel.get()
     ));
     std::uint8_t* webp = nullptr;
     const auto length =
         WebPEncodeLosslessRGBA(original.rgba.data(), original.width, original.height, original.width * 4, &webp);
     TEST_CHECK(length > 0);
-    decoded = files::decodeRasterImage({webp, length}, 128, 1000000, cancel.get());
+    decoded = luciole::decodeRasterImage({webp, length}, 128, 1000000, cancel.get());
     WebPFree(webp);
     TEST_CHECK(decoded && decoded->rgba == original.rgba);
     const GioPtr<GdkPixbuf> pixbuf(gdk_pixbuf_new(GDK_COLORSPACE_RGB, false, 8, 32, 16));
@@ -150,22 +150,22 @@ namespace {
     const std::array<std::uint8_t, 36> exif{0xff, 0xe1, 0, 34, 'E', 'x', 'i', 'f', 0, 0, 'I', 'I', 42, 0, 8, 0, 0, 0, 1,
                                             0,    0x12, 1, 3,  0,   1,   0,   0,   0, 6, 0,   0,   0,  0, 0, 0, 0};
     oriented.insert(oriented.begin() + 2, exif.begin(), exif.end());
-    decoded = files::decodeRasterImage(oriented, 128, 1000000, cancel.get());
+    decoded = luciole::decodeRasterImage(oriented, 128, 1000000, cancel.get());
     TEST_CHECK(decoded && decoded->width == 16 && decoded->height == 32);
-    TEST_CHECK(!files::readThumbnailPng(std::span(data).first(20), 128));
+    TEST_CHECK(!luciole::readThumbnailPng(std::span(data).first(20), 128));
     data[20] ^= 1;
-    TEST_CHECK(!files::readThumbnailPng(data, 128));
+    TEST_CHECK(!luciole::readThumbnailPng(data, 128));
     g_cancellable_cancel(cancel.get());
-    TEST_CHECK(!files::decodeRasterImage(png(original), 128, 1000000, cancel.get()));
+    TEST_CHECK(!luciole::decodeRasterImage(png(original), 128, 1000000, cancel.get()));
   }
   void testRasterFormats() {
     const GioPtr<GCancellable> cancel(g_cancellable_new());
     const std::vector<std::uint8_t> gif{'G', 'I',  'F', '8', '9', 'a', 1, 0, 1, 0, 0x80, 0, 0, 0,    0, 0, 255, 255,
                                         255, 0x2c, 0,   0,   0,   0,   1, 0, 1, 0, 0,    2, 2, 0x44, 1, 0, 0x3b};
-    auto decoded = files::decodeRasterImage(gif, 128, 1000000, cancel.get());
+    auto decoded = luciole::decodeRasterImage(gif, 128, 1000000, cancel.get());
     TEST_CHECK(decoded && decoded->width == 1 && decoded->height == 1 && decoded->rgba[3] == 255);
     const std::vector<std::uint8_t> pnm{'P', '6', '\n', '2', ' ', '1', '\n', '2', '5', '5', '\n', 255, 0, 0, 0, 255, 0};
-    decoded = files::decodeRasterImage(pnm, 128, 1000000, cancel.get());
+    decoded = luciole::decodeRasterImage(pnm, 128, 1000000, cancel.get());
     TEST_CHECK(
         decoded && decoded->width == 2 && decoded->height == 1 && decoded->rgba[0] == 255 && decoded->rgba[5] == 255
     );
@@ -186,7 +186,7 @@ namespace {
     bmp[28] = 24;
     bmp[56] = 255;
     bmp[58] = 255;
-    decoded = files::decodeRasterImage(bmp, 128, 1000000, cancel.get());
+    decoded = luciole::decodeRasterImage(bmp, 128, 1000000, cancel.get());
     TEST_CHECK(decoded && decoded->width == 2 && decoded->rgba[0] == 255 && decoded->rgba[5] == 255);
     const auto pngData = png(picture());
     std::vector<std::uint8_t> ico(22);
@@ -199,7 +199,7 @@ namespace {
     put32(ico, 14, static_cast<std::uint32_t>(pngData.size()));
     put32(ico, 18, 22);
     ico.insert(ico.end(), pngData.begin(), pngData.end());
-    decoded = files::decodeRasterImage(ico, 128, 1000000, cancel.get());
+    decoded = luciole::decodeRasterImage(ico, 128, 1000000, cancel.get());
     TEST_CHECK(decoded && decoded->rgba == picture().rgba);
     // Verify both PNG-backed and 32-bit DIB icon transparency.
     ico.resize(22);
@@ -217,7 +217,7 @@ namespace {
     dib[45] = 255;
     dib[47] = 255;
     ico.insert(ico.end(), dib.begin(), dib.end());
-    decoded = files::decodeRasterImage(ico, 128, 1000000, cancel.get());
+    decoded = luciole::decodeRasterImage(ico, 128, 1000000, cancel.get());
     TEST_CHECK(
         decoded
         && decoded->width == 2
@@ -226,21 +226,21 @@ namespace {
         && decoded->rgba[3] == 128
         && decoded->rgba[5] == 255
     );
-    TEST_CHECK(!files::decodeRasterImage(ico, 128, 1, cancel.get()));
+    TEST_CHECK(!luciole::decodeRasterImage(ico, 128, 1, cancel.get()));
     put32(ico, 26, 0x80000000U);
-    TEST_CHECK(!files::decodeRasterImage(ico, 128, 1000000, cancel.get()));
+    TEST_CHECK(!luciole::decodeRasterImage(ico, 128, 1000000, cancel.get()));
     const std::array<std::uint8_t, 8> transparentRedBlue{255, 0, 0, 0, 0, 0, 255, 255};
     const auto resized = resizeToRgba(transparentRedBlue.data(), 2, 1, ResizeSourceLayout::Rgba, 1, 1);
     TEST_CHECK(resized.size() == 4 && resized[0] < 5 && resized[2] > 250 && resized[3] >= 125 && resized[3] <= 130);
     auto corrupt = pngData;
     corrupt[20] ^= 1;
-    TEST_CHECK(!files::decodeRasterImage(corrupt, 128, 1000000, cancel.get()));
-    TEST_CHECK(!files::decodePng(pngData, 100));
-    const auto theme = files::decodePng(pngData);
+    TEST_CHECK(!luciole::decodeRasterImage(corrupt, 128, 1000000, cancel.get()));
+    TEST_CHECK(!luciole::decodePng(pngData, 100));
+    const auto theme = luciole::decodePng(pngData);
     TEST_CHECK(theme && theme->pixels == picture().rgba);
-    files::installPixbufImageDecoder();
+    luciole::installPixbufImageDecoder();
     const auto providerBytes = png(picture(128, 64));
-    const files::GString base64(g_base64_encode(providerBytes.data(), providerBytes.size()));
+    const luciole::GString base64(g_base64_encode(providerBytes.data(), providerBytes.size()));
     const std::string uri = "data:image/png;base64," + std::string(base64.get());
     const auto cropped = loadImageFile(uri, 32, true);
     TEST_CHECK(cropped && cropped->width == 32 && cropped->height == 32);
@@ -255,25 +255,25 @@ namespace {
   void benchmarkThumbnails(const fs::path& directory, std::size_t limit, bool videos) {
     TEST_CHECK(limit >= 1 && limit <= 256);
     Pump pump;
-    files::DirectorySession session;
-    session.open(files::Location::fromPath(fs::absolute(directory).native()));
-    pump.until([&] { return session.snapshot().status != files::DirectoryStatus::Loading; });
-    TEST_CHECK(session.snapshot().status == files::DirectoryStatus::Ready);
+    luciole::DirectorySession session;
+    session.open(luciole::Location::fromPath(fs::absolute(directory).native()));
+    pump.until([&] { return session.snapshot().status != luciole::DirectoryStatus::Loading; });
+    TEST_CHECK(session.snapshot().status == luciole::DirectoryStatus::Ready);
     auto entries = session.snapshot().entries;
     std::erase_if(entries, [videos](const auto& entry) {
-      return entry.type != files::FileType::Regular
+      return entry.type != luciole::FileType::Regular
           || !entry.contentType
           || !entry.contentType->starts_with(videos ? "video/" : "image/")
           || entry.symlink;
     });
-    std::ranges::sort(entries, {}, &files::DirectoryEntry::name);
+    std::ranges::sort(entries, {}, &luciole::DirectoryEntry::name);
     if (entries.size() > limit) {
       entries.erase(entries.begin() + static_cast<std::ptrdiff_t>(limit), entries.end());
     }
     TEST_CHECK(!entries.empty());
-    files::ThumbnailService service;
+    luciole::ThumbnailService service;
     const auto phase = [&](const char* name) {
-      std::vector<std::shared_ptr<const files::FileIconImage>> assets;
+      std::vector<std::shared_ptr<const luciole::FileIconImage>> assets;
       assets.reserve(entries.size());
       std::vector<double> elapsed(entries.size(), -1);
       const auto started = std::chrono::steady_clock::now();
@@ -301,10 +301,10 @@ namespace {
       );
     };
     phase("cold-thumbnail-cache");
-    const auto cache = files::ThumbnailStore{}.root() / "normal";
+    const auto cache = luciole::ThumbnailStore{}.root() / "normal";
     pump.until([&] {
       return std::ranges::all_of(entries, [&](const auto& entry) {
-        return fs::exists(cache / files::ThumbnailStore::filename(entry.location.uri()));
+        return fs::exists(cache / luciole::ThumbnailStore::filename(entry.location.uri()));
       });
     });
     service.invalidate();
@@ -313,7 +313,7 @@ namespace {
   }
   void testWorkerTransport() {
     std::vector<std::uint8_t> valid{'N', 'F', 'R', '1', 0, 0, 0, 1, 0, 0, 0, 1, 240, 20, 40, 128};
-    const auto result = files::readThumbnailWorkerResult(valid, 128);
+    const auto result = luciole::readThumbnailWorkerResult(valid, 128);
     TEST_CHECK(
         result
         && result->width == 1
@@ -322,38 +322,38 @@ namespace {
     );
     auto malformed = valid;
     malformed[0] = 'X';
-    TEST_CHECK(!files::readThumbnailWorkerResult(malformed, 128));
+    TEST_CHECK(!luciole::readThumbnailWorkerResult(malformed, 128));
     malformed = valid;
     malformed.pop_back();
-    TEST_CHECK(!files::readThumbnailWorkerResult(malformed, 128));
+    TEST_CHECK(!luciole::readThumbnailWorkerResult(malformed, 128));
     malformed = valid;
     malformed.push_back(0);
-    TEST_CHECK(!files::readThumbnailWorkerResult(malformed, 128));
+    TEST_CHECK(!luciole::readThumbnailWorkerResult(malformed, 128));
     malformed = valid;
     malformed[4] = 1;
-    TEST_CHECK(!files::readThumbnailWorkerResult(malformed, 128));
-    TEST_CHECK(!files::readThumbnailWorkerResult(valid, 0));
+    TEST_CHECK(!luciole::readThumbnailWorkerResult(malformed, 128));
+    TEST_CHECK(!luciole::readThumbnailWorkerResult(valid, 0));
     const std::string diagnostic = "NFE1GdkPixbuf: decoder unavailable";
-    const auto failed = files::readThumbnailWorkerResult({diagnostic.begin(), diagnostic.end()}, 128);
+    const auto failed = luciole::readThumbnailWorkerResult({diagnostic.begin(), diagnostic.end()}, 128);
     TEST_CHECK(!failed && failed.error() == diagnostic.substr(4));
     auto oversized = std::vector<std::uint8_t>(1025, 'a');
     std::copy_n(diagnostic.begin(), 4, oversized.begin());
-    TEST_CHECK(files::readThumbnailWorkerResult(oversized, 128).error() != std::string(1021, 'a'));
+    TEST_CHECK(luciole::readThumbnailWorkerResult(oversized, 128).error() != std::string(1021, 'a'));
   }
   void testBatchAndLargerCache() {
-    files::ThumbnailStore store;
+    luciole::ThumbnailStore store;
     const GioPtr<GCancellable> cancel(g_cancellable_new());
-    const auto uri = files::Location::fromPath("/tmp/cache-larger-only.png").uri();
-    const auto second = files::Location::fromPath("/tmp/cache-batch-second.png").uri();
+    const auto uri = luciole::Location::fromPath("/tmp/cache-larger-only.png").uri();
+    const auto second = luciole::Location::fromPath("/tmp/cache-batch-second.png").uri();
     const auto make = [](const std::string& key) {
-      return files::ThumbnailPng{
+      return luciole::ThumbnailPng{
           .image = picture(256, 128),
-          .text = {
-              {"Thumb::URI", key}, {"Thumb::MTime", "123"}, {"Thumb::Size", "42"}, {"X-Noctalia-Files::Stamp", "same"}
-          }
+          .text = {{"Thumb::URI", key}, {"Thumb::MTime", "123"}, {"Thumb::Size", "42"}, {"X-Luciole::Stamp", "same"}}
       };
     };
-    const std::array writes{files::ThumbnailCacheWrite{make(uri), 256}, files::ThumbnailCacheWrite{make(second), 512}};
+    const std::array writes{
+        luciole::ThumbnailCacheWrite{make(uri), 256}, luciole::ThumbnailCacheWrite{make(second), 512}
+    };
     store.writeBatch(writes, 16U * 1024U * 1024U, cancel.get());
     const auto cached = store.read(uri, 128, 123, 42, "same");
     TEST_CHECK(
@@ -367,17 +367,17 @@ namespace {
     TEST_CHECK(store.clear().empty());
   }
   void testCache() {
-    files::ThumbnailStore store;
+    luciole::ThumbnailStore store;
     const GioPtr<GCancellable> cancel(g_cancellable_new());
-    const auto uri = files::Location::fromPath("/tmp/literal space\nimage.png").uri();
+    const auto uri = luciole::Location::fromPath("/tmp/literal space\nimage.png").uri();
     const auto make = [&](const std::string& key) {
-      return files::ThumbnailPng{
+      return luciole::ThumbnailPng{
           .image = picture(), .text = {{"Thumb::URI", key}, {"Thumb::MTime", "123"}, {"Thumb::Size", "42"}}
       };
     };
     store.write(make(uri), 128, 16U * 1024U * 1024U, cancel.get());
-    const auto path = store.root() / "normal" / files::ThumbnailStore::filename(uri);
-    TEST_CHECK(fs::exists(path) && files::ThumbnailStore::filename("abc") == "900150983cd24fb0d6963f7d28e17f72.png");
+    const auto path = store.root() / "normal" / luciole::ThumbnailStore::filename(uri);
+    TEST_CHECK(fs::exists(path) && luciole::ThumbnailStore::filename("abc") == "900150983cd24fb0d6963f7d28e17f72.png");
     const auto cached = store.read(uri, 128, 123, 42);
     TEST_CHECK(cached && cached->image.rgba == picture().rgba);
     const GioPtr<GdkPixbuf> independent(gdk_pixbuf_new_from_file(path.c_str(), nullptr));
@@ -387,45 +387,43 @@ namespace {
     struct stat mode{};
     TEST_CHECK(::stat(path.c_str(), &mode) == 0 && (mode.st_mode & 0777) == 0600);
     auto foreign = make("sftp://example.invalid/photo.png");
-    auto bytes = files::writeThumbnailPng(foreign);
+    auto bytes = luciole::writeThumbnailPng(foreign);
     TEST_CHECK(bytes.has_value());
-    const auto foreignPath = store.root() / "normal" / files::ThumbnailStore::filename(foreign.text.at("Thumb::URI"));
+    const auto foreignPath = store.root() / "normal" / luciole::ThumbnailStore::filename(foreign.text.at("Thumb::URI"));
     write(foreignPath, *bytes);
     TEST_CHECK(store.clear().empty() && !fs::exists(path) && fs::exists(foreignPath));
     store.write(make(uri), 256, 16U * 1024U * 1024U, cancel.get());
-    const auto large = store.root() / "large" / files::ThumbnailStore::filename(uri);
+    const auto large = store.root() / "large" / luciole::ThumbnailStore::filename(uri);
     TEST_CHECK(fs::exists(large));
     fs::rename(large, large.string() + ".old");
     write(large, *bytes);
     TEST_CHECK(store.clear().empty() && fs::exists(large));
     auto bad = make(uri);
     bad.text.erase("Thumb::MTime");
-    bytes = files::writeThumbnailPng(bad);
+    bytes = luciole::writeThumbnailPng(bad);
     TEST_CHECK(bytes.has_value());
     write(path, *bytes);
     TEST_CHECK(!store.read(uri, 128, 123, 42));
   }
   void testCacheLimits() {
-    files::ThumbnailStore store;
+    luciole::ThumbnailStore store;
     const GioPtr<GCancellable> cancel(g_cancellable_new());
     const auto make = [](const std::string& uri, const std::string& stamp) {
-      return files::ThumbnailPng{
+      return luciole::ThumbnailPng{
           .image = picture(),
-          .text = {
-              {"Thumb::URI", uri}, {"Thumb::MTime", "123"}, {"Thumb::Size", "42"}, {"X-Noctalia-Files::Stamp", stamp}
-          }
+          .text = {{"Thumb::URI", uri}, {"Thumb::MTime", "123"}, {"Thumb::Size", "42"}, {"X-Luciole::Stamp", stamp}}
       };
     };
-    const auto first = files::Location::fromPath("/tmp/cache-one.png").uri();
-    const auto second = files::Location::fromPath("/tmp/cache-two.png").uri();
+    const auto first = luciole::Location::fromPath("/tmp/cache-one.png").uri();
+    const auto second = luciole::Location::fromPath("/tmp/cache-two.png").uri();
     store.write(make(first, "source-one"), 128, 1000000, cancel.get());
     TEST_CHECK(
         store.read(first, 128, 123, 42, "source-one").has_value() && !store.read(first, 128, 123, 42, "source-two")
     );
-    const auto one = store.root() / "normal" / files::ThumbnailStore::filename(first);
+    const auto one = store.root() / "normal" / luciole::ThumbnailStore::filename(first);
     const auto budget = fs::file_size(one) + 32;
     store.write(make(second, "source-two"), 128, budget, cancel.get());
-    const auto two = store.root() / "normal" / files::ThumbnailStore::filename(second);
+    const auto two = store.root() / "normal" / luciole::ThumbnailStore::filename(second);
     TEST_CHECK(!fs::exists(one) && fs::exists(two) && fs::file_size(two) <= budget);
     TEST_CHECK(store.clear().empty());
   }
@@ -527,9 +525,9 @@ namespace {
     const int largeInput = ::open(largeVideo.c_str(), O_RDONLY | O_CLOEXEC);
     TEST_CHECK(largeInput >= 0);
     const GioPtr<GCancellable> limitCancel(g_cancellable_new());
-    auto limited = files::ThumbnailOptions{};
+    auto limited = luciole::ThumbnailOptions{};
     limited.maxMegapixels = 1;
-    const auto tooLarge = files::renderThumbnailProvider(largeInput, "video/mp4", 128, limited, limitCancel.get());
+    const auto tooLarge = luciole::renderThumbnailProvider(largeInput, "video/mp4", 128, limited, limitCancel.get());
     ::close(largeInput);
     TEST_CHECK(!tooLarge);
     const auto audio = fixture.root / "artwork.mp3";
@@ -585,7 +583,7 @@ namespace {
     const auto render = [&](const fs::path& path, const std::string& mime) {
       const int input = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
       TEST_CHECK(input >= 0);
-      auto result = files::renderThumbnailProvider(input, mime, 128, {}, cancel.get());
+      auto result = luciole::renderThumbnailProvider(input, mime, 128, {}, cancel.get());
       ::close(input);
       return result;
     };
@@ -687,14 +685,14 @@ namespace {
     TEST_CHECK(still && still->width == 128 && still->height == 64);
     TEST_CHECK(!render(plain, "audio/x-wav"));
     const std::string originalPath = std::getenv("PATH");
-    ::setenv("PATH", "/noctalia-thumbnail-test-no-tools", 1);
+    ::setenv("PATH", "/luciole-thumbnail-test-no-tools", 1);
     TEST_CHECK(!render(document, "application/pdf") && !render(video, "video/mp4"));
     ::setenv("PATH", originalPath.c_str(), 1);
     const auto bin = fixture.root / "slow-bin";
     fs::create_directory(bin);
-    const files::GString sleep(g_find_program_in_path("sleep"));
+    const luciole::GString sleep(g_find_program_in_path("sleep"));
     TEST_CHECK(sleep != nullptr);
-    const files::GString shell(g_find_program_in_path("sh"));
+    const luciole::GString shell(g_find_program_in_path("sh"));
     TEST_CHECK(shell != nullptr);
     std::ofstream(bin / "pdftoppm") << "#!" << shell.get() << "\nexec " << sleep.get() << " 30\n";
     TEST_CHECK(::chmod((bin / "pdftoppm").c_str(), 0700) == 0);
@@ -721,12 +719,12 @@ namespace {
     const std::string svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 200'>"
                             "<rect width='200' height='200' fill='red' fill-opacity='.5'/>"
                             "<image x='200' width='200' height='200' href='"
-        + files::Location::fromPath(linked.native()).uri()
+        + luciole::Location::fromPath(linked.native()).uri()
         + "'/><image x='200' width='200' height='200' href='linked.png'/></svg>";
     std::ofstream(path, std::ios::binary) << svg;
     const auto bytes = std::span(reinterpret_cast<const std::uint8_t*>(svg.data()), svg.size());
-    TEST_CHECK(!files::rasterizeSvg(bytes, 128, false, 79999));
-    auto decoded = files::rasterizeSvg(bytes, 128, false, 80000);
+    TEST_CHECK(!luciole::rasterizeSvg(bytes, 128, false, 79999));
+    auto decoded = luciole::rasterizeSvg(bytes, 128, false, 80000);
     TEST_CHECK(decoded && decoded->width == 128 && decoded->height == 64);
     TEST_CHECK(decoded->sourceWidth == 400 && decoded->sourceHeight == 200);
     TEST_CHECK(decoded->rgba[0] == 255 && decoded->rgba[3] == 128);
@@ -745,10 +743,10 @@ namespace {
     );
     const GioPtr<GCancellable> cancel(g_cancellable_new());
     const auto render = [&](const fs::path& file, const std::string& mime, int side,
-                            files::ThumbnailOptions options = {}) {
+                            luciole::ThumbnailOptions options = {}) {
       const int fd = ::open(file.c_str(), O_RDONLY | O_CLOEXEC);
       TEST_CHECK(fd >= 0);
-      auto result = files::renderThumbnailProvider(fd, mime, side, options, cancel.get());
+      auto result = luciole::renderThumbnailProvider(fd, mime, side, options, cancel.get());
       ::close(fd);
       return result;
     };
@@ -762,7 +760,7 @@ namespace {
     TEST_CHECK(!render(broken, "image/svg+xml", 128));
     const auto oversized = fixture.root / "oversized.svg";
     std::ofstream(oversized) << "<svg xmlns='http://www.w3.org/2000/svg' width='2000' height='1000'/>";
-    auto limited = files::ThumbnailOptions{};
+    auto limited = luciole::ThumbnailOptions{};
     limited.maxMegapixels = 1;
     TEST_CHECK(!render(oversized, "image/svg+xml", 128, limited));
     g_cancellable_cancel(cancel.get());
@@ -770,13 +768,13 @@ namespace {
     g_cancellable_reset(cancel.get());
 
     Pump pump;
-    files::ThumbnailService service;
+    luciole::ThumbnailService service;
     const auto entry = source(zipped, pump);
     TEST_CHECK(entry.contentType == "image/svg+xml-compressed");
     const auto thumbnail = service.request(entry, 128);
     pump.until([&] { return thumbnail && thumbnail->ready; });
     TEST_CHECK(thumbnail->pixels && thumbnail->pixels->rgba == decoded->rgba);
-    files::ThumbnailStore store;
+    luciole::ThumbnailStore store;
     pump.until([&] {
       const auto cached = store.read(entry.location.uri(), 128, *entry.modifiedSeconds, entry.size);
       return cached && cached->image.rgba == decoded->rgba;
@@ -797,7 +795,7 @@ namespace {
     const auto first = source(firstPath, pump), second = source(secondPath, pump);
     const auto warm = source(fixture.root / "artwork.png", pump);
     const GioPtr<GCancellable> cancel(g_cancellable_new());
-    files::ThumbnailStore store;
+    luciole::ThumbnailStore store;
     store.write(
         {.image = picture(),
          .text =
@@ -808,13 +806,13 @@ namespace {
     );
     const auto bin = fixture.root / "blocked-bin";
     fs::create_directory(bin);
-    const files::GString shell(g_find_program_in_path("sh")), sleep(g_find_program_in_path("sleep"));
+    const luciole::GString shell(g_find_program_in_path("sh")), sleep(g_find_program_in_path("sleep"));
     TEST_CHECK(shell && sleep);
     std::ofstream(bin / "pdftoppm") << "#!" << shell.get() << "\nexec " << sleep.get() << " 30\n";
     TEST_CHECK(::chmod((bin / "pdftoppm").c_str(), 0700) == 0);
     const std::string path = std::getenv("PATH");
     ::setenv("PATH", bin.c_str(), 1);
-    files::ThumbnailService service;
+    luciole::ThumbnailService service;
     auto a = service.request(first, 128), b = service.request(second, 128);
     TEST_CHECK(a && b);
     pump.until([&] { return service.activeJobs() == 2; });
@@ -854,18 +852,18 @@ namespace {
     TEST_CHECK(!alternate.empty());
     write(path, original);
     auto entry = source(path, pump);
-    files::ThumbnailService service;
+    luciole::ThumbnailService service;
     auto asset = service.request(entry, 128);
     TEST_CHECK(asset != nullptr);
     pump.until([&] { return asset->ready; });
     const auto cachePath =
-        files::ThumbnailStore{}.root() / "normal" / files::ThumbnailStore::filename(entry.location.uri());
+        luciole::ThumbnailStore{}.root() / "normal" / luciole::ThumbnailStore::filename(entry.location.uri());
     TEST_CHECK(asset->pixels && !fs::exists(cachePath));
     pump.until([&] { return fs::exists(cachePath); });
-    files::DirectorySnapshot snapshot;
+    luciole::DirectorySnapshot snapshot;
     snapshot.generation = 100;
-    snapshot.location = files::Location::fromPath(fixture.root.native());
-    snapshot.status = files::DirectoryStatus::Ready;
+    snapshot.location = luciole::Location::fromPath(fixture.root.native());
+    snapshot.status = luciole::DirectoryStatus::Ready;
     snapshot.entries.push_back(entry);
     service.synchronizeSources(snapshot);
     ++snapshot.generation;
@@ -893,7 +891,7 @@ namespace {
     const auto path = fixture.root / "café\nimage \xff.png";
     write(path, png(picture()));
     auto entry = source(path, pump);
-    files::ThumbnailService thumbnails;
+    luciole::ThumbnailService thumbnails;
     auto asset = thumbnails.request(entry, 48);
     TEST_CHECK(asset != nullptr);
     pump.until([&] { return asset->ready; });
@@ -911,13 +909,13 @@ namespace {
     asset = thumbnails.request(entry, 48);
     pump.until([&] { return asset->ready; });
     TEST_CHECK(asset->pixels && asset->pixels->rgba.front() == 255);
-    auto options = files::ThumbnailOptions{};
-    options.policy = files::ThumbnailPolicy::Never;
+    auto options = luciole::ThumbnailOptions{};
+    options.policy = luciole::ThumbnailPolicy::Never;
     thumbnails.setOptions(options);
     TEST_CHECK(!thumbnails.request(entry, 48));
-    options.policy = files::ThumbnailPolicy::Local;
+    options.policy = luciole::ThumbnailPolicy::Local;
     thumbnails.setOptions(options);
-    std::vector<std::shared_ptr<const files::FileIconImage>> held;
+    std::vector<std::shared_ptr<const luciole::FileIconImage>> held;
     for (std::uint64_t id = 1; id <= 1200; ++id) {
       entry.id = id;
       if (auto image = thumbnails.request(entry, 48)) {
@@ -929,7 +927,7 @@ namespace {
     );
     thumbnails.invalidate();
     held.clear();
-    std::vector<std::shared_ptr<const files::FileIconImage>> overscan;
+    std::vector<std::shared_ptr<const luciole::FileIconImage>> overscan;
     for (std::uint64_t id = 1; id <= 16; ++id) {
       entry.id = id;
       overscan.push_back(thumbnails.request(entry, 1024, false));
@@ -955,13 +953,13 @@ namespace {
     TEST_CHECK(!thumbnails.request(entry, 48));
     pump.until([&] { return !thumbnails.clearing() && thumbnails.activeJobs() == 0; });
     TEST_CHECK(thumbnails.error().empty() && !asset->pixels);
-    const auto remote = files::Location::fromUri("sftp://example.invalid/photo.png");
-    files::DirectoryEntry remoteEntry{
+    const auto remote = luciole::Location::fromUri("sftp://example.invalid/photo.png");
+    luciole::DirectoryEntry remoteEntry{
         .id = 99,
         .location = remote,
         .name = "photo.png",
         .displayName = "photo.png",
-        .type = files::FileType::Regular,
+        .type = luciole::FileType::Regular,
         .size = 42,
         .modifiedSeconds = 123,
         .etag = std::nullopt,
@@ -969,12 +967,12 @@ namespace {
         .contentType = "image/png"
     };
     TEST_CHECK(!thumbnails.request(remoteEntry, 48));
-    options.policy = files::ThumbnailPolicy::All;
+    options.policy = luciole::ThumbnailPolicy::All;
     thumbnails.setOptions(options);
     auto remoteAsset = thumbnails.request(remoteEntry, 48);
     pump.until([&] { return remoteAsset->ready; });
     TEST_CHECK(static_cast<bool>(remoteAsset->pixels));
-    auto owner = std::make_unique<files::ThumbnailService>();
+    auto owner = std::make_unique<luciole::ThumbnailService>();
     auto retiring = owner->request(entry, 48);
     owner->setChangedCallback([&] { owner.reset(); });
     pump.until([&] { return !owner; });
@@ -989,7 +987,7 @@ int main(int argc, char** argv) {
     args.emplace_back(argv[i]);
   }
   if (!args.empty() && args.front() == "--thumbnail-worker") {
-    return files::runThumbnailWorker(std::span(args).subspan(1));
+    return luciole::runThumbnailWorker(std::span(args).subspan(1));
   }
   initLogLevelFromEnvironment();
   try {

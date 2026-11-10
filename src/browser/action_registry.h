@@ -10,7 +10,7 @@
 #include <string_view>
 #include <utility>
 
-namespace files {
+namespace luciole {
   // A new action needs a row in kActions (action_registry.cpp) and a handler in BrowserPage::runAction, both in
   // enum order; static_asserts reject a missing row.
   enum class BrowserAction : std::uint8_t {
@@ -160,4 +160,4 @@ namespace files {
     static bool current(const ActionContext& context, const ActionRequest& request, ActionScope scope);
     static ActionState state(BrowserAction action, const ActionContext& context, const ActionRequest& request);
   };
-} // namespace files
+} // namespace luciole

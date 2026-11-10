@@ -11,19 +11,19 @@
 #include <algorithm>
 #include <cmath>
 
-files::PlacesSidebar::PlacesSidebar(PinService& pins, DriveMonitor& drives) : m_pins(pins), m_drives(drives) {
+luciole::PlacesSidebar::PlacesSidebar(PinService& pins, DriveMonitor& drives) : m_pins(pins), m_drives(drives) {
   setDirection(FlexDirection::Vertical);
   setAlign(FlexAlign::Stretch);
   setMinWidth(static_cast<float>(kDefaultSidebarWidth));
   setMaxWidth(static_cast<float>(kDefaultSidebarWidth));
   // Rows sit on the window chrome. Their right inset is the 8px resize-handle gap before the content
   // (kWorkspaceInset), so the left inset matches it and nothing else pads the rows horizontally.
-  setPadding(files::kSideListPadding, 0.0F, files::kSideListPadding, Style::spaceSm);
+  setPadding(luciole::kSideListPadding, 0.0F, luciole::kSideListPadding, Style::spaceSm);
   addChild(
       ui::scrollView(
           {.out = &m_scroll,
            .viewportPaddingH = 0.0F,
-           .viewportPaddingV = files::kSideListViewportPaddingV,
+           .viewportPaddingV = luciole::kSideListViewportPaddingV,
            .fillWidth = true,
            .flexGrow = 1.0F}
       )
@@ -31,28 +31,28 @@ files::PlacesSidebar::PlacesSidebar(PinService& pins, DriveMonitor& drives) : m_
   m_scroll->content()->setAlign(FlexAlign::Stretch);
   m_scroll->content()->setGap(Style::spaceXs);
 }
-void files::PlacesSidebar::setOpenCallback(std::function<void(const Location&)> callback) {
+void luciole::PlacesSidebar::setOpenCallback(std::function<void(const Location&)> callback) {
   m_open = std::move(callback);
 }
-void files::PlacesSidebar::setContextCallback(std::function<void(const Bookmark&, float, float)> callback) {
+void luciole::PlacesSidebar::setContextCallback(std::function<void(const Bookmark&, float, float)> callback) {
   m_context = std::move(callback);
 }
-void files::PlacesSidebar::setDragCallback(std::function<void(const Bookmark&)> callback) {
+void luciole::PlacesSidebar::setDragCallback(std::function<void(const Bookmark&)> callback) {
   m_drag = std::move(callback);
 }
-void files::PlacesSidebar::setRenameCallback(std::function<void(const Bookmark&)> callback) {
+void luciole::PlacesSidebar::setRenameCallback(std::function<void(const Bookmark&)> callback) {
   m_rename = std::move(callback);
 }
-void files::PlacesSidebar::setDriveOpenCallback(std::function<void(const std::string&)> callback) {
+void luciole::PlacesSidebar::setDriveOpenCallback(std::function<void(const std::string&)> callback) {
   m_driveOpen = std::move(callback);
 }
-void files::PlacesSidebar::setDriveRemoveCallback(std::function<void(const std::string&)> callback) {
+void luciole::PlacesSidebar::setDriveRemoveCallback(std::function<void(const std::string&)> callback) {
   m_driveRemove = std::move(callback);
 }
-void files::PlacesSidebar::setDriveContextCallback(std::function<void(const std::string&, float, float)> callback) {
+void luciole::PlacesSidebar::setDriveContextCallback(std::function<void(const std::string&, float, float)> callback) {
   m_driveContext = std::move(callback);
 }
-const files::Drive* files::PlacesSidebar::driveAt(const Location& root) const {
+const luciole::Drive* luciole::PlacesSidebar::driveAt(const Location& root) const {
   if (!m_showDrives || m_pins.contains(root)) {
     return nullptr;
   }
@@ -60,7 +60,7 @@ const files::Drive* files::PlacesSidebar::driveAt(const Location& root) const {
   const auto found = std::ranges::find(drives, std::optional(root), &Drive::root);
   return found == drives.end() ? nullptr : &*found;
 }
-InputArea* files::PlacesSidebar::focusArea(const Location& location) const {
+InputArea* luciole::PlacesSidebar::focusArea(const Location& location) const {
   if (m_tree) {
     return m_tree->focusArea(location);
   }
@@ -71,11 +71,11 @@ InputArea* files::PlacesSidebar::focusArea(const Location& location) const {
   const auto drive = std::ranges::find(m_driveRows, std::optional(location), &DriveRow::root);
   return drive == m_driveRows.end() ? nullptr : drive->button->inputArea();
 }
-void files::PlacesSidebar::invalidate() {
+void luciole::PlacesSidebar::invalidate() {
   m_dirty = true;
   markLayoutDirty();
 }
-std::optional<files::Bookmark> files::PlacesSidebar::folderAt(float x, float y) const {
+std::optional<luciole::Bookmark> luciole::PlacesSidebar::folderAt(float x, float y) const {
   if (m_tree) {
     return m_tree->folderAt(x, y);
   }
@@ -102,7 +102,7 @@ std::optional<files::Bookmark> files::PlacesSidebar::folderAt(float x, float y) 
   }
   return std::nullopt;
 }
-std::optional<LayoutRect> files::PlacesSidebar::folderRect(const Location& location) const {
+std::optional<LayoutRect> luciole::PlacesSidebar::folderRect(const Location& location) const {
   if (m_tree) {
     return m_tree->folderRect(location);
   }
@@ -127,14 +127,14 @@ std::optional<LayoutRect> files::PlacesSidebar::folderRect(const Location& locat
   }
   return std::nullopt;
 }
-void files::PlacesSidebar::cancelDragCandidate() {
+void luciole::PlacesSidebar::cancelDragCandidate() {
   if (m_tree) {
     m_tree->cancelDragCandidate();
   }
   m_dragCandidate.reset();
   m_dragged = false;
 }
-void files::PlacesSidebar::sync(std::optional<Location> current) {
+void luciole::PlacesSidebar::sync(std::optional<Location> current) {
   m_current = std::move(current);
   if (m_tree) {
     m_tree->sync(m_current, m_showHidden);
@@ -154,15 +154,15 @@ void files::PlacesSidebar::sync(std::optional<Location> current) {
   }
   markLayoutDirty();
 }
-void files::PlacesSidebar::addDriveRow(const Drive& drive) {
+void luciole::PlacesSidebar::addDriveRow(const Drive& drive) {
   auto button = ui::button(
       {.text = drive.label,
        .glyph = drive.glyph,
-       .controlHeight = files::kSideListRowHeight,
+       .controlHeight = luciole::kSideListRowHeight,
        .contentAlign = ButtonContentAlign::Start,
        .variant = ButtonVariant::Ghost,
-       .paddingH = files::kSideListRowPaddingH,
-       .gap = files::kSideListRowGap,
+       .paddingH = luciole::kSideListRowPaddingH,
+       .gap = luciole::kSideListRowGap,
        .flexGrow = 1.0F,
        .onClick = [this, key = drive.key] {
          if (m_driveOpen) {
@@ -222,15 +222,15 @@ void files::PlacesSidebar::addDriveRow(const Drive& drive) {
   m_driveRows.push_back({drive.key, drive.root, drive.label, raw});
   m_scroll->content()->addChild(std::move(row));
 }
-void files::PlacesSidebar::addRow(const Bookmark& bookmark, const std::string& glyph, std::size_t index) {
+void luciole::PlacesSidebar::addRow(const Bookmark& bookmark, const std::string& glyph, std::size_t index) {
   auto button = ui::button(
       {.text = bookmark.label,
        .glyph = glyph,
-       .controlHeight = files::kSideListRowHeight,
+       .controlHeight = luciole::kSideListRowHeight,
        .contentAlign = ButtonContentAlign::Start,
        .variant = ButtonVariant::Ghost,
-       .paddingH = files::kSideListRowPaddingH,
-       .gap = files::kSideListRowGap,
+       .paddingH = luciole::kSideListRowPaddingH,
+       .gap = luciole::kSideListRowGap,
        .onClick = [this, location = bookmark.location] {
          if (m_open) {
            m_open(location);
@@ -306,22 +306,22 @@ void files::PlacesSidebar::addRow(const Bookmark& bookmark, const std::string& g
   m_rows.push_back({bookmark, index, raw});
   m_scroll->content()->addChild(std::move(button));
 }
-void files::PlacesSidebar::setTreeEnabled(bool enabled) {
+void luciole::PlacesSidebar::setTreeEnabled(bool enabled) {
   if (std::exchange(m_treeEnabled, enabled) != enabled) {
     invalidate();
   }
 }
-void files::PlacesSidebar::setShowHidden(bool showHidden) {
+void luciole::PlacesSidebar::setShowHidden(bool showHidden) {
   if (std::exchange(m_showHidden, showHidden) != showHidden && m_tree) {
     m_tree->sync(m_current, showHidden);
   }
 }
-void files::PlacesSidebar::setShowDrives(bool showDrives) {
+void luciole::PlacesSidebar::setShowDrives(bool showDrives) {
   if (std::exchange(m_showDrives, showDrives) != showDrives) {
     invalidate();
   }
 }
-void files::PlacesSidebar::rebuild() {
+void luciole::PlacesSidebar::rebuild() {
   if (m_treeEnabled) {
     m_scroll->setVisible(false);
     m_scroll->setParticipatesInLayout(false);
@@ -412,7 +412,7 @@ void files::PlacesSidebar::rebuild() {
   }
   sync(m_current);
 }
-LayoutSize files::PlacesSidebar::doMeasure(Renderer& renderer, const LayoutConstraints& constraints) {
+LayoutSize luciole::PlacesSidebar::doMeasure(Renderer& renderer, const LayoutConstraints& constraints) {
   if (m_dirty) {
     m_dirty = false;
     rebuild();
@@ -422,7 +422,7 @@ LayoutSize files::PlacesSidebar::doMeasure(Renderer& renderer, const LayoutConst
   }
   return Flex::doMeasure(renderer, constraints);
 }
-void files::PlacesSidebar::doArrange(Renderer& renderer, const LayoutRect& rect) {
+void luciole::PlacesSidebar::doArrange(Renderer& renderer, const LayoutRect& rect) {
   if (m_dirty) {
     m_dirty = false;
     rebuild();
@@ -432,7 +432,7 @@ void files::PlacesSidebar::doArrange(Renderer& renderer, const LayoutRect& rect)
   }
   Flex::doArrange(renderer, rect);
 }
-std::optional<std::size_t> files::PlacesSidebar::dropSlot(float x, float y) const {
+std::optional<std::size_t> luciole::PlacesSidebar::dropSlot(float x, float y) const {
   if (m_tree) {
     return m_tree->dropSlot(x, y);
   }
@@ -453,7 +453,7 @@ std::optional<std::size_t> files::PlacesSidebar::dropSlot(float x, float y) cons
   }
   return m_pins.bookmarks().size();
 }
-LayoutRect files::PlacesSidebar::dropLine(std::size_t slot) const {
+LayoutRect luciole::PlacesSidebar::dropLine(std::size_t slot) const {
   if (m_tree) {
     return m_tree->dropLine(slot);
   }
@@ -477,14 +477,14 @@ LayoutRect files::PlacesSidebar::dropLine(std::size_t slot) const {
   }
   return {x + 8.0F, std::clamp(line, top + 2.0F, top + height() - 3.0F), width() - 16.0F, 2.0F};
 }
-void files::PlacesSidebar::dragScroll(float delta) {
+void luciole::PlacesSidebar::dragScroll(float delta) {
   if (m_tree) {
     m_tree->dragScroll(delta);
     return;
   }
   m_scroll->requestScrollToOffset(m_scroll->scrollOffset() + delta);
 }
-float files::PlacesSidebar::dragScrollSpeed(float x, float y) const {
+float luciole::PlacesSidebar::dragScrollSpeed(float x, float y) const {
   if (m_tree) {
     return m_tree->dragScrollSpeed(x, y);
   }

@@ -14,8 +14,8 @@
 #include <unistd.h>
 
 namespace {
-  using namespace files;
-  using namespace files::archive_work;
+  using namespace luciole;
+  using namespace luciole::archive_work;
   namespace fs = std::filesystem;
   int addFilter(struct archive* writer, ArchiveCompression compression) {
     switch (compression) {
@@ -245,7 +245,7 @@ namespace {
   }
 } // namespace
 
-bool files::archiveEncryptionAvailable() {
+bool luciole::archiveEncryptionAvailable() {
   static const bool available = [] {
     const std::unique_ptr<struct archive, decltype(&archive_write_free)> writer(
         archive_write_new(), &archive_write_free
@@ -257,7 +257,7 @@ bool files::archiveEncryptionAvailable() {
   return available;
 }
 
-std::optional<std::string> files::archivePasswordProblem(std::string_view password, ArchiveFormat format) {
+std::optional<std::string> luciole::archivePasswordProblem(std::string_view password, ArchiveFormat format) {
   if (password.size() > 1024 || password.contains('\0')) {
     return "Use a password of at most 1024 bytes without NUL characters.";
   }
@@ -269,7 +269,7 @@ std::optional<std::string> files::archivePasswordProblem(std::string_view passwo
   return std::nullopt;
 }
 
-std::span<const files::ArchiveFormatInfo> files::archiveFormats() {
+std::span<const luciole::ArchiveFormatInfo> luciole::archiveFormats() {
   static const auto formats = [] {
     std::vector<ArchiveFormatInfo> result;
     for (const auto& item : std::array{
@@ -296,7 +296,7 @@ std::span<const files::ArchiveFormatInfo> files::archiveFormats() {
   }();
   return formats;
 }
-files::archive_work::Prepared files::archive_work::compress(
+luciole::archive_work::Prepared luciole::archive_work::compress(
     const std::vector<Location>& sources, const Location& destination, ArchiveFormat format, ArchiveLimits limits,
     const CancelToken& cancel, Progress& progress, const Passwords& passwords
 ) {

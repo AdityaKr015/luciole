@@ -5,7 +5,7 @@
 
 #include <gio/gio.h>
 
-namespace files {
+namespace luciole {
   std::expected<LoadedImageFile, std::string> renderThumbnailProvider(
       int sourceFd, const std::string& mime, int side, const ThumbnailOptions& options, GCancellable* cancellable
   );

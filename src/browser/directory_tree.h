@@ -4,7 +4,7 @@
 
 #include <map>
 
-namespace files {
+namespace luciole {
   struct TreeRowInfo {
     std::size_t depth = 0;
     bool enabled = false, expandable = false, expanded = false, loading = false;
@@ -40,4 +40,4 @@ namespace files {
     std::optional<std::pair<EntryId, std::string>> m_rejected;
     std::function<void()> m_changed;
   };
-} // namespace files
+} // namespace luciole

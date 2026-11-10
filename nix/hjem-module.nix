@@ -5,18 +5,18 @@
   ...
 }:
 let
-  cfg = config.programs.noctalia-files;
+  cfg = config.programs.luciole;
   toml = pkgs.formats.toml { };
 in
 {
   _class = "hjem";
 
-  options.programs.noctalia-files = {
-    enable = lib.mkEnableOption "Noctalia Files";
+  options.programs.luciole = {
+    enable = lib.mkEnableOption "Luciole";
     package = lib.mkOption {
       type = lib.types.nullOr lib.types.package;
       default = null;
-      description = "Noctalia Files package to install.";
+      description = "Luciole package to install.";
     };
     settings = lib.mkOption {
       type = lib.types.oneOf [
@@ -36,7 +36,7 @@ in
 
   config = lib.mkIf cfg.enable {
     packages = lib.optional (cfg.package != null) cfg.package;
-    xdg.config.files."noctalia-files/config.toml" = lib.mkIf (cfg.settings != { }) {
+    xdg.config.files."luciole/config.toml" = lib.mkIf (cfg.settings != { }) {
       source = import ./config_file.nix {
         inherit pkgs;
         inherit (cfg) settings package checkConfig;

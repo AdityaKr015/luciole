@@ -14,12 +14,12 @@ namespace {
   std::uint64_t nextContext = 0;
 }
 
-struct files::BrowserController::ActivationState {
+struct luciole::BrowserController::ActivationState {
   CancelToken token;
   std::function<void(EntryId, const Location&, std::uint64_t, const std::expected<FileType, FileError>&)> resolved;
 };
 
-files::BrowserController::BrowserController(SortOptions sort, bool showHidden, bool showBackups)
+luciole::BrowserController::BrowserController(SortOptions sort, bool showHidden, bool showBackups)
     : m_activation(std::make_shared<ActivationState>()) {
   m_activation->resolved = [this](
                                EntryId id, const Location& target, std::uint64_t context,
@@ -68,7 +68,7 @@ files::BrowserController::BrowserController(SortOptions sort, bool showHidden, b
   });
 }
 
-files::BrowserController::~BrowserController() {
+luciole::BrowserController::~BrowserController() {
   cancelSearchTimeout();
   m_activation->resolved = {};
   m_activation->token.cancel();
@@ -78,37 +78,37 @@ files::BrowserController::~BrowserController() {
   m_tree.reset();
 }
 
-void files::BrowserController::advanceContext() {
+void luciole::BrowserController::advanceContext() {
   cancelSearchTimeout();
   m_contextSerial = ++nextContext;
   m_activation->token.cancel();
   m_activation->token = CancelToken{};
 }
 
-void files::BrowserController::setChangedCallback(std::function<void()> callback) { m_changed = std::move(callback); }
-void files::BrowserController::setFileActivatedCallback(std::function<void(const Location&)> callback) {
+void luciole::BrowserController::setChangedCallback(std::function<void()> callback) { m_changed = std::move(callback); }
+void luciole::BrowserController::setFileActivatedCallback(std::function<void(const Location&)> callback) {
   m_fileActivated = std::move(callback);
 }
 
-void files::BrowserController::setCaptureViewport(std::function<BrowseViewport()> callback) {
+void luciole::BrowserController::setCaptureViewport(std::function<BrowseViewport()> callback) {
   m_captureViewport = std::move(callback);
 }
-void files::BrowserController::setViewDefaults(ViewMode mode, int iconSize) {
+void luciole::BrowserController::setViewDefaults(ViewMode mode, int iconSize) {
   m_defaults.mode = mode;
   m_defaults.iconSize = iconSize;
 }
-std::optional<files::BrowseViewport> files::BrowserController::takeRestoredViewport() {
+std::optional<luciole::BrowseViewport> luciole::BrowserController::takeRestoredViewport() {
   return std::exchange(m_restoredViewport, std::nullopt);
 }
-std::optional<files::BrowserController::Reference>
-files::BrowserController::reference(std::optional<EntryId> id) const {
+std::optional<luciole::BrowserController::Reference>
+luciole::BrowserController::reference(std::optional<EntryId> id) const {
   const auto* entry = id ? m_model.entry(*id) : nullptr;
   if (!entry || !entry->identity) {
     return std::nullopt;
   }
   return Reference{entry->location.uri(), *entry->identity};
 }
-void files::BrowserController::saveVisit() {
+void luciole::BrowserController::saveVisit() {
   if (m_history.empty() || m_restoring) {
     return;
   }
@@ -129,7 +129,7 @@ void files::BrowserController::saveVisit() {
   visit.first = reference(visit.viewport.first);
   visit.viewport.first.reset();
 }
-void files::BrowserController::loadVisit() {
+void luciole::BrowserController::loadVisit() {
   const auto destination = m_history[m_historyIndex].location;
   const auto query = m_history[m_historyIndex].query;
   m_viewport = m_history[m_historyIndex].viewport;
@@ -153,7 +153,7 @@ void files::BrowserController::loadVisit() {
     m_search.start(destination, query, m_model.filter().showHidden, m_model.filter().showBackups);
   }
 }
-void files::BrowserController::open(const Location& location) {
+void luciole::BrowserController::open(const Location& location) {
   const auto destination = location; // NOLINT(performance-unnecessary-copy-initialization)
   if (!m_history.empty() && m_history[m_historyIndex].location == destination) {
     m_restoring = false;
@@ -180,7 +180,7 @@ void files::BrowserController::open(const Location& location) {
   loadVisit();
 }
 
-bool files::BrowserController::openText(const std::string& text) {
+bool luciole::BrowserController::openText(const std::string& text) {
   if (text.empty()) {
     showMessage("Enter a path or URI.");
     return false;
@@ -196,14 +196,14 @@ bool files::BrowserController::openText(const std::string& text) {
   }
 }
 
-void files::BrowserController::home() { (void)openText("~"); }
+void luciole::BrowserController::home() { (void)openText("~"); }
 
-bool files::BrowserController::canBack() const { return !m_history.empty() && m_historyIndex > 0; }
-bool files::BrowserController::canForward() const {
+bool luciole::BrowserController::canBack() const { return !m_history.empty() && m_historyIndex > 0; }
+bool luciole::BrowserController::canForward() const {
   return !m_history.empty() && m_historyIndex + 1 < m_history.size();
 }
 
-bool files::BrowserController::back() {
+bool luciole::BrowserController::back() {
   if (!canBack()) {
     return false;
   }
@@ -212,7 +212,7 @@ bool files::BrowserController::back() {
   loadVisit();
   return true;
 }
-bool files::BrowserController::forward() {
+bool luciole::BrowserController::forward() {
   if (!canForward()) {
     return false;
   }
@@ -222,14 +222,14 @@ bool files::BrowserController::forward() {
   return true;
 }
 
-bool files::BrowserController::canUp() const {
+bool luciole::BrowserController::canUp() const {
   if (!m_model.snapshot().location) {
     return false;
   }
   return m_model.snapshot().location->parent().has_value();
 }
 
-bool files::BrowserController::up() {
+bool luciole::BrowserController::up() {
   if (!m_model.snapshot().location) {
     return false;
   }
@@ -241,7 +241,7 @@ bool files::BrowserController::up() {
   return true;
 }
 
-void files::BrowserController::refresh() {
+void luciole::BrowserController::refresh() {
   m_message.clear();
   if (m_query.empty()) {
     if (m_tree) {
@@ -253,7 +253,7 @@ void files::BrowserController::refresh() {
   }
 }
 
-void files::BrowserController::stop() {
+void luciole::BrowserController::stop() {
   if (m_tree) {
     m_tree->clear();
   }
@@ -271,7 +271,7 @@ void files::BrowserController::stop() {
   }
 }
 
-void files::BrowserController::toggleHidden() {
+void luciole::BrowserController::toggleHidden() {
   auto filter = m_model.filter();
   filter.showHidden = !filter.showHidden;
   m_model.setFilter(std::move(filter));
@@ -280,7 +280,7 @@ void files::BrowserController::toggleHidden() {
   }
 }
 
-void files::BrowserController::setShowBackups(bool showBackups) {
+void luciole::BrowserController::setShowBackups(bool showBackups) {
   if (m_model.filter().showBackups == showBackups) {
     return;
   }
@@ -292,7 +292,7 @@ void files::BrowserController::setShowBackups(bool showBackups) {
   }
 }
 
-void files::BrowserController::cancelSearchTimeout() {
+void luciole::BrowserController::cancelSearchTimeout() {
   if (auto* source = std::exchange(m_searchTimeout, nullptr)) {
     g_source_destroy(source);
     g_source_unref(source);
@@ -300,7 +300,7 @@ void files::BrowserController::cancelSearchTimeout() {
   m_searchPending = false;
 }
 
-void files::BrowserController::scheduleSearch() {
+void luciole::BrowserController::scheduleSearch() {
   if (!m_searchPending || m_searchComposing) {
     return;
   }
@@ -324,7 +324,7 @@ void files::BrowserController::scheduleSearch() {
   g_source_attach(m_searchTimeout, g_main_context_default());
 }
 
-void files::BrowserController::startSearch() {
+void luciole::BrowserController::startSearch() {
   cancelSearchTimeout();
   if (m_query.empty() || !m_session.snapshot().location) {
     return;
@@ -333,7 +333,7 @@ void files::BrowserController::startSearch() {
   m_search.start(*m_session.snapshot().location, m_query, m_model.filter().showHidden, m_model.filter().showBackups);
 }
 
-void files::BrowserController::publishPendingSearch() {
+void luciole::BrowserController::publishPendingSearch() {
   publish(
       {.location = m_session.snapshot().location,
        .status = DirectoryStatus::Loading,
@@ -344,7 +344,7 @@ void files::BrowserController::publishPendingSearch() {
   );
 }
 
-void files::BrowserController::editSearchQuery(std::string text) {
+void luciole::BrowserController::editSearchQuery(std::string text) {
   if (m_query == text) {
     return;
   }
@@ -364,13 +364,13 @@ void files::BrowserController::editSearchQuery(std::string text) {
   publishPendingSearch();
 }
 
-void files::BrowserController::submitSearchQuery() {
+void luciole::BrowserController::submitSearchQuery() {
   if (m_searchPending && !m_searchComposing) {
     startSearch();
   }
 }
 
-void files::BrowserController::setSearchComposing(bool composing) {
+void luciole::BrowserController::setSearchComposing(bool composing) {
   if (m_searchComposing == composing) {
     return;
   }
@@ -388,7 +388,7 @@ void files::BrowserController::setSearchComposing(bool composing) {
   }
 }
 
-void files::BrowserController::setSearchQuery(std::string text) {
+void luciole::BrowserController::setSearchQuery(std::string text) {
   if (m_query == text) {
     submitSearchQuery();
     return;
@@ -407,7 +407,7 @@ void files::BrowserController::setSearchQuery(std::string text) {
   }
 }
 
-void files::BrowserController::publish(DirectorySnapshot snapshot) {
+void luciole::BrowserController::publish(DirectorySnapshot snapshot) {
   snapshot.generation = m_revision = std::max(m_revision, m_model.snapshot().generation) + 1;
   m_publishing = true;
   if (m_tree && m_query.empty()) {
@@ -455,7 +455,7 @@ void files::BrowserController::publish(DirectorySnapshot snapshot) {
   notify();
 }
 
-void files::BrowserController::setExpandableFolders(bool enabled) {
+void luciole::BrowserController::setExpandableFolders(bool enabled) {
   if (enabled == expandableFolders()) {
     return;
   }
@@ -467,11 +467,11 @@ void files::BrowserController::setExpandableFolders(bool enabled) {
     publish(m_session.snapshot());
   }
 }
-bool files::BrowserController::toggleFolder(EntryId id) { return m_tree && m_query.empty() && m_tree->toggle(id); }
-files::TreeRowInfo files::BrowserController::treeRow(EntryId id) const {
+bool luciole::BrowserController::toggleFolder(EntryId id) { return m_tree && m_query.empty() && m_tree->toggle(id); }
+luciole::TreeRowInfo luciole::BrowserController::treeRow(EntryId id) const {
   return m_tree && m_query.empty() ? m_tree->row(id) : TreeRowInfo{};
 }
-bool files::BrowserController::treeKey(bool expand) {
+bool luciole::BrowserController::treeKey(bool expand) {
   if (!m_tree || !m_query.empty() || !m_model.selection().focused) {
     return false;
   }
@@ -494,7 +494,7 @@ bool files::BrowserController::treeKey(bool expand) {
   return true;
 }
 
-void files::BrowserController::activate(EntryId id) {
+void luciole::BrowserController::activate(EntryId id) {
   const auto* entry = m_model.entry(id);
   if (entry == nullptr || std::ranges::find(m_model.rows(), id) == m_model.rows().end()) {
     return;
@@ -527,19 +527,19 @@ void files::BrowserController::activate(EntryId id) {
   }
 }
 
-void files::BrowserController::showMessage(std::string message) {
+void luciole::BrowserController::showMessage(std::string message) {
   m_message = std::move(message);
   notify();
 }
 
-void files::BrowserController::notify() const {
+void luciole::BrowserController::notify() const {
   const auto callback = m_changed;
   if (callback) {
     callback();
   }
 }
 
-void files::BrowserController::duplicateFrom(BrowserController& source) {
+void luciole::BrowserController::duplicateFrom(BrowserController& source) {
   if (&source == this) {
     return;
   }

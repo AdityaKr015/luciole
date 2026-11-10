@@ -7,9 +7,9 @@
 #include <optional>
 #include <string>
 
-namespace files {
+namespace luciole {
   class PinService;
-} // namespace files
+} // namespace luciole
 
 class NameDialog;
 class OperationJob;
@@ -18,10 +18,10 @@ class PageContext;
 // Single-item rename of a file or folder, and renaming a place in the sidebar.
 class RenameController {
 public:
-  RenameController(PageContext& page, files::PinService& pins);
+  RenameController(PageContext& page, luciole::PinService& pins);
 
-  void openFileRename(files::DirectoryEntry target);
-  void openPlaceRename(const files::Bookmark& bookmark);
+  void openFileRename(luciole::DirectoryEntry target);
+  void openPlaceRename(const luciole::Bookmark& bookmark);
   // Owned rename job change: sync the editor on the next frame, or report a job whose editor closed.
   void changed(OperationJob& job);
   // Frame slot in BrowserPage::prepareFrame().
@@ -30,20 +30,20 @@ public:
   void syncPlaceRename();
 
 private:
-  bool canFileRename(const files::DirectoryEntry& entry) const;
+  bool canFileRename(const luciole::DirectoryEntry& entry) const;
   void submitFileRename(std::string name);
   void syncFileRename(const OperationJob& job);
   void submitPlaceRename(std::string label);
 
   PageContext& m_page;
-  files::PinService& m_pins;
+  luciole::PinService& m_pins;
   // The editor's job: checks the target, then renames it.
   std::shared_ptr<OperationJob> m_job;
   NameDialog* m_fileRenameEditor = nullptr;
-  std::optional<files::DirectoryEntry> m_fileRenameTarget;
+  std::optional<luciole::DirectoryEntry> m_fileRenameTarget;
   bool m_fileRenamePreparing = false;
   bool m_dirty = false;
   NameDialog* m_placeEditor = nullptr;
-  std::optional<files::Bookmark> m_placeRenameTarget;
+  std::optional<luciole::Bookmark> m_placeRenameTarget;
   std::optional<std::string> m_pendingPlaceLabel;
 };

@@ -3,7 +3,7 @@
 #include "fs/gio_interop.h"
 
 namespace {
-  void readIcon(GIcon* icon, files::FileIconSource& result) {
+  void readIcon(GIcon* icon, luciole::FileIconSource& result) {
     if (icon == nullptr) {
       return;
     }
@@ -15,7 +15,7 @@ namespace {
         result.names.emplace_back(names[i]);
       }
     } else if (G_IS_FILE_ICON(icon)) {
-      const files::GString path(g_file_get_path(g_file_icon_get_file(G_FILE_ICON(icon))));
+      const luciole::GString path(g_file_get_path(g_file_icon_get_file(G_FILE_ICON(icon))));
       if (path) {
         result.filePath = path.get();
       }
@@ -23,13 +23,13 @@ namespace {
   }
 } // namespace
 
-files::FileIconSource files::readIconSource(GIcon* icon) {
+luciole::FileIconSource luciole::readIconSource(GIcon* icon) {
   FileIconSource result;
   readIcon(icon, result);
   return result;
 }
 
-files::FileIconSource files::readFileIcon(GFileInfo* info, const Location& location) {
+luciole::FileIconSource luciole::readFileIcon(GFileInfo* info, const Location& location) {
   auto result = readIconSource(g_file_info_get_icon(info));
   const auto type = g_file_info_get_file_type(info);
   result.names.emplace_back(type == G_FILE_TYPE_DIRECTORY ? "folder" : "text-x-generic");

@@ -23,19 +23,19 @@ namespace {
         continue;
       }
       if (code != 0) {
-        const auto error = files::errnoError(code);
-        files::throwFileError(error.kind, "Account lookup failed: " + error.message);
+        const auto error = luciole::errnoError(code);
+        luciole::throwFileError(error.kind, "Account lookup failed: " + error.message);
       }
       if (result) {
         return record;
       }
       return std::nullopt;
     }
-    files::throwFileError(files::FileErrorKind::Other, "Account lookup exceeded its size limit.");
+    luciole::throwFileError(luciole::FileErrorKind::Other, "Account lookup exceeded its size limit.");
   }
 } // namespace
 
-std::string files::accountName(std::uint32_t id, AccountKind kind) {
+std::string luciole::accountName(std::uint32_t id, AccountKind kind) {
   std::vector<char> buffer;
   if (kind == AccountKind::User) {
     const auto record = account<passwd>(buffer, [id](auto& record, auto& bytes, auto*& result) {
@@ -55,7 +55,7 @@ std::string files::accountName(std::uint32_t id, AccountKind kind) {
   return {};
 }
 
-std::uint32_t files::accountId(const std::string& text, AccountKind kind, std::string_view userRole) {
+std::uint32_t luciole::accountId(const std::string& text, AccountKind kind, std::string_view userRole) {
   if (text.empty() || text.size() > 1024 || text.contains('\0')) {
     throwFileError(FileErrorKind::InvalidArgument, "Enter an account name or a numeric ID.");
   }
@@ -86,7 +86,7 @@ std::uint32_t files::accountId(const std::string& text, AccountKind kind, std::s
   throwFileError(FileErrorKind::Missing, "Group was not found.");
 }
 
-bool files::memberOfGroup(std::uint32_t group) {
+bool luciole::memberOfGroup(std::uint32_t group) {
   if (group == ::getegid()) {
     return true;
   }

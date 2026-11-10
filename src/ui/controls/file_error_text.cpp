@@ -1,6 +1,6 @@
 #include "ui/controls/file_error_text.h"
 
-std::string files::fileErrorText(const FileError& error) {
+std::string luciole::fileErrorText(const FileError& error) {
   if (!error.message.empty()) {
     return error.message;
   }
@@ -44,11 +44,11 @@ std::string files::fileErrorText(const FileError& error) {
   return "The operation failed.";
 }
 
-std::string files::fileErrorText(const std::optional<FileError>& error) {
+std::string luciole::fileErrorText(const std::optional<FileError>& error) {
   return error ? fileErrorText(*error) : std::string{};
 }
 
-std::string files::nameErrorText(const FileError& error, std::string_view missing) {
+std::string luciole::nameErrorText(const FileError& error, std::string_view missing) {
   using Kind = FileErrorKind;
   switch (error.kind) {
   case Kind::Exists:

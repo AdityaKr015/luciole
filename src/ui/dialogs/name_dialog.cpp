@@ -12,8 +12,8 @@ NameDialog::NameDialog(
       m_validate(std::move(validate)), m_submit(std::move(submit)) {
   setDirection(FlexDirection::Vertical);
   setAlign(FlexAlign::Stretch);
-  files::applyDialogStyle(*this);
-  addChild(files::dialogHeader(title, glyph, cancel));
+  luciole::applyDialogStyle(*this);
+  addChild(luciole::dialogHeader(title, glyph, cancel));
   addChild(
       ui::input(
           {.out = &m_input,

@@ -4,7 +4,7 @@
 #include <optional>
 #include <vector>
 
-namespace files {
+namespace luciole {
   using TabId = std::uint64_t;
   using WindowId = std::uint64_t;
   struct TabLayout {
@@ -50,4 +50,4 @@ namespace files {
     TabId m_nextTab = 0;
     WindowId m_nextWindow = 0;
   };
-} // namespace files
+} // namespace luciole

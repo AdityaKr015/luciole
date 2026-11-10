@@ -33,7 +33,7 @@ namespace {
 } // namespace
 
 std::expected<LoadedImageFile, std::string>
-files::rasterizeSvg(const std::string& path, int targetSize, bool centerSquareCrop) {
+luciole::rasterizeSvg(const std::string& path, int targetSize, bool centerSquareCrop) {
   auto bytes = readEncodedImageFile(path);
   if (!bytes) {
     return std::unexpected(bytes.error());
@@ -43,7 +43,7 @@ files::rasterizeSvg(const std::string& path, int targetSize, bool centerSquareCr
   );
 }
 
-std::expected<LoadedImageFile, std::string> files::rasterizeSvg(
+std::expected<LoadedImageFile, std::string> luciole::rasterizeSvg(
     std::span<const std::uint8_t> bytes, int targetSize, bool centerSquareCrop, std::uint64_t maxSourcePixels
 ) {
   if (bytes.empty() || bytes.size() > kMaxEncodedImageBytes || !maxSourcePixels) {

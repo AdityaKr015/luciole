@@ -1,6 +1,6 @@
 #pragma once
 
-namespace files {
+namespace luciole {
   inline constexpr int kMaxPreviewImageSide = 2048;
   enum class ThumbnailPurpose { Thumbnail, Preview };
   enum class ThumbnailPolicy { Never, Local, All };
@@ -11,4 +11,4 @@ namespace files {
     int cacheMiB = 128;
     bool operator==(const ThumbnailOptions&) const = default;
   };
-} // namespace files
+} // namespace luciole

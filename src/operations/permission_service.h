@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-namespace files {
+namespace luciole {
   enum class PermissionPhase { Idle, Loading, Ready, Saving, Error, Cancelled };
   struct PermissionInfo {
     std::uint32_t mode = 0, owner = 0, group = 0;
@@ -84,4 +84,4 @@ namespace files {
     struct State;
     std::shared_ptr<State> m_state;
   };
-} // namespace files
+} // namespace luciole

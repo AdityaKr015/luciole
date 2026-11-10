@@ -18,7 +18,7 @@ namespace {
   struct Fixture {
     fs::path root;
     Fixture() {
-      const files::GString path(g_dir_make_tmp("noctalia-icons-XXXXXX", nullptr));
+      const luciole::GString path(g_dir_make_tmp("luciole-icons-XXXXXX", nullptr));
       TEST_CHECK(path != nullptr);
       root = path.get();
       fs::create_directories(root / "config/gtk-3.0");
@@ -94,8 +94,8 @@ namespace {
     TEST_CHECK(resolver.resolve("bitmap", 24).contains("/64x64/"));
     TEST_CHECK(resolver.resolve("bitmap", 12).contains("/16x16/"));
 
-    files::FileIconCache cache;
-    const files::FileIconSource source{.names = {"broken", "missing", "folder"}, .filePath = {}, .desktopFile = {}};
+    luciole::FileIconCache cache;
+    const luciole::FileIconSource source{.names = {"broken", "missing", "folder"}, .filePath = {}, .desktopFile = {}};
     const auto first = cache.request(source, 48);
     TEST_CHECK(first == cache.request(source, 48));
     pump.until([&] { return first->ready; });
@@ -105,13 +105,13 @@ namespace {
     pump.until([&] { return large->ready; });
     TEST_CHECK(large->pixels && large->pixels->width == 96);
 
-    const files::GioPtr<GFileInfo> info(g_file_info_new());
-    const files::GioPtr<GIcon> themed(g_themed_icon_new("inherited"));
+    const luciole::GioPtr<GFileInfo> info(g_file_info_new());
+    const luciole::GioPtr<GIcon> themed(g_themed_icon_new("inherited"));
     g_file_info_set_icon(info.get(), themed.get());
     g_file_info_set_name(info.get(), "launcher.desktop");
     g_file_info_set_file_type(info.get(), G_FILE_TYPE_REGULAR);
     const auto launcher =
-        files::readFileIcon(info.get(), files::Location::fromPath((fixture.root / "launcher.desktop").native()));
+        luciole::readFileIcon(info.get(), luciole::Location::fromPath((fixture.root / "launcher.desktop").native()));
     TEST_CHECK(launcher.names.front() == "inherited" && !launcher.desktopFile.empty());
     const auto app = cache.request(launcher, 48);
     pump.until([&] { return app->ready; });
@@ -123,7 +123,7 @@ namespace {
     pump.until([&] { return current->ready; });
     TEST_CHECK(obsolete != current && !obsolete->ready);
 
-    auto dying = std::make_unique<files::FileIconCache>();
+    auto dying = std::make_unique<luciole::FileIconCache>();
     bool destroyed = false;
     dying->setChangedCallback([&] {
       dying.reset();
@@ -136,7 +136,7 @@ namespace {
 } // namespace
 
 int main() {
-  files::installPixbufImageDecoder();
+  luciole::installPixbufImageDecoder();
   try {
     testIcons();
     std::println("file icon checks passed");

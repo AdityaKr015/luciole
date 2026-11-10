@@ -7,9 +7,9 @@ class Label;
 class AclEditor final : public Flex {
 public:
   explicit AclEditor(std::function<void()> changed);
-  void sync(const files::PermissionSnapshot& snapshot);
+  void sync(const luciole::PermissionSnapshot& snapshot);
   bool canApply() const;
-  files::AclEdit edit() const;
+  luciole::AclEdit edit() const;
   const Node* messageNode() const;
 
 private:
@@ -22,8 +22,8 @@ private:
   void recalculate(bool defaults);
   void updateEffective();
   std::function<void()> m_changed;
-  std::shared_ptr<const files::AclInfo> m_actual;
-  std::vector<files::AclEntry> m_access, m_defaults;
+  std::shared_ptr<const luciole::AclInfo> m_actual;
+  std::vector<luciole::AclEntry> m_access, m_defaults;
   std::vector<std::pair<Label*, std::pair<bool, std::size_t>>> m_effective;
   Flex* m_rows = nullptr;
   Label *m_status = nullptr, *m_reason = nullptr;

@@ -7,7 +7,7 @@
 #include <string_view>
 #include <vector>
 
-namespace files {
+namespace luciole {
   std::optional<std::string> bookmarkLabelProblem(std::string_view label);
 
   struct Bookmark {
@@ -59,4 +59,4 @@ namespace files {
     ConfigIssues m_issues;
     bool m_loaded = false;
   };
-} // namespace files
+} // namespace luciole

@@ -1,5 +1,5 @@
 {
-  description = "A native Wayland file manager using Noctalia rendering and controls.";
+  description = "Luciole, a native Wayland file manager using Noctalia rendering and controls.";
 
   inputs.nixpkgs.url = "https://channels.nixos.org/nixos-unstable/nixexprs.tar.zst";
 
@@ -16,14 +16,12 @@
         { pkgs, lib, ... }:
         {
           imports = [ module ];
-          programs.noctalia-files.package =
-            lib.mkDefault
-              self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+          programs.luciole.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
         };
     in
     {
       overlays.default = final: _prev: {
-        noctalia-files = final.callPackage ./nix/package.nix { };
+        luciole = final.callPackage ./nix/package.nix { };
       };
 
       packages = forEachSystem (pkgs: {
@@ -40,7 +38,7 @@
 
       devShells = forEachSystem (pkgs: {
         default = pkgs.callPackage ./nix/devshell.nix {
-          noctalia-files = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+          luciole = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
         };
       });
 

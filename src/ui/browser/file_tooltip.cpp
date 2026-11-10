@@ -14,19 +14,19 @@ namespace {
     const std::unique_ptr<GDateTime, decltype(&g_date_time_unref)> date(
         g_date_time_new_from_unix_local(static_cast<gint64>(*seconds)), &g_date_time_unref
     );
-    const files::GString text(date ? g_date_time_format(date.get(), "%Y-%m-%d %H:%M:%S") : nullptr);
+    const luciole::GString text(date ? g_date_time_format(date.get(), "%Y-%m-%d %H:%M:%S") : nullptr);
     return text ? text.get() : "Unknown";
   }
 } // namespace
 
-bool files::sameTooltipFile(const FileTooltipTarget& a, const FileTooltipTarget& b) {
+bool luciole::sameTooltipFile(const FileTooltipTarget& a, const FileTooltipTarget& b) {
   return a.context == b.context
       && a.entry.id == b.entry.id
       && a.entry.location == b.entry.location
       && a.entry.identity == b.entry.identity;
 }
 
-struct files::FileTooltipData::State {
+struct luciole::FileTooltipData::State {
   std::function<void()> changed;
   std::optional<FileTooltipTarget> target;
   FileDetails details;
@@ -36,19 +36,19 @@ struct files::FileTooltipData::State {
   std::string error;
 };
 
-files::FileTooltipData::FileTooltipData(std::function<void()> changed) : m_state(std::make_shared<State>()) {
+luciole::FileTooltipData::FileTooltipData(std::function<void()> changed) : m_state(std::make_shared<State>()) {
   m_state->changed = std::move(changed);
 }
-files::FileTooltipData::~FileTooltipData() { clear(); }
+luciole::FileTooltipData::~FileTooltipData() { clear(); }
 
-void files::FileTooltipData::clear() {
+void luciole::FileTooltipData::clear() {
   m_state->token.cancel();
   ++m_state->serial;
   m_state->target.reset();
   m_state->pending = false;
 }
 
-void files::FileTooltipData::show(const FileTooltipTarget& target) {
+void luciole::FileTooltipData::show(const FileTooltipTarget& target) {
   if (m_state->target && sameTooltipFile(*m_state->target, target)) {
     return;
   }
@@ -67,7 +67,7 @@ void files::FileTooltipData::show(const FileTooltipTarget& target) {
   refresh();
 }
 
-void files::FileTooltipData::refresh() {
+void luciole::FileTooltipData::refresh() {
   auto& state = *m_state;
   if (!state.target || state.pending) {
     return;
@@ -93,7 +93,7 @@ void files::FileTooltipData::refresh() {
   });
 }
 
-std::vector<TooltipRow> files::FileTooltipData::rows() const {
+std::vector<TooltipRow> luciole::FileTooltipData::rows() const {
   const auto& state = *m_state;
   if (!state.target) {
     return {};

@@ -15,8 +15,8 @@
 #include <unistd.h>
 
 namespace {
-  using namespace files;
-  using namespace files::archive_work;
+  using namespace luciole;
+  using namespace luciole::archive_work;
   namespace fs = std::filesystem;
   struct Reader {
     Work& work;
@@ -511,7 +511,7 @@ namespace {
   }
 } // namespace
 
-files::archive_work::Prepared files::archive_work::inspect(
+luciole::archive_work::Prepared luciole::archive_work::inspect(
     const Location& source, ArchiveLimits limits, const CancelToken& cancel, Progress& progress,
     const Passwords& passwords
 ) {
@@ -520,7 +520,7 @@ files::archive_work::Prepared files::archive_work::inspect(
   Reader reader(source, work, &passwords);
   return {.stage = {}, .catalog = ::catalog(reader), .output = std::nullopt};
 }
-files::archive_work::Prepared files::archive_work::extract(
+luciole::archive_work::Prepared luciole::archive_work::extract(
     const Location& source, const Location& destination, const std::vector<std::string>& selected,
     const std::shared_ptr<const ArchiveCatalog>& expected, bool open, ArchiveLimits limits, const CancelToken& cancel,
     Progress& progress, const Passwords& passwords

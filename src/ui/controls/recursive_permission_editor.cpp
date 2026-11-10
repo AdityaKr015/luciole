@@ -79,7 +79,7 @@ RecursivePermissionEditor::RecursivePermissionEditor(const std::function<void()>
     );
   }
 }
-files::RecursivePermissionEdit RecursivePermissionEditor::edit() const {
+luciole::RecursivePermissionEdit RecursivePermissionEditor::edit() const {
   const auto [fileMode, fileMask] = patch(m_files);
   const auto [folderMode, folderMask] = patch(m_folders);
   return {
@@ -96,9 +96,9 @@ bool RecursivePermissionEditor::canApply() const {
   const auto value = edit();
   return m_ready && (value.files.mode || value.directoryMode || value.files.owner || value.files.group);
 }
-void RecursivePermissionEditor::sync(const files::PermissionSnapshot& snapshot) {
+void RecursivePermissionEditor::sync(const luciole::PermissionSnapshot& snapshot) {
   // Descendants are unknown until Apply. Kernel/provider checks remain authoritative.
-  m_ready = snapshot.phase == files::PermissionPhase::Ready && !(snapshot.recursive && snapshot.finished);
+  m_ready = snapshot.phase == luciole::PermissionPhase::Ready && !(snapshot.recursive && snapshot.finished);
   for (const auto& choices : {m_files, m_folders}) {
     for (auto* choice : choices) {
       choice->setEnabled(m_ready);

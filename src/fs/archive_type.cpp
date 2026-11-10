@@ -30,7 +30,7 @@ namespace {
   }
 } // namespace
 
-bool files::archiveCompressionAvailable(ArchiveCompression compression) {
+bool luciole::archiveCompressionAvailable(ArchiveCompression compression) {
   switch (compression) {
   case ArchiveCompression::None:
     return true;
@@ -46,12 +46,12 @@ bool files::archiveCompressionAvailable(ArchiveCompression compression) {
   return false;
 }
 
-std::optional<unsigned> files::splitZipPart(const Location& location) {
+std::optional<unsigned> luciole::splitZipPart(const Location& location) {
   const auto name = location.basename();
   if (!name || name->size() < 8) {
     return std::nullopt;
   }
-  const files::GString lower(g_ascii_strdown(name->c_str(), -1));
+  const luciole::GString lower(g_ascii_strdown(name->c_str(), -1));
   const std::string_view text(lower.get());
   const auto index = text.substr(text.size() - 3);
   if (!text.substr(0, text.size() - 3).ends_with(".zip.")
@@ -61,7 +61,7 @@ std::optional<unsigned> files::splitZipPart(const Location& location) {
   return static_cast<unsigned>((index[0] - '0') * 100 + (index[1] - '0') * 10 + index[2] - '0');
 }
 
-bool files::isSupportedArchive(const Location& location, const std::optional<std::string>& mime) {
+bool luciole::isSupportedArchive(const Location& location, const std::optional<std::string>& mime) {
   if (!location.nativePath()) {
     return false;
   }
@@ -72,7 +72,7 @@ bool files::isSupportedArchive(const Location& location, const std::optional<std
   if (!name) {
     return false;
   }
-  const files::GString lower(g_ascii_strdown(name->c_str(), -1));
+  const luciole::GString lower(g_ascii_strdown(name->c_str(), -1));
   const std::string_view text(lower.get());
   if (const auto part = text.rfind(".7z."); part != std::string_view::npos) {
     const auto index = text.substr(part + 4);
@@ -119,9 +119,9 @@ bool files::isSupportedArchive(const Location& location, const std::optional<std
   return (text.ends_with(".tar.zst") || text.ends_with(".tzst"))
       && archiveCompressionAvailable(ArchiveCompression::Zstd);
 }
-std::string files::archiveFolderName(const Location& location) {
+std::string luciole::archiveFolderName(const Location& location) {
   std::string name = location.basename().value_or("Archive");
-  const files::GString lower(g_ascii_strdown(name.c_str(), -1));
+  const luciole::GString lower(g_ascii_strdown(name.c_str(), -1));
   const std::string_view text(lower.get());
   for (const auto suffix :
        {std::string_view(".zip.001"), std::string_view(".tar.bz2"), std::string_view(".tar.zst"),

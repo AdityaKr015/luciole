@@ -14,7 +14,7 @@ namespace {
   constexpr Logger kLog("file-launch");
 }
 
-struct files::FileLauncher::State {
+struct luciole::FileLauncher::State {
   struct Launch {
     std::shared_ptr<State> state;
     GioPtr<GAppLaunchContext> context{g_app_launch_context_new()};
@@ -53,28 +53,28 @@ struct files::FileLauncher::State {
   }
 };
 
-files::FileLauncher::FileLauncher() : m_state(std::make_shared<State>()) {}
-files::FileLauncher::~FileLauncher() {
+luciole::FileLauncher::FileLauncher() : m_state(std::make_shared<State>()) {}
+luciole::FileLauncher::~FileLauncher() {
   cancelApplications();
   m_state->changed = {};
   m_state->activation = {};
   g_cancellable_cancel(m_state->cancellable.get());
 }
-void files::FileLauncher::setActivationProvider(ActivationProvider provider) {
+void luciole::FileLauncher::setActivationProvider(ActivationProvider provider) {
   m_state->activation = std::move(provider);
 }
-void files::FileLauncher::cancelApplications() {
+void luciole::FileLauncher::cancelApplications() {
   ++m_state->querySerial;
   if (m_state->queryCancel) {
     g_cancellable_cancel(m_state->queryCancel.get());
   }
 }
-void files::FileLauncher::applications(
+void luciole::FileLauncher::applications(
     std::string mime, std::function<void(ApplicationList)> callback, bool includeOther, std::string search
 ) {
   applications(std::vector{std::move(mime)}, std::move(callback), includeOther, std::move(search));
 }
-void files::FileLauncher::applications(
+void luciole::FileLauncher::applications(
     std::vector<std::string> types, std::function<void(ApplicationList)> callback, bool includeOther, std::string search
 ) {
   if (types.empty()) {
@@ -180,7 +180,7 @@ void files::FileLauncher::applications(
   });
 }
 
-void files::FileLauncher::setDefault(
+void luciole::FileLauncher::setDefault(
     std::string mime, ApplicationChoice application, std::function<void(std::string)> callback
 ) {
   struct Change {
@@ -235,10 +235,10 @@ void files::FileLauncher::setDefault(
   });
 }
 
-void files::FileLauncher::openWith(const Location& location, const ApplicationChoice& application) {
+void luciole::FileLauncher::openWith(const Location& location, const ApplicationChoice& application) {
   openWith(std::vector{location}, application);
 }
-void files::FileLauncher::openWith(const std::vector<Location>& locations, const ApplicationChoice& application) {
+void luciole::FileLauncher::openWith(const std::vector<Location>& locations, const ApplicationChoice& application) {
   if (!application.app || locations.empty()) {
     return;
   }
@@ -279,11 +279,11 @@ void files::FileLauncher::openWith(const std::vector<Location>& locations, const
     );
   });
 }
-void files::FileLauncher::setChangedCallback(std::function<void(const std::string&)> callback) {
+void luciole::FileLauncher::setChangedCallback(std::function<void(const std::string&)> callback) {
   m_state->changed = std::move(callback);
 }
-bool files::FileLauncher::busy() const { return m_state->active != 0; }
-void files::FileLauncher::open(const Location& location) {
+bool luciole::FileLauncher::busy() const { return m_state->active != 0; }
+void luciole::FileLauncher::open(const Location& location) {
   const auto started = g_get_monotonic_time();
   const auto serial = ++m_state->nextSerial;
   kLog.debug("request {}: begin", serial);

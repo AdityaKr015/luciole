@@ -8,11 +8,11 @@
 #include <utility>
 
 namespace {
-  std::string issueMessage(const files::ConfigIssue& issue) {
+  std::string issueMessage(const luciole::ConfigIssue& issue) {
     return issue.file.filename().string() + ": " + (issue.key.empty() ? "" : issue.key + ": ") + issue.message;
   }
   using WatchTarget = std::pair<std::filesystem::path, std::filesystem::path>;
-  std::vector<WatchTarget> watchTargets(const files::ConfigPaths& paths) {
+  std::vector<WatchTarget> watchTargets(const luciole::ConfigPaths& paths) {
     std::vector<WatchTarget> targets;
     const auto add = [&](const std::filesystem::path& path) {
       auto directory = path.parent_path();
@@ -53,7 +53,7 @@ namespace {
   }
 } // namespace
 
-struct files::ViewPreferenceWriter::State : std::enable_shared_from_this<State> {
+struct luciole::ViewPreferenceWriter::State : std::enable_shared_from_this<State> {
   struct Result {
     std::string error;
     std::optional<Settings> settings;
@@ -199,44 +199,44 @@ struct files::ViewPreferenceWriter::State : std::enable_shared_from_this<State> 
   }
 };
 
-files::ViewPreferenceWriter::ViewPreferenceWriter(ConfigPaths paths) : m_state(std::make_shared<State>()) {
+luciole::ViewPreferenceWriter::ViewPreferenceWriter(ConfigPaths paths) : m_state(std::make_shared<State>()) {
   m_state->paths = std::move(paths);
 }
-files::ViewPreferenceWriter::~ViewPreferenceWriter() {
+luciole::ViewPreferenceWriter::~ViewPreferenceWriter() {
   m_state->changed = {};
   m_state->stopWatching();
 }
-void files::ViewPreferenceWriter::save(ViewMode mode) { m_state->queue({{BrowserPreference::ViewMode, mode}}); }
-void files::ViewPreferenceWriter::saveGridIconSize(int size) {
+void luciole::ViewPreferenceWriter::save(ViewMode mode) { m_state->queue({{BrowserPreference::ViewMode, mode}}); }
+void luciole::ViewPreferenceWriter::saveGridIconSize(int size) {
   m_state->queue({{BrowserPreference::GridIconSize, size}});
 }
-void files::ViewPreferenceWriter::saveSidebarWidth(int width) {
+void luciole::ViewPreferenceWriter::saveSidebarWidth(int width) {
   m_state->queue({{BrowserPreference::SidebarWidth, width}});
 }
-void files::ViewPreferenceWriter::saveShowSidebar(bool visible) {
+void luciole::ViewPreferenceWriter::saveShowSidebar(bool visible) {
   m_state->queue({{BrowserPreference::ShowSidebar, visible}});
 }
-void files::ViewPreferenceWriter::saveInteraction(ActivationMode activation, TypingMode typing) {
+void luciole::ViewPreferenceWriter::saveInteraction(ActivationMode activation, TypingMode typing) {
   m_state->queue({{BrowserPreference::ActivationMode, activation}, {BrowserPreference::TypingMode, typing}});
 }
-void files::ViewPreferenceWriter::saveShowHidden(bool visible) {
+void luciole::ViewPreferenceWriter::saveShowHidden(bool visible) {
   m_state->queue({{BrowserPreference::ShowHidden, visible}});
 }
-void files::ViewPreferenceWriter::saveSort(SortOptions options) {
+void luciole::ViewPreferenceWriter::saveSort(SortOptions options) {
   m_state->queue({
       {BrowserPreference::SortBy, options.field},
       {BrowserPreference::SortDescending, options.descending},
       {BrowserPreference::DirectoriesFirst, options.directoriesFirst},
   });
 }
-bool files::ViewPreferenceWriter::busy() const {
+bool luciole::ViewPreferenceWriter::busy() const {
   return m_state->active || !m_state->pending.empty() || m_state->reloadPending;
 }
-void files::ViewPreferenceWriter::saveColumnOrder(DetailsColumnOrder order) {
+void luciole::ViewPreferenceWriter::saveColumnOrder(DetailsColumnOrder order) {
   m_state->queue({{BrowserPreference::ColumnOrder, order}});
 }
 
-void files::ViewPreferenceWriter::saveColumnWidths(DetailsColumnWidths widths) {
+void luciole::ViewPreferenceWriter::saveColumnWidths(DetailsColumnWidths widths) {
   m_state->queue(
       {{BrowserPreference::NameColumnWidth, widths[0]},
        {BrowserPreference::TypeColumnWidth, widths[1]},
@@ -250,7 +250,7 @@ void files::ViewPreferenceWriter::saveColumnWidths(DetailsColumnWidths widths) {
        {BrowserPreference::LocationColumnWidth, widths[9]}}
   );
 }
-void files::ViewPreferenceWriter::saveDetailsColumns(DetailsColumnVisibility visibility) {
+void luciole::ViewPreferenceWriter::saveDetailsColumns(DetailsColumnVisibility visibility) {
   m_state->queue({
       {BrowserPreference::ShowTypeColumn, visibility.type},
       {BrowserPreference::ShowSizeColumn, visibility.size},
@@ -264,21 +264,21 @@ void files::ViewPreferenceWriter::saveDetailsColumns(DetailsColumnVisibility vis
 
   });
 }
-void files::ViewPreferenceWriter::setChangedCallback(std::function<void(const std::string&)> callback) {
+void luciole::ViewPreferenceWriter::setChangedCallback(std::function<void(const std::string&)> callback) {
   m_state->changed = std::move(callback);
 }
 
-void files::ViewPreferenceWriter::submit(const std::vector<OverrideEdit>& edits) { m_state->queue(edits); }
-void files::ViewPreferenceWriter::resetAll() { submit(inheritAllPreferences()); }
-void files::ViewPreferenceWriter::reload() {
+void luciole::ViewPreferenceWriter::submit(const std::vector<OverrideEdit>& edits) { m_state->queue(edits); }
+void luciole::ViewPreferenceWriter::resetAll() { submit(inheritAllPreferences()); }
+void luciole::ViewPreferenceWriter::reload() {
   m_state->reloadPending = true;
   m_state->pump();
 }
-void files::ViewPreferenceWriter::startWatching() {
+void luciole::ViewPreferenceWriter::startWatching() {
   m_state->watching = true;
   reload();
 }
-const std::optional<files::Settings>& files::ViewPreferenceWriter::settings() const { return m_state->settings; }
-const std::optional<files::Settings>& files::ViewPreferenceWriter::inheritedSettings() const {
+const std::optional<luciole::Settings>& luciole::ViewPreferenceWriter::settings() const { return m_state->settings; }
+const std::optional<luciole::Settings>& luciole::ViewPreferenceWriter::inheritedSettings() const {
   return m_state->inherited;
 }

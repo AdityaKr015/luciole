@@ -2,7 +2,7 @@
 
 #include "ui/style.h"
 
-namespace files {
+namespace luciole {
   // Side-list metrics: panel padding, scroll viewport padding, row height, row padding and gap.
   inline constexpr float kSideListPadding = Style::spaceXs;
   inline constexpr float kSideListViewportPaddingV = Style::spaceMd;
@@ -10,4 +10,4 @@ namespace files {
   inline constexpr float kSideListRowHeight = Style::controlHeightSm;
   inline constexpr float kSideListRowPaddingH = Style::spaceSm;
   inline constexpr float kSideListRowGap = Style::spaceSm;
-} // namespace files
+} // namespace luciole

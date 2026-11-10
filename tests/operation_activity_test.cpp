@@ -11,11 +11,11 @@
 
 namespace {
   namespace fs = std::filesystem;
-  using files::ActivityState;
+  using luciole::ActivityState;
   struct Fixture {
     fs::path root;
     Fixture() {
-      std::string path = "/tmp/noctalia-activity-XXXXXX";
+      std::string path = "/tmp/luciole-activity-XXXXXX";
       TEST_CHECK(::mkdtemp(path.data()));
       root = path;
       fs::create_directory(root / "destination");
@@ -24,7 +24,7 @@ namespace {
       std::error_code error;
       fs::remove_all(root, error);
     }
-    files::Location at(const std::string& name) const { return files::Location::fromPath((root / name).native()); }
+    luciole::Location at(const std::string& name) const { return luciole::Location::fromPath((root / name).native()); }
     void write(const std::string& name) const { std::ofstream(root / name) << name; }
   };
   class Pump {
@@ -46,13 +46,13 @@ namespace {
   struct Owner final : OperationHub::Owner {
     unsigned changes = 0;
     void jobChanged(OperationJob&) override {}
-    void transfersFinished(const std::vector<files::TransferResult>&) override {}
+    void transfersFinished(const std::vector<luciole::TransferResult>&) override {}
     void activityChanged() override { ++changes; }
   };
   struct Workspace {
-    files::TabWorkspace model;
-    files::WindowId window = model.addWindow();
-    files::TabId page = model.addTab(window);
+    luciole::TabWorkspace model;
+    luciole::WindowId window = model.addWindow();
+    luciole::TabId page = model.addTab(window);
     OperationHub hub{model};
     Owner owner;
     Workspace() { hub.attach(page, owner); }
@@ -64,17 +64,17 @@ namespace {
     fixture.write("missing");
     fixture.write("destination/missing");
     Workspace workspace;
-    auto job = workspace.hub.create<files::TransferService>(workspace.page);
-    auto& service = job->service<files::TransferService>();
+    auto job = workspace.hub.create<luciole::TransferService>(workspace.page);
+    auto& service = job->service<luciole::TransferService>();
     TEST_CHECK(workspace.hub.activities().empty());
     TEST_CHECK(service.start(
-        {{fixture.at("success"), fixture.at("missing")}, fixture.at("destination"), files::TransferAction::Copy}
+        {{fixture.at("success"), fixture.at("missing")}, fixture.at("destination"), luciole::TransferAction::Copy}
     ));
     auto live = workspace.hub.activities();
     TEST_CHECK(live.size() == 1 && !live[0].finished && live[0].canCancel && !live[0].progress);
     pump.until([&] { return service.conflict().has_value(); });
     fs::permissions(fixture.root / "destination", fs::perms::owner_read | fs::perms::owner_exec);
-    TEST_CHECK(service.resolve(service.conflict()->id, files::TransferConflictChoice::Replace));
+    TEST_CHECK(service.resolve(service.conflict()->id, luciole::TransferConflictChoice::Replace));
     pump.until([&] { return !service.busy(); });
     fs::permissions(fixture.root / "destination", fs::perms::owner_all);
     auto result = workspace.hub.activities();
@@ -88,7 +88,7 @@ namespace {
     TEST_CHECK(live.size() == 1 && live[0].id == job->id() && !live[0].finished);
     pump.until([&] {
       if (auto conflict = service.conflict()) {
-        TEST_CHECK(service.resolve(conflict->id, files::TransferConflictChoice::Replace));
+        TEST_CHECK(service.resolve(conflict->id, luciole::TransferConflictChoice::Replace));
       }
       return !service.busy();
     });
@@ -105,9 +105,9 @@ namespace {
     fixture.write("destination/conflict");
     Workspace workspace;
     const auto other = workspace.model.addTab(workspace.window);
-    auto job = workspace.hub.create<files::TransferService>(workspace.page);
-    auto& service = job->service<files::TransferService>();
-    TEST_CHECK(service.start({{fixture.at("conflict")}, fixture.at("destination"), files::TransferAction::Copy}));
+    auto job = workspace.hub.create<luciole::TransferService>(workspace.page);
+    auto& service = job->service<luciole::TransferService>();
+    TEST_CHECK(service.start({{fixture.at("conflict")}, fixture.at("destination"), luciole::TransferAction::Copy}));
     pump.until([&] { return service.conflict().has_value(); });
     auto live = workspace.hub.activities();
     TEST_CHECK(live.size() == 1 && live[0].state == ActivityState::Waiting && live[0].canReview && live[0].canCancel);
@@ -127,20 +127,20 @@ namespace {
   void historyAndInspection(Pump& pump) {
     Fixture fixture;
     Workspace workspace;
-    auto inspection = workspace.hub.create<files::PermissionService>(workspace.page, JobScope::Page);
-    TEST_CHECK(inspection->service<files::PermissionService>().prepare(fixture.at("destination")));
+    auto inspection = workspace.hub.create<luciole::PermissionService>(workspace.page, JobScope::Page);
+    TEST_CHECK(inspection->service<luciole::PermissionService>().prepare(fixture.at("destination")));
     pump.until([&] { return !inspection->running(); });
     TEST_CHECK(workspace.hub.activities().empty());
     for (unsigned index = 0; index < 16; ++index) {
-      auto job = workspace.hub.create<files::CreateService>(workspace.page, JobScope::Page);
-      auto& service = job->service<files::CreateService>();
-      TEST_CHECK(service.prepare(fixture.at("destination"), files::CreateKind::EmptyFile));
+      auto job = workspace.hub.create<luciole::CreateService>(workspace.page, JobScope::Page);
+      auto& service = job->service<luciole::CreateService>();
+      TEST_CHECK(service.prepare(fixture.at("destination"), luciole::CreateKind::EmptyFile));
       pump.until([&] { return !service.busy(); });
       const auto ready = jobActivity(*job);
       TEST_CHECK(ready && !ready->finished && ready->canReview);
       TEST_CHECK(service.create(std::to_string(index)));
       pump.until([&] { return !service.busy(); });
-      TEST_CHECK(service.snapshot().status == files::CreateStatus::Succeeded);
+      TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Succeeded);
       job.reset();
       workspace.hub.update(workspace.window);
     }
@@ -155,9 +155,9 @@ namespace {
   void boundedReports(Pump& pump) {
     Fixture fixture;
     Workspace workspace;
-    auto job = workspace.hub.create<files::TransferService>(workspace.page);
-    auto& service = job->service<files::TransferService>();
-    std::vector<files::Location> sources;
+    auto job = workspace.hub.create<luciole::TransferService>(workspace.page);
+    auto& service = job->service<luciole::TransferService>();
+    std::vector<luciole::Location> sources;
     for (unsigned index = 0; index < 600; ++index) {
       std::string name;
       for (unsigned letter = 0; letter < 60; ++letter) {
@@ -165,7 +165,7 @@ namespace {
       }
       sources.push_back(fixture.at(name + std::to_string(index)));
     }
-    TEST_CHECK(service.start({std::move(sources), fixture.at("destination"), files::TransferAction::Copy}));
+    TEST_CHECK(service.start({std::move(sources), fixture.at("destination"), luciole::TransferAction::Copy}));
     pump.until([&] { return !service.busy(); });
     const auto report = workspace.hub.activityReport(job->id());
     TEST_CHECK(report && report->size() <= 64 * 1024 && report->contains("Report truncated."));
@@ -176,9 +176,9 @@ namespace {
     Fixture fixture;
     fixture.write("input");
     Workspace workspace;
-    auto job = workspace.hub.create<files::ArchiveService>(workspace.page);
-    auto& archive = job->service<files::ArchiveService>();
-    TEST_CHECK(archive.compress({fixture.at("input")}, fixture.at("output.zip"), files::ArchiveFormat::Zip));
+    auto job = workspace.hub.create<luciole::ArchiveService>(workspace.page);
+    auto& archive = job->service<luciole::ArchiveService>();
+    TEST_CHECK(archive.compress({fixture.at("input")}, fixture.at("output.zip"), luciole::ArchiveFormat::Zip));
     TEST_CHECK(workspace.hub.cancelActivity(job->id()));
     pump.until([&] { return !archive.busy(); });
     const auto results = workspace.hub.activities();

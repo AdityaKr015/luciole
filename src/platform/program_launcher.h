@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace files {
+namespace luciole {
   struct ProgramData;
   struct PreparedProgram {
     std::string name, command;
@@ -30,4 +30,4 @@ namespace files {
   Location scriptsDirectory();
   ScriptListing listScripts(const CancelToken& token);
   Location ensureScriptsDirectory(const CancelToken& token);
-} // namespace files
+} // namespace luciole

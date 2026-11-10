@@ -15,13 +15,13 @@
 
 namespace {
   using namespace std::chrono_literals;
-  using A = files::BrowserAction;
-  using R = files::ActionRegistry;
-  files::DirectoryEntry
-  entry(files::EntryId id, const std::string& name, files::FileType type = files::FileType::Regular) {
+  using A = luciole::BrowserAction;
+  using R = luciole::ActionRegistry;
+  luciole::DirectoryEntry
+  entry(luciole::EntryId id, const std::string& name, luciole::FileType type = luciole::FileType::Regular) {
     return {
         .id = id,
-        .location = files::Location::fromPath("/tmp/action-fixture/" + name),
+        .location = luciole::Location::fromPath("/tmp/action-fixture/" + name),
         .name = name,
         .displayName = name,
         .type = type,
@@ -31,23 +31,23 @@ namespace {
         .parentDisplayName = {}
     };
   }
-  files::DirectorySnapshot snapshot() {
+  luciole::DirectorySnapshot snapshot() {
     return {
         .generation = 1,
-        .location = files::Location::fromPath("/tmp/action-fixture"),
-        .status = files::DirectoryStatus::Ready,
+        .location = luciole::Location::fromPath("/tmp/action-fixture"),
+        .status = luciole::DirectoryStatus::Ready,
         .entries =
             {entry(1, "alpha.txt"), entry(2, "Beta.txt"), entry(3, "boulder.png"), entry(4, "café.txt"),
-             entry(5, "[literal].txt"), entry(6, "folder", files::FileType::Directory)},
+             entry(5, "[literal].txt"), entry(6, "folder", luciole::FileType::Directory)},
         .error = {},
         .monitorError = {}
     };
   }
   void testFileClipboardActions() {
-    files::DirectoryModel model;
+    luciole::DirectoryModel model;
     auto data = snapshot();
     model.applySnapshot(data);
-    files::ActionContext c{
+    luciole::ActionContext c{
         .model = model, .context = 12, .query = {}, .pinned = {}, .clipboardAvailable = true, .clipboardHasFiles = true
     };
     TEST_CHECK(!R::state(A::CopyFiles, c, R::capture(c)).enabled);
@@ -75,26 +75,26 @@ namespace {
     ++data.generation;
     model.applySnapshot(data);
     TEST_CHECK(!R::state(A::CutFiles, c, request).enabled && R::state(A::CopyFiles, c, request).enabled);
-    data.entries[0].location = files::Location::fromUri("sftp://example.invalid/source");
+    data.entries[0].location = luciole::Location::fromUri("sftp://example.invalid/source");
     ++data.generation;
     model.applySnapshot(data);
     TEST_CHECK(R::state(A::CopyFiles, c, R::capture(c)).enabled);
-    data.entries[0].location = files::Location::fromUri("smb://example.invalid/share/source");
+    data.entries[0].location = luciole::Location::fromUri("smb://example.invalid/share/source");
     ++data.generation;
     model.applySnapshot(data);
     TEST_CHECK(R::state(A::CopyFiles, c, R::capture(c)).enabled);
-    data.entries[0].location = files::Location::fromUri("https://example.invalid/file");
+    data.entries[0].location = luciole::Location::fromUri("https://example.invalid/file");
     ++data.generation;
     model.applySnapshot(data);
     TEST_CHECK(!R::state(A::CopyFiles, c, R::capture(c)).enabled);
   }
   void testExecutionActions() {
-    files::DirectoryModel model;
+    luciole::DirectoryModel model;
     auto data = snapshot();
     data.entries.front().access.execute = true;
     model.applySnapshot(data);
     model.select(1);
-    files::ActionContext context{.model = model, .context = 11, .query = {}, .pinned = {}};
+    luciole::ActionContext context{.model = model, .context = 11, .query = {}, .pinned = {}};
     auto request = R::capture(context);
     TEST_CHECK(R::state(A::RunProgram, context, request).enabled);
     TEST_CHECK(!R::state(A::RunInTerminal, context, request).enabled);
@@ -108,13 +108,13 @@ namespace {
     ++data.generation;
     model.applySnapshot(data);
     TEST_CHECK(!R::state(A::RunProgram, context, request).enabled);
-    data.entries.front().location = files::Location::fromPath("/tmp/action-fixture/test.desktop");
+    data.entries.front().location = luciole::Location::fromPath("/tmp/action-fixture/test.desktop");
     ++data.generation;
     model.applySnapshot(data);
     request = R::capture(context);
     TEST_CHECK(R::state(A::RunProgram, context, request).enabled);
     TEST_CHECK(!R::state(A::RunInTerminal, context, request).enabled);
-    data.entries.front().location = files::Location::fromUri("sftp://server/test.desktop");
+    data.entries.front().location = luciole::Location::fromUri("sftp://server/test.desktop");
     ++data.generation;
     model.applySnapshot(data);
     request = R::capture(context);
@@ -122,16 +122,16 @@ namespace {
     TEST_CHECK(!R::state(A::Scripts, context, request).enabled);
   }
   void testTrashActions() {
-    files::DirectoryModel model;
+    luciole::DirectoryModel model;
     auto data = snapshot();
-    data.location = files::Location::trash();
+    data.location = luciole::Location::trash();
     data.entries.erase(data.entries.begin() + 1, data.entries.end());
-    data.entries[0].location = files::Location::fromUri("trash:///alpha.txt");
-    data.entries[0].identity = files::FileIdentity{"trash-volume", "item-1"};
-    data.entries[0].trash.original = files::Location::fromPath("/tmp/original/alpha.txt");
+    data.entries[0].location = luciole::Location::fromUri("trash:///alpha.txt");
+    data.entries[0].identity = luciole::FileIdentity{"trash-volume", "item-1"};
+    data.entries[0].trash.original = luciole::Location::fromPath("/tmp/original/alpha.txt");
     model.applySnapshot(data);
     model.select(1);
-    files::ActionContext context{.model = model, .context = 33, .query = {}, .pinned = {}};
+    luciole::ActionContext context{.model = model, .context = 33, .query = {}, .pinned = {}};
     const auto request = R::capture(context);
     TEST_CHECK(
         R::state(A::Restore, context, request).enabled && R::state(A::DeletePermanently, context, request).enabled
@@ -152,24 +152,24 @@ namespace {
     model.applySnapshot(data);
     TEST_CHECK(!R::state(A::DeletePermanently, context, request).enabled);
     data.entries[0].access.remove = true;
-    data.location = files::Location::fromUri("trash:///folder");
-    data.entries[0].location = files::Location::fromUri("trash:///folder/alpha.txt");
+    data.location = luciole::Location::fromUri("trash:///folder");
+    data.entries[0].location = luciole::Location::fromUri("trash:///folder/alpha.txt");
     ++data.generation;
     model.applySnapshot(data);
     TEST_CHECK(!R::state(A::DeletePermanently, context, R::capture(context)).enabled);
-    data.location = files::Location::fromPath("/tmp/action-fixture");
-    data.entries[0].location = files::Location::fromPath("/tmp/action-fixture/alpha.txt");
+    data.location = luciole::Location::fromPath("/tmp/action-fixture");
+    data.entries[0].location = luciole::Location::fromPath("/tmp/action-fixture/alpha.txt");
     ++data.generation;
     model.applySnapshot(data);
     TEST_CHECK(!R::state(A::DeletePermanently, context, R::capture(context)).enabled);
   }
   void testLinkActions() {
-    files::DirectoryModel model;
+    luciole::DirectoryModel model;
     auto data = snapshot();
-    data.entries[0].identity = files::FileIdentity{"native", "source"};
+    data.entries[0].identity = luciole::FileIdentity{"native", "source"};
     model.applySnapshot(data);
     model.select(1);
-    files::ActionContext context{.model = model, .context = 44, .query = {}, .pinned = {}};
+    luciole::ActionContext context{.model = model, .context = 44, .query = {}, .pinned = {}};
     const auto enabled = [&] { return R::state(A::CreateLink, context, R::capture(context)).enabled; };
     TEST_CHECK(enabled());
     context.operationsBusy = true;
@@ -179,31 +179,31 @@ namespace {
     ++data.generation;
     model.applySnapshot(data);
     TEST_CHECK(enabled());
-    for (const auto type : {files::FileType::Directory, files::FileType::Symlink}) {
+    for (const auto type : {luciole::FileType::Directory, luciole::FileType::Symlink}) {
       data.entries[0].type = type;
-      data.entries[0].symlink = type == files::FileType::Symlink;
+      data.entries[0].symlink = type == luciole::FileType::Symlink;
       ++data.generation;
       model.applySnapshot(data);
       TEST_CHECK(enabled());
     }
-    data.entries[0].type = files::FileType::Special;
+    data.entries[0].type = luciole::FileType::Special;
     ++data.generation;
     model.applySnapshot(data);
     TEST_CHECK(!enabled());
-    data.entries[0].type = files::FileType::Regular;
+    data.entries[0].type = luciole::FileType::Regular;
     data.entries[0].symlink = false;
     for (const auto& uri : {"trash:///source", "sftp://example.invalid/source"}) {
-      data.entries[0].location = files::Location::fromUri(uri);
+      data.entries[0].location = luciole::Location::fromUri(uri);
       ++data.generation;
       model.applySnapshot(data);
       TEST_CHECK(!enabled());
     }
-    data.entries[0].location = files::Location::fromPath("/tmp/action-fixture/alpha.txt");
+    data.entries[0].location = luciole::Location::fromPath("/tmp/action-fixture/alpha.txt");
     data.entries[0].identity.reset();
     ++data.generation;
     model.applySnapshot(data);
     TEST_CHECK(!enabled());
-    data.entries[0].identity = files::FileIdentity{"native", "source"};
+    data.entries[0].identity = luciole::FileIdentity{"native", "source"};
     ++data.generation;
     model.applySnapshot(data);
     context.query = "source";
@@ -212,14 +212,14 @@ namespace {
     TEST_CHECK(!enabled());
   }
   void testPreviewActions() {
-    files::DirectoryModel model;
+    luciole::DirectoryModel model;
     model.applySnapshot(snapshot());
-    files::ActionContext context{.model = model, .context = 1, .query = {}, .pinned = {}};
+    luciole::ActionContext context{.model = model, .context = 1, .query = {}, .pinned = {}};
     TEST_CHECK(!R::state(A::QuickPreview, context, R::capture(context)).enabled);
     model.select(1);
     const auto request = R::capture(context);
     TEST_CHECK(R::state(A::OpenWith, context, request).enabled && R::state(A::QuickPreview, context, request).enabled);
-    model.select(3, files::SelectionMode::Toggle);
+    model.select(3, luciole::SelectionMode::Toggle);
     const auto batch = R::capture(context);
     TEST_CHECK(batch.targets.size() == 2 && R::state(A::OpenWith, context, batch).enabled);
     TEST_CHECK(!R::state(A::QuickPreview, context, batch).enabled);
@@ -239,12 +239,12 @@ namespace {
     TEST_CHECK(!R::state(A::OpenWith, context, request).enabled);
   }
   void testArchiveActions() {
-    files::DirectoryModel model;
+    luciole::DirectoryModel model;
     auto data = snapshot();
     data.entries.push_back(entry(7, "sample.TAR.GZ"));
     model.applySnapshot(data);
     model.select(7);
-    files::ActionContext c{.model = model, .context = 9, .query = {}, .pinned = {}};
+    luciole::ActionContext c{.model = model, .context = 9, .query = {}, .pinned = {}};
     const auto request = R::capture(c);
     TEST_CHECK(
         R::state(A::Compress, c, request).enabled
@@ -269,7 +269,7 @@ namespace {
     TEST_CHECK(R::state(A::Compress, c, plain).enabled && !R::state(A::BrowseArchive, c, plain).enabled);
     model.select(6);
     TEST_CHECK(R::state(A::Compress, c, R::capture(c)).enabled);
-    data.entries.back().location = files::Location::fromUri("sftp://example.invalid/sample.tar.gz");
+    data.entries.back().location = luciole::Location::fromUri("sftp://example.invalid/sample.tar.gz");
     data.entries.back().access.read = true;
     ++data.generation;
     model.applySnapshot(data);
@@ -277,14 +277,14 @@ namespace {
     TEST_CHECK(!R::state(A::Compress, c, R::capture(c)).enabled);
   }
   void testSplitArchiveActions() {
-    files::DirectoryModel model;
+    luciole::DirectoryModel model;
     auto data = snapshot();
     data.entries.push_back(entry(7, "download.ZIP.001"));
     data.entries.push_back(entry(8, "download.ZIP.002"));
     data.entries.back().contentType = "application/zip";
     model.applySnapshot(data);
     model.select(7);
-    files::ActionContext context{.model = model, .context = 1, .query = {}, .pinned = {}};
+    luciole::ActionContext context{.model = model, .context = 1, .query = {}, .pinned = {}};
     auto request = R::capture(context);
     for (const auto action : {A::BrowseArchive, A::ExtractHere, A::ExtractTo}) {
       TEST_CHECK(R::state(action, context, request).enabled);
@@ -294,87 +294,87 @@ namespace {
     for (const auto action : {A::BrowseArchive, A::ExtractHere, A::ExtractTo}) {
       TEST_CHECK(!R::state(action, context, request).enabled);
     }
-    TEST_CHECK(files::archiveFolderName(data.entries[6].location) == "download");
-    TEST_CHECK(!files::isSupportedArchive(files::Location::fromUri("sftp://example.invalid/test.zip.001"), {}));
-    TEST_CHECK(!files::splitZipPart(files::Location::fromPath("/tmp/test.zip.01")));
-    TEST_CHECK(!files::splitZipPart(files::Location::fromPath("/tmp/test.zip.001.bak")));
+    TEST_CHECK(luciole::archiveFolderName(data.entries[6].location) == "download");
+    TEST_CHECK(!luciole::isSupportedArchive(luciole::Location::fromUri("sftp://example.invalid/test.zip.001"), {}));
+    TEST_CHECK(!luciole::splitZipPart(luciole::Location::fromPath("/tmp/test.zip.01")));
+    TEST_CHECK(!luciole::splitZipPart(luciole::Location::fromPath("/tmp/test.zip.001.bak")));
   }
   void testCompressedArchiveActions() {
-    files::DirectoryModel sevenZipModel;
+    luciole::DirectoryModel sevenZipModel;
     auto sevenZipData = snapshot();
     sevenZipData.entries.push_back(entry(7, "package.7Z"));
     sevenZipModel.applySnapshot(sevenZipData);
     sevenZipModel.select(7);
-    files::ActionContext sevenZipContext{.model = sevenZipModel, .context = 1, .query = {}, .pinned = {}};
+    luciole::ActionContext sevenZipContext{.model = sevenZipModel, .context = 1, .query = {}, .pinned = {}};
     const auto sevenZipRequest = R::capture(sevenZipContext);
     for (const auto action : {A::BrowseArchive, A::ExtractHere, A::ExtractTo}) {
       TEST_CHECK(R::state(action, sevenZipContext, sevenZipRequest).enabled);
     }
-    TEST_CHECK(files::archiveFolderName(sevenZipData.entries.back().location) == "package");
-    TEST_CHECK(files::isSupportedArchive(files::Location::fromPath("/tmp/opaque"), "application/x-7z-compressed"));
+    TEST_CHECK(luciole::archiveFolderName(sevenZipData.entries.back().location) == "package");
+    TEST_CHECK(luciole::isSupportedArchive(luciole::Location::fromPath("/tmp/opaque"), "application/x-7z-compressed"));
     TEST_CHECK(
-        !files::isSupportedArchive(files::Location::fromPath("/tmp/split.7z.001"), "application/x-7z-compressed")
+        !luciole::isSupportedArchive(luciole::Location::fromPath("/tmp/split.7z.001"), "application/x-7z-compressed")
     );
-    TEST_CHECK(files::isSupportedArchive(files::Location::fromPath("/tmp/supported.RAR"), {}));
-    TEST_CHECK(files::archiveFolderName(files::Location::fromPath("/tmp/supported.RAR")) == "supported");
+    TEST_CHECK(luciole::isSupportedArchive(luciole::Location::fromPath("/tmp/supported.RAR"), {}));
+    TEST_CHECK(luciole::archiveFolderName(luciole::Location::fromPath("/tmp/supported.RAR")) == "supported");
     for (const auto* const mime : {"application/vnd.rar", "application/x-rar", "application/x-rar-compressed"}) {
-      TEST_CHECK(files::isSupportedArchive(files::Location::fromPath("/tmp/opaque-rar"), mime));
+      TEST_CHECK(luciole::isSupportedArchive(luciole::Location::fromPath("/tmp/opaque-rar"), mime));
       for (const auto* const name : {"set.part1.rar", "set.part002.RAR", "set.rar.001", "set.r00", "set.s01"}) {
-        TEST_CHECK(!files::isSupportedArchive(files::Location::fromPath(std::string("/tmp/") + name), mime));
+        TEST_CHECK(!luciole::isSupportedArchive(luciole::Location::fromPath(std::string("/tmp/") + name), mime));
       }
     }
-    files::DirectoryModel rarModel;
+    luciole::DirectoryModel rarModel;
     auto rarData = snapshot();
     rarData.entries.push_back(entry(7, "package.rar"));
     rarModel.applySnapshot(rarData);
     rarModel.select(7);
-    files::ActionContext rarContext{.model = rarModel, .context = 1, .query = {}, .pinned = {}};
+    luciole::ActionContext rarContext{.model = rarModel, .context = 1, .query = {}, .pinned = {}};
     for (const auto action : {A::BrowseArchive, A::ExtractHere, A::ExtractTo}) {
       TEST_CHECK(R::state(action, rarContext, R::capture(rarContext)).enabled);
     }
-    TEST_CHECK(!files::isSupportedArchive(files::Location::fromUri("sftp://example.invalid/package.rar"), {}));
+    TEST_CHECK(!luciole::isSupportedArchive(luciole::Location::fromUri("sftp://example.invalid/package.rar"), {}));
     for (const auto compression :
-         {files::ArchiveCompression::Bzip2, files::ArchiveCompression::Zstd, files::ArchiveCompression::Xz}) {
-      const bool bzip = compression == files::ArchiveCompression::Bzip2;
-      const char* const name = bzip                        ? "package.TAR.BZ2"
-          : compression == files::ArchiveCompression::Zstd ? "package.TAR.ZST"
-                                                           : "package.TAR.XZ";
-      files::DirectoryModel model;
+         {luciole::ArchiveCompression::Bzip2, luciole::ArchiveCompression::Zstd, luciole::ArchiveCompression::Xz}) {
+      const bool bzip = compression == luciole::ArchiveCompression::Bzip2;
+      const char* const name = bzip                          ? "package.TAR.BZ2"
+          : compression == luciole::ArchiveCompression::Zstd ? "package.TAR.ZST"
+                                                             : "package.TAR.XZ";
+      luciole::DirectoryModel model;
       auto data = snapshot();
       data.entries.push_back(entry(7, name));
       model.applySnapshot(data);
       model.select(7);
-      files::ActionContext context{.model = model, .context = 1, .query = {}, .pinned = {}};
+      luciole::ActionContext context{.model = model, .context = 1, .query = {}, .pinned = {}};
       const auto request = R::capture(context);
       for (const auto action : {A::BrowseArchive, A::ExtractHere, A::ExtractTo}) {
-        TEST_CHECK(R::state(action, context, request).enabled == files::archiveCompressionAvailable(compression));
+        TEST_CHECK(R::state(action, context, request).enabled == luciole::archiveCompressionAvailable(compression));
       }
-      TEST_CHECK(files::archiveFolderName(data.entries.back().location) == "package");
-      const auto opaque = files::Location::fromPath("/tmp/opaque-container");
+      TEST_CHECK(luciole::archiveFolderName(data.entries.back().location) == "package");
+      const auto opaque = luciole::Location::fromPath("/tmp/opaque-container");
       TEST_CHECK(
-          files::isSupportedArchive(
+          luciole::isSupportedArchive(
               opaque,
-              bzip                                                 ? "application/x-bzip2-compressed-tar"
-                  : compression == files::ArchiveCompression::Zstd ? "application/x-zstd-compressed-tar"
-                                                                   : "application/x-xz-compressed-tar"
+              bzip                                                   ? "application/x-bzip2-compressed-tar"
+                  : compression == luciole::ArchiveCompression::Zstd ? "application/x-zstd-compressed-tar"
+                                                                     : "application/x-xz-compressed-tar"
           )
-          == files::archiveCompressionAvailable(compression)
+          == luciole::archiveCompressionAvailable(compression)
       );
     }
     for (const char* const name : {"a.tbz2", "a.tbz", "a.tzst", "a.txz"}) {
-      TEST_CHECK(files::archiveFolderName(files::Location::fromPath(std::string("/tmp/") + name)) == "a");
+      TEST_CHECK(luciole::archiveFolderName(luciole::Location::fromPath(std::string("/tmp/") + name)) == "a");
     }
-    TEST_CHECK(!files::isSupportedArchive(files::Location::fromPath("/tmp/plain.bz2"), "application/x-bzip2"));
-    TEST_CHECK(!files::isSupportedArchive(files::Location::fromPath("/tmp/plain.zst"), "application/zstd"));
-    TEST_CHECK(!files::isSupportedArchive(files::Location::fromPath("/tmp/plain.xz"), "application/x-xz"));
+    TEST_CHECK(!luciole::isSupportedArchive(luciole::Location::fromPath("/tmp/plain.bz2"), "application/x-bzip2"));
+    TEST_CHECK(!luciole::isSupportedArchive(luciole::Location::fromPath("/tmp/plain.zst"), "application/zstd"));
+    TEST_CHECK(!luciole::isSupportedArchive(luciole::Location::fromPath("/tmp/plain.xz"), "application/x-xz"));
   }
   void testCapabilitiesAndTargets() {
-    files::DirectoryModel model;
+    luciole::DirectoryModel model;
     auto data = snapshot();
     model.applySnapshot(data);
     model.select(2);
-    files::ActionContext c{
-        .model = model, .context = 4, .query = {}, .pinsEditable = true, .pinned = [](const files::Location&) {
+    luciole::ActionContext c{
+        .model = model, .context = 4, .query = {}, .pinsEditable = true, .pinned = [](const luciole::Location&) {
           return false;
         }
     };
@@ -387,7 +387,7 @@ namespace {
     );
     model.select(3);
     TEST_CHECK(R::state(A::Rename, c, request).enabled && request.targets.front().id == 2);
-    model.setSort({files::SortField::Name, true, false});
+    model.setSort({luciole::SortField::Name, true, false});
     TEST_CHECK(R::state(A::Open, c, request).enabled);
     c.operationsBusy = true;
     const auto busy = R::state(A::Rename, c, request);
@@ -427,7 +427,7 @@ namespace {
     ++c.context;
     TEST_CHECK(!R::state(A::Open, c, request).enabled);
     c.context = request.context;
-    data.entries[1].location = files::Location::fromPath("/tmp/action-fixture/renamed.txt");
+    data.entries[1].location = luciole::Location::fromPath("/tmp/action-fixture/renamed.txt");
     ++data.generation;
     model.applySnapshot(data);
     TEST_CHECK(!R::state(A::Open, c, request).enabled);
@@ -443,11 +443,11 @@ namespace {
     const auto folder = R::capture(c);
     TEST_CHECK(R::state(A::Pin, c, folder).enabled && !R::state(A::Unpin, c, folder).enabled);
     TEST_CHECK(R::state(A::PinCurrent, c, folder).enabled && !R::state(A::UnpinCurrent, c, folder).enabled);
-    c.pinned = [](const files::Location&) { return true; };
+    c.pinned = [](const luciole::Location&) { return true; };
     TEST_CHECK(!R::state(A::Pin, c, folder).enabled && R::state(A::Unpin, c, folder).enabled);
     TEST_CHECK(!R::state(A::PinCurrent, c, folder).enabled && R::state(A::UnpinCurrent, c, folder).enabled);
     for (auto& item : data.entries) {
-      item.identity = files::FileIdentity{"native", std::to_string(item.id)};
+      item.identity = luciole::FileIdentity{"native", std::to_string(item.id)};
     }
     ++data.generation;
     model.applySnapshot(data);
@@ -458,27 +458,27 @@ namespace {
         && R::state(A::Rename, c, multiple).enabled
         && R::state(A::Properties, c, multiple).enabled
     );
-    data.entries.front().location = files::Location::fromPath("/tmp/another-folder/alpha");
+    data.entries.front().location = luciole::Location::fromPath("/tmp/another-folder/alpha");
     ++data.generation;
     model.applySnapshot(data);
     TEST_CHECK(!R::state(A::Rename, c, R::capture(c)).enabled);
-    data.status = files::DirectoryStatus::Cancelled;
+    data.status = luciole::DirectoryStatus::Cancelled;
     ++data.generation;
     model.applySnapshot(data);
     TEST_CHECK(!R::state(A::SelectAll, c, R::capture(c)).enabled);
     auto remote = snapshot();
-    remote.location = files::Location::fromUri("sftp://example.test/files");
+    remote.location = luciole::Location::fromUri("sftp://example.test/files");
     remote.entries = {entry(90, "remote")};
-    remote.entries.front().location = files::Location::fromUri("sftp://example.test/files/remote");
+    remote.entries.front().location = luciole::Location::fromUri("sftp://example.test/files/remote");
     remote.generation = ++data.generation;
     model.applySnapshot(remote);
     model.select(90);
     TEST_CHECK(!R::state(A::Rename, c, R::capture(c)).enabled && R::state(A::Open, c, R::capture(c)).enabled);
   }
   void testRenameHistoryActions() {
-    files::DirectoryModel model;
+    luciole::DirectoryModel model;
     model.applySnapshot(snapshot());
-    files::ActionContext c{.model = model, .query = {}, .pinned = {}};
+    luciole::ActionContext c{.model = model, .query = {}, .pinned = {}};
     const auto request = R::capture(c);
     TEST_CHECK(!R::state(A::UndoRename, c, request).enabled && !R::state(A::RedoRename, c, request).enabled);
     c.canUndoRename = true;
@@ -490,11 +490,11 @@ namespace {
     c.canRedoRename = true;
     ++c.context;
     TEST_CHECK(R::state(A::RedoRename, c, request).enabled);
-    TEST_CHECK(files::shortcutMatches(A::UndoRename, XKB_KEY_z, KeyMod::Ctrl));
-    TEST_CHECK(files::shortcutMatches(A::RedoRename, XKB_KEY_Z, KeyMod::Ctrl | KeyMod::Shift));
+    TEST_CHECK(luciole::shortcutMatches(A::UndoRename, XKB_KEY_z, KeyMod::Ctrl));
+    TEST_CHECK(luciole::shortcutMatches(A::RedoRename, XKB_KEY_Z, KeyMod::Ctrl | KeyMod::Shift));
   }
   void testBulkSelection() {
-    files::DirectoryModel model;
+    luciole::DirectoryModel model;
     model.applySnapshot(snapshot());
     model.select(2);
     const auto focus = model.selection().focused, anchor = model.selection().anchor;
@@ -506,15 +506,15 @@ namespace {
         && model.selection().anchor == anchor
     );
     model.invertSelection();
-    TEST_CHECK(model.selectedIds() == std::vector<files::EntryId>{2});
+    TEST_CHECK(model.selectedIds() == std::vector<luciole::EntryId>{2});
     TEST_CHECK(
         !model.selectPattern("*.TXT")
         && model.selection().selected.size() == 4
         && model.selection().focused == focus
         && model.selection().anchor == anchor
     );
-    TEST_CHECK(!model.selectPattern("CAFE\xCC\x81.???") && model.selectedIds() == std::vector<files::EntryId>{4});
-    TEST_CHECK(!model.selectPattern("[literal].txt") && model.selectedIds() == std::vector<files::EntryId>{5});
+    TEST_CHECK(!model.selectPattern("CAFE\xCC\x81.???") && model.selectedIds() == std::vector<luciole::EntryId>{4});
+    TEST_CHECK(!model.selectPattern("[literal].txt") && model.selectedIds() == std::vector<luciole::EntryId>{5});
     const auto before = model.selectedIds();
     TEST_CHECK(
         model.selectPattern("").has_value()
@@ -525,15 +525,15 @@ namespace {
     );
     model.setFilter({false, "Beta"});
     model.selectPattern("*");
-    TEST_CHECK(model.selectedIds() == std::vector<files::EntryId>{2});
+    TEST_CHECK(model.selectedIds() == std::vector<luciole::EntryId>{2});
     model.invertSelection();
     TEST_CHECK(model.selectedIds().empty());
   }
   void testTypeahead() {
-    files::DirectoryModel model;
+    luciole::DirectoryModel model;
     model.applySnapshot(snapshot());
-    files::TypeaheadSelection input;
-    const auto now = files::TypeaheadSelection::Clock::now();
+    luciole::TypeaheadSelection input;
+    const auto now = luciole::TypeaheadSelection::Clock::now();
     TEST_CHECK(input.append(model, "b", now) == 2 && input.append(model, "B", now + 20ms) == 3 && input.text() == "b");
     TEST_CHECK(input.append(model, "e", now + 40ms) == 2);
     TEST_CHECK(!input.append(model, "x", now + 60ms) && model.selection().focused == 2);
@@ -550,22 +550,22 @@ namespace {
     TEST_CHECK(!input.append(model, "b", now + 8s));
   }
   void testActionTable() {
-    TEST_CHECK(R::definitions().size() == files::kBrowserActionCount);
-    for (std::size_t index = 0; index < files::kBrowserActionCount; ++index) {
+    TEST_CHECK(R::definitions().size() == luciole::kBrowserActionCount);
+    for (std::size_t index = 0; index < luciole::kBrowserActionCount; ++index) {
       const auto action = R::definitions()[index].action;
       TEST_CHECK(&R::definition(action) == &R::definitions()[index]);
       TEST_CHECK(R::fromMenuId(R::menuId(action)) == action);
     }
     TEST_CHECK(R::definition(A::MenuBack).label == "Back");
     TEST_CHECK(!R::fromMenuId(-1));
-    TEST_CHECK(!R::fromMenuId(static_cast<int>(files::kBrowserActionCount)));
+    TEST_CHECK(!R::fromMenuId(static_cast<int>(luciole::kBrowserActionCount)));
     TEST_CHECK(!R::fromMenuId(9000));
   }
   void testShortcuts() {
     for (const auto& definition : R::definitions()) {
-      TEST_CHECK(files::actionChord(definition.action).has_value() == !definition.shortcut.empty());
+      TEST_CHECK(luciole::actionChord(definition.action).has_value() == !definition.shortcut.empty());
     }
-    const auto chord = [](A action) { return files::actionChord(action).value_or(KeyChord{}); };
+    const auto chord = [](A action) { return luciole::actionChord(action).value_or(KeyChord{}); };
     TEST_CHECK((chord(A::Settings) == KeyChord{XKB_KEY_comma, KeyMod::Ctrl}));
     TEST_CHECK((chord(A::Back) == KeyChord{XKB_KEY_Left, KeyMod::Alt}));
     TEST_CHECK((chord(A::Open) == KeyChord{XKB_KEY_Return, 0}));
@@ -574,19 +574,19 @@ namespace {
     TEST_CHECK((chord(A::EditLocation) == KeyChord{XKB_KEY_l, KeyMod::Ctrl}));
     TEST_CHECK((chord(A::CreateFolder) == KeyChord{XKB_KEY_n, KeyMod::Ctrl | KeyMod::Shift}));
     TEST_CHECK(
-        files::shortcutMatches(A::CreateFolder, XKB_KEY_N, KeyMod::Ctrl | KeyMod::Shift)
-        && files::shortcutMatches(A::CreateFolder, XKB_KEY_n, KeyMod::Ctrl | KeyMod::Shift)
-        && !files::shortcutMatches(A::CreateFolder, XKB_KEY_n, KeyMod::Ctrl)
+        luciole::shortcutMatches(A::CreateFolder, XKB_KEY_N, KeyMod::Ctrl | KeyMod::Shift)
+        && luciole::shortcutMatches(A::CreateFolder, XKB_KEY_n, KeyMod::Ctrl | KeyMod::Shift)
+        && !luciole::shortcutMatches(A::CreateFolder, XKB_KEY_n, KeyMod::Ctrl)
     );
     TEST_CHECK(
-        files::shortcutMatches(A::CopyFiles, XKB_KEY_c, KeyMod::Ctrl)
-        && !files::shortcutMatches(A::CopyFiles, XKB_KEY_C, KeyMod::Ctrl)
-        && !files::shortcutMatches(A::CopyFiles, XKB_KEY_c, KeyMod::Ctrl | KeyMod::Alt)
+        luciole::shortcutMatches(A::CopyFiles, XKB_KEY_c, KeyMod::Ctrl)
+        && !luciole::shortcutMatches(A::CopyFiles, XKB_KEY_C, KeyMod::Ctrl)
+        && !luciole::shortcutMatches(A::CopyFiles, XKB_KEY_c, KeyMod::Ctrl | KeyMod::Alt)
     );
-    TEST_CHECK(!files::shortcutMatches(A::Root, 0, 0));
-    TEST_CHECK(files::shortcutAction({A::Grid, A::List, A::Miller}, XKB_KEY_2, KeyMod::Ctrl) == A::List);
-    TEST_CHECK(files::shortcutAction({A::DeletePermanently, A::Trash}, XKB_KEY_Delete, 0) == A::DeletePermanently);
-    TEST_CHECK(!files::shortcutAction({A::Back, A::Forward}, XKB_KEY_Left, 0));
+    TEST_CHECK(!luciole::shortcutMatches(A::Root, 0, 0));
+    TEST_CHECK(luciole::shortcutAction({A::Grid, A::List, A::Miller}, XKB_KEY_2, KeyMod::Ctrl) == A::List);
+    TEST_CHECK(luciole::shortcutAction({A::DeletePermanently, A::Trash}, XKB_KEY_Delete, 0) == A::DeletePermanently);
+    TEST_CHECK(!luciole::shortcutAction({A::Back, A::Forward}, XKB_KEY_Left, 0));
   }
 } // namespace
 int main() {

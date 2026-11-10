@@ -3,7 +3,7 @@
 #include "fs/cancel_token.h"
 #include "fs/folder_totals.h"
 
-namespace files {
+namespace luciole {
   struct FolderTotalsLimits {
     std::size_t items = 1000000, depth = 128;
   };
@@ -12,4 +12,4 @@ namespace files {
       std::vector<DirectoryEntry> roots, const CancelToken& token,
       const std::function<void(const FolderTotalsSnapshot&)>& progress, FolderTotalsLimits limits = {}
   );
-} // namespace files
+} // namespace luciole

@@ -5,7 +5,7 @@
 namespace {
   constexpr std::uint64_t DecoderMemoryLimit = 128U * 1024U * 1024U;
   [[noreturn]] void decodeError(lzma_ret status) {
-    using namespace files;
+    using namespace luciole;
     if (status == LZMA_MEMLIMIT_ERROR) {
       throwFileError(FileErrorKind::Unsupported, "XZ archive exceeds the 128 MiB decoder memory limit.");
     }
@@ -19,7 +19,7 @@ namespace {
   }
 } // namespace
 
-bool files::archive_work::XzInput::recognizes(Input& input) {
+bool luciole::archive_work::XzInput::recognizes(Input& input) {
   if (input.split()) {
     return false;
   }
@@ -29,7 +29,7 @@ bool files::archive_work::XzInput::recognizes(Input& input) {
   constexpr std::array<char, 6> magic{static_cast<char>(0xFD), '7', 'z', 'X', 'Z', 0};
   return count == signature.size() && signature == magic;
 }
-files::archive_work::XzInput::XzInput(Input& input, Work& work)
+luciole::archive_work::XzInput::XzInput(Input& input, Work& work)
     : m_input(input), m_work(work), m_budget(decodedContainerBudget(work.limits)) {
   const auto status =
       lzma_stream_decoder(&m_stream, DecoderMemoryLimit, LZMA_CONCATENATED | LZMA_TELL_UNSUPPORTED_CHECK);
@@ -38,8 +38,8 @@ files::archive_work::XzInput::XzInput(Input& input, Work& work)
     decodeError(status);
   }
 }
-files::archive_work::XzInput::~XzInput() { lzma_end(&m_stream); }
-std::size_t files::archive_work::XzInput::read(std::span<char> buffer) {
+luciole::archive_work::XzInput::~XzInput() { lzma_end(&m_stream); }
+std::size_t luciole::archive_work::XzInput::read(std::span<char> buffer) {
   m_work.check();
   if (m_finished || buffer.empty()) {
     return 0;
@@ -72,7 +72,7 @@ std::size_t files::archive_work::XzInput::read(std::span<char> buffer) {
   }
   return produced;
 }
-void files::archive_work::XzInput::finish() {
+void luciole::archive_work::XzInput::finish() {
   // TAR stops at its end markers; drain the remaining XZ frames, checks and
   // padding before accepting a catalog or publishing extracted data.
   std::array<char, 65536> discard{};

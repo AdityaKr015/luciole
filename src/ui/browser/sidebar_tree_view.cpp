@@ -17,7 +17,7 @@ namespace {
     TreeButton() {
       setVariant(ButtonVariant::Ghost);
       setContentAlign(ButtonContentAlign::Start);
-      setControlHeight(files::kSideListRowHeight);
+      setControlHeight(luciole::kSideListRowHeight);
       setGlyph("folder");
       setText(" ");
       label()->setUseMarkup(false);
@@ -29,8 +29,8 @@ namespace {
       insertChildAt(0, std::move(prefix));
     }
     void bind(
-        const files::TreeRowInfo& info, const std::string& text, const std::string& glyph, bool selected, bool hovered,
-        float width
+        const luciole::TreeRowInfo& info, const std::string& text, const std::string& glyph, bool selected,
+        bool hovered, float width
     ) {
       const float prefix = std::min(static_cast<float>(info.depth) * 14.0F, std::max(0.0F, width - 110.0F)) + 18.0F;
       m_prefix->setMinWidth(prefix);
@@ -50,7 +50,7 @@ namespace {
   };
 } // namespace
 
-class files::SidebarTreeView::Adapter final : public VirtualGridAdapter {
+class luciole::SidebarTreeView::Adapter final : public VirtualGridAdapter {
 public:
   explicit Adapter(SidebarTreeView& owner) : m_owner(owner) {}
   std::size_t itemCount() const override { return m_owner.m_model.rows().size(); }
@@ -123,7 +123,7 @@ private:
   bool m_expand = false, m_dragged = false;
 };
 
-files::SidebarTreeView::SidebarTreeView() : m_adapter(std::make_unique<Adapter>(*this)) {
+luciole::SidebarTreeView::SidebarTreeView() : m_adapter(std::make_unique<Adapter>(*this)) {
   setDirection(FlexDirection::Vertical);
   setAlign(FlexAlign::Stretch);
   setFlexGrow(1);
@@ -142,7 +142,7 @@ files::SidebarTreeView::SidebarTreeView() : m_adapter(std::make_unique<Adapter>(
   grid->setFlexGrow(1);
   grid->setColumns(1);
   grid->setSquareCells(false);
-  grid->setCellHeight(files::kSideListRowHeight);
+  grid->setCellHeight(luciole::kSideListRowHeight);
   grid->setRowGap(4);
   grid->setAdapter(m_adapter.get());
   grid->focusArea()->setTabFocusKey("sidebar-tree");
@@ -186,7 +186,7 @@ files::SidebarTreeView::SidebarTreeView() : m_adapter(std::make_unique<Adapter>(
     }
   });
 }
-files::SidebarTreeView::~SidebarTreeView() {
+luciole::SidebarTreeView::~SidebarTreeView() {
   m_grid->focusArea()->setOnFocusGain({});
   m_grid->focusArea()->setOnFocusLoss({});
   m_grid->focusArea()->setOnKeyDown({});
@@ -194,7 +194,7 @@ files::SidebarTreeView::~SidebarTreeView() {
   m_model.setChangedCallback({});
   m_tree.setChangedCallback({});
 }
-void files::SidebarTreeView::setRoots(const PinService& pins, const std::vector<Drive>& drives) {
+void luciole::SidebarTreeView::setRoots(const PinService& pins, const std::vector<Drive>& drives) {
   DirectorySnapshot snapshot;
   snapshot.status = DirectoryStatus::Ready;
   std::map<std::string, EntryId> roots;
@@ -247,7 +247,7 @@ void files::SidebarTreeView::setRoots(const PinService& pins, const std::vector<
   m_rootIds = std::move(roots);
   m_tree.setRoot(std::move(snapshot));
 }
-void files::SidebarTreeView::sync(std::optional<Location> current, bool showHidden) {
+void luciole::SidebarTreeView::sync(std::optional<Location> current, bool showHidden) {
   if (m_current == current && m_model.filter().showHidden == showHidden) {
     return;
   }
@@ -256,7 +256,7 @@ void files::SidebarTreeView::sync(std::optional<Location> current, bool showHidd
   m_dirty = true;
   markLayoutDirty();
 }
-void files::SidebarTreeView::prepare() {
+void luciole::SidebarTreeView::prepare() {
   if (!std::exchange(m_dirty, false)) {
     return;
   }
@@ -268,11 +268,11 @@ void files::SidebarTreeView::prepare() {
       std::exchange(m_reveal, false)
   );
 }
-std::optional<files::Bookmark> files::SidebarTreeView::bookmark(EntryId id) const {
+std::optional<luciole::Bookmark> luciole::SidebarTreeView::bookmark(EntryId id) const {
   const auto* entry = m_model.entry(id);
   return entry ? std::optional(Bookmark{entry->displayName, entry->location}) : std::nullopt;
 }
-InputArea* files::SidebarTreeView::focusArea(const Location& location) {
+InputArea* luciole::SidebarTreeView::focusArea(const Location& location) {
   const auto found =
       std::ranges::find_if(m_model.rows(), [&](EntryId id) { return m_model.entry(id)->location == location; });
   if (found == m_model.rows().end()) {
@@ -282,11 +282,11 @@ InputArea* files::SidebarTreeView::focusArea(const Location& location) {
   m_model.select(*found);
   return m_grid->focusArea();
 }
-std::optional<files::Bookmark> files::SidebarTreeView::folderAt(float x, float y) const {
+std::optional<luciole::Bookmark> luciole::SidebarTreeView::folderAt(float x, float y) const {
   const auto index = m_grid->itemAtScene(x, y);
   return index ? bookmark(m_model.rows()[*index]) : std::nullopt;
 }
-std::optional<LayoutRect> files::SidebarTreeView::folderRect(const Location& location) const {
+std::optional<LayoutRect> luciole::SidebarTreeView::folderRect(const Location& location) const {
   for (std::size_t i = 0; i < m_model.rows().size(); ++i) {
     if (m_model.entry(m_model.rows()[i])->location == location) {
       if (const auto rect = m_grid->itemRect(i)) {
@@ -296,7 +296,7 @@ std::optional<LayoutRect> files::SidebarTreeView::folderRect(const Location& loc
   }
   return std::nullopt;
 }
-std::optional<std::size_t> files::SidebarTreeView::dropSlot(float x, float y) const {
+std::optional<std::size_t> luciole::SidebarTreeView::dropSlot(float x, float y) const {
   if (!containsScenePoint(x, y) || folderAt(x, y)) {
     return std::nullopt;
   }
@@ -310,7 +310,7 @@ std::optional<std::size_t> files::SidebarTreeView::dropSlot(float x, float y) co
   }
   return m_pinCount;
 }
-LayoutRect files::SidebarTreeView::dropLine(std::size_t slot) const {
+LayoutRect luciole::SidebarTreeView::dropLine(std::size_t slot) const {
   float x = 0, y = 0;
   Node::absolutePosition(this, x, y);
   for (std::size_t i = 0; i < m_model.rows().size(); ++i) {
@@ -329,8 +329,8 @@ LayoutRect files::SidebarTreeView::dropLine(std::size_t slot) const {
   }
   return {x, std::min(line, y + height() - 2), width(), 2};
 }
-void files::SidebarTreeView::dragScroll(float delta) { m_grid->scrollDuringDrag(delta); }
-float files::SidebarTreeView::dragScrollSpeed(float x, float y) const {
+void luciole::SidebarTreeView::dragScroll(float delta) { m_grid->scrollDuringDrag(delta); }
+float luciole::SidebarTreeView::dragScrollSpeed(float x, float y) const {
   if (!containsScenePoint(x, y)) {
     return 0;
   }
@@ -338,8 +338,8 @@ float files::SidebarTreeView::dragScrollSpeed(float x, float y) const {
   Node::mapFromScene(this, x, y, localX, localY);
   return localY < 28 ? -6 : localY > height() - 28 ? 6 : 0;
 }
-void files::SidebarTreeView::cancelDragCandidate() { m_grid->cancelPointerGesture(); }
-bool files::SidebarTreeView::key(std::uint32_t sym, std::uint32_t modifiers) {
+void luciole::SidebarTreeView::cancelDragCandidate() { m_grid->cancelPointerGesture(); }
+bool luciole::SidebarTreeView::key(std::uint32_t sym, std::uint32_t modifiers) {
   if (m_model.rows().empty()) {
     return false;
   }

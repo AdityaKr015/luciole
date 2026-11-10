@@ -9,7 +9,9 @@
 #include <algorithm>
 #include <format>
 
-FolderTotalsView::FolderTotalsView(std::span<const files::DirectoryEntry> targets, std::function<void()> requestSync) {
+FolderTotalsView::FolderTotalsView(
+    std::span<const luciole::DirectoryEntry> targets, std::function<void()> requestSync
+) {
   setDirection(FlexDirection::Vertical);
   setAlign(FlexAlign::Stretch);
   setGap(Style::spaceXs);
@@ -58,15 +60,15 @@ FolderTotalsView::FolderTotalsView(std::span<const files::DirectoryEntry> target
 void FolderTotalsView::sync(float width) {
   const auto& value = m_service.snapshot();
   const bool running = m_service.busy();
-  const files::GString size(g_format_size_full(value.bytes, G_FORMAT_SIZE_IEC_UNITS));
+  const luciole::GString size(g_format_size_full(value.bytes, G_FORMAT_SIZE_IEC_UNITS));
   const std::string bytes = value.overflow  ? "Size overflow"
       : value.bytes == 0 && value.partial() ? "Size unknown"
       : value.bytes < 1024                  ? std::string(size.get())
                                             : std::format("{} ({} bytes)", size.get(), value.bytes);
-  const char* phase = running                              ? (value.cancelRequested ? "Stopping…" : "Calculating…")
-      : value.phase == files::FolderTotalsPhase::Cancelled ? "Stopped · partial result"
-      : value.partial()                                    ? "Partial result"
-                                                           : "Calculated";
+  const char* phase = running                                ? (value.cancelRequested ? "Stopping…" : "Calculating…")
+      : value.phase == luciole::FolderTotalsPhase::Cancelled ? "Stopped · partial result"
+      : value.partial()                                      ? "Partial result"
+                                                             : "Calculated";
   m_status->setText(std::format("{} · {}", phase, bytes));
   std::string counts = std::format(
       "{} {} · {} {}", value.files, value.files == 1 ? "file" : "files", value.folders,

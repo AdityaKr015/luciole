@@ -1,4 +1,4 @@
-_noctalia_files() {
+_luciole() {
   local cur="${COMP_WORDS[COMP_CWORD]}"
   if [[ $COMP_CWORD -eq 2 && ${COMP_WORDS[1]} == completions ]]; then
     COMPREPLY=( $(compgen -W 'bash zsh fish' -- "$cur") )
@@ -17,4 +17,4 @@ _noctalia_files() {
     COMPREPLY=()
   fi
 }
-complete -F _noctalia_files noctalia-files
+complete -F _luciole luciole

@@ -75,5 +75,5 @@ endforeach
 test('headless-cli', python,
   args: [files('cli_test.py'), app, meson.project_version()],
   timeout: 30,
-  env: ['NOCTALIA_FILES_ASSETS_DIR=' + (meson.project_source_root() / 'lib/assets')],
+  env: ['LUCIOLE_ASSETS_DIR=' + (meson.project_source_root() / 'lib/assets')],
 )

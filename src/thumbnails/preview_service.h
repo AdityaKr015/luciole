@@ -3,7 +3,7 @@
 #include "thumbnails/preview_metadata.h"
 #include "thumbnails/thumbnail_service.h"
 
-namespace files {
+namespace luciole {
   enum class PreviewStatus { Empty, Loading, Ready, Unavailable, Error };
   struct PreviewSnapshot {
     std::optional<DirectoryEntry> entry;
@@ -31,4 +31,4 @@ namespace files {
     struct State;
     std::shared_ptr<State> m_state;
   };
-} // namespace files
+} // namespace luciole

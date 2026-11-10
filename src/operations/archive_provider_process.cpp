@@ -17,8 +17,8 @@
 #include <unistd.h>
 
 namespace {
-  using namespace files;
-  using namespace files::archive_work;
+  using namespace luciole;
+  using namespace luciole::archive_work;
   struct Limits {
     pid_t parent;
     rlim_t fileBytes, seconds;
@@ -156,7 +156,7 @@ namespace {
   }
 } // namespace
 
-int files::archive_work::runArchiveProvider(
+int luciole::archive_work::runArchiveProvider(
     Input& input, Work& work, std::string_view password, std::span<const char* const> argv, int output,
     std::uint64_t outputLimit, std::uint64_t fileLimit
 ) {

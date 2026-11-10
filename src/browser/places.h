@@ -5,7 +5,7 @@
 #include <functional>
 #include <memory>
 
-namespace files {
+namespace luciole {
   struct UserPlace {
     Bookmark bookmark;
     std::string glyphName;
@@ -39,4 +39,4 @@ namespace files {
     std::shared_ptr<State> m_state;
     bool save(std::vector<Bookmark> bookmarks);
   };
-} // namespace files
+} // namespace luciole

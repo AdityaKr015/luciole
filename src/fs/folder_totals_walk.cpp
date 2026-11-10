@@ -18,7 +18,7 @@ namespace {
     void operator()(DIR* value) const { ::closedir(value); }
   };
   bool sameStamp(const struct stat& a, const struct stat& b) {
-    return files::sameIdentity(a, b)
+    return luciole::sameIdentity(a, b)
         && a.st_mtim.tv_sec == b.st_mtim.tv_sec
         && a.st_mtim.tv_nsec == b.st_mtim.tv_nsec
         && a.st_ctim.tv_sec == b.st_ctim.tv_sec
@@ -28,17 +28,17 @@ namespace {
   class Walker {
   public:
     Walker(
-        std::vector<files::DirectoryEntry> roots, const files::CancelToken& token,
-        const std::function<void(const files::FolderTotalsSnapshot&)>& progress, files::FolderTotalsLimits limits
+        std::vector<luciole::DirectoryEntry> roots, const luciole::CancelToken& token,
+        const std::function<void(const luciole::FolderTotalsSnapshot&)>& progress, luciole::FolderTotalsLimits limits
     )
         : m_roots(std::move(roots)), m_token(token), m_progress(progress), m_limits(limits) {
       std::ranges::stable_sort(m_roots, {}, [](const auto& entry) { return entry.location.uri().size(); });
       for (const auto& root : m_roots) {
         m_selected.emplace(root.location.uri(), &root);
       }
-      m_result.phase = files::FolderTotalsPhase::Running;
+      m_result.phase = luciole::FolderTotalsPhase::Running;
     }
-    files::FolderTotalsSnapshot run() {
+    luciole::FolderTotalsSnapshot run() {
       m_progress(m_result);
       for (const auto& root : m_roots) {
         if (stopped()) {
@@ -53,18 +53,19 @@ namespace {
             continue;
           }
           const auto fd =
-              files::checkedFd(::open(root.location.nativePath()->c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC));
-          const auto value = files::statFd(fd.get());
+              luciole::checkedFd(::open(root.location.nativePath()->c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC));
+          const auto value = luciole::statFd(fd.get());
           visit(fd.get(), value, root.location, 0);
           struct stat current{};
           if (::lstat(root.location.nativePath()->c_str(), &current) != 0 || !sameStamp(value, current)) {
             ++m_result.changed;
           }
-        } catch (const files::FileErrorException& error) {
+        } catch (const luciole::FileErrorException& error) {
           failed(error.error());
         }
       }
-      m_result.phase = m_token.cancelled() ? files::FolderTotalsPhase::Cancelled : files::FolderTotalsPhase::Complete;
+      m_result.phase =
+          m_token.cancelled() ? luciole::FolderTotalsPhase::Cancelled : luciole::FolderTotalsPhase::Complete;
       m_progress(m_result);
       return m_result;
     }
@@ -80,11 +81,11 @@ namespace {
       }
       return false;
     }
-    void failed(const files::FileError& error) {
-      if (error.kind == files::FileErrorKind::Cancelled) {
+    void failed(const luciole::FileError& error) {
+      if (error.kind == luciole::FileErrorKind::Cancelled) {
         return;
       }
-      if (error.kind == files::FileErrorKind::Changed) {
+      if (error.kind == luciole::FileErrorKind::Changed) {
         ++m_result.changed;
       } else {
         ++m_result.unavailable;
@@ -92,14 +93,14 @@ namespace {
       // Retain only one bounded error regardless of the tree size.
       m_result.error = error.message.substr(0, 256);
     }
-    void validateRoot(const files::DirectoryEntry& root, const struct stat& value) const {
-      const auto details = files::readFileDetails(root.location, m_token);
-      const files::GioPtr<GFileInfo> info(g_file_query_info(
-          files::gioFile(root.location).get(), "unix::device,unix::inode", G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS,
-          files::gioCancellable(m_token), nullptr
+    void validateRoot(const luciole::DirectoryEntry& root, const struct stat& value) const {
+      const auto details = luciole::readFileDetails(root.location, m_token);
+      const luciole::GioPtr<GFileInfo> info(g_file_query_info(
+          luciole::gioFile(root.location).get(), "unix::device,unix::inode", G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS,
+          luciole::gioCancellable(m_token), nullptr
       ));
       if (m_token.cancelled()) {
-        files::throwFileError(files::FileErrorKind::Cancelled, "Cancelled.");
+        luciole::throwFileError(luciole::FileErrorKind::Cancelled, "Cancelled.");
       }
       if (!info
           || !g_file_info_has_attribute(info.get(), "unix::device")
@@ -109,10 +110,10 @@ namespace {
           || (root.identity && root.identity != details.identity)
           || (root.etag && root.etag != details.etag)
           || (root.contentRevision && root.contentRevision != details.contentRevision)) {
-        files::throwFileError(files::FileErrorKind::Changed, "A selected item changed. Reopen Properties.");
+        luciole::throwFileError(luciole::FileErrorKind::Changed, "A selected item changed. Reopen Properties.");
       }
     }
-    void visit(int fd, const struct stat& value, const files::Location& location, std::size_t depth) {
+    void visit(int fd, const struct stat& value, const luciole::Location& location, std::size_t depth) {
       if (stopped()) {
         return;
       }
@@ -159,23 +160,23 @@ namespace {
         m_progress(m_result);
       }
     }
-    void children(int fd, const struct stat& baseline, const files::Location& location, std::size_t depth) {
+    void children(int fd, const struct stat& baseline, const luciole::Location& location, std::size_t depth) {
       const int descriptor = ::openat(fd, ".", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
       if (descriptor < 0) {
-        files::throwErrno(errno);
+        luciole::throwErrno(errno);
       }
       const std::unique_ptr<DIR, CloseDirectory> directory(::fdopendir(descriptor));
       if (!directory) {
         const int code = errno;
         ::close(descriptor);
-        files::throwErrno(code);
+        luciole::throwErrno(code);
       }
       while (!stopped()) {
         errno = 0;
         const auto* item = ::readdir(directory.get());
         if (!item) {
           if (errno) {
-            failed(files::errnoError(errno));
+            failed(luciole::errnoError(errno));
           }
           break;
         }
@@ -185,35 +186,35 @@ namespace {
         }
         try {
           const auto child =
-              files::checkedFd(::openat(::dirfd(directory.get()), name.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC));
-          const auto value = files::statFd(child.get());
+              luciole::checkedFd(::openat(::dirfd(directory.get()), name.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC));
+          const auto value = luciole::statFd(child.get());
           visit(child.get(), value, location.child(name), depth + 1);
           struct stat current{};
           if (::fstatat(::dirfd(directory.get()), name.c_str(), &current, AT_SYMLINK_NOFOLLOW) != 0
               || !sameStamp(value, current)) {
             ++m_result.changed;
           }
-        } catch (const files::FileErrorException& error) {
+        } catch (const luciole::FileErrorException& error) {
           failed(error.error());
         }
       }
-      if (!sameStamp(baseline, files::statFd(fd))) {
+      if (!sameStamp(baseline, luciole::statFd(fd))) {
         ++m_result.changed;
       }
     }
-    std::vector<files::DirectoryEntry> m_roots;
-    const files::CancelToken& m_token;
-    const std::function<void(const files::FolderTotalsSnapshot&)>& m_progress;
-    files::FolderTotalsLimits m_limits;
-    files::FolderTotalsSnapshot m_result;
+    std::vector<luciole::DirectoryEntry> m_roots;
+    const luciole::CancelToken& m_token;
+    const std::function<void(const luciole::FolderTotalsSnapshot&)>& m_progress;
+    luciole::FolderTotalsLimits m_limits;
+    luciole::FolderTotalsSnapshot m_result;
     std::size_t m_items = 0;
-    std::map<std::string, const files::DirectoryEntry*> m_selected;
+    std::map<std::string, const luciole::DirectoryEntry*> m_selected;
     std::set<std::string> m_seenRoots;
     std::set<std::pair<dev_t, ino_t>> m_directories;
   };
 } // namespace
 
-files::FolderTotalsSnapshot files::walkFolderTotals(
+luciole::FolderTotalsSnapshot luciole::walkFolderTotals(
     std::vector<DirectoryEntry> roots, const CancelToken& token,
     const std::function<void(const FolderTotalsSnapshot&)>& progress, FolderTotalsLimits limits
 ) {

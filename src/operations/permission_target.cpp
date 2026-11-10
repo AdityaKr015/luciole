@@ -8,24 +8,24 @@
 #include <unistd.h>
 
 namespace {
-  [[noreturn]] void changed(const char* message) { files::throwFileError(files::FileErrorKind::Changed, message); }
-  files::FileType typeFromMode(mode_t mode) {
-    return S_ISDIR(mode) ? files::FileType::Directory
-        : S_ISLNK(mode)  ? files::FileType::Symlink
-        : S_ISREG(mode)  ? files::FileType::Regular
-                         : files::FileType::Special;
+  [[noreturn]] void changed(const char* message) { luciole::throwFileError(luciole::FileErrorKind::Changed, message); }
+  luciole::FileType typeFromMode(mode_t mode) {
+    return S_ISDIR(mode) ? luciole::FileType::Directory
+        : S_ISLNK(mode)  ? luciole::FileType::Symlink
+        : S_ISREG(mode)  ? luciole::FileType::Regular
+                         : luciole::FileType::Special;
   }
 } // namespace
 
-bool files::samePermissions(const struct stat& a, const struct stat& b) {
+bool luciole::samePermissions(const struct stat& a, const struct stat& b) {
   return a.st_uid == b.st_uid && a.st_gid == b.st_gid && (a.st_mode & 07777) == (b.st_mode & 07777);
 }
 
-files::PermissionTarget::PermissionTarget(DirectoryEntry entry)
+luciole::PermissionTarget::PermissionTarget(DirectoryEntry entry)
     : entry(std::move(entry)), path(*this->entry.location.nativePath()),
       fd(checkedFd(::open(path.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC))), baseline(statFd(fd.get())) {}
 
-files::PermissionTarget::PermissionTarget(
+luciole::PermissionTarget::PermissionTarget(
     DirectoryEntry entry, int descriptor, std::vector<std::shared_ptr<PermissionTarget>> ancestors
 )
     : entry(std::move(entry)), path(*this->entry.location.nativePath()), fd(checkedFd(descriptor)),
@@ -35,12 +35,12 @@ files::PermissionTarget::PermissionTarget(
   this->entry.identity.reset(); // Identified directly by the held native descriptor.
 }
 
-bool files::PermissionTarget::current() const {
+bool luciole::PermissionTarget::current() const {
   struct stat value{};
   return ::lstat(path.c_str(), &value) == 0 && sameIdentity(value, baseline);
 }
 
-void files::PermissionTarget::validate() const {
+void luciole::PermissionTarget::validate() const {
   for (const auto& ancestor : ancestors) {
     if (!ancestor->current() || !samePermissions(statFd(ancestor->fd.get()), ancestor->baseline)) {
       changed("A containing folder changed. Reopen Properties.");
@@ -60,7 +60,7 @@ void files::PermissionTarget::validate() const {
   }
 }
 
-files::PermissionInfo files::PermissionTarget::inspect(bool names) const {
+luciole::PermissionInfo luciole::PermissionTarget::inspect(bool names) const {
   const auto value = statFd(fd.get());
   const bool root = ::geteuid() == 0, owned = value.st_uid == ::geteuid();
   struct statvfs filesystem{};
@@ -110,7 +110,7 @@ files::PermissionInfo files::PermissionTarget::inspect(bool names) const {
   return info;
 }
 
-void files::PermissionTarget::loadAcl(bool adopt) {
+void luciole::PermissionTarget::loadAcl(bool adopt) {
   auto value = inspectAcl(fd.get());
   const auto basic = inspect(false);
   value.editable = value.supported
@@ -126,8 +126,8 @@ void files::PermissionTarget::loadAcl(bool adopt) {
   aclView = std::make_shared<const AclInfo>(std::move(value));
 }
 
-std::shared_ptr<files::PermissionTarget>
-files::preparePermissionTarget(const DirectoryEntry& entry, bool captureCurrentLocation) {
+std::shared_ptr<luciole::PermissionTarget>
+luciole::preparePermissionTarget(const DirectoryEntry& entry, bool captureCurrentLocation) {
   if (!entry.location.nativePath() || entry.location.isTrash()) {
     throwFileError(FileErrorKind::Unsupported, "Permission editing is available for native items outside Trash.");
   }

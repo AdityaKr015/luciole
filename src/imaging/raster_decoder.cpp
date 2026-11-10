@@ -33,7 +33,7 @@ namespace {
   }
 } // namespace
 
-std::expected<std::vector<std::uint8_t>, std::string> files::readEncodedImageFile(const std::string& path) {
+std::expected<std::vector<std::uint8_t>, std::string> luciole::readEncodedImageFile(const std::string& path) {
   std::error_code error;
   if (!std::filesystem::is_regular_file(path, error)) {
     return std::unexpected("image path is not a regular file");
@@ -50,7 +50,7 @@ std::expected<std::vector<std::uint8_t>, std::string> files::readEncodedImageFil
   return bytes;
 }
 
-std::expected<LoadedImageFile, std::string> files::decodeRasterImage(
+std::expected<LoadedImageFile, std::string> luciole::decodeRasterImage(
     std::span<const std::uint8_t> bytes, int target, std::uint64_t maxPixels, GCancellable* cancellable,
     std::string_view contentType
 ) {
@@ -152,7 +152,7 @@ std::expected<LoadedImageFile, std::string> files::decodeRasterImage(
 }
 
 std::expected<LoadedImageFile, std::string>
-files::fitRasterPixels(GdkPixbuf* pixbuf, int target, std::uint64_t maxPixels) {
+luciole::fitRasterPixels(GdkPixbuf* pixbuf, int target, std::uint64_t maxPixels) {
   if (!pixbuf || target < 1 || target > kMaxImageSide) {
     return std::unexpected("invalid decoded pixels");
   }

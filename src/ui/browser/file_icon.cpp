@@ -9,7 +9,7 @@
 #include <cmath>
 #include <tuple>
 
-files::FileIcon::FileIcon(FileIconCache& cache, float size, ThumbnailService* thumbnails)
+luciole::FileIcon::FileIcon(FileIconCache& cache, float size, ThumbnailService* thumbnails)
     : m_cache(cache), m_thumbnails(thumbnails), m_size(size) {
   m_image = static_cast<ImageNode*>(addChild(std::make_unique<ImageNode>()));
   m_image->setFitMode(ImageFitMode::Contain);
@@ -34,11 +34,11 @@ files::FileIcon::FileIcon(FileIconCache& cache, float size, ThumbnailService* th
   }
   setHitTestVisible(false);
 }
-files::FileIcon::~FileIcon() {
+luciole::FileIcon::~FileIcon() {
   m_lifetime.reset();
   m_texture.reset();
 }
-void files::FileIcon::bind(const FileIconSource& source, ColorSpec foreground) {
+void luciole::FileIcon::bind(const FileIconSource& source, ColorSpec foreground) {
   setEmblems(false, false);
   if (!m_thumbnailSource && source == m_source && foreground == m_foreground) {
     return;
@@ -50,7 +50,7 @@ void files::FileIcon::bind(const FileIconSource& source, ColorSpec foreground) {
   m_foreground = foreground;
   markLayoutDirty();
 }
-void files::FileIcon::bindFile(const DirectoryEntry& entry, ColorSpec foreground) {
+void luciole::FileIcon::bindFile(const DirectoryEntry& entry, ColorSpec foreground) {
   const bool changed = !m_thumbnailSource
       || entry.id != m_thumbnailSource->id
       || entry.location != m_thumbnailSource->location
@@ -74,14 +74,14 @@ void files::FileIcon::bindFile(const DirectoryEntry& entry, ColorSpec foreground
   m_foreground = foreground;
   markLayoutDirty();
 }
-void files::FileIcon::setEmblems(bool link, bool readOnly) {
+void luciole::FileIcon::setEmblems(bool link, bool readOnly) {
   if (m_linkEmblem->visible() != link || m_readOnlyEmblem->visible() != readOnly) {
     m_linkEmblem->setVisible(link);
     m_readOnlyEmblem->setVisible(readOnly);
     markLayoutDirty();
   }
 }
-void files::FileIcon::setThumbnailVisible(bool visible) {
+void luciole::FileIcon::setThumbnailVisible(bool visible) {
   if (m_thumbnailVisible != visible) {
     m_thumbnailVisible = visible;
     if (!visible) {
@@ -94,7 +94,7 @@ void files::FileIcon::setThumbnailVisible(bool visible) {
     markLayoutDirty();
   }
 }
-void files::FileIcon::releaseFile(Renderer&) {
+void luciole::FileIcon::releaseFile(Renderer&) {
   setEmblems(false, false);
   const bool changed = m_prepared || m_thumbnailSource || m_thumbnail || m_asset || !m_texture.empty();
   m_prepared.reset();
@@ -109,28 +109,28 @@ void files::FileIcon::releaseFile(Renderer&) {
     markLayoutDirty();
   }
 }
-void files::FileIcon::setIconSize(float size) {
+void luciole::FileIcon::setIconSize(float size) {
   if (m_size != size) {
     m_size = size;
     markLayoutDirty();
   }
 }
-void files::FileIcon::setPreparedImage(std::shared_ptr<const FileIconImage> image) {
+void luciole::FileIcon::setPreparedImage(std::shared_ptr<const FileIconImage> image) {
   if (m_prepared != image) {
     m_prepared = std::move(image);
     markLayoutDirty();
   }
 }
-void files::FileIcon::setPreviewHeight(float height) {
+void luciole::FileIcon::setPreviewHeight(float height) {
   if (m_previewHeight != height) {
     m_previewHeight = height;
     markLayoutDirty();
   }
 }
-LayoutSize files::FileIcon::doMeasure(Renderer&, const LayoutConstraints&) {
+LayoutSize luciole::FileIcon::doMeasure(Renderer&, const LayoutConstraints&) {
   return {m_size, m_previewHeight > 0 ? m_previewHeight : m_size};
 }
-void files::FileIcon::doLayout(Renderer& renderer) {
+void luciole::FileIcon::doLayout(Renderer& renderer) {
   if (!m_thumbnailVisible) {
     m_texture.reset();
     m_image->setTextureId({});
@@ -139,7 +139,7 @@ void files::FileIcon::doLayout(Renderer& renderer) {
   const int pixels = static_cast<int>(std::ceil(m_size * renderer.renderScale()));
   if (m_thumbnails
       && m_thumbnailSource
-      && m_thumbnailSource->type == files::FileType::Regular
+      && m_thumbnailSource->type == luciole::FileType::Regular
       && !m_thumbnailSource->symlink
       && m_thumbnailSource->modifiedSeconds) {
     if (pixels != m_thumbnailPixels || !m_thumbnails->touch(m_thumbnail, m_thumbnailVisible)) {
@@ -203,7 +203,7 @@ void files::FileIcon::doLayout(Renderer& renderer) {
     m_readOnlyEmblem->arrange(renderer, {left + imageWidth - badgeSize, bottom - badgeSize, badgeSize, badgeSize});
   }
 }
-void files::FileIcon::doInvalidateGpuResources(Renderer&) {
+void luciole::FileIcon::doInvalidateGpuResources(Renderer&) {
   m_image->setTextureId({});
   markLayoutDirty();
 }

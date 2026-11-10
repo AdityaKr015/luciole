@@ -10,19 +10,19 @@ namespace {
   constexpr auto kLog = Logger("palette");
 }
 
-files::PaletteWatcher::PaletteWatcher() : m_path(palettePath()) {
+luciole::PaletteWatcher::PaletteWatcher() : m_path(palettePath()) {
   watch();
   reload();
 }
 
-files::PaletteWatcher::~PaletteWatcher() {
+luciole::PaletteWatcher::~PaletteWatcher() {
   if (m_debounce) {
     g_source_destroy(m_debounce);
     g_source_unref(m_debounce);
   }
 }
 
-void files::PaletteWatcher::reload() {
+void luciole::PaletteWatcher::reload() {
   auto palette = loadPalette(m_path, defaultPalette());
   if (!palette) {
     kLog.warn("{}", palette.error());
@@ -31,7 +31,7 @@ void files::PaletteWatcher::reload() {
   setPalette(*palette);
 }
 
-void files::PaletteWatcher::scheduleReload() {
+void luciole::PaletteWatcher::scheduleReload() {
   // Template writers may truncate, write and rename in quick succession; apply the settled file once.
   if (m_debounce) {
     g_source_destroy(m_debounce);
@@ -52,7 +52,7 @@ void files::PaletteWatcher::scheduleReload() {
   g_source_attach(m_debounce, g_main_context_default());
 }
 
-void files::PaletteWatcher::watch() {
+void luciole::PaletteWatcher::watch() {
   const auto folder = m_path.parent_path();
   std::error_code error;
   const auto target = std::filesystem::is_directory(folder, error) ? folder : folder.parent_path();

@@ -27,12 +27,12 @@
 #include <utility>
 
 ArchiveController::ArchiveController(
-    PageContext& page, files::FileLauncher& launcher, files::FileIconCache& icons, WaylandConnection& connection
+    PageContext& page, luciole::FileLauncher& launcher, luciole::FileIconCache& icons, WaylandConnection& connection
 )
     : m_page(page), m_launcher(launcher), m_icons(icons), m_connection(connection) {}
 
-void ArchiveController::compress(const std::vector<files::DirectoryEntry>& targets) {
-  std::vector<files::Location> sources;
+void ArchiveController::compress(const std::vector<luciole::DirectoryEntry>& targets) {
+  std::vector<luciole::Location> sources;
   sources.reserve(targets.size());
   for (const auto& target : targets) {
     sources.push_back(target.location);
@@ -40,19 +40,19 @@ void ArchiveController::compress(const std::vector<files::DirectoryEntry>& targe
   openDialog(std::move(sources), {}, true);
 }
 
-void ArchiveController::extractTo(const files::Location& archive) { openDialog({archive}, {}, false); }
+void ArchiveController::extractTo(const luciole::Location& archive) { openDialog({archive}, {}, false); }
 
-void ArchiveController::extractHere(const files::Location& archive) {
+void ArchiveController::extractHere(const luciole::Location& archive) {
   if (!extract(archive, destination(archive), {})) {
     m_page.actionError("Could not start extraction.");
   }
 }
 
-void ArchiveController::browse(const files::Location& archive) {
+void ArchiveController::browse(const luciole::Location& archive) {
   if (!m_browser) {
-    m_browser = m_page.jobs().create<files::ArchiveService>(JobScope::Page);
+    m_browser = m_page.jobs().create<luciole::ArchiveService>(JobScope::Page);
   }
-  if (m_browser->service<files::ArchiveService>().inspect(archive)) {
+  if (m_browser->service<luciole::ArchiveService>().inspect(archive)) {
     m_source = archive;
     m_wanted = true;
     m_dirty = true;
@@ -62,11 +62,11 @@ void ArchiveController::browse(const files::Location& archive) {
 }
 
 bool ArchiveController::extract(
-    const files::Location& source, const files::Location& destination, std::vector<std::string> selected
+    const luciole::Location& source, const luciole::Location& destination, std::vector<std::string> selected
 ) {
   // The archive browser's catalog of `source`, if any, guards against a changed archive.
-  auto expected = m_browser ? m_browser->service<files::ArchiveService>().catalog() : nullptr;
-  return m_page.jobs().create<files::ArchiveService>()->service<files::ArchiveService>().extract(
+  auto expected = m_browser ? m_browser->service<luciole::ArchiveService>().catalog() : nullptr;
+  return m_page.jobs().create<luciole::ArchiveService>()->service<luciole::ArchiveService>().extract(
       source, destination, std::move(selected), std::move(expected)
   );
 }
@@ -78,7 +78,7 @@ OperationJob* ArchiveController::shown() const {
 }
 
 void ArchiveController::changed(OperationJob& job) {
-  auto& archives = job.service<files::ArchiveService>();
+  auto& archives = job.service<luciole::ArchiveService>();
   m_dirty = true;
   if (&job == m_browser.get()) {
     if (auto file = archives.takeOpenedFile()) {
@@ -86,7 +86,7 @@ void ArchiveController::changed(OperationJob& job) {
     }
   }
   if (!archives.busy() && job.takeResult()) {
-    std::string message = files::fileErrorText(archives.error());
+    std::string message = luciole::fileErrorText(archives.error());
     const bool finished = !archives.results().empty();
     if (finished && message.empty()) {
       message = "Archive operation complete.";
@@ -107,19 +107,19 @@ void ArchiveController::onFrame() {
   syncPassword();
 }
 
-files::Location ArchiveController::destination(const files::Location& source) {
-  return source.parent().value_or(source).child(files::archiveFolderName(source));
+luciole::Location ArchiveController::destination(const luciole::Location& source) {
+  return source.parent().value_or(source).child(luciole::archiveFolderName(source));
 }
 
 void ArchiveController::openDialog(
-    std::vector<files::Location> sources, std::vector<std::string> selected, bool compress
+    std::vector<luciole::Location> sources, std::vector<std::string> selected, bool compress
 ) {
   if (sources.empty() || m_page.jobs().newest([](const OperationJob& job) {
         return job.kind() == JobKind::Archive && job.running();
       })) {
     return;
   }
-  const auto formats = files::archiveFormats();
+  const auto formats = luciole::archiveFormats();
   if (compress && formats.empty()) {
     m_page.actionError("No archive writer is available.");
     return;
@@ -134,30 +134,30 @@ void ArchiveController::openDialog(
   const std::string name = (sources.size() == 1 ? source.displayName().value_or("Archive") : "Archive")
       + (formats.empty() ? ".zip" : std::string(formats.front().suffix));
   auto root = std::make_unique<ArchiveDialog>(
-      compress, name, files::locationEditText(compress ? base : destination(source)),
+      compress, name, luciole::locationEditText(compress ? base : destination(source)),
       [this, sources = std::move(sources), selected = std::move(selected), base, compress](
-          const std::string& name, const std::string& path, files::ArchiveFormat format, const std::string& password
+          const std::string& name, const std::string& path, luciole::ArchiveFormat format, const std::string& password
       ) -> std::string {
         if (path.empty()) {
           return "Enter a destination folder.";
         }
-        auto destination = files::resolveLocationText(path, base);
+        auto destination = luciole::resolveLocationText(path, base);
         if (!destination.nativePath()) {
           return "Choose a native destination folder.";
         }
         if (compress) {
-          if (auto problem = files::filenameProblem(name)) {
+          if (auto problem = luciole::filenameProblem(name)) {
             return *problem;
           }
-          const auto formats = files::archiveFormats();
-          const auto found = std::ranges::find(formats, format, &files::ArchiveFormatInfo::format);
+          const auto formats = luciole::archiveFormats();
+          const auto found = std::ranges::find(formats, format, &luciole::ArchiveFormatInfo::format);
           if (found == formats.end() || !name.ends_with(found->suffix)) {
             return "Use the filename extension for the selected format.";
           }
           destination = destination.child(name);
         }
         const bool started = compress
-            ? m_page.jobs().create<files::ArchiveService>()->service<files::ArchiveService>().compress(
+            ? m_page.jobs().create<luciole::ArchiveService>()->service<luciole::ArchiveService>().compress(
                   sources, destination, format, password
               )
             : extract(sources.front(), destination, selected);
@@ -200,7 +200,7 @@ void ArchiveController::syncPassword() {
   }
   if (m_passwordDialog) {
     const auto* job = m_page.jobs().find(m_passwordDialog->job);
-    const auto pending = job ? job->service<files::ArchiveService>().passwordRequest() : std::nullopt;
+    const auto pending = job ? job->service<luciole::ArchiveService>().passwordRequest() : std::nullopt;
     if (!pending || pending->id != m_passwordDialog->request) {
       m_passwordDialog.reset();
       m_page.dismissMenu();
@@ -212,9 +212,9 @@ void ArchiveController::syncPassword() {
   }
   auto* job = m_page.jobs().oldest([](const OperationJob& candidate) {
     return candidate.kind() == JobKind::Archive
-        && candidate.service<files::ArchiveService>().passwordRequest().has_value();
+        && candidate.service<luciole::ArchiveService>().passwordRequest().has_value();
   });
-  const auto request = job ? job->service<files::ArchiveService>().passwordRequest() : std::nullopt;
+  const auto request = job ? job->service<luciole::ArchiveService>().passwordRequest() : std::nullopt;
   if (!request) {
     return;
   }
@@ -223,7 +223,7 @@ void ArchiveController::syncPassword() {
       request->source.displayName().value_or("Archive"), request->retry,
       [this, active](std::string password) {
         auto* owner = m_page.jobs().find(active.job);
-        if (owner && owner->service<files::ArchiveService>().providePassword(active.request, std::move(password))) {
+        if (owner && owner->service<luciole::ArchiveService>().providePassword(active.request, std::move(password))) {
           m_passwordDialog.reset();
           m_page.dismissMenu();
           return true;
@@ -278,18 +278,19 @@ void ArchiveController::sync() {
     auto root = std::make_unique<ArchiveView>(
         m_icons, [this] { return m_connection.keyboardModifiers(); }, [this] { deferClose(); },
         [this](std::vector<std::string> selected) {
-          if (const auto* catalog = m_browser ? m_browser->service<files::ArchiveService>().catalog().get() : nullptr) {
+          if (const auto* catalog =
+                  m_browser ? m_browser->service<luciole::ArchiveService>().catalog().get() : nullptr) {
             openDialog({catalog->source}, std::move(selected), false);
           }
         },
         [this](const std::string& path) {
           if (m_browser) {
-            (void)m_browser->service<files::ArchiveService>().openMember(path);
+            (void)m_browser->service<luciole::ArchiveService>().openMember(path);
           }
         },
         [this] {
           if (m_source && m_browser) {
-            (void)m_browser->service<files::ArchiveService>().inspect(*m_source);
+            (void)m_browser->service<luciole::ArchiveService>().inspect(*m_source);
           }
         },
         [this] {
@@ -306,10 +307,10 @@ void ArchiveController::sync() {
     m_page.dispatcher().setFocus(m_view->focusArea());
   }
   if (const auto* job = shown(); m_view && job) {
-    const auto& archives = job->service<files::ArchiveService>();
+    const auto& archives = job->service<luciole::ArchiveService>();
     m_view->sync(
-        m_browser ? m_browser->service<files::ArchiveService>().catalog() : nullptr, archives.phase(), archives.items(),
-        archives.bytes(), archives.error()
+        m_browser ? m_browser->service<luciole::ArchiveService>().catalog() : nullptr, archives.phase(),
+        archives.items(), archives.bytes(), archives.error()
     );
     m_page.surface().requestLayout();
   }

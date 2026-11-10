@@ -5,7 +5,7 @@
 
 #include <gio/gio.h>
 
-void files::assignArchiveIcons(ArchiveCatalog& catalog) {
+void luciole::assignArchiveIcons(ArchiveCatalog& catalog) {
   for (auto& entry : catalog.entries) {
     if (entry.kind == ArchiveEntryKind::Directory) {
       entry.icon.names = {"folder"};

@@ -17,7 +17,7 @@
 #include <wayland-server.h>
 
 namespace {
-  using namespace files;
+  using namespace luciole;
   using namespace std::chrono_literals;
   using MimeData = std::unordered_map<std::string, std::string>;
 

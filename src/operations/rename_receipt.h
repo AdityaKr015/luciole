@@ -5,7 +5,7 @@
 
 #include <memory>
 
-namespace files {
+namespace luciole {
   struct RenameIdentity;
   // Immutable proof of one completed rename. Worker-only capture/reversal; no traversal or overwrite.
   class RenameReceipt {
@@ -22,4 +22,4 @@ namespace files {
     Location m_source, m_destination;
     std::shared_ptr<const RenameIdentity> m_identity;
   };
-} // namespace files
+} // namespace luciole

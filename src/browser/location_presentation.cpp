@@ -8,7 +8,7 @@
 #include <memory>
 #include <stdexcept>
 
-std::vector<files::Breadcrumb> files::locationBreadcrumbs(const Location& location) {
+std::vector<luciole::Breadcrumb> luciole::locationBreadcrumbs(const Location& location) {
   std::vector<Breadcrumb> result;
   const char* homePath = g_get_home_dir();
   const auto home =
@@ -43,12 +43,12 @@ std::vector<files::Breadcrumb> files::locationBreadcrumbs(const Location& locati
   return result;
 }
 
-std::string files::locationEditText(const Location& location) {
+std::string luciole::locationEditText(const Location& location) {
   const auto path = location.nativePath();
   return path && g_utf8_validate(path->c_str(), static_cast<gssize>(path->size()), nullptr) ? *path : location.uri();
 }
 
-files::Location files::resolveLocationText(const std::string& text, const Location& base) {
+luciole::Location luciole::resolveLocationText(const std::string& text, const Location& base) {
   if (text.empty() || text.contains('\0')) {
     throw std::invalid_argument("Enter a path or URI without NUL bytes.");
   }

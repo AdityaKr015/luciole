@@ -13,7 +13,7 @@ class LinkDialog final : public Flex {
 public:
   LinkDialog(
       float width, std::string source, std::string name, std::string destination, bool hardAllowed,
-      std::function<void(std::string, std::string, files::CreateKind)> submit, std::function<void()> cancel
+      std::function<void(std::string, std::string, luciole::CreateKind)> submit, std::function<void()> cancel
   );
   Input* nameInput() const { return m_name; }
   void setSaving(bool saving);
@@ -28,5 +28,5 @@ private:
   Label* m_error = nullptr;
   Button *m_create = nullptr, *m_cancel = nullptr;
   bool m_saving = false;
-  std::function<void(std::string, std::string, files::CreateKind)> m_submit;
+  std::function<void(std::string, std::string, luciole::CreateKind)> m_submit;
 };

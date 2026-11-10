@@ -2,7 +2,7 @@
 
 #include "fs/directory_session.h"
 
-namespace files {
+namespace luciole {
   // Default-context GIO traversal, one directory and one 64-entry batch in flight.
   class RecursiveSearch {
   public:
@@ -21,4 +21,4 @@ namespace files {
     struct State;
     std::shared_ptr<State> m_state;
   };
-} // namespace files
+} // namespace luciole

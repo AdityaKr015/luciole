@@ -64,7 +64,7 @@ void OperationsController::onFrame() {
   const auto active = std::ranges::count_if(activities, [](const auto& item) { return !item.finished; });
   const bool progressing = std::ranges::any_of(activities, [](const auto& item) {
     return !item.finished
-        && (item.state == files::ActivityState::Preparing || item.state == files::ActivityState::Working);
+        && (item.state == luciole::ActivityState::Preparing || item.state == luciole::ActivityState::Working);
   });
   const bool failed = std::ranges::any_of(activities, [](const auto& item) { return item.failed(); });
   m_button->setGlyph(active ? "progress" : failed ? "alert-circle" : "progress-check");
@@ -97,7 +97,7 @@ void OperationsController::open() {
   Button* clear = nullptr;
   auto root = ui::column(
       {.align = FlexAlign::Stretch},
-      files::dialogHeader("File Operations", "progress", [this] { m_page.dismissMenu(); }), std::move(view),
+      luciole::dialogHeader("File Operations", "progress", [this] { m_page.dismissMenu(); }), std::move(view),
       ui::separator({}),
       ui::row(
           {.justify = FlexJustify::End},
@@ -110,7 +110,7 @@ void OperationsController::open() {
           )
       )
   );
-  files::applyDialogStyle(*root);
+  luciole::applyDialogStyle(*root);
   m_page.showPopup(
       std::move(root), nullptr, sceneRect(*m_button),
       std::min(484.0F, static_cast<float>(m_page.surface().width()) - 32.0F), popupHeight(activities.size()), true
@@ -179,7 +179,7 @@ void OperationsController::details(std::uint64_t id) {
   );
   auto root = ui::column(
       {.align = FlexAlign::Stretch},
-      files::dialogHeader("Operation Details", "info-circle", [this] { m_page.dismissMenu(); }), std::move(body),
+      luciole::dialogHeader("Operation Details", "info-circle", [this] { m_page.dismissMenu(); }), std::move(body),
       ui::separator({}),
       ui::row(
           {.justify = FlexJustify::End, .gap = Style::spaceSm},
@@ -200,7 +200,7 @@ void OperationsController::details(std::uint64_t id) {
           )
       )
   );
-  files::applyDialogStyle(*root);
+  luciole::applyDialogStyle(*root);
   m_page.showCenteredDialog(std::move(root), 556.0F);
   if (m_page.menuSurface()) {
     m_detailsScroll = scroll;

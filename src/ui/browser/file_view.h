@@ -8,7 +8,7 @@
 
 #include <chrono>
 
-namespace files {
+namespace luciole {
   class FileViewAdapter final : public VirtualGridAdapter {
   public:
     FileViewAdapter(
@@ -83,4 +83,4 @@ namespace files {
     bool m_areaSelection = false;
     bool m_areaToggle = false;
   };
-} // namespace files
+} // namespace luciole

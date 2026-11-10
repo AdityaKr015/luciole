@@ -9,11 +9,11 @@
 #include <algorithm>
 #include <wayland-cursor.h>
 
-files::DesktopIntegration::DesktopIntegration(WaylandConnection& connection) : m_connection(connection) {}
+luciole::DesktopIntegration::DesktopIntegration(WaylandConnection& connection) : m_connection(connection) {}
 
-files::DesktopIntegration::~DesktopIntegration() = default;
+luciole::DesktopIntegration::~DesktopIntegration() = default;
 
-void files::DesktopIntegration::requestActivation(
+void luciole::DesktopIntegration::requestActivation(
     wl_surface* source, std::uint32_t serial, const std::string& appId, std::function<void(std::string)> completed
 ) {
   if (m_activation) {
@@ -23,7 +23,7 @@ void files::DesktopIntegration::requestActivation(
   }
 }
 
-void files::DesktopIntegration::onGlobal(
+void luciole::DesktopIntegration::onGlobal(
     wl_registry* registry, std::uint32_t name, std::string_view interface, std::uint32_t version
 ) {
   if (interface == "wl_data_device_manager" && !m_dataDeviceManager) {
@@ -44,7 +44,7 @@ void files::DesktopIntegration::onGlobal(
     m_shapeGlobal = name;
   }
 }
-void files::DesktopIntegration::onGlobalRemove(std::uint32_t name) {
+void luciole::DesktopIntegration::onGlobalRemove(std::uint32_t name) {
   if (name == m_activationGlobal) {
     m_activationGlobal = 0;
     m_activation.reset();
@@ -63,7 +63,7 @@ void files::DesktopIntegration::onGlobalRemove(std::uint32_t name) {
     m_shapeGlobal = 0;
   }
 }
-void files::DesktopIntegration::releaseGlobals() {
+void luciole::DesktopIntegration::releaseGlobals() {
   m_activation.reset();
   m_activationGlobal = 0;
   if (m_cursorSurface) {
@@ -83,7 +83,7 @@ void files::DesktopIntegration::releaseGlobals() {
     m_decorations = nullptr;
   }
 }
-void files::DesktopIntegration::pointer(const PointerEvent& event) {
+void luciole::DesktopIntegration::pointer(const PointerEvent& event) {
   if (event.type == PointerEvent::Type::Enter) {
     m_enterSerial = event.serial;
     setCursorShape(event.serial, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT);
@@ -91,7 +91,7 @@ void files::DesktopIntegration::pointer(const PointerEvent& event) {
     m_enterSerial = 0;
   }
 }
-void files::DesktopIntegration::setCursorShape(std::uint32_t serial, std::uint32_t shape) {
+void luciole::DesktopIntegration::setCursorShape(std::uint32_t serial, std::uint32_t shape) {
   if (m_shapeGlobal) {
     m_connection.setCursorShape(serial, shape);
     return;
@@ -160,7 +160,7 @@ void files::DesktopIntegration::setCursorShape(std::uint32_t serial, std::uint32
   wl_surface_commit(m_cursorSurface);
 }
 
-struct files::WindowSurface::Decoration {
+struct luciole::WindowSurface::Decoration {
   zxdg_toplevel_decoration_v1* role = nullptr;
   WindowSurface* surface = nullptr;
   bool server = false;
@@ -172,7 +172,7 @@ struct files::WindowSurface::Decoration {
     server = false;
   }
 };
-files::WindowSurface::WindowSurface(WaylandConnection& connection)
+luciole::WindowSurface::WindowSurface(WaylandConnection& connection)
     : ToplevelSurface(connection), m_decoration(std::make_shared<Decoration>()) {
   m_decoration->surface = this;
   auto& desktop = connection.extension<DesktopIntegration>();
@@ -196,8 +196,8 @@ files::WindowSurface::WindowSurface(WaylandConnection& connection)
       [state = m_decoration] { state->release(); }
   );
 }
-files::WindowSurface::~WindowSurface() {
+luciole::WindowSurface::~WindowSurface() {
   m_decoration->surface = nullptr;
   m_decoration->release();
 }
-bool files::WindowSurface::serverDecorated() const { return m_decoration->server; }
+bool luciole::WindowSurface::serverDecorated() const { return m_decoration->server; }

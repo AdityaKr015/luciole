@@ -14,7 +14,7 @@ struct zxdg_decoration_manager_v1;
 struct PointerEvent;
 class WaylandConnection;
 
-namespace files {
+namespace luciole {
   class LaunchActivation;
   class DesktopIntegration final : public WaylandExtension {
   public:
@@ -53,4 +53,4 @@ namespace files {
     struct Decoration;
     std::shared_ptr<Decoration> m_decoration;
   };
-} // namespace files
+} // namespace luciole

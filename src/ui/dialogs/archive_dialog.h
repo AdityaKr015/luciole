@@ -15,7 +15,7 @@ class ArchiveDialog final : public Flex {
 public:
   ArchiveDialog(
       bool compress, std::string name, std::string destination,
-      std::function<std::string(const std::string&, const std::string&, files::ArchiveFormat, const std::string&)>
+      std::function<std::string(const std::string&, const std::string&, luciole::ArchiveFormat, const std::string&)>
           submit,
       std::function<void()> cancel
   );
@@ -31,13 +31,14 @@ private:
   ScrollView* m_scroll = nullptr;
   Label* m_error = nullptr;
   std::size_t m_format = 0;
-  std::function<std::string(const std::string&, const std::string&, files::ArchiveFormat, const std::string&)> m_submit;
+  std::function<std::string(const std::string&, const std::string&, luciole::ArchiveFormat, const std::string&)>
+      m_submit;
 };
 class ArchivePasswordDialog final : public Flex {
 public:
   ArchivePasswordDialog(
       std::string name, bool retry, std::function<bool(std::string)> submit, std::function<void()> cancel,
-      files::ArchiveFormat format = files::ArchiveFormat::Zip
+      luciole::ArchiveFormat format = luciole::ArchiveFormat::Zip
   );
   InputArea* focusArea() const;
 
@@ -46,5 +47,5 @@ private:
   Input* m_password = nullptr;
   Label* m_error = nullptr;
   std::function<bool(std::string)> m_submit;
-  files::ArchiveFormat m_format = files::ArchiveFormat::Zip;
+  luciole::ArchiveFormat m_format = luciole::ArchiveFormat::Zip;
 };

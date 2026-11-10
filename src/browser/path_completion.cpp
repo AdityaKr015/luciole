@@ -8,22 +8,22 @@
 #include <exception>
 #include <stdexcept>
 
-struct files::PathCompletion::State {
+struct luciole::PathCompletion::State {
   CancelToken token;
   std::uint64_t revision = 0;
   bool active = true;
 };
-files::PathCompletion::PathCompletion() : m_state(std::make_shared<State>()) {}
-files::PathCompletion::~PathCompletion() {
+luciole::PathCompletion::PathCompletion() : m_state(std::make_shared<State>()) {}
+luciole::PathCompletion::~PathCompletion() {
   m_state->active = false;
   cancel();
 }
-void files::PathCompletion::cancel() {
+void luciole::PathCompletion::cancel() {
   ++m_state->revision;
   m_state->token.cancel();
   m_state->token = CancelToken{};
 }
-void files::PathCompletion::complete(
+void luciole::PathCompletion::complete(
     const std::string& text, const Location& base, bool showHidden, std::function<void(PathSuggestions)> completed
 ) {
   try {
@@ -52,12 +52,12 @@ void files::PathCompletion::complete(
     completed({.items = {}, .error = error.what()});
   }
 }
-void files::PathCompletion::children(
+void luciole::PathCompletion::children(
     const Location& parent, bool showHidden, std::function<void(PathSuggestions)> completed
 ) {
   enumerate(parent, {}, showHidden, std::move(completed));
 }
-void files::PathCompletion::enumerate(
+void luciole::PathCompletion::enumerate(
     const Location& parent, std::string prefix, bool showHidden, std::function<void(PathSuggestions)> completed
 ) {
   cancel();

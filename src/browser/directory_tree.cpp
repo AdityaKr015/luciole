@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <set>
 
-struct files::DirectoryTree::Node {
+struct luciole::DirectoryTree::Node {
   DirectoryEntry entry;
   DirectorySession session{maxChildren};
   bool started = false;
@@ -14,29 +14,29 @@ struct files::DirectoryTree::Node {
   std::map<std::string, Identity> ids;
   explicit Node(DirectoryEntry value) : entry(std::move(value)) {}
 };
-files::DirectoryTree::DirectoryTree(DirectoryModel& model, bool foldersOnly)
+luciole::DirectoryTree::DirectoryTree(DirectoryModel& model, bool foldersOnly)
     : m_model(model), m_foldersOnly(foldersOnly) {}
-files::DirectoryTree::~DirectoryTree() { clear(); }
-void files::DirectoryTree::clear() {
+luciole::DirectoryTree::~DirectoryTree() { clear(); }
+void luciole::DirectoryTree::clear() {
   for (auto& [uri, node] : m_nodes) {
     node->session.setChangedCallback({});
   }
   m_nodes.clear();
   m_rejected.reset();
 }
-void files::DirectoryTree::setRoot(DirectorySnapshot snapshot) {
+void luciole::DirectoryTree::setRoot(DirectorySnapshot snapshot) {
   if (m_root.location != snapshot.location) {
     clear();
   }
   m_root = std::move(snapshot);
   publish();
 }
-std::size_t files::DirectoryTree::loading() const {
+std::size_t luciole::DirectoryTree::loading() const {
   return std::ranges::count_if(m_nodes, [](const auto& pair) {
     return pair.second->started && pair.second->session.snapshot().status == DirectoryStatus::Loading;
   });
 }
-files::TreeRowInfo files::DirectoryTree::row(EntryId id) const {
+luciole::TreeRowInfo luciole::DirectoryTree::row(EntryId id) const {
   TreeRowInfo result{.depth = m_model.treeDepth(id), .enabled = true, .status = {}};
   const auto* entry = m_model.entry(id);
   result.expandable = entry && entry->type == FileType::Directory && !entry->symlink && !entry->location.isTrash();
@@ -61,7 +61,7 @@ files::TreeRowInfo files::DirectoryTree::row(EntryId id) const {
   }
   return result;
 }
-bool files::DirectoryTree::cycle(const DirectoryEntry& entry) const {
+bool luciole::DirectoryTree::cycle(const DirectoryEntry& entry) const {
   auto parent = m_model.treeParent(entry.id);
   std::set<EntryId> visited;
   while (parent) {
@@ -79,7 +79,7 @@ bool files::DirectoryTree::cycle(const DirectoryEntry& entry) const {
   }
   return false;
 }
-bool files::DirectoryTree::expand(EntryId id) {
+bool luciole::DirectoryTree::expand(EntryId id) {
   const auto info = row(id);
   if (!info.expandable || info.expanded) {
     return false;
@@ -103,7 +103,7 @@ bool files::DirectoryTree::expand(EntryId id) {
   pump();
   return true;
 }
-bool files::DirectoryTree::collapse(EntryId id) {
+bool luciole::DirectoryTree::collapse(EntryId id) {
   const auto* entry = m_model.entry(id);
   if (!entry || !m_nodes.contains(id)) {
     return false;
@@ -132,8 +132,8 @@ bool files::DirectoryTree::collapse(EntryId id) {
   pump();
   return true;
 }
-bool files::DirectoryTree::toggle(EntryId id) { return row(id).expanded ? collapse(id) : expand(id); }
-void files::DirectoryTree::pump() {
+bool luciole::DirectoryTree::toggle(EntryId id) { return row(id).expanded ? collapse(id) : expand(id); }
+void luciole::DirectoryTree::pump() {
   if (m_pumping) {
     return;
   }
@@ -153,7 +153,7 @@ void files::DirectoryTree::pump() {
   }
   m_pumping = false;
 }
-void files::DirectoryTree::refresh() {
+void luciole::DirectoryTree::refresh() {
   for (auto& [id, node] : m_nodes) {
     node->session.setChangedCallback({});
     node->session.cancel();
@@ -166,7 +166,7 @@ void files::DirectoryTree::refresh() {
   publish();
   pump();
 }
-void files::DirectoryTree::publish() {
+void luciole::DirectoryTree::publish() {
   auto snapshot = m_root;
   std::unordered_map<EntryId, EntryId> parents;
   std::set<EntryId> retained;

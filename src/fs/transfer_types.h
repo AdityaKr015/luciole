@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-namespace files {
+namespace luciole {
   // Verified transfer backends; this check never performs remote I/O.
   bool transferLocationSupported(const Location& location);
 
@@ -31,4 +31,4 @@ namespace files {
   };
   bool
   transferAffectsLocation(const std::vector<TransferResult>& results, const Location& location, bool recursive = false);
-} // namespace files
+} // namespace luciole

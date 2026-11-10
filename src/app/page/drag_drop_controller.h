@@ -14,14 +14,14 @@
 #include <utility>
 #include <vector>
 
-namespace files {
+namespace luciole {
   class FileIcon;
   class FileIconCache;
   class MillerColumns;
   class PinService;
   class ThumbnailService;
   struct FileIconImage;
-} // namespace files
+} // namespace luciole
 
 struct PointerEvent;
 class AnimationManager;
@@ -41,9 +41,9 @@ class WaylandConnection;
 class DragDropController {
 public:
   DragDropController(
-      PageContext& page, WaylandConnection& connection, files::PinService& pins, TransferController& transferController,
-      files::ThumbnailService& thumbnails, files::FileIconCache& icons, files::MillerColumns& miller,
-      SidebarController& sidebar, LocationBarController& locationBar
+      PageContext& page, WaylandConnection& connection, luciole::PinService& pins,
+      TransferController& transferController, luciole::ThumbnailService& thumbnails, luciole::FileIconCache& icons,
+      luciole::MillerColumns& miller, SidebarController& sidebar, LocationBarController& locationBar
   );
 
   // True while a file or place drag runs.
@@ -53,17 +53,17 @@ public:
 
   // Drops from outside the page, at the pointer position the page tracks.
   void clearExternalDrop();
-  const std::vector<files::Bookmark>* draggedFolders() const;
-  files::FileDropTarget externalDrop(float x, float y, const std::vector<files::Bookmark>* pins);
-  files::FileDropTarget externalDestination(const files::Location& destination, LayoutRect rect);
+  const std::vector<luciole::Bookmark>* draggedFolders() const;
+  luciole::FileDropTarget externalDrop(float x, float y, const std::vector<luciole::Bookmark>* pins);
+  luciole::FileDropTarget externalDestination(const luciole::Location& destination, LayoutRect rect);
   // The folder under (x, y) that a drag from another page drops into.
-  std::optional<std::pair<files::Location, LayoutRect>> foreignTarget(float x, float y) const;
-  void setForeignDrop(std::function<std::optional<std::pair<files::Location, LayoutRect>>(float, float)> callback);
+  std::optional<std::pair<luciole::Location, LayoutRect>> foreignTarget(float x, float y) const;
+  void setForeignDrop(std::function<std::optional<std::pair<luciole::Location, LayoutRect>>(float, float)> callback);
 
   // Remembers the serial of a left press on the page, which starts a compositor drag.
   void trackButton(const PointerEvent& event);
-  void startFileDrag(const std::vector<files::EntryId>& ids);
-  void startPlaceDrag(const files::Bookmark& bookmark);
+  void startFileDrag(const std::vector<luciole::EntryId>& ids);
+  void startPlaceDrag(const luciole::Bookmark& bookmark);
   void cancelDrag();
   // The file view ended its gesture: cancel a file drag the page runs itself.
   void cancelFileDrag();
@@ -88,23 +88,23 @@ public:
 
 private:
   struct EntryTarget {
-    files::EntryId id;
-    files::Location location;
+    luciole::EntryId id;
+    luciole::Location location;
   };
   struct Drag {
     std::vector<EntryTarget> entries;
-    std::vector<files::Bookmark> bookmarks;
-    std::optional<files::Location> sourcePin;
+    std::vector<luciole::Bookmark> bookmarks;
+    std::optional<luciole::Location> sourcePin;
     bool foldersOnly = false;
   };
   struct DropTarget {
-    files::Location location;
+    luciole::Location location;
     LayoutRect rect;
-    std::optional<files::EntryId> entry = std::nullopt;
+    std::optional<luciole::EntryId> entry = std::nullopt;
   };
 
   bool dragCurrent() const;
-  bool validDropFolder(const files::Location& destination) const;
+  bool validDropFolder(const luciole::Location& destination) const;
   std::optional<DropTarget> dropTarget() const;
   std::optional<std::size_t> pinDropSlot() const;
   VirtualGridView* dragView() const;
@@ -113,16 +113,16 @@ private:
 
   PageContext& m_page;
   WaylandConnection& m_connection;
-  files::PinService& m_pins;
+  luciole::PinService& m_pins;
   TransferController& m_transferController;
-  files::ThumbnailService& m_thumbnails;
-  files::FileIconCache& m_icons;
-  files::MillerColumns& m_miller;
+  luciole::ThumbnailService& m_thumbnails;
+  luciole::FileIconCache& m_icons;
+  luciole::MillerColumns& m_miller;
   SidebarController& m_sidebar;
   LocationBarController& m_locationBar;
-  std::function<std::optional<std::pair<files::Location, LayoutRect>>(float, float)> m_foreignDrop;
+  std::function<std::optional<std::pair<luciole::Location, LayoutRect>>(float, float)> m_foreignDrop;
   std::optional<Drag> m_drag;
-  std::shared_ptr<const files::FileIconImage> m_dragArtwork;
+  std::shared_ptr<const luciole::FileIconImage> m_dragArtwork;
   std::uint32_t m_fileDragSerial = 0;
   bool m_externalHover = false;
   bool m_externalDraggingHere = false;
@@ -139,7 +139,7 @@ private:
   std::optional<DropTarget> m_lastDropTarget;
   Node* m_dragOverlay = nullptr;
   std::unique_ptr<Node> m_detachedDragOverlay;
-  files::FileIcon* m_dragIcon = nullptr;
+  luciole::FileIcon* m_dragIcon = nullptr;
   Flex* m_dragCount = nullptr;
   Label* m_dragCountLabel = nullptr;
   Box* m_folderDropHighlight = nullptr;

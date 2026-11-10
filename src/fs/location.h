@@ -3,7 +3,7 @@
 #include <optional>
 #include <string>
 
-namespace files {
+namespace luciole {
   // URIs and native names are operation data, never presentation text.
   class Location {
   public:
@@ -35,4 +35,4 @@ namespace files {
     explicit Location(std::string uri);
     std::string m_uri;
   };
-} // namespace files
+} // namespace luciole

@@ -5,6 +5,6 @@
 #include <gio/gio.h>
 #include <string>
 
-namespace files {
+namespace luciole {
   GioPtr<GAppLaunchContext> launchContext(const std::string& activationToken);
-} // namespace files
+} // namespace luciole

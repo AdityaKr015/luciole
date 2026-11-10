@@ -1,4 +1,4 @@
-#compdef noctalia-files
+#compdef luciole
 _arguments \
   '--help[Show help]' \
   '--version[Show version]' \

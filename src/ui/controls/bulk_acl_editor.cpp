@@ -10,7 +10,7 @@
 
 namespace {
   constexpr std::array tags{
-      files::AclTag::Owner, files::AclTag::OwningGroup, files::AclTag::Other, files::AclTag::Mask
+      luciole::AclTag::Owner, luciole::AclTag::OwningGroup, luciole::AclTag::Other, luciole::AclTag::Mask
   };
   std::pair<std::uint32_t, std::uint32_t> rights(const std::array<std::size_t, 3>& choices) {
     std::uint32_t value = 0, mask = 0;
@@ -59,18 +59,18 @@ void BulkAclEditor::changed(bool rebuild) {
   m_status->setColor(colorSpecFromRole(ColorRole::OnSurfaceVariant));
   m_changed();
 }
-files::AclPatchEdit BulkAclEditor::edit() const {
-  files::AclPatchEdit edit;
+luciole::AclPatchEdit BulkAclEditor::edit() const {
+  luciole::AclPatchEdit edit;
   edit.defaultPolicy = m_defaults;
   for (std::size_t i = 0; i < m_lists.size(); ++i) {
-    if (i == 1 && (m_defaults == files::AclDefaultPolicy::Keep || m_defaults == files::AclDefaultPolicy::Remove)) {
+    if (i == 1 && (m_defaults == luciole::AclDefaultPolicy::Keep || m_defaults == luciole::AclDefaultPolicy::Remove)) {
       continue;
     }
     const auto& list = m_lists[i];
     auto& patch = i == 0 ? edit.access : edit.defaults;
     patch.maskPolicy = list.mask;
     for (std::size_t j = 0; j < tags.size(); ++j) {
-      if (tags[j] == files::AclTag::Mask && list.mask != files::AclMaskPolicy::Keep) {
+      if (tags[j] == luciole::AclTag::Mask && list.mask != luciole::AclMaskPolicy::Keep) {
         continue;
       }
       const auto [value, mask] = rights(list.bits[j]);
@@ -91,13 +91,13 @@ bool BulkAclEditor::canApply() const {
   const auto value = edit();
   return m_ready
       && (!value.access.entries.empty()
-          || value.access.maskPolicy != files::AclMaskPolicy::Keep
+          || value.access.maskPolicy != luciole::AclMaskPolicy::Keep
           || !value.defaults.entries.empty()
-          || value.defaults.maskPolicy != files::AclMaskPolicy::Keep
-          || value.defaultPolicy == files::AclDefaultPolicy::Create
-          || value.defaultPolicy == files::AclDefaultPolicy::Remove);
+          || value.defaults.maskPolicy != luciole::AclMaskPolicy::Keep
+          || value.defaultPolicy == luciole::AclDefaultPolicy::Create
+          || value.defaultPolicy == luciole::AclDefaultPolicy::Remove);
 }
-void BulkAclEditor::sync(const files::PermissionSnapshot& snapshot) {
+void BulkAclEditor::sync(const luciole::PermissionSnapshot& snapshot) {
   std::size_t editable = 0, inspected = 0;
   if (snapshot.results) {
     for (const auto& row : *snapshot.results) {
@@ -108,10 +108,10 @@ void BulkAclEditor::sync(const files::PermissionSnapshot& snapshot) {
     }
   }
   const bool ready =
-      snapshot.phase == files::PermissionPhase::Ready && editable > 0 && !(snapshot.recursive && snapshot.finished);
+      snapshot.phase == luciole::PermissionPhase::Ready && editable > 0 && !(snapshot.recursive && snapshot.finished);
   if (snapshot.results != m_results && snapshot.finished && snapshot.aclOperation) {
     m_lists = {};
-    m_defaults = files::AclDefaultPolicy::Keep;
+    m_defaults = luciole::AclDefaultPolicy::Keep;
     m_rebuild = true;
   }
   m_results = snapshot.results;
@@ -173,7 +173,7 @@ void BulkAclEditor::rebuild() {
                .enabled = m_ready,
                .equalSegmentWidths = true,
                .onChange = [this](std::size_t value) {
-                 m_defaults = static_cast<files::AclDefaultPolicy>(value);
+                 m_defaults = static_cast<luciole::AclDefaultPolicy>(value);
                  changed(true);
                }}
           )
@@ -187,7 +187,7 @@ void BulkAclEditor::rebuild() {
                .maxLines = 4}
           )
       );
-      if (m_defaults == files::AclDefaultPolicy::Keep || m_defaults == files::AclDefaultPolicy::Remove) {
+      if (m_defaults == luciole::AclDefaultPolicy::Keep || m_defaults == luciole::AclDefaultPolicy::Remove) {
         continue;
       }
     }
@@ -199,7 +199,7 @@ void BulkAclEditor::rebuild() {
              .enabled = m_ready,
              .equalSegmentWidths = true,
              .onChange = [this, index](std::size_t value) {
-               m_lists[index].mask = static_cast<files::AclMaskPolicy>(value);
+               m_lists[index].mask = static_cast<luciole::AclMaskPolicy>(value);
                changed(true);
              }}
         )
@@ -215,7 +215,7 @@ void BulkAclEditor::rebuild() {
     );
     constexpr std::array names{"Owner", "Owning group", "Others", "Mask (group class)"};
     for (std::size_t role = 0; role < tags.size(); ++role) {
-      if (tags[role] == files::AclTag::Mask && list.mask != files::AclMaskPolicy::Keep) {
+      if (tags[role] == luciole::AclTag::Mask && list.mask != luciole::AclMaskPolicy::Keep) {
         continue;
       }
       m_rows->addChild(ui::label({.text = names[role], .fontWeight = FontWeight::SemiBold}));
@@ -229,7 +229,7 @@ void BulkAclEditor::rebuild() {
       m_rows->addChild(
           ui::row(
               {.align = FlexAlign::Center, .gap = Style::spaceSm},
-              ui::label({.text = value.tag == files::AclTag::User ? "User" : "Group"}),
+              ui::label({.text = value.tag == luciole::AclTag::User ? "User" : "Group"}),
               ui::input(
                   {.value = value.account,
                    .placeholder = "Name or numeric ID",
@@ -285,10 +285,10 @@ void BulkAclEditor::rebuild() {
       actions->addChild(
           ui::button(
               {.text = user ? "Add user change" : "Add group change",
-               .enabled = m_ready && list.named.size() < files::maxAclEntries - tags.size(),
+               .enabled = m_ready && list.named.size() < luciole::maxAclEntries - tags.size(),
                .variant = ButtonVariant::Ghost,
                .onClick = [this, index, user] {
-                 m_lists[index].named.push_back({user ? files::AclTag::User : files::AclTag::Group, {}, {}, false});
+                 m_lists[index].named.push_back({user ? luciole::AclTag::User : luciole::AclTag::Group, {}, {}, false});
                  changed(true);
                }}
           )
