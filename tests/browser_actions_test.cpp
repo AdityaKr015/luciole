@@ -88,6 +88,39 @@ namespace {
     model.applySnapshot(data);
     TEST_CHECK(!R::state(A::CopyFiles, c, R::capture(c)).enabled);
   }
+  void testExecutionActions() {
+    files::DirectoryModel model;
+    auto data = snapshot();
+    data.entries.front().access.execute = true;
+    model.applySnapshot(data);
+    model.select(1);
+    files::ActionContext context{.model = model, .context = 11, .query = {}, .pinned = {}};
+    auto request = R::capture(context);
+    TEST_CHECK(R::state(A::RunProgram, context, request).enabled);
+    TEST_CHECK(!R::state(A::RunInTerminal, context, request).enabled);
+    context.terminalAvailable = true;
+    TEST_CHECK(R::state(A::RunInTerminal, context, request).enabled);
+    TEST_CHECK(R::state(A::Scripts, context, request).enabled);
+    model.select(6);
+    TEST_CHECK(!R::state(A::RunProgram, context, R::capture(context)).enabled);
+    model.select(1);
+    data.entries.front().access.execute = false;
+    ++data.generation;
+    model.applySnapshot(data);
+    TEST_CHECK(!R::state(A::RunProgram, context, request).enabled);
+    data.entries.front().location = files::Location::fromPath("/tmp/action-fixture/test.desktop");
+    ++data.generation;
+    model.applySnapshot(data);
+    request = R::capture(context);
+    TEST_CHECK(R::state(A::RunProgram, context, request).enabled);
+    TEST_CHECK(!R::state(A::RunInTerminal, context, request).enabled);
+    data.entries.front().location = files::Location::fromUri("sftp://server/test.desktop");
+    ++data.generation;
+    model.applySnapshot(data);
+    request = R::capture(context);
+    TEST_CHECK(!R::state(A::RunProgram, context, request).enabled);
+    TEST_CHECK(!R::state(A::Scripts, context, request).enabled);
+  }
   void testTrashActions() {
     files::DirectoryModel model;
     auto data = snapshot();
@@ -545,6 +578,7 @@ int main() {
     testArchiveActions();
     testSplitArchiveActions();
     testCompressedArchiveActions();
+    testExecutionActions();
     testTrashActions();
     testLinkActions();
     testFileClipboardActions();

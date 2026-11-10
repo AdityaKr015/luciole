@@ -37,6 +37,7 @@ endforeach
 alias_target('generated-headers', protocol_headers)
 
 gio = dependency('gio-2.0', version: '>=2.76')
+gio_unix = dependency('gio-unix-2.0', version: '>=2.76')
 gdk_pixbuf = dependency('gdk-pixbuf-2.0', version: '>=2.44')
 glycin = dependency('glycin-2', version: '>=2.0.1')
 if not cpp.has_header('stb/stb_image_resize2.h')
@@ -282,15 +283,16 @@ platform_lib = static_library('files-platform',
     'src/platform/file_launcher.cpp',
     'src/platform/launch_activation.cpp',
     'src/platform/launch_context.cpp',
+    'src/platform/program_launcher.cpp',
     'src/platform/terminal_launcher.cpp',
   ),
   protocol_sources,
   protocol_headers,
   include_directories: src_inc,
-  dependencies: [fs_dep, noctalia_ui_dep, wayland_client, dependency('wayland-cursor')],
+  dependencies: [fs_dep, noctalia_ui_dep, wayland_client, gio_unix, dependency('wayland-cursor')],
 )
 platform_dep = declare_dependency(link_with: platform_lib, include_directories: src_inc,
-  dependencies: [fs_dep, noctalia_ui_dep, wayland_client],
+  dependencies: [fs_dep, noctalia_ui_dep, wayland_client, gio_unix],
   sources: protocol_headers,
 )
 
@@ -346,6 +348,7 @@ app = executable('noctalia-files',
     'src/app/page/browser_page.cpp',
     'src/app/page/create_controller.cpp',
     'src/app/page/details_header_controller.cpp',
+    'src/app/page/execution_controller.cpp',
     'src/app/page/drag_drop_controller.cpp',
     'src/app/page/file_keyboard_controller.cpp',
     'src/app/page/location_bar_controller.cpp',

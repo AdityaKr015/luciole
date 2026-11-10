@@ -23,6 +23,7 @@ namespace files {
 struct KeyboardEvent;
 class CreateController;
 class DetailsHeaderController;
+class ExecutionController;
 class LocationBarController;
 class PageContext;
 class PropertiesController;
@@ -39,7 +40,7 @@ public:
       PageContext& page, files::PinService& pins, TransferController& transferController,
       files::TerminalLauncher& terminal, files::PathCompletion& siblingCompletion, CreateController& creator,
       SubmenuController& submenus, RenameController& renamer, PropertiesController& properties,
-      DetailsHeaderController& columns, LocationBarController& locationBar
+      DetailsHeaderController& columns, LocationBarController& locationBar, ExecutionController& execution
   );
 
   // Shows `entries` on the popup; activating an entry closes the menu and then calls `action` with its id.
@@ -91,6 +92,7 @@ private:
   PropertiesController& m_properties;
   DetailsHeaderController& m_columns;
   LocationBarController& m_locationBar;
+  ExecutionController& m_execution;
   ContextMenuControl* m_menu = nullptr;
   ScrollView* m_scroll = nullptr;
   std::shared_ptr<int> m_lifetime = std::make_shared<int>(0);

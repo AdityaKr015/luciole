@@ -233,10 +233,12 @@ bool BrowserPage::busy() const {
       || m_preferences.busy()
       || m_pins.busy()
       || m_launcher.busy()
+      || m_execution.busy()
       || m_transferController.pastePending();
 }
 
 void BrowserPage::shutdown() {
+  m_execution.cancel();
   m_preview.clear();
   m_transferController.cancelPaste();
   m_launcher.cancelApplications();
@@ -1304,6 +1306,11 @@ void BrowserPage::runAction(
       {Action::Terminal, [](BrowserPage& page, const Call& call) { page.openTerminal(*call.request.folder); }},
       {Action::CopyTargetPath, pathClipboard},
       {Action::CopyTargetUri, pathClipboard},
+      {Action::RunProgram, [](BrowserPage& page, const Call& call) { page.m_execution.run(call.request, false); }},
+      {Action::RunInTerminal, [](BrowserPage& page, const Call& call) { page.m_execution.run(call.request, true); }},
+      {Action::Scripts, [](BrowserPage& page, const Call&) {
+        page.m_submenus.open(files::ActionRegistry::menuId(Action::Scripts), false);
+      }},
       {Action::TargetTerminal,
        [](BrowserPage& page, const Call& call) { page.openTerminal(call.targets.front().location); }},
   });

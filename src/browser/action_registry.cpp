@@ -178,6 +178,32 @@ namespace {
     }
     return {};
   }
+  State runProgram(const C& c, const R& r) {
+    if (!single(r) || c.operationsBusy) {
+      return unavailable("Select one program and wait for file operations to finish.");
+    }
+    const auto* entry = c.model.entry(r.targets.front().id);
+    if (!entry->location.isNative()
+        || entry->location.isTrash()
+        || (entry->type != FileType::Regular && !entry->symlink)) {
+      return unavailable("Run requires a native program outside Trash.");
+    }
+    return require(
+        entry->location.basename().value_or("").ends_with(".desktop") || entry->access.execute != false,
+        "Allow executing this file in Properties first."
+    );
+  }
+  State scripts(const C& c, const R& r) {
+    if (!r.folder || !r.folder->isNative() || r.folder->isTrash() || c.operationsBusy) {
+      return unavailable("Scripts require a native folder outside Trash.");
+    }
+    return require(
+        std::ranges::all_of(
+            r.targets, [](const auto& target) { return target.location.isNative() && !target.location.isTrash(); }
+        ),
+        "Scripts currently accept native files outside Trash."
+    );
+  }
   State containing(const C&, const R& r) { return require(single(r), "Select exactly one item."); }
   State originalLocation(const C& c, const R& r) {
     if (!single(r)) {
@@ -493,6 +519,23 @@ namespace {
       {.action = A::Terminal, .label = "Open Terminal Here", .shortcut = "", .scope = S::Location, .rule = terminal},
       {.action = A::CopyTargetPath, .label = "Copy path", .shortcut = "", .scope = S::Targets, .rule = clipboard},
       {.action = A::CopyTargetUri, .label = "Copy URI", .shortcut = "", .scope = S::Targets, .rule = clipboard},
+      {.action = A::RunProgram, .label = "Run as a Program", .shortcut = "", .scope = S::Targets, .rule = runProgram},
+      {.action = A::RunInTerminal,
+       .label = "Run in Terminal",
+       .shortcut = "",
+       .scope = S::Targets,
+       .rule =
+           [](const C& c, const R& r) {
+             const auto state = runProgram(c, r);
+             if (!state.enabled) {
+               return state;
+             }
+             return require(
+                 c.terminalAvailable && !r.targets.front().location.basename().value_or("").ends_with(".desktop"),
+                 "Run in Terminal requires xdg-terminal-exec and a program or script."
+             );
+           }},
+      {.action = A::Scripts, .label = "Scripts", .shortcut = "", .scope = S::Selection, .rule = scripts},
       {.action = A::TargetTerminal,
        .label = "Open in Terminal",
        .shortcut = "",

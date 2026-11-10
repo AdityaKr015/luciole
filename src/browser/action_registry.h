@@ -84,6 +84,9 @@ namespace files {
     Terminal,
     CopyTargetPath,
     CopyTargetUri,
+    RunProgram,
+    RunInTerminal,
+    Scripts,
     TargetTerminal
   };
   // TargetTerminal stays the last enumerator.

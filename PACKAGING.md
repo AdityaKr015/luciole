@@ -65,7 +65,7 @@ Names below are pkg-config modules or header paths, not universal distribution p
 | `wayland-protocols`                               | 1.49 or newer; build-time protocol definitions                                                 |
 | `wayland-client`, `wayland-egl`, `wayland-cursor` | Wayland connection, EGL surfaces and cursor fallback                                           |
 | `egl`, `glesv2`                                   | EGL and OpenGL ES; the shared library also has fallback detection through wayland-egl/libepoxy |
-| `gio-2.0`                                         | 2.76 or newer; GLib/GIO filesystem and desktop integration                                     |
+| `gio-2.0`, `gio-unix-2.0`                        | 2.76 or newer; filesystem integration and Unix desktop launchers, from GLib development files |
 | `glib-2.0`                                        | GLib core services                                                                             |
 | `freetype2`, `fontconfig`                         | Font discovery and rendering                                                                   |
 | `cairo`, `cairo-ft`                               | Cairo rendering with FreeType integration                                                      |
@@ -99,7 +99,7 @@ The linked libraries need their ordinary runtime packages. The following data, p
 | `ffmpeg`, `ffprobe`                           | Video/audio artwork and media metadata                                            |
 | `pdftoppm`, `pdfinfo`                         | PDF thumbnails and metadata, normally supplied by Poppler utilities               |
 | `7zz`, `7z` or `7za`                          | System 7-Zip CLI for encrypted 7z input, searched in that order                   |
-| `xdg-terminal-exec`                           | Open Terminal Here; unavailable when the helper or a suitable terminal is missing |
+| `xdg-terminal-exec`                           | Open Terminal Here and Run in Terminal; require the helper and a suitable terminal |
 | Associated applications                       | Opening files through the user's GIO MIME associations                            |
 
 Missing optional helpers make their associated feature unavailable; they do not prevent ordinary native directory browsing. Recommend or depend on them according to the features the package advertises. The Nix wrapper exposes FFmpeg, Poppler utilities, 7-Zip and xdg-terminal-exec on `PATH`.
@@ -177,8 +177,17 @@ The application loads internal defaults, then the user's base configuration and 
 | `$XDG_CONFIG_HOME/noctalia-files/colors.toml`   | Optional palette handoff                             |
 | `$XDG_STATE_HOME/noctalia-files/state.toml`     | Application-owned persistent state, including Places |
 | `$XDG_CACHE_HOME/thumbnails/`                   | Regenerable freedesktop thumbnail cache              |
+| `$XDG_DATA_HOME/noctalia-files/scripts/`       | User-installed executable context-menu scripts      |
 
 Unset XDG config/state/cache roots use `~/.config`, `~/.local/state` and `~/.cache`. Files does not currently search `/etc/xdg` or a packaged default config. Do not install per-user `settings.toml`, state or caches from a system package. Keep the GUI override file writable even when `config.toml` is an immutable declarative file. Valid external configuration changes apply automatically.
+
+### Programs and custom scripts
+
+Ordinary Open uses the user's associated application. The separate Run as a Program and Run in Terminal actions execute native ELF programs or executable scripts with an interpreter line. Files does not grant executable permissions automatically. Application `.desktop` files require an explicit Launch Once confirmation showing their captured name and command; Files does not save trust or change their permissions. Supported launchers have `Type=Application` and an `Exec` command. GIO handles their argument fields, declared working directory and terminal behavior. Standalone `%k` receives the original launcher URI; quoted or embedded `%k` is rejected. Successful launching means handoff, not that an application has become ready or exited successfully.
+
+The Scripts submenu lists executable files from `$XDG_DATA_HOME/noctalia-files/scripts`, defaulting to `~/.local/share/noctalia-files/scripts`. Open Scripts Folder creates it on demand. Packages should not populate a user's directory. No scripting language is required by Files itself; each user script needs its own declared interpreter. The script receives selected native paths as separate arguments, with the current native browse folder as its working directory. A background-menu invocation supplies no selected paths. Filenames are never interpolated into a shell command. Remote and Trash locations are outside this script increment.
+
+The application/scripts directories and script targets must be owned by the user or root and not writable by group or others. Symlinks to qualifying executable targets are accepted, including declaratively managed read-only files. Hidden files, `.desktop` entries and non-executable files do not become script actions. Listing is flat and bounded to 64 actions and 1024 inspected children; launch arguments are limited to 4096 paths and 1 MiB. Changed files are refused on revalidation, but native execution uses the original pathname and does not promise atomic protection against a concurrent hostile writer. Launched programs continue independently of Files.
 
 Validate a candidate base configuration without a compositor:
 

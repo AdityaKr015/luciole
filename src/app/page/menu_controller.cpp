@@ -3,6 +3,7 @@
 #include "app/page/active_dialog.h"
 #include "app/page/create_controller.h"
 #include "app/page/details_header_controller.h"
+#include "app/page/execution_controller.h"
 #include "app/page/location_bar_controller.h"
 #include "app/page/page_context.h"
 #include "app/page/properties_controller.h"
@@ -64,11 +65,11 @@ MenuController::MenuController(
     PageContext& page, files::PinService& pins, TransferController& transferController,
     files::TerminalLauncher& terminal, files::PathCompletion& siblingCompletion, CreateController& creator,
     SubmenuController& submenus, RenameController& renamer, PropertiesController& properties,
-    DetailsHeaderController& columns, LocationBarController& locationBar
+    DetailsHeaderController& columns, LocationBarController& locationBar, ExecutionController& execution
 )
     : m_page(page), m_pins(pins), m_transferController(transferController), m_terminal(terminal),
       m_siblingCompletion(siblingCompletion), m_creator(creator), m_submenus(submenus), m_renamer(renamer),
-      m_properties(properties), m_columns(columns), m_locationBar(locationBar) {}
+      m_properties(properties), m_columns(columns), m_locationBar(locationBar), m_execution(execution) {}
 
 ContextMenuControlEntry
 MenuController::actionEntry(Action action, const files::ActionRequest& request, bool radio) const {
@@ -110,6 +111,8 @@ std::vector<ContextMenuControlEntry> MenuController::folderMenuEntries(const fil
   addSeparator(entries);
   entries.push_back({.id = CopyLocation, .label = "Copy Location", .hasSubmenu = true});
   add(Action::Terminal);
+  add(Action::Scripts);
+  entries.back().hasSubmenu = true;
   return entries;
 }
 
@@ -124,6 +127,20 @@ std::vector<ContextMenuControlEntry> MenuController::itemMenuEntries(const files
 
   add(Action::Open);
   add(Action::OpenWith);
+  if (single
+      && single->location.isNative()
+      && !trash
+      && (single->type == files::FileType::Regular || single->symlink)
+      && (single->access.execute == true || single->location.basename().value_or("").ends_with(".desktop"))) {
+    add(Action::RunProgram);
+    if (!single->location.basename().value_or("").ends_with(".desktop")) {
+      add(Action::RunInTerminal);
+    }
+  }
+  if (!trash && m_page.actionState(Action::Scripts, request).enabled) {
+    add(Action::Scripts);
+    entries.back().hasSubmenu = true;
+  }
   if (one) {
     add(Action::QuickPreview);
   }
@@ -237,6 +254,10 @@ void MenuController::openFileMenu(std::optional<files::EntryId> id, float x, flo
       m_submenus.attach(
           row, entryId, [this, request] { m_creator.openDocumentMenu(request); },
           [this] { m_creator.documentMenuClosed(); }
+      );
+    } else if (entryId == files::ActionRegistry::menuId(Action::Scripts)) {
+      m_submenus.attach(
+          row, entryId, [this, request] { m_execution.scripts(request); }, [this] { m_execution.closeScripts(); }
       );
     } else if (entryId == OpenIn) {
       m_submenus.attach(row, entryId, [this, request] { showOpenInMenu(request); });

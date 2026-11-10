@@ -28,6 +28,7 @@ public:
     TransferConflict,
     DropAction,
     ArchivePassword,
+    RunProgram,
   };
 
   // Takes the popup content. It counts as a plain menu until bind() names it.

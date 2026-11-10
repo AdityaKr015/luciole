@@ -9,6 +9,7 @@
 #include "app/page/create_controller.h"
 #include "app/page/details_header_controller.h"
 #include "app/page/drag_drop_controller.h"
+#include "app/page/execution_controller.h"
 #include "app/page/file_keyboard_controller.h"
 #include "app/page/location_bar_controller.h"
 #include "app/page/menu_controller.h"
@@ -333,6 +334,7 @@ private:
   BatchRenameController m_batchRename{*this};
   files::TemplateCatalog m_templates;
   SubmenuController m_submenus{*this, m_connection, m_renderer, m_animations};
+  ExecutionController m_execution{*this, m_submenus, m_connection};
   CreateController m_createController{*this, m_templates, m_submenus};
   ArchiveController m_archiveController{*this, m_launcher, m_icons, m_connection};
   TransferController m_transferController{*this, [this] { operationProgressTick(); }};
@@ -347,7 +349,8 @@ private:
       m_renameController,
       m_propertiesController,
       m_detailsHeader,
-      m_locationBar
+      m_locationBar,
+      m_execution
   };
   SettingsController m_settingsController{*this,        m_preferences, m_thumbnails,
                                           m_connection, m_renderer,    [this] {
