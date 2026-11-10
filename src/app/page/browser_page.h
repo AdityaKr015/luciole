@@ -19,6 +19,7 @@
 #include "app/page/settings_controller.h"
 #include "app/page/sidebar_controller.h"
 #include "app/page/status_bar_controller.h"
+#include "app/page/submenu_controller.h"
 #include "app/page/transfer_controller.h"
 #include "app/page/trash_controller.h"
 #include "app/workspace_command.h"
@@ -277,6 +278,7 @@ private:
   ActiveDialog& activeDialog() override;
   ContextMenuControl* contextMenu() override;
   std::uint32_t popupSerial() override;
+  float popupMaxHeight() const override;
   files::WaylandTextClipboard& clipboard() override;
   files::WindowSurface& surface() override;
   InputDispatcher& dispatcher() override;
@@ -329,7 +331,8 @@ private:
   PropertiesController m_propertiesController{*this, m_icons};
   BatchRenameController m_batchRename{*this};
   files::TemplateCatalog m_templates;
-  CreateController m_createController{*this, m_templates, m_connection, m_renderer, m_animations};
+  SubmenuController m_submenus{*this, m_connection, m_renderer, m_animations};
+  CreateController m_createController{*this, m_templates, m_submenus};
   ArchiveController m_archiveController{*this, m_launcher, m_icons, m_connection};
   TransferController m_transferController{*this, [this] { operationProgressTick(); }};
   MenuController m_menuController{
@@ -339,6 +342,7 @@ private:
       m_terminal,
       m_siblingCompletion,
       m_createController,
+      m_submenus,
       m_renameController,
       m_propertiesController,
       m_detailsHeader,

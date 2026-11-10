@@ -157,6 +157,9 @@ public:
   virtual bool popupAvailable() = 0;
   // Serial for a new popup grab: the last press, else the last input.
   virtual std::uint32_t popupSerial() = 0;
+  // Tallest a context menu popup may be: the height of the window's output, or of the window while that is unknown,
+  // less a margin. Popups may extend past the window.
+  virtual float popupMaxHeight() const = 0;
 
 protected:
   PageContext() = default;

@@ -7,6 +7,7 @@
 #include "app/page/page_context.h"
 #include "app/page/properties_controller.h"
 #include "app/page/rename_controller.h"
+#include "app/page/submenu_controller.h"
 #include "app/page/transfer_controller.h"
 #include "browser/browser_controller.h"
 #include "browser/location_presentation.h"
@@ -28,20 +29,46 @@
 #include "wayland/wayland_seat.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <string>
 #include <utility>
+#include <vector>
 
 using Action = files::BrowserAction;
+
+namespace {
+  // File menu entries that are not browser actions.
+  enum FileMenuId : std::uint16_t {
+    NewTab = 9000,
+    OtherPane,
+    NewWindow,
+    CopyToOther,
+    MoveToOther,
+    ClosePane,
+    PasteInto,
+    OpenIn,
+    CopyLocation,
+  };
+
+  constexpr float kShortSubmenuWidth = 200.0F;
+
+  // Appends a separator unless `entries` is empty or already ends with one.
+  void addSeparator(std::vector<ContextMenuControlEntry>& entries) {
+    if (!entries.empty() && !entries.back().separator) {
+      entries.push_back({.label = "", .separator = true});
+    }
+  }
+} // namespace
 
 MenuController::MenuController(
     PageContext& page, files::PinService& pins, TransferController& transferController,
     files::TerminalLauncher& terminal, files::PathCompletion& siblingCompletion, CreateController& creator,
-    RenameController& renamer, PropertiesController& properties, DetailsHeaderController& columns,
-    LocationBarController& locationBar
+    SubmenuController& submenus, RenameController& renamer, PropertiesController& properties,
+    DetailsHeaderController& columns, LocationBarController& locationBar
 )
     : m_page(page), m_pins(pins), m_transferController(transferController), m_terminal(terminal),
-      m_siblingCompletion(siblingCompletion), m_creator(creator), m_renamer(renamer), m_properties(properties),
-      m_columns(columns), m_locationBar(locationBar) {}
+      m_siblingCompletion(siblingCompletion), m_creator(creator), m_submenus(submenus), m_renamer(renamer),
+      m_properties(properties), m_columns(columns), m_locationBar(locationBar) {}
 
 ContextMenuControlEntry
 MenuController::actionEntry(Action action, const files::ActionRequest& request, bool radio) const {
@@ -59,160 +86,213 @@ MenuController::actionEntry(Action action, const files::ActionRequest& request, 
   };
 }
 
+std::vector<ContextMenuControlEntry> MenuController::folderMenuEntries(const files::ActionRequest& request) const {
+  std::vector<ContextMenuControlEntry> entries;
+  const auto add = [&](Action action) { entries.push_back(actionEntry(action, request)); };
+  if (m_page.hasOtherPane()) {
+    entries.push_back({.id = ClosePane, .label = "Close Pane", .shortcut = "Ctrl+Alt+W"});
+  }
+  add(Action::CreateFolder);
+  add(Action::NewDocument);
+  entries.back().hasSubmenu = true;
+  add(Action::PasteFiles);
+  addSeparator(entries);
+  add(Action::SelectAll);
+  add(Action::InvertSelection);
+  add(Action::SelectPattern);
+  addSeparator(entries);
+  add(Action::SortMenu);
+  add(Action::Refresh);
+  if (request.folder && !request.folder->isTrash()) {
+    add(m_pins.contains(*request.folder) ? Action::UnpinCurrent : Action::PinCurrent);
+  }
+  add(Action::ReloadPins);
+  addSeparator(entries);
+  entries.push_back({.id = CopyLocation, .label = "Copy Location", .hasSubmenu = true});
+  add(Action::Terminal);
+  return entries;
+}
+
+std::vector<ContextMenuControlEntry> MenuController::itemMenuEntries(const files::ActionRequest& request) const {
+  std::vector<ContextMenuControlEntry> entries;
+  const auto add = [&](Action action) { entries.push_back(actionEntry(action, request)); };
+  const auto& model = m_page.browser().model();
+  const bool one = request.targets.size() == 1;
+  const auto* single = one ? model.entry(request.targets.front().id) : nullptr;
+  const bool singleFolder = single != nullptr && single->type == files::FileType::Directory;
+  const bool trash = request.targets.front().location.isTrash();
+
+  add(Action::Open);
+  if (one) {
+    add(Action::OpenWith);
+    add(Action::QuickPreview);
+  }
+  if (singleFolder) {
+    entries.push_back({.id = OpenIn, .label = "Open In", .hasSubmenu = true});
+  }
+  addSeparator(entries);
+  add(Action::CutFiles);
+  add(Action::CopyFiles);
+  if (singleFolder && !trash && m_page.clipboard().available() && m_page.clipboard().hasFiles()) {
+    entries.push_back(
+        {.id = PasteInto,
+         .label = "Paste into Folder",
+         .enabled =
+             !m_page.operationsBusy() && single->location.nativePath().has_value() && single->access.write != false}
+    );
+  }
+  if (m_page.hasOtherPane()) {
+    entries.push_back({.id = CopyToOther, .label = "Copy to Other Pane", .enabled = !m_page.operationsBusy()});
+    entries.push_back({.id = MoveToOther, .label = "Move to Other Pane", .enabled = !m_page.operationsBusy()});
+  }
+  entries.push_back({.id = CopyLocation, .label = "Copy Location", .hasSubmenu = true});
+  addSeparator(entries);
+  if (single != nullptr) {
+    if (files::isSupportedArchive(single->location, single->contentType)) {
+      add(Action::BrowseArchive);
+      add(Action::ExtractHere);
+      add(Action::ExtractTo);
+    }
+    // Only useful when the item lives outside the shown folder (search results); otherwise it reopens this one.
+    if (single->location.parent() != model.snapshot().location) {
+      add(Action::ContainingFolder);
+    }
+    if (single->trash.original) {
+      add(Action::OriginalLocation);
+    }
+  }
+  addSeparator(entries);
+  const bool folders = std::ranges::all_of(request.targets, [&model](const auto& target) {
+    const auto* entry = model.entry(target.id);
+    return entry->type == files::FileType::Directory && !entry->location.isTrash();
+  });
+  if (folders) {
+    if (std::ranges::any_of(request.targets, [this](const auto& target) {
+          return !m_pins.contains(target.location);
+        })) {
+      add(Action::Pin);
+    }
+    if (std::ranges::any_of(request.targets, [this](const auto& target) { return m_pins.contains(target.location); })) {
+      add(Action::Unpin);
+    }
+  }
+  addSeparator(entries);
+  if (trash) {
+    add(Action::Restore);
+    add(Action::DeletePermanently);
+  } else {
+    add(Action::Rename);
+    add(Action::CreateLink);
+    add(Action::Compress);
+    addSeparator(entries);
+    add(Action::Trash);
+  }
+  addSeparator(entries);
+  add(Action::Properties);
+  return entries;
+}
+
 void MenuController::openFileMenu(std::optional<files::EntryId> id, float x, float y) {
   m_page.setActionMessage({});
   const auto request = m_page.actionRequest(id.has_value());
-  std::vector<ContextMenuControlEntry> entries;
-  const auto add = [&](Action action) { entries.push_back(actionEntry(action, request)); };
-  const auto separator = [&] { entries.push_back({.label = "", .separator = true}); };
-  if (!id) {
-    if (m_page.hasOtherPane()) {
-      entries.push_back({.id = 9005, .label = "Close Pane", .shortcut = "Ctrl+Alt+W"});
-    }
-    add(Action::CreateFolder);
-    add(Action::NewDocument);
-    entries.back().hasSubmenu = true;
-    add(Action::PasteFiles);
-    separator();
-    add(Action::SelectAll);
-    add(Action::InvertSelection);
-    add(Action::SelectPattern);
-    separator();
-    add(Action::SortMenu);
-    add(Action::Refresh);
-    if (request.folder && !request.folder->isTrash()) {
-      add(m_pins.contains(*request.folder) ? Action::UnpinCurrent : Action::PinCurrent);
-    }
-    add(Action::ReloadPins);
-    separator();
-    add(Action::CopyPath);
-    add(Action::CopyUri);
-    add(Action::Terminal);
-  } else {
-    if (request.targets.empty()) {
-      return;
-    }
-    add(Action::Open);
-    if (request.targets.size() == 1) {
-      add(Action::OpenWith);
-      add(Action::QuickPreview);
-    }
-    if (request.targets.size() == 1) {
-      const auto* entry = m_page.browser().model().entry(request.targets.front().id);
-      if (entry && entry->type == files::FileType::Directory) {
-        entries.push_back({.id = 9000, .label = "Open in New Tab"});
-        entries.push_back({.id = 9001, .label = "Open in Other Pane"});
-        entries.push_back({.id = 9002, .label = "Open in New Window"});
-      }
-    }
-    separator();
-    add(Action::CutFiles);
-    add(Action::CopyFiles);
-    add(Action::PasteFiles);
-    entries.push_back(
-        {.id = 9003, .label = "Copy to Other Pane", .enabled = m_page.hasOtherPane() && !m_page.operationsBusy()}
-    );
-    entries.push_back(
-        {.id = 9004, .label = "Move to Other Pane", .enabled = m_page.hasOtherPane() && !m_page.operationsBusy()}
-    );
-    if (request.targets.size() == 1) {
-      const auto* entry = m_page.browser().model().entry(request.targets.front().id);
-      if (entry && files::isSupportedArchive(entry->location, entry->contentType)) {
-        add(Action::BrowseArchive);
-        add(Action::ExtractHere);
-        add(Action::ExtractTo);
-      }
-    }
-    if (request.targets.size() == 1) {
-      const auto& location = m_page.browser().model().entry(request.targets.front().id)->location;
-      // Only useful when the item lives outside the shown folder (search results); otherwise it reopens this one.
-      if (location.parent() != m_page.browser().model().snapshot().location) {
-        add(Action::ContainingFolder);
-      }
-      if (m_page.browser().model().entry(request.targets.front().id)->trash.original) {
-        add(Action::OriginalLocation);
-      }
-    }
-    const bool folders = std::ranges::all_of(request.targets, [this](const auto& target) {
-      const auto* entry = m_page.browser().model().entry(target.id);
-      return entry->type == files::FileType::Directory && !entry->location.isTrash();
-    });
-    if (folders) {
-      separator();
-      if (std::ranges::any_of(request.targets, [this](const auto& target) {
-            return !m_pins.contains(target.location);
-          })) {
-        add(Action::Pin);
-      }
-      if (std::ranges::any_of(request.targets, [this](const auto& target) {
-            return m_pins.contains(target.location);
-          })) {
-        add(Action::Unpin);
-      }
-    }
-    separator();
-    const bool trash = request.targets.front().location.isTrash();
-    if (trash) {
-      add(Action::Restore);
-      add(Action::DeletePermanently);
-    }
-    if (!trash) {
-      add(Action::Rename);
-    }
-    if (!trash) {
-      add(Action::CreateLink);
-      add(Action::Compress);
-      add(Action::Trash);
-    }
-    separator();
-    add(Action::CopyTargetPath);
-    add(Action::CopyTargetUri);
-    if (folders && request.targets.size() == 1) {
-      add(Action::TargetTerminal);
-    }
-    separator();
-    add(Action::Properties);
+  if (id && request.targets.empty()) {
+    return;
   }
-  const auto document =
-      std::ranges::find(entries, files::ActionRegistry::menuId(Action::NewDocument), &ContextMenuControlEntry::id);
-  const auto documentRow = !id && document != entries.end()
-      ? std::optional<std::size_t>(static_cast<std::size_t>(document - entries.begin()))
-      : std::nullopt;
+  auto entries = id ? itemMenuEntries(request) : folderMenuEntries(request);
+  std::vector<std::pair<std::size_t, int>> submenus;
+  for (std::size_t row = 0; row < entries.size(); ++row) {
+    if (entries[row].hasSubmenu) {
+      submenus.emplace_back(row, entries[row].id);
+    }
+  }
   showContextMenu(
       std::move(entries),
       [this, request, x, y](int action) {
         if (action == files::ActionRegistry::menuId(Action::SortMenu)) {
           openSortMenu(LayoutRect{x, y, 1, 1}, false);
-          return;
-        }
-        if (action == 9005) {
+        } else if (action == ClosePane) {
           m_page.requestWorkspace(WorkspaceCommand::ClosePane, std::nullopt, std::nullopt);
-          return;
-        }
-        if (action >= 9000) {
-          if (!m_page.requestCurrent(request, files::ActionScope::Targets)) {
-            return;
+        } else if (action == PasteInto) {
+          if (m_page.requestCurrent(request, files::ActionScope::Targets) && !m_page.operationsBusy()) {
+            m_transferController.pasteInto(request);
           }
-          const auto command = action == 9000 ? WorkspaceCommand::NewTab
-              : action == 9001                ? WorkspaceCommand::OpenOther
-              : action == 9002                ? WorkspaceCommand::NewWindow
-              : action == 9003                ? WorkspaceCommand::CopyOther
-                                              : WorkspaceCommand::MoveOther;
-          m_page.requestWorkspace(
-              command, action < 9003 ? std::optional(request.targets.front().location) : std::nullopt,
-              action >= 9003 ? std::optional(request) : std::nullopt
-          );
-          return;
-        }
-        if (const auto browserAction = files::ActionRegistry::fromMenuId(action)) {
+        } else if (action == CopyToOther || action == MoveToOther) {
+          if (m_page.requestCurrent(request, files::ActionScope::Targets)) {
+            m_page.requestWorkspace(
+                action == CopyToOther ? WorkspaceCommand::CopyOther : WorkspaceCommand::MoveOther, std::nullopt, request
+            );
+          }
+        } else if (const auto browserAction = files::ActionRegistry::fromMenuId(action)) {
           m_page.dispatchAction(*browserAction, request);
         }
       },
       {x, y, 1, 1}
   );
-  if (m_menu && documentRow) {
-    m_creator.attachDocumentMenu(*documentRow, request);
+  if (!m_menu) {
+    return;
   }
+  for (const auto& [row, entryId] : submenus) {
+    if (entryId == files::ActionRegistry::menuId(Action::NewDocument)) {
+      m_submenus.attach(
+          row, entryId, [this, request] { m_creator.openDocumentMenu(request); },
+          [this] { m_creator.documentMenuClosed(); }
+      );
+    } else if (entryId == OpenIn) {
+      m_submenus.attach(row, entryId, [this, request] { showOpenInMenu(request); });
+    } else if (entryId == CopyLocation) {
+      m_submenus.attach(row, entryId, [this, request, targets = id.has_value()] {
+        showCopyLocationMenu(request, targets);
+      });
+    }
+  }
+}
+
+void MenuController::showOpenInMenu(const files::ActionRequest& request) {
+  std::vector<ContextMenuControlEntry> entries{
+      {.id = NewTab, .label = "New Tab"},
+      // Without a second pane, the workspace splits the window to open one.
+      {.id = OtherPane, .label = m_page.hasOtherPane() ? "Other Pane" : "New Pane"},
+      {.id = NewWindow, .label = "New Window"}
+  };
+  if (!request.targets.front().location.isTrash()) {
+    entries.push_back(actionEntry(Action::TargetTerminal, request));
+    entries.back().label = "Terminal";
+  }
+  m_submenus.show(
+      std::move(entries),
+      [this, request](int id) {
+        if (const auto action = files::ActionRegistry::fromMenuId(id)) {
+          m_page.dispatchAction(*action, request);
+          return;
+        }
+        if (!m_page.requestCurrent(request, files::ActionScope::Targets)) {
+          return;
+        }
+        m_page.requestWorkspace(
+            id == NewTab          ? WorkspaceCommand::NewTab
+                : id == NewWindow ? WorkspaceCommand::NewWindow
+                                  : WorkspaceCommand::OpenOther,
+            request.targets.front().location, std::nullopt
+        );
+      },
+      kShortSubmenuWidth
+  );
+}
+
+void MenuController::showCopyLocationMenu(const files::ActionRequest& request, bool targets) {
+  auto path = actionEntry(targets ? Action::CopyTargetPath : Action::CopyPath, request);
+  path.label = "Path";
+  auto uri = actionEntry(targets ? Action::CopyTargetUri : Action::CopyUri, request);
+  uri.label = "URI";
+  m_submenus.show(
+      {std::move(path), std::move(uri)},
+      [this, request](int id) {
+        if (const auto action = files::ActionRegistry::fromMenuId(id)) {
+          m_page.dispatchAction(*action, request);
+        }
+      },
+      kShortSubmenuWidth
+  );
 }
 
 void MenuController::openPlaceMenu(const files::Bookmark& bookmark, float x, float y) {
@@ -386,7 +466,7 @@ void MenuController::key(const KeyboardEvent& event) {
     }
     return;
   }
-  if (m_creator.documentKey(event)) {
+  if (m_submenus.key(event)) {
     return;
   }
   if (!event.pressed) {
@@ -404,11 +484,9 @@ void MenuController::key(const KeyboardEvent& event) {
       revealHighlight();
       m_page.menuSurface()->requestRedraw();
     }
-  } else if (
-      KeySymbol::isEnter(event.sym)
-      || (KeySymbol::isRight(event.sym) && m_creator.isDocumentRow(m_menu->highlightedIndex()))
-  ) {
-    m_creator.openedFromKeyboard();
+  } else if (KeySymbol::isRight(event.sym)) {
+    m_submenus.openHighlighted();
+  } else if (KeySymbol::isEnter(event.sym) && !m_submenus.openHighlighted()) {
     (void)m_menu->activateHighlighted();
   }
 }
@@ -427,7 +505,7 @@ void MenuController::showContextMenu(
   auto menu = std::make_unique<ContextMenuControl>();
   auto* control = menu.get();
   const float contentHeight = ContextMenuControl::preferredHeight(entries, entries.size(), 1.0F);
-  const float height = std::min(contentHeight, std::max(120.0F, static_cast<float>(m_page.surface().height()) - 32.0F));
+  const float height = std::min(contentHeight, m_page.popupMaxHeight());
   control->setMaxVisible(entries.size());
   const float width = std::min(preferredWidth, static_cast<float>(m_page.surface().width()) - 32.0F);
   control->setEntries(std::move(entries));

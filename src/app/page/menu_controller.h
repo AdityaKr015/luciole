@@ -27,18 +27,19 @@ class LocationBarController;
 class PageContext;
 class PropertiesController;
 class RenameController;
+class SubmenuController;
 class TransferController;
 class ScrollView;
 
-// Context menus: the file, place, view, sort, selection, columns and breadcrumb menus, and keyboard navigation of
-// whichever context menu the popup shows.
+// Context menus: the file, place, view, sort, selection, columns and breadcrumb menus and the file menu's submenus,
+// and keyboard navigation of whichever context menu the popup shows.
 class MenuController {
 public:
   MenuController(
       PageContext& page, files::PinService& pins, TransferController& transferController,
       files::TerminalLauncher& terminal, files::PathCompletion& siblingCompletion, CreateController& creator,
-      RenameController& renamer, PropertiesController& properties, DetailsHeaderController& columns,
-      LocationBarController& locationBar
+      SubmenuController& submenus, RenameController& renamer, PropertiesController& properties,
+      DetailsHeaderController& columns, LocationBarController& locationBar
   );
 
   // Shows `entries` on the popup; activating an entry closes the menu and then calls `action` with its id.
@@ -68,6 +69,12 @@ public:
 private:
   ContextMenuControlEntry
   actionEntry(files::BrowserAction action, const files::ActionRequest& request, bool radio = false) const;
+  // The file menu of the empty area, or of the request's targets.
+  std::vector<ContextMenuControlEntry> folderMenuEntries(const files::ActionRequest& request) const;
+  std::vector<ContextMenuControlEntry> itemMenuEntries(const files::ActionRequest& request) const;
+  void showOpenInMenu(const files::ActionRequest& request);
+  // Path and URI of the request's targets, or of its folder when `targets` is false.
+  void showCopyLocationMenu(const files::ActionRequest& request, bool targets);
   void showActionMenu(
       std::initializer_list<std::optional<files::BrowserAction>> actions, bool radio = false, bool back = false,
       std::optional<LayoutRect> anchor = std::nullopt, bool alignLeft = true
@@ -79,6 +86,7 @@ private:
   files::TerminalLauncher& m_terminal;
   files::PathCompletion& m_siblingCompletion;
   CreateController& m_creator;
+  SubmenuController& m_submenus;
   RenameController& m_renamer;
   PropertiesController& m_properties;
   DetailsHeaderController& m_columns;

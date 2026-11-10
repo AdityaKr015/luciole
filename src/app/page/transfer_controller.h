@@ -30,6 +30,8 @@ public:
 
   // Pastes the clipboard's files into the request's folder once the clipboard answers.
   void paste(const files::ActionRequest& request);
+  // Pastes the clipboard's files into the request's single target, a folder, once the clipboard answers.
+  void pasteInto(const files::ActionRequest& request);
   // True from a paste request until the clipboard answers.
   bool pastePending() const { return m_pendingFilePaste; }
   void cancelPaste() { m_pendingFilePaste = false; }
@@ -69,6 +71,8 @@ private:
     std::uint64_t conflict = 0;
   };
 
+  // Pastes into `destination` once the clipboard answers and `request` is still current for `scope`.
+  void paste(const files::ActionRequest& request, files::ActionScope scope, files::Location destination);
   std::shared_ptr<OperationJob> start(files::TransferRequest request);
   std::shared_ptr<OperationJob>
   startPayloadTransfer(files::FilePayload payload, const files::Location& destination, files::TransferAction action);

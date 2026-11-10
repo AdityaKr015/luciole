@@ -33,14 +33,30 @@ TransferController::TransferController(PageContext& page, std::function<void()> 
     : m_page(page), m_progressTick(std::move(progressTick)) {}
 
 void TransferController::paste(const files::ActionRequest& request) {
+  if (request.folder) {
+    paste(request, files::ActionScope::Location, *request.folder);
+  }
+}
+
+void TransferController::pasteInto(const files::ActionRequest& request) {
+  if (request.targets.size() == 1) {
+    paste(request, files::ActionScope::Targets, request.targets.front().location);
+  }
+}
+
+void TransferController::paste(
+    const files::ActionRequest& request, files::ActionScope scope, files::Location destination
+) {
   m_pendingFilePaste = true;
   const std::weak_ptr<int> lifetime = m_lifetime;
-  m_page.clipboard().requestFiles([this, lifetime, request](std::optional<files::ClipboardFiles> selection) {
+  m_page.clipboard().requestFiles([this, lifetime, request, scope,
+                                   destination =
+                                       std::move(destination)](std::optional<files::ClipboardFiles> selection) {
     if (lifetime.expired()) {
       return;
     }
     const bool pending = std::exchange(m_pendingFilePaste, false);
-    if (!pending || !m_page.visible() || !m_page.requestCurrent(request, files::ActionScope::Location)) {
+    if (!pending || !m_page.visible() || !m_page.requestCurrent(request, scope)) {
       return;
     }
     if (!selection) {
@@ -55,7 +71,7 @@ void TransferController::paste(const files::ActionRequest& request) {
       return;
     }
     const auto job = startPayloadTransfer(
-        selection->payload, *request.folder, cut ? files::TransferAction::Move : files::TransferAction::Copy
+        selection->payload, destination, cut ? files::TransferAction::Move : files::TransferAction::Copy
     );
     if (cut) {
       if (job) {

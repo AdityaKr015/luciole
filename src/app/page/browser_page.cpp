@@ -408,7 +408,7 @@ void BrowserPage::setForeignDrop(
 
 bool BrowserPage::popupOwns(wl_surface* surface) const {
   return (m_menuSurface && m_menuSurface->wlSurface() == surface)
-      || m_createController.documentOwns(surface)
+      || m_submenus.owns(surface)
       || m_settingsController.dropdownOwns(surface);
 }
 
@@ -602,7 +602,7 @@ void BrowserPage::outputChanged(wl_output* output) {
   if (m_menuSurface != nullptr && m_connection.outputForSurface(m_menuSurface->wlSurface()) == output) {
     m_menuSurface->onSurfaceOutputEnter(m_menuSurface->wlSurface(), output);
   }
-  m_createController.outputChanged(output);
+  m_submenus.outputChanged(output);
 }
 
 void BrowserPage::pointer(const PointerEvent& event) {
@@ -610,7 +610,7 @@ void BrowserPage::pointer(const PointerEvent& event) {
     return;
   }
   if (m_menuSurface != nullptr && event.type == PointerEvent::Type::Button && event.pressed) {
-    const bool inPopup = m_createController.documentOwns(event.surface)
+    const bool inPopup = m_submenus.owns(event.surface)
         || (event.surface == m_menuSurface->wlSurface()
             && event.sx >= 0
             && event.sy >= 0
@@ -624,8 +624,8 @@ void BrowserPage::pointer(const PointerEvent& event) {
   }
   auto* input = event.surface == m_surface->wlSurface()                         ? &dispatcher()
       : m_menuSurface != nullptr && event.surface == m_menuSurface->wlSurface() ? &m_menuDispatcher
-      : m_createController.documentOwns(event.surface) ? &m_createController.documentDispatcher()
-                                                       : nullptr;
+      : m_submenus.owns(event.surface)                                          ? &m_submenus.dispatcher()
+                                                                                : nullptr;
   if (input == nullptr) {
     return;
   }
@@ -704,12 +704,12 @@ void BrowserPage::pointer(const PointerEvent& event) {
     }
   }
   dispatchPointer(*input, event, x, y);
-  if (input == &m_createController.documentDispatcher() && event.type != PointerEvent::Type::Leave) {
-    m_createController.documentPointer();
+  if (input == &m_submenus.dispatcher() && event.type != PointerEvent::Type::Leave) {
+    m_submenus.pointer();
   }
   if (input == &m_menuDispatcher
       && (event.type == PointerEvent::Type::Enter || event.type == PointerEvent::Type::Motion)) {
-    m_createController.menuHover();
+    m_submenus.menuHover();
   }
 }
 
@@ -858,7 +858,7 @@ void BrowserPage::dispatchPointer(InputDispatcher& input, const PointerEvent& ev
     break;
   case PointerEvent::Type::Axis:
     if (&input == &m_menuDispatcher) {
-      m_createController.menuScrolled();
+      m_submenus.menuScrolled();
     }
     if (page
         && m_viewMode == files::ViewMode::List
@@ -1235,7 +1235,9 @@ void BrowserPage::runAction(
       {Action::CreateFolder, createItem},
       {Action::CreateFile, createItem},
       {Action::NewDocument,
-       [](BrowserPage& page, const Call& call) { page.m_createController.openDocumentMenu(call.request); }},
+       [](BrowserPage& page, const Call&) {
+         page.m_submenus.open(files::ActionRegistry::menuId(Action::NewDocument), false);
+       }},
       {Action::PinCurrent,
        [](BrowserPage& page, const Call& call) {
          const auto& folder = *call.request.folder;
@@ -2290,7 +2292,7 @@ void BrowserPage::dismissMenu() {
 }
 
 void BrowserPage::closeMenu() {
-  m_createController.menuClosed();
+  m_submenus.menuClosed();
   m_launcher.cancelApplications();
   if (!m_previewController.bounds() || !previewVisible()) {
     m_preview.clear();
@@ -2327,6 +2329,13 @@ ActiveDialog& BrowserPage::activeDialog() { return m_activeDialog; }
 ContextMenuControl* BrowserPage::contextMenu() { return m_menuController.menu(); }
 
 std::uint32_t BrowserPage::popupSerial() { return m_popupSerial != 0 ? m_popupSerial : m_connection.lastInputSerial(); }
+
+float BrowserPage::popupMaxHeight() const {
+  const auto* output = m_connection.findOutputByWl(m_connection.outputForSurface(m_surface->wlSurface()));
+  const auto height = output != nullptr && output->hasUsableGeometry() ? output->effectiveLogicalHeight()
+                                                                       : static_cast<std::int32_t>(m_surface->height());
+  return std::max(120.0F, static_cast<float>(height) - 32.0F);
+}
 
 files::WaylandTextClipboard& BrowserPage::clipboard() { return m_clipboard; }
 

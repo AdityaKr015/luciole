@@ -3,31 +3,24 @@
 #include "app/operation_hub.h"
 #include "app/page/active_dialog.h"
 #include "app/page/page_context.h"
+#include "app/page/submenu_controller.h"
 #include "browser/browser_controller.h"
 #include "browser/location_presentation.h"
-#include "core/deferred_call.h"
-#include "core/input/key_symbols.h"
 #include "core/ui_phase.h"
 #include "fs/filename.h"
 #include "platform/desktop_integration.h"
-#include "render/animation/animation_manager.h"
-#include "render/render_context.h"
-#include "ui/builders.h"
+#include "render/scene/input_area.h"
+#include "render/scene/input_dispatcher.h"
 #include "ui/controls/context_menu.h"
 #include "ui/controls/file_error_text.h"
 #include "ui/controls/input.h"
 #include "ui/controls/link_dialog.h"
 #include "ui/controls/name_editor.h"
-#include "ui/controls/scroll_view.h"
-#include "ui/palette.h"
-#include "ui/style.h"
-#include "wayland/wayland_connection.h"
-#include "wayland/wayland_seat.h"
-#include "xdg-shell-client-protocol.h"
+#include "wayland/popup_surface.h"
 
 #include <algorithm>
-#include <cmath>
 #include <exception>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -38,53 +31,17 @@ namespace {
   }
 } // namespace
 
-CreateController::CreateController(
-    PageContext& page, files::TemplateCatalog& templates, WaylandConnection& connection, RenderContext& renderer,
-    AnimationManager& animations
-)
-    : m_page(page), m_templates(templates), m_connection(connection), m_renderer(renderer), m_animations(animations) {}
+CreateController::CreateController(PageContext& page, files::TemplateCatalog& templates, SubmenuController& submenus)
+    : m_page(page), m_templates(templates), m_submenus(submenus) {}
 
 bool CreateController::canCreateItem() const {
   return m_page.actionState(files::BrowserAction::CreateFolder, m_page.requestFor({})).enabled;
 }
 
-void CreateController::closeDocumentMenu() {
-  if (auto* menu = m_page.contextMenu()) {
-    menu->setSubmenuDirection(ContextSubmenuDirection::Right);
-  }
-  ++m_documentGeneration;
-  m_closeDocumentPending = false;
-  m_templates.cancel();
-  m_documentDispatcher.setSceneRoot(nullptr);
-  if (m_documentSurface) {
-    m_documentSurface->setSceneRoot(nullptr);
-  }
-  m_documentRoot.reset();
-  m_documentMenu = nullptr;
-  m_documentScroll = nullptr;
-  m_documentSurface.reset();
-}
-
-void CreateController::menuClosed() {
-  closeDocumentMenu();
-  m_documentRow.reset();
-}
-
-void CreateController::dismissDocumentMenu() {
-  m_closeDocumentPending = true;
-  const auto generation = m_documentGeneration;
-  const std::weak_ptr<int> lifetime = m_lifetime;
-  DeferredCall::callLater([this, lifetime, generation] {
-    if (!lifetime.expired() && generation == m_documentGeneration && m_closeDocumentPending) {
-      closeDocumentMenu();
-    }
-  });
-}
-
-void CreateController::fillDocumentMenu(
+void CreateController::showDocumentMenu(
     const files::ActionRequest& request, files::TemplateListing listing, bool loading
 ) {
-  if (!m_documentSurface || !m_page.actionState(files::BrowserAction::NewDocument, request).enabled) {
+  if (!m_page.actionState(files::BrowserAction::NewDocument, request).enabled) {
     return;
   }
   auto items = std::make_shared<std::vector<files::DocumentTemplate>>(std::move(listing.items));
@@ -103,177 +60,33 @@ void CreateController::fillDocumentMenu(
   if (listing.truncated) {
     entries.push_back({.label = "Template list limit reached", .enabled = false});
   }
-  const float contentHeight = ContextMenuControl::preferredHeight(entries, entries.size());
-  const float height = std::min(contentHeight, static_cast<float>(m_page.surface().height()) - 32.0F);
-  const float width = 300.0F;
-  const bool overflowing = contentHeight > height;
-  m_documentMenu->setMaxVisible(entries.size());
-  m_documentMenu->setEntries(std::move(entries));
-  m_documentMenu->setMenuWidth(width - (overflowing ? Style::scrollbarWidth + Style::scrollbarGap : 0.0F));
-  m_documentMenu->setHighlightedIndex(m_documentKeyboard ? 0 : m_documentMenu->entryCount());
-  m_documentMenu->setOnActivate([this, request, items](const ContextMenuControlEntry& entry) {
-    const auto id = entry.id;
-    const std::weak_ptr<int> lifetime = m_lifetime;
-    m_page.dismissMenu();
-    DeferredCall::callLater([this, lifetime, request, items, id] {
-      if (lifetime.expired() || !m_page.actionState(files::BrowserAction::NewDocument, request).enabled) {
-        return;
-      }
-      if (id == -1) {
-        openCreateItem(*request.folder, files::CreateKind::EmptyFile);
-      } else if (id >= 0 && static_cast<std::size_t>(id) < items->size()) {
-        openCreateItem(*request.folder, files::CreateKind::Document, (*items)[static_cast<std::size_t>(id)]);
-      }
-    });
-  });
-  m_documentScroll->setReserveScrollbarGutter(overflowing);
-  m_documentScroll->setSize(width, height);
-  (void)m_documentSurface->resize(
-      static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(std::ceil(height)), false
+  m_submenus.show(
+      std::move(entries),
+      [this, request, items](int id) {
+        if (!m_page.actionState(files::BrowserAction::NewDocument, request).enabled) {
+          return;
+        }
+        if (id == -1) {
+          openCreateItem(*request.folder, files::CreateKind::EmptyFile);
+        } else if (id >= 0 && static_cast<std::size_t>(id) < items->size()) {
+          openCreateItem(*request.folder, files::CreateKind::Document, (*items)[static_cast<std::size_t>(id)]);
+        }
+      },
+      300.0F
   );
-  m_documentSurface->requestLayout();
-}
-
-void CreateController::attachDocumentMenu(std::size_t row, const files::ActionRequest& request) {
-  m_documentRow = row;
-  m_page.contextMenu()->setOnSubmenuOpen([this, request](const ContextMenuControlEntry&, float) {
-    openDocumentMenu(request);
-  });
 }
 
 void CreateController::openDocumentMenu(const files::ActionRequest& request) {
-  m_closeDocumentPending = false;
-  auto* menuSurface = m_page.menuSurface();
-  auto* contextMenu = m_page.contextMenu();
-  if (m_documentSurface
-      || !menuSurface
-      || !contextMenu
-      || !m_documentRow
-      || !m_page.actionState(files::BrowserAction::NewDocument, request).enabled) {
+  if (!m_page.actionState(files::BrowserAction::NewDocument, request).enabled) {
     return;
   }
-  const float top = contextMenu->rowTop(*m_documentRow);
-  const float bottom = contextMenu->rowBottom(*m_documentRow);
-  float menuX = 0, menuY = 0;
-  Node::absolutePosition(contextMenu, menuX, menuY);
-  m_documentSurface = std::make_unique<PopupSurface>(m_connection);
-  m_documentSurface->setRenderContext(&m_renderer);
-  m_documentSurface->setAnimationManager(&m_animations);
-  m_documentSurface->setDismissedCallback([this] { dismissDocumentMenu(); });
-  auto menu = std::make_unique<ContextMenuControl>();
-  m_documentMenu = menu.get();
-  auto scroll =
-      ui::scrollView({.out = &m_documentScroll, .viewportPaddingH = 0.0F, .viewportPaddingV = 0.0F, .flexGrow = 1.0F});
-  scroll->content()->addChild(std::move(menu));
-  m_documentRoot = ui::column(
-      {.fill = colorSpecFromRole(ColorRole::SurfaceContainerHigh), .radius = Style::radiusLg}, std::move(scroll)
-  );
-  m_documentRoot->setAnimationManager(&m_animations);
-  m_documentSurface->setSceneRoot(m_documentRoot.get());
-  m_documentDispatcher.setSceneRoot(m_documentRoot.get());
-  m_documentDispatcher.setCursorShapeCallback([this](std::uint32_t serial, std::uint32_t shape) {
-    m_connection.extension<files::DesktopIntegration>().setCursorShape(serial, shape);
-  });
-  m_documentSurface->setConfigureCallback([this](std::uint32_t, std::uint32_t) {
-    if (auto* menu = m_page.contextMenu()) {
-      menu->setSubmenuDirection(
-          m_documentSurface->configuredX() < 0 ? ContextSubmenuDirection::Left : ContextSubmenuDirection::Right
-      );
-      m_page.menuSurface()->requestLayout();
-    }
-    m_documentSurface->requestLayout();
-  });
-  m_documentSurface->setPrepareFrameCallback([this](bool, bool) {
-    if (m_documentSurface && m_renderer.makeCurrent(m_documentSurface->renderTarget())) {
-      UiPhaseScope phase(UiPhase::Layout);
-      m_documentRoot->arrange(
-          m_documentSurface->renderTarget().renderer(),
-          {0, 0, static_cast<float>(m_documentSurface->width()), static_cast<float>(m_documentSurface->height())}
-      );
-    }
-  });
-  const PopupSurfaceConfig config{
-      .anchorX = 0,
-      .anchorY = static_cast<int>(std::floor(menuY + top)),
-      .anchorWidth = static_cast<int>(menuSurface->width()),
-      .anchorHeight = std::max(1, static_cast<int>(bottom - top)),
-      .width = 300,
-      .height = 84,
-      .anchor = XDG_POSITIONER_ANCHOR_TOP_RIGHT,
-      .gravity = XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT,
-      .constraintAdjustment = XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_FLIP_X
-          | XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X
-          | XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y,
-      .serial = m_page.popupSerial()
-  };
-  if (!m_documentSurface->initializeAsChild(
-          menuSurface->xdgSurface(), m_connection.outputForSurface(m_page.surface().wlSurface()), config
-      )) {
-    closeDocumentMenu();
-    return;
-  }
-  fillDocumentMenu(request, {}, true);
-  const auto generation = ++m_documentGeneration;
+  showDocumentMenu(request, {}, true);
+  const auto generation = m_submenus.generation();
   m_templates.load([this, request, generation](files::TemplateListing listing) {
-    if (generation == m_documentGeneration && m_documentSurface) {
-      fillDocumentMenu(request, std::move(listing));
+    if (generation == m_submenus.generation()) {
+      showDocumentMenu(request, std::move(listing));
     }
   });
-}
-
-bool CreateController::documentOwns(const wl_surface* surface) const {
-  return m_documentSurface && m_documentSurface->wlSurface() == surface;
-}
-
-void CreateController::outputChanged(wl_output* output) {
-  if (m_documentSurface && m_connection.outputForSurface(m_documentSurface->wlSurface()) == output) {
-    m_documentSurface->onSurfaceOutputEnter(m_documentSurface->wlSurface(), output);
-  }
-}
-
-bool CreateController::documentKey(const KeyboardEvent& event) {
-  if (!m_documentSurface) {
-    return false;
-  }
-  if (!event.pressed) {
-    return true;
-  }
-  if (KeySymbol::isEscape(event.sym) || KeySymbol::isLeft(event.sym)) {
-    dismissDocumentMenu();
-  } else if (KeySymbol::isEnter(event.sym)) {
-    if (m_documentMenu->highlightedIndex() >= m_documentMenu->entryCount()) {
-      (void)m_documentMenu->moveHighlight(1);
-    }
-    (void)m_documentMenu->activateHighlighted();
-  } else if (KeySymbol::isUp(event.sym) || KeySymbol::isDown(event.sym)) {
-    (void)m_documentMenu->moveHighlight(KeySymbol::isUp(event.sym) ? -1 : 1);
-    const auto index = m_documentMenu->highlightedIndex();
-    const float top = m_documentMenu->rowTop(index), bottom = m_documentMenu->rowBottom(index);
-    const float offset = m_documentScroll->scrollOffset();
-    if (top < offset) {
-      m_documentScroll->requestScrollToOffset(top);
-    } else if (bottom > offset + m_documentScroll->height()) {
-      m_documentScroll->requestScrollToOffset(bottom - m_documentScroll->height());
-    }
-    m_documentSurface->requestLayout();
-  }
-  return true;
-}
-
-void CreateController::menuHover() {
-  auto* menu = m_page.contextMenu();
-  if (m_documentRow && menu && menu->highlightedIndex() == *m_documentRow) {
-    m_documentKeyboard = false;
-    (void)menu->activateHighlighted();
-  } else if (m_documentSurface) {
-    dismissDocumentMenu();
-  }
-}
-
-void CreateController::menuScrolled() {
-  if (m_documentSurface) {
-    dismissDocumentMenu();
-  }
 }
 
 void CreateController::openCreateItem(
