@@ -21,6 +21,8 @@ namespace files {
 
   FileError fileError(const GError& error);
   FileType fileType(GFileType type);
+  // Providers may omit the separate boolean when their type already describes the item.
+  bool readIsSymlink(GFileInfo* info);
 
   std::optional<FileIdentity> readFileIdentity(GFileInfo* info);
   EntryMetadata readEntryMetadata(GFileInfo* info);

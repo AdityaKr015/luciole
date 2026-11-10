@@ -26,7 +26,13 @@ namespace {
     TEST_CHECK(commented && commented->locations.front().nativePath() == "/tmp/a b");
   }
   void testRemoteRoundTrip() {
-    const files::FilePayload remote{{files::Location::fromUri("sftp://user@example.invalid/path/a%20b%FF.txt")}, true};
+    const files::FilePayload remote{
+        {files::Location::fromUri("sftp://user@example.invalid/path/a%20b%FF.txt"),
+         files::Location::fromUri("smb://server.invalid/share/caf%C3%A9%20%23.txt"),
+         files::Location::fromUri("dav://server.invalid/files/space%20%25.txt"),
+         files::Location::fromUri("davs://server.invalid/files/%E6%97%A5%E6%9C%AC%E8%AA%9E.txt")},
+        true
+    };
     for (const auto mime : {files::kUriListMime, files::kGnomeFilesMime}) {
       const auto encoded = files::encodeFilePayload(remote, mime);
       TEST_CHECK(encoded);

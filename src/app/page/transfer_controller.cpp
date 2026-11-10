@@ -168,7 +168,7 @@ void TransferController::chooseDrop(
   if (!files::transferLocationSupported(destination) || std::ranges::any_of(payload.locations, [](const auto& item) {
         return !files::transferLocationSupported(item);
       })) {
-    m_page.actionError("File transfers support local and mounted SFTP folders outside Trash.");
+    m_page.actionError("File transfers support local and mounted SFTP, SMB or WebDAV folders outside Trash.");
     finish(false);
     return;
   }
@@ -522,7 +522,7 @@ std::shared_ptr<OperationJob> TransferController::startPayloadTransfer(
       || std::ranges::any_of(payload.locations, [](const auto& location) {
            return !files::transferLocationSupported(location);
          })) {
-    m_page.actionError("File transfers support local and mounted SFTP folders outside Trash.");
+    m_page.actionError("File transfers support local and mounted SFTP, SMB or WebDAV folders outside Trash.");
     return nullptr;
   }
   m_page.setActionMessage({});

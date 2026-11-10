@@ -164,7 +164,7 @@ struct files::RecursiveSearch::State : std::enable_shared_from_this<State> {
     if (name == nullptr) {
       return;
     }
-    const bool hidden = g_file_info_get_is_hidden(info);
+    const bool hidden = g_file_info_get_attribute_boolean(info, G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN) || name[0] == '.';
     if (hidden && !scan->showHidden) {
       return;
     }
@@ -176,7 +176,7 @@ struct files::RecursiveSearch::State : std::enable_shared_from_this<State> {
     if (!scan->showBackups && isEditorBackup(name, type)) {
       return;
     }
-    const bool symlink = g_file_info_get_is_symlink(info);
+    const bool symlink = readIsSymlink(info);
     if (type == FileType::Directory && !symlink) {
       const char* identity = g_file_info_get_attribute_string(info, G_FILE_ATTRIBUTE_ID_FILE);
       const char* filesystem = g_file_info_get_attribute_string(info, G_FILE_ATTRIBUTE_ID_FILESYSTEM);

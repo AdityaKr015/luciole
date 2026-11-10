@@ -127,7 +127,8 @@ std::optional<files::FileError> files::enumerateChildren(
         .name = name,
         .displayName = display ? display : name,
         .type = fileType(g_file_info_get_file_type(info.get())),
-        .hidden = g_file_info_get_is_hidden(info.get()) != FALSE,
+        .hidden = g_file_info_get_attribute_boolean(info.get(), G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN)
+            || (name && name[0] == '.'),
     };
     if (!visit(child)) {
       break;

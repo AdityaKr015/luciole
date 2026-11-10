@@ -296,7 +296,7 @@ bool DragDropController::validDropFolder(const files::Location& destination) con
     }
     bool differentParent = false;
     for (const auto& source : payload->locations) {
-      if (source == destination || destination.isInside(source)) {
+      if (files::transferLocationsEqual(source, destination) || files::transferLocationInside(destination, source)) {
         return false;
       }
       differentParent |= source.parent() != destination;
@@ -308,14 +308,15 @@ bool DragDropController::validDropFolder(const files::Location& destination) con
   }
   bool anyDifferentParent = false;
   for (const auto& source : m_drag->entries) {
-    if (!files::transferLocationSupported(source.location) || source.location == destination) {
+    if (!files::transferLocationSupported(source.location)
+        || files::transferLocationsEqual(source.location, destination)) {
       return false;
     }
     const auto* entry = m_page.browser().model().entry(source.id);
     if (entry == nullptr) {
       return false;
     }
-    if (entry->type == files::FileType::Directory && destination.isInside(source.location)) {
+    if (entry->type == files::FileType::Directory && files::transferLocationInside(destination, source.location)) {
       return false;
     }
     anyDifferentParent = anyDifferentParent || source.location.parent() != destination;

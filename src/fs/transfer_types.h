@@ -11,6 +11,10 @@ namespace files {
   // Verified transfer backends; this check never performs remote I/O.
   bool transferLocationSupported(const Location& location);
 
+  // Includes conservative same-server SMB case aliases, without remote I/O.
+  bool transferLocationsEqual(const Location& source, const Location& target);
+  bool transferLocationInside(const Location& child, const Location& parent);
+
   enum class TransferAction { Move, Copy, Link };
   enum class TransferOutcome { Moved, Copied, Skipped, Failed, Cancelled, Partial, Linked };
   struct TransferResult {
@@ -25,4 +29,6 @@ namespace files {
     bool retryable = false;
     std::optional<Location> destination;
   };
+  bool
+  transferAffectsLocation(const std::vector<TransferResult>& results, const Location& location, bool recursive = false);
 } // namespace files

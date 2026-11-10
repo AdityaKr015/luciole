@@ -54,6 +54,7 @@
           mesonFlags = [ "-Dtests=enabled" ];
           doCheck = true;
           preCheck = ''
+            export GIO_EXTRA_MODULES="${pkgs.gvfs}/lib/gio/modules:${pkgs.glib-networking}/lib/gio/modules"
             export XDG_DATA_DIRS="${pkgs.shared-mime-info}/share:${pkgs.glycin-loaders}/share"
             export PATH="${
               nixpkgs.lib.makeBinPath [

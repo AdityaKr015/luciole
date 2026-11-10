@@ -15,6 +15,7 @@
   fontconfig,
   cairo,
   glib,
+  glib-networking,
   dbus,
   gvfs,
   pango,
@@ -168,7 +169,12 @@ stdenv.mkDerivation (finalAttrs: {
           _7zz
         ]
       }" \
-      --suffix GIO_EXTRA_MODULES : "${gvfs}/lib/gio/modules" \
+      --suffix GIO_EXTRA_MODULES : "${
+        lib.makeSearchPath "lib/gio/modules" [
+          gvfs
+          glib-networking
+        ]
+      }" \
       --suffix XDG_DATA_DIRS : "${
         lib.makeSearchPath "share" [
           adwaita-icon-theme

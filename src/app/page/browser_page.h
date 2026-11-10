@@ -100,6 +100,7 @@ public:
   void shutdown();
   // OperationHub::Owner: hands the job to the controller of its kind.
   void jobChanged(OperationJob& job) override;
+  void transfersFinished(const std::vector<files::TransferResult>& results) override;
   // The shared thumbnail service changed.
   void thumbnailsChanged();
 
@@ -383,6 +384,7 @@ private:
   std::optional<files::BrowseViewport> m_inactiveViewport;
   std::function<void(WorkspaceCommand, std::optional<files::Location>)> m_workspaceRequest;
   bool m_visible = false, m_active = false;
+  bool m_pendingProviderRefresh = false;
   files::TabId m_workspaceId;
   std::uint64_t m_nextFocusKey = 0;
   std::function<bool()> m_popupAvailable, m_hasOther;

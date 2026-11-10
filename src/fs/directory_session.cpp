@@ -285,8 +285,9 @@ struct files::DirectorySession::State : std::enable_shared_from_this<State> {
         .name = name,
         .displayName = g_file_info_get_display_name(info),
         .type = fileType(g_file_info_get_file_type(info)),
-        .hidden = g_file_info_get_is_hidden(info) != FALSE,
-        .symlink = g_file_info_get_is_symlink(info) != FALSE,
+        .hidden =
+            g_file_info_get_attribute_boolean(info, G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN) != FALSE || name[0] == '.',
+        .symlink = readIsSymlink(info) != FALSE,
         .size = std::nullopt,
         .modifiedSeconds = std::nullopt,
         .etag = std::nullopt,

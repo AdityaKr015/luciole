@@ -107,16 +107,24 @@ std::shared_ptr<OperationJob> OperationHub::add(files::TabId page, OperationJob:
 }
 
 void OperationHub::changed(OperationJob& job) {
+  bool finished = false;
   if (job.running()) {
     job.m_running = true;
     job.m_ran = true;
     job.m_resultTaken = false;
   } else if (std::exchange(job.m_running, false)) {
+    finished = true;
     if (auto idle = std::exchange(job.m_idle, {})) {
       idle(job);
     }
   }
   notify(m_routing.owner(job.id()), job);
+  if (finished && job.kind() == JobKind::Transfer) {
+    for (const auto& [page, owner] : m_owners) {
+      (void)page;
+      owner->transfersFinished(job.service<files::TransferService>().results());
+    }
+  }
 }
 
 void OperationHub::notify(files::TabId page, OperationJob& job) {

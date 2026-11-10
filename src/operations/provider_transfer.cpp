@@ -42,18 +42,49 @@ namespace {
   bool validName(std::string_view name) {
     return !name.empty() && name != "." && name != ".." && !name.contains('/') && !name.contains('\0');
   }
+  void destinationName(const Location& parent, std::string_view name) {
+    const bool smb = parent.uri().starts_with("smb:"),
+               dav = parent.uri().starts_with("dav:") || parent.uri().starts_with("davs:");
+    if ((smb || dav) && !g_utf8_validate(name.data(), static_cast<gssize>(name.size()), nullptr)) {
+      throwFileError(
+          FileErrorKind::InvalidArgument, "This destination requires UTF-8 filenames. The original name was retained."
+      );
+    }
+    if (!smb) {
+      return;
+    }
+    const auto base = name.substr(0, name.find('.'));
+    const files::GString upper(g_ascii_strup(base.data(), static_cast<gssize>(base.size())));
+    const std::string_view device(upper.get());
+    const bool reserved = device == "CON"
+        || device == "PRN"
+        || device == "AUX"
+        || device == "NUL"
+        || (device.size() == 4
+            && (device.starts_with("COM") || device.starts_with("LPT"))
+            && device[3] >= '1'
+            && device[3] <= '9');
+    if (reserved || name.ends_with('.') || name.ends_with(' ') || std::ranges::any_of(name, [](unsigned char ch) {
+          return ch < 0x20 || std::string_view("<>:\"\\|?*").contains(static_cast<char>(ch));
+        })) {
+      throwFileError(
+          FileErrorKind::InvalidArgument,
+          "This name cannot be represented on an SMB share. The original name was retained."
+      );
+    }
+  }
   std::optional<std::uint64_t> fact(GFileInfo* value, const char* attribute) {
     return g_file_info_has_attribute(value, attribute)
         ? std::optional<std::uint64_t>(g_file_info_get_attribute_uint64(value, attribute))
         : std::nullopt;
   }
   bool folder(GFileInfo* value) {
-    return g_file_info_get_file_type(value) == G_FILE_TYPE_DIRECTORY && !g_file_info_get_is_symlink(value);
+    return g_file_info_get_file_type(value) == G_FILE_TYPE_DIRECTORY && !readIsSymlink(value);
   }
   void unchanged(GFileInfo* expected, GFileInfo* actual, bool content = true) {
     if (!actual
         || g_file_info_get_file_type(expected) != g_file_info_get_file_type(actual)
-        || g_file_info_get_is_symlink(expected) != g_file_info_get_is_symlink(actual)) {
+        || readIsSymlink(expected) != readIsSymlink(actual)) {
       throwFileError(FileErrorKind::Changed, "An item changed during the transfer.");
     }
     for (const char* attribute :
@@ -170,15 +201,29 @@ namespace {
   }
   void copy(const Tree& tree, const Location& target, const CancelToken& token, std::atomic<std::uint64_t>& bytes) {
     check(token);
+    destinationName(*target.parent(), *target.basename());
     unchanged(tree.captured.get(), info(tree.source, token).get());
     if (folder(tree.captured.get())) {
       mkdir(target, token);
       for (const auto& child : tree.children) {
         copy(child, target.child(*child.source.basename()), token, bytes);
       }
+      GError* queryError = nullptr;
+      const std::unique_ptr<GFileAttributeInfoList, decltype(&g_file_attribute_info_list_unref)> supported(
+          g_file_query_settable_attributes(gioFile(target).get(), gioCancellable(token), &queryError),
+          g_file_attribute_info_list_unref
+      );
+      if (!supported) {
+        if (queryError && g_error_matches(queryError, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED)) {
+          g_error_free(queryError);
+          return;
+        }
+        fail(queryError);
+      }
       Info attributes(g_file_info_new());
       for (const auto* attribute : {G_FILE_ATTRIBUTE_UNIX_MODE, G_FILE_ATTRIBUTE_TIME_MODIFIED}) {
-        if (g_file_info_has_attribute(tree.captured.get(), attribute)) {
+        if (g_file_info_has_attribute(tree.captured.get(), attribute)
+            && g_file_attribute_info_list_lookup(supported.get(), attribute)) {
           if (std::string_view(attribute) == G_FILE_ATTRIBUTE_UNIX_MODE) {
             g_file_info_set_attribute_uint32(
                 attributes.get(), attribute, g_file_info_get_attribute_uint32(tree.captured.get(), attribute)
@@ -303,16 +348,18 @@ struct files::ProviderTransfer::State {
           && !g_file_info_get_attribute_boolean(parent.get(), G_FILE_ATTRIBUTE_ACCESS_CAN_WRITE)) {
         throwFileError(FileErrorKind::ReadOnly, "The destination is read-only.");
       }
-      if (node.source == node.parent || (folder(node.captured.get()) && node.parent.isInside(node.source))) {
+      if (transferLocationsEqual(node.source, node.parent)
+          || (folder(node.captured.get()) && transferLocationInside(node.parent, node.source))) {
         throwFileError(FileErrorKind::WouldRecurse, "A folder cannot be placed inside itself.");
       }
       auto name = node.source.basename();
       if (!name || !validName(*name)) {
         throwFileError(FileErrorKind::InvalidArgument, "A filesystem root cannot be transferred.");
       }
+      destinationName(node.parent, *name);
       auto target = node.parent.child(*name);
-      bool keepBoth = node.source == target && request.action == TransferAction::Copy;
-      if (node.source == target && request.action == TransferAction::Move) {
+      bool keepBoth = transferLocationsEqual(node.source, target) && request.action == TransferAction::Copy;
+      if (transferLocationsEqual(node.source, target) && request.action == TransferAction::Move) {
         node.result.outcome = TransferOutcome::Skipped;
         return;
       }
@@ -512,12 +559,12 @@ std::vector<files::TransferResult> files::ProviderTransfer::run(
           || state.request.action == TransferAction::Link) {
         throwFileError(
             FileErrorKind::Unsupported,
-            "This transfer supports local and mounted SFTP locations; links require local paths."
+            "This transfer requires local or mounted SFTP, SMB or WebDAV locations; links require local paths."
         );
       }
       bool covered = !seen.insert(node->source.uri()).second;
       for (const auto& other : state.roots) {
-        if (other.get() != node.get() && node->source.isInside(other->source)) {
+        if (other.get() != node.get() && transferLocationInside(node->source, other->source)) {
           covered = true;
           break;
         }

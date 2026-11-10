@@ -79,3 +79,9 @@ files::FileType files::fileType(GFileType type) {
   }
   return FileType::Unknown;
 }
+
+bool files::readIsSymlink(GFileInfo* info) {
+  return g_file_info_get_attribute_uint32(info, G_FILE_ATTRIBUTE_STANDARD_TYPE) == G_FILE_TYPE_SYMBOLIC_LINK
+      || (g_file_info_has_attribute(info, G_FILE_ATTRIBUTE_STANDARD_IS_SYMLINK)
+          && g_file_info_get_attribute_boolean(info, G_FILE_ATTRIBUTE_STANDARD_IS_SYMLINK));
+}

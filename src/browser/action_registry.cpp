@@ -61,7 +61,7 @@ namespace {
               && (entry.type == FileType::Directory || entry.type == FileType::Regular || entry.symlink)
               && (!cut || (entry.access.rename != false && entry.access.remove != false));
         })) {
-      return unavailable("Select accessible local or SFTP files or folders outside Trash.");
+      return unavailable("Select accessible local or supported remote files or folders outside Trash.");
     }
     return {};
   }
@@ -79,7 +79,7 @@ namespace {
       return unavailable("The clipboard has no available files.");
     }
     if (!r.folder || !transferLocationSupported(*r.folder) || !c.query.empty() || !ready(c)) {
-      return unavailable("Open an available local or SFTP folder first.");
+      return unavailable("Open an available local or supported remote folder first.");
     }
     if (c.model.snapshot().metadata.access.write == false || c.model.snapshot().metadata.filesystem.readOnly == true) {
       return unavailable("Writing to this folder is not permitted.");

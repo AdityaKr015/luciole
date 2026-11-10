@@ -92,6 +92,8 @@ public:
   public:
     // A job this page owns changed, or the page just took it over.
     virtual void jobChanged(OperationJob& job) = 0;
+    // All pages observe completed transfers, including providers without directory monitors.
+    virtual void transfersFinished(const std::vector<files::TransferResult>& results) = 0;
 
   protected:
     Owner() = default;

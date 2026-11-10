@@ -286,6 +286,28 @@ void BrowserPage::thumbnailsChanged() {
   m_surface->requestLayout();
 }
 
+void BrowserPage::transfersFinished(const std::vector<files::TransferResult>& results) {
+  const auto refresh = [&](files::BrowserController& controller) {
+    const auto& current = controller.model().snapshot().location;
+    if (current
+        && !current->isNative()
+        && files::transferAffectsLocation(results, *current, !controller.searchQuery().empty())) {
+      if (m_visible) {
+        controller.refresh();
+      } else {
+        m_pendingProviderRefresh = true;
+      }
+    }
+  };
+  if (m_miller.enabled()) {
+    for (const auto& column : m_miller.columns()) {
+      refresh(*column->browser);
+    }
+  } else {
+    refresh(m_browser);
+  }
+}
+
 files::BrowserSettings BrowserPage::options() const {
   auto value = m_savedSettings;
   value.viewMode = m_viewMode;
@@ -467,6 +489,17 @@ void BrowserPage::prepare(LayoutRect bounds, bool active, bool roundCorner) {
     m_visible = true;
     m_appliedViewMode.reset();
     m_pendingHistoryViewport = m_inactiveViewport;
+    if (std::exchange(m_pendingProviderRefresh, false)) {
+      if (m_miller.enabled()) {
+        for (const auto& column : m_miller.columns()) {
+          if (!column->location.isNative()) {
+            column->browser->refresh();
+          }
+        }
+      } else {
+        m_browser.refresh();
+      }
+    }
   }
   const bool split = m_hasOther && m_hasOther();
   m_paneHeader->setVisible(split);
