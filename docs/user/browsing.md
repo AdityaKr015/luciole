@@ -1,0 +1,56 @@
+# Browsing
+
+## Navigation and search
+
+The location bar shows clickable folder breadcrumbs. Double-click a breadcrumb or unused space in the bar to edit the path; Ctrl+L also starts editing. Tab accepts a path completion when one is available. Home and its descendants use Home as the breadcrumb root; you can still navigate above it.
+
+By default, typing while browsing starts a recursive filename search rooted in the current folder. The separate search field remains next to the location bar. Clear the query to return to the folder listing. Settings → General can change typing to name selection instead. Content search and an indexing service are not part of the current search.
+
+| Action | Shortcut |
+| --- | --- |
+| Back / Forward | Alt+Left / Alt+Right |
+| Parent folder / Home | Alt+Up / Alt+Home |
+| Edit location / Focus search | Ctrl+L / Ctrl+F |
+| Refresh | F5 |
+| Show hidden files | Ctrl+H |
+| Show sidebar / Show preview | F9 / F8 |
+
+## Views and selection
+
+Use the toolbar or main menu to choose Grid (Ctrl+1), List (Ctrl+2) or Columns (Ctrl+3). Ctrl+wheel changes grid icon size. View, zoom, sort and hidden-file choices are saved as defaults for new browsing pages. Existing tabs and panes keep their own browsing state.
+
+List headers sort by their column. Drag their dividers to resize columns; Settings → List columns controls visibility and order. Additional columns include accessed/created time, owner, group, permissions and location. Missing provider metadata stays unavailable rather than becoming a made-up value. Grid view uses the toolbar's Sort menu.
+
+Click an entry to select it, Ctrl+click to toggle it and Shift+click to select a range. Clicking empty space clears selection. Drag an area over entries to select several. Ctrl+A selects all visible results, Ctrl+Shift+I inverts selection and Ctrl+S selects by pattern. Escape clears the selection when browsing. Opening uses double-click by default; Settings → General offers single-click opening.
+
+## Places and folder trees
+
+Places contains Home, available XDG user folders, File System, Trash and your pinned folders. Pin or unpin a folder through its context menu, or drag a folder into Places. Drag rows to reorder them. Trash can move within the list but cannot be unpinned. Its context menu offers Empty Trash.
+
+Settings → Sidebar & preview controls sidebar visibility, width, drive rows and the optional folder tree. The separate expandable-folder preference adds a tree within List view. Both tree options are off by default.
+
+## Tabs and split view
+
+Each tab can contain one or two browsing panes. A split belongs to its tab; it does not create another tab. Navigation, search, selection and scroll belong to each pane. Actions target the focused pane.
+
+| Action | Shortcut |
+| --- | --- |
+| New tab / New window | Ctrl+T / Ctrl+N |
+| Duplicate tab / Reopen closed tab | Ctrl+Shift+D / Ctrl+Shift+T |
+| Close tab / Close focused split pane | Ctrl+W / Ctrl+Alt+W |
+| Next / Previous tab | Ctrl+Tab / Ctrl+Shift+Tab |
+| Toggle split / Switch pane | F3 / F6 |
+
+Current tabs and window layouts are not restored across application restarts. Saved preference defaults are separate from that unfinished session-restoration feature.
+
+## Miller columns
+
+Columns show successive folder levels inside one pane. Selecting one folder reveals its child column. Selecting a different folder replaces the descendant branch. Left/Right moves between parent and selected child; each column scrolls vertically, and horizontal scrolling reveals additional levels. Dividers resize columns.
+
+Show parent folders is enabled by default in Settings → Views. Disable it to start Column view at the current folder alone. Deep navigation remains possible, while the application retains only a bounded set of live columns.
+
+## Preview and Properties
+
+The side preview is on by default. Resize its divider to change the saved width; small windows temporarily collapse it when there is insufficient room. F8 toggles it, and Space opens a quick preview for one selected item. Images, video stills, the first PDF page and embedded audio artwork depend on installed providers. Video previews are still images, not playback.
+
+The preview shows essential content facts such as file size, dimensions, format and duration when available. Properties (Alt+Return) includes additional technical and permission information. See [file operations](file-operations.md#properties-and-permissions).

@@ -3,6 +3,8 @@
 Notes for distribution packagers.
 The dependency and install declarations in [meson.build](meson.build), [lib/meson.build](lib/meson.build) and [nix/package.nix](nix/package.nix) are the source of truth. This guide describes the current implementation; planned features are not packaging requirements.
 
+For application usage and settings, see the [user guide](docs/user/index.md). Implementation contracts live under [docs/design/](docs/design/README.md). These source documentation pages are not additional installed assets.
+
 ## Package description
 
 Use the description from the Nix package metadata:
