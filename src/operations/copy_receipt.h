@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -34,6 +35,17 @@ namespace luciole {
 
   private:
     friend class CopyReceipt;
+    friend class MoveEffect;
+    friend class MoveFolder;
+    friend class MoveReceipt;
+    int item() const;
+    Location currentLocation() const;
+    int parent() const;
+    std::mutex& mutex() const;
+    std::shared_ptr<const CopyEffect> retainedFrom(int from, const std::string& name) const;
+    std::shared_ptr<const CopyEffect> restoreTo(const Location& destination, int target, bool& changed) const;
+    std::shared_ptr<const CopyEffect> storeTo(const Location& folder, int target, bool& changed) const;
+    std::shared_ptr<const CopyEffect> refreshFolder(bool empty, std::size_t& remaining, const CancelToken& token) const;
     CopyEffect(
         Location destination, std::shared_ptr<CopyStorage> storage, std::shared_ptr<const transfer::Tree> tree,
         bool hidden, std::shared_ptr<const CopyEffect> previous = {}

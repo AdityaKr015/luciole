@@ -216,7 +216,7 @@ void OperationHub::update(std::optional<luciole::WindowId> preferred) {
     luciole::JobActivity activity;
     activity.id = ++m_next;
     activity.title = "Discard undo data";
-    activity.summary = "Retained copy needs inspection";
+    activity.summary = "Retained item needs inspection";
     activity.state = luciole::ActivityState::Failed;
     activity.finished = true;
     activity.report = std::make_shared<const std::string>(std::move(error.message));

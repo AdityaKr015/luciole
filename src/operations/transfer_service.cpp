@@ -384,6 +384,93 @@ bool luciole::TransferService::start(TransferRequest request) { return launch(st
 bool luciole::TransferService::retryFailed() {
   return m_state->job && retryable() > 0 ? launch(m_state->job->request, true) : false;
 }
+namespace {
+  using namespace luciole;
+  // Worker-local optional history collection; prepared proofs outlive every source.
+  struct MoveCapture {
+    struct PreparedMove {
+      std::shared_ptr<const MoveEffect> effect;
+      std::size_t source;
+    };
+    struct RetainedFolder {
+      std::shared_ptr<const MoveFolder> effect;
+      std::size_t source;
+    };
+    std::size_t budget, remaining = 16384;
+    bool collecting;
+    CancelToken token;
+    std::vector<std::shared_ptr<const MoveEffect>> moves;
+    std::vector<PreparedMove> preparedMoves;
+    std::vector<RetainedFolder> retainedFolders;
+    MoveCapture(std::size_t limit, CancelToken cancel)
+        : budget(limit), collecting(limit != 0), token(std::move(cancel)) {}
+    bool room() const { return moves.size() + preparedMoves.size() + retainedFolders.size() < budget; }
+    void attach(Work& work) {
+      if (collecting) {
+        work.recordMove = [&](const Source& source, const Location& destination, int target, int item) {
+          try {
+            if (!collecting || !room() || item < 0 || !sameIdentity(source.metadata, statFd(item))) {
+              collecting = false;
+              return false;
+            }
+            moves.push_back(MoveEffect::capture(source.location, destination, source.parent.get(), target, item));
+            return true;
+          } catch (const FileErrorException&) {
+            collecting = false;
+            return false;
+          }
+        };
+        work.prepareMove = [&](const Source& source, const Location& destination,
+                               int target) -> std::shared_ptr<const MoveEffect> {
+          if (collecting && room()) {
+            try {
+              auto proof = MoveEffect::prepareReplacement(
+                  source.location, destination, source.parent.get(), target, remaining, token
+              );
+              if (proof) {
+                preparedMoves.push_back({proof, source.index});
+                return proof;
+              }
+            } catch (const FileErrorException&) {
+            }
+          }
+          collecting = false;
+          return {};
+        };
+        work.recordPreparedMove = [&](const std::shared_ptr<const MoveEffect>& proof) {
+          try {
+            moves.push_back(proof->publishedReplacement());
+          } catch (const FileErrorException&) {
+            collecting = false;
+            throw;
+          }
+        };
+        work.recordMerge = [&](const Source& source, const Location& folder, int target) {
+          if (collecting && room() && remaining) {
+            try {
+              auto proof = MoveFolder::retain(source.location, source.parent.get(), folder, target, token);
+              if (proof) {
+                --remaining;
+                retainedFolders.push_back({std::move(proof), source.index});
+                return true;
+              }
+            } catch (const FileErrorException&) {
+              collecting = false;
+              // Once source retention committed, its reported recovery path must survive.
+              if (::faccessat(source.parent.get(), source.name.c_str(), F_OK, AT_SYMLINK_NOFOLLOW) != 0
+                  && errno == ENOENT) {
+                throw;
+              }
+            }
+          }
+          collecting = false;
+          return false;
+        };
+      }
+    }
+  };
+} // namespace
+
 bool luciole::TransferService::launch(TransferRequest request, bool retry) {
   if (busy() || request.sources.empty()) {
     return false;
@@ -414,7 +501,6 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
             conflictAsker(owner->gate, [owner] { State::notify(owner); }, token, allowMerge, policies)
         };
         work.allowMerge = allowMerge;
-        std::vector<std::shared_ptr<const MoveEffect>> moves;
         std::vector<std::shared_ptr<const CopyEffect>> copies;
         struct PreparedCopy {
           std::shared_ptr<const CopyEffect> effect;
@@ -422,23 +508,10 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
         };
         // Keep displaced data alive until every source has finished, even if optional history is disqualified.
         std::vector<PreparedCopy> preparedCopies;
-        const auto budget = !retry ? transferHistoryBudget(job->request.action == TransferAction::Move ? 3 : 6) : 0;
-        if (budget && job->request.action == TransferAction::Move) {
-          work.recordMove = [&](const Source& source, const Location& destination, int target, int item) {
-            try {
-              if (moves.size() >= budget || item < 0 || !sameIdentity(source.metadata, statFd(item))) {
-                moves.clear();
-                return false;
-              }
-              moves.push_back(MoveEffect::capture(source.location, destination, source.parent.get(), target, item));
-              return true;
-            } catch (const FileErrorException&) {
-              moves.clear();
-              return false;
-            }
-          };
-        }
+        const auto budget = !retry ? transferHistoryBudget(job->request.action == TransferAction::Move ? 9 : 6) : 0;
         std::size_t remaining = 16384;
+        MoveCapture moveHistory(job->request.action == TransferAction::Move ? budget : 0, token);
+        moveHistory.attach(work);
         bool collectingCopies = budget && job->request.action != TransferAction::Move;
         if (collectingCopies) {
           work.prepareCopy = [&](const Source& source, const Location& destination, int parent, int stage,
@@ -492,17 +565,65 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
         job->mergedItems = work.mergedItems;
         std::shared_ptr<const MoveReceipt> receipt;
         std::shared_ptr<const CopyReceipt> copyReceipt;
-        const auto moved = std::ranges::count(outcomes, TransferOutcome::Moved, &TransferResult::outcome);
-        const bool complete = std::ranges::all_of(outcomes, [](const auto& result) {
-          return !result.error
-              && result.children.empty()
-              && (result.outcome == TransferOutcome::Moved || result.outcome == TransferOutcome::Skipped);
-        });
-        if (!retry && !remote && complete && moved > 0 && static_cast<std::size_t>(moved) == moves.size()) {
+        std::size_t moved = 0, merged = 0;
+        const auto completeMove = [&](auto&& self, const Node& node) -> bool {
+          if (node.result.error
+              || (node.result.outcome != TransferOutcome::Moved && node.result.outcome != TransferOutcome::Skipped)) {
+            return false;
+          }
+          if (node.result.outcome == TransferOutcome::Moved) {
+            node.merging ? ++merged : ++moved;
+          }
+          return std::ranges::all_of(node.children, [&](const auto& child) { return self(self, *child); });
+        };
+        const bool movesComplete =
+            std::ranges::all_of(
+                outcomes,
+                [](const auto& result) {
+                  return !result.error
+                      && (result.outcome == TransferOutcome::Moved || result.outcome == TransferOutcome::Skipped);
+                }
+            )
+            && std::ranges::all_of(job->nodes, [&](const auto& node) {
+                 return !node || completeMove(completeMove, *node);
+               });
+        bool moveCaptureChanged = false;
+        if (!retry
+            && !remote
+            && moveHistory.collecting
+            && movesComplete
+            && moved == moveHistory.moves.size()
+            && merged == moveHistory.retainedFolders.size()) {
           try {
-            receipt = MoveReceipt::capture(moves, job->changedLinks);
+            std::vector<std::shared_ptr<const MoveFolder>> folders;
+            folders.reserve(moveHistory.retainedFolders.size());
+            for (const auto& retained : moveHistory.retainedFolders) {
+              folders.push_back(retained.effect);
+            }
+            receipt = MoveReceipt::capture(moveHistory.moves, job->changedLinks, folders);
           } catch (const FileErrorException&) {
-            // The transfers completed; optional history capture must not change their outcomes.
+            moveCaptureChanged = true;
+          }
+        }
+        if (!receipt && (moveCaptureChanged || !movesComplete)) {
+          const auto retain = [&](const auto& prepared) {
+            for (const auto& location : prepared.effect->retainForRecovery()) {
+              if (prepared.source < outcomes.size()) {
+                auto& result = outcomes[prepared.source];
+                if (!result.error) {
+                  result.error = FileError{
+                      .kind = FileErrorKind::Other, .message = "Undo is unavailable for this incomplete move."
+                  };
+                }
+                result.error->message += " Retained item for inspection: " + location.uri();
+              }
+            }
+          };
+          for (const auto& prepared : moveHistory.preparedMoves) {
+            retain(prepared);
+          }
+          for (const auto& retained : moveHistory.retainedFolders) {
+            retain(retained);
           }
         }
         std::size_t copied = 0;

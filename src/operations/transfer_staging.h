@@ -18,7 +18,8 @@
 // into per-child commits.
 namespace luciole {
   class CopyEffect;
-}
+  class MoveEffect;
+} // namespace luciole
 namespace luciole::transfer {
   struct Source {
     std::size_t index;
@@ -47,6 +48,9 @@ namespace luciole::transfer {
     Choose choose;
     // Optional successful same-filesystem rename capture. False stops further optional capture.
     std::function<bool(const Source&, const Location&, int, int)> recordMove;
+    std::function<std::shared_ptr<const MoveEffect>(const Source&, const Location&, int)> prepareMove;
+    std::function<void(const std::shared_ptr<const MoveEffect>&)> recordPreparedMove;
+    std::function<bool(const Source&, const Location&, int)> recordMerge;
     std::function<std::shared_ptr<const CopyEffect>(const Source&, const Location&, int, int, bool)> prepareCopy;
     std::function<void(const std::shared_ptr<const CopyEffect>&, int)> recordCopy;
     bool allowMerge = true;

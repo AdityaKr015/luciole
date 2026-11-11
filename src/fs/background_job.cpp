@@ -12,7 +12,10 @@ void luciole::detail::runInThread(std::move_only_function<void()> work, std::mov
   const GioPtr<GTask> task(g_task_new(
       nullptr, nullptr,
       [](GObject*, GAsyncResult* result, gpointer) {
-        static_cast<Request*>(g_task_get_task_data(G_TASK(result)))->done();
+        // GTask's worker reference may outlive delivery. Release completion captures
+        // before returning, so finished services cannot retain hidden worker ownership.
+        auto done = std::move(static_cast<Request*>(g_task_get_task_data(G_TASK(result)))->done);
+        done();
       },
       nullptr
   ));
@@ -20,7 +23,10 @@ void luciole::detail::runInThread(std::move_only_function<void()> work, std::mov
     delete static_cast<Request*>(data);
   });
   g_task_run_in_thread(task.get(), [](GTask* task, gpointer, gpointer data, GCancellable*) {
-    static_cast<Request*>(data)->work();
+    {
+      auto work = std::move(static_cast<Request*>(data)->work);
+      work();
+    }
     g_task_return_boolean(task, TRUE);
   });
 }

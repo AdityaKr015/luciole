@@ -1,6 +1,7 @@
 #include "operations/transfer_staging.h"
 
 #include "fs/gio_ptr.h"
+#include "operations/move_receipt.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -160,6 +161,34 @@ namespace luciole::transfer {
             return merge(node, destination, action, work, *replace);
           }
           validateBindings(source, binding);
+          if (action == TransferAction::Move && replace && work.prepareMove) {
+            auto proof = work.prepareMove(source, binding.location.child(target), destination);
+            if (proof) {
+              work.check();
+              requireUnchanged(source.metadata, info(source.parent.get(), source.name));
+              requireUnchanged(*replace, info(destination, target));
+              if (::syscall(
+                      SYS_renameat2, source.parent.get(), source.name.c_str(), destination, target.c_str(),
+                      RENAME_EXCHANGE
+                  )
+                  != 0) {
+                fail("Could not exchange moved item");
+              }
+              result.outcome = Partial;
+              result.destination = binding.location.child(target);
+              try {
+                work.note(info(destination, target));
+                work.note(info(source.parent.get(), source.name));
+                work.recordPreparedMove(proof);
+                result.outcome = Moved;
+              } catch (const std::exception&) {
+                result.error = currentFileError();
+                result.error->message +=
+                    " Inspect both the destination and original source name for the exchanged items.";
+              }
+              return result;
+            }
+          }
           if (action != TransferAction::Move || replace) {
             break;
           }
@@ -323,8 +352,7 @@ namespace luciole::transfer {
     }
 
     TransferResult merge(Node& node, int destination, TransferAction action, Work& work, const struct stat& existing) {
-      // Copy history captures changed leaves; move merges still need source-folder recovery.
-      work.recordMove = {};
+      // Native move history captures changed leaves and retains emptied source containers.
       if (action != TransferAction::Copy) {
         work.prepareCopy = {};
         work.recordCopy = {};
@@ -414,7 +442,8 @@ namespace luciole::transfer {
                   FileErrorKind::Changed, "New source entries remain; they were not included in this merge."
               );
             }
-            if (::unlinkat(source.parent.get(), source.name.c_str(), AT_REMOVEDIR) != 0) {
+            if ((!work.recordMerge || !work.recordMerge(source, *result.destination, output.get()))
+                && ::unlinkat(source.parent.get(), source.name.c_str(), AT_REMOVEDIR) != 0) {
               fail("Could not remove empty merged source folder");
             }
             result.outcome = Moved;

@@ -133,8 +133,8 @@ struct luciole::CopyStorage {
       throwFileError(FileErrorKind::Other, "The private folder could not be removed.");
     } catch (const std::exception& error) {
       auto message =
-          "Retained copy needs inspection at " + filenameDisplayText(stage->recoveryPath()) + ": " + error.what();
-      std::println(stderr, "[copy-history] {}", message);
+          "Retained item needs inspection at " + filenameDisplayText(stage->recoveryPath()) + ": " + error.what();
+      std::println(stderr, "[file-history] {}", message);
       const std::scoped_lock lock(cleanupMutex);
       if (cleanupErrors.size() == 12) {
         cleanupErrors.erase(cleanupErrors.begin());
@@ -241,33 +241,118 @@ std::shared_ptr<const luciole::CopyEffect> luciole::CopyEffect::published(int fr
   if (!m_previous) {
     return incoming;
   }
-  auto& previous = *m_previous->m_storage;
+  return std::shared_ptr<const CopyEffect>(
+      new CopyEffect(m_destination, m_storage, incoming->m_tree, false, m_previous->retainedFrom(from, "item"))
+  );
+}
+
+int luciole::CopyEffect::item() const { return m_storage->item.get(); }
+luciole::Location luciole::CopyEffect::currentLocation() const {
+  return m_storage->stage ? Location::fromPath(m_storage->stage->recoveryPath()) : m_destination;
+}
+int luciole::CopyEffect::parent() const { return m_storage->parent.get(); }
+std::mutex& luciole::CopyEffect::mutex() const { return m_storage->replayMutex; }
+
+std::shared_ptr<const luciole::CopyEffect> luciole::CopyEffect::retainedFrom(int from, const std::string& name) const {
+  auto& storage = *m_storage;
   try {
-    auto expected = *m_previous->m_tree;
-    // Only the root's ctime changes when this destination is exchanged and retained.
-    expected.metadata.st_ctim = statFd(previous.item.get()).st_ctim;
-    requireRevision(expected.metadata, statFd(previous.item.get()));
-    verify(from, "item", expected, {});
-    auto stage = std::make_unique<CreationStage>(previous.parent.get(), false);
-    stage->adopt(checkedFd(::fcntl(previous.item.get(), F_DUPFD_CLOEXEC, 0)));
-    (void)currentParent(m_destination, previous.parent.get());
-    verify(from, "item", expected, {});
-    if (::syscall(SYS_renameat2, from, "item", stage->fd(), "item", RENAME_NOREPLACE) != 0) {
+    auto expected = *m_tree;
+    expected.metadata.st_ctim = statFd(item()).st_ctim;
+    requireRevision(expected.metadata, statFd(item()));
+    verify(from, name, expected, {});
+    auto stage = std::make_unique<CreationStage>(parent(), false);
+    stage->adopt(checkedFd(::fcntl(item(), F_DUPFD_CLOEXEC, 0)));
+    (void)currentParent(m_destination, parent());
+    verify(from, name, expected, {});
+    if (::syscall(SYS_renameat2, from, name.c_str(), stage->fd(), "item", RENAME_NOREPLACE) != 0) {
       throwErrno(errno);
     }
-    previous.stage = std::move(stage);
-    auto retained = m_previous->afterMove(true);
-    return std::shared_ptr<const CopyEffect>(
-        new CopyEffect(m_destination, m_storage, incoming->m_tree, false, std::move(retained))
-    );
+    storage.stage = std::move(stage);
+    return afterMove(true);
   } catch (const std::exception&) {
     auto error = currentFileError();
-    if (previous.stage) {
-      previous.retainForInspection = true;
-      error.message += " Inspect previous destination: " + filenameDisplayText(previous.stage->recoveryPath());
+    if (storage.stage) {
+      storage.retainForInspection = true;
+      error.message += " Inspect retained item: " + filenameDisplayText(storage.stage->recoveryPath());
     }
     throw FileErrorException(std::move(error));
   }
+}
+
+std::shared_ptr<const luciole::CopyEffect>
+luciole::CopyEffect::restoreTo(const Location& destination, int target, bool& changed) const {
+  validate({});
+  if (!m_hidden || m_previous) {
+    throwFileError(FileErrorKind::Changed, "Invalid retained-item restoration.");
+  }
+  (void)currentParent(destination, target);
+  auto nextParent = checkedFd(::fcntl(target, F_DUPFD_CLOEXEC, 0));
+  if (::syscall(
+          SYS_renameat2, m_storage->stage->fd(), "item", target, destination.basename()->c_str(), RENAME_NOREPLACE
+      )
+      != 0) {
+    throwErrno(errno);
+  }
+  changed = true;
+  auto stage = std::move(m_storage->stage);
+  m_storage->cleanupTree.reset();
+  if (!stage->clear()) {
+    throwFileError(
+        FileErrorKind::Other,
+        "The item returned, but inspect its private folder: " + filenameDisplayText(stage->recoveryPath())
+    );
+  }
+  m_storage->parent = std::move(nextParent);
+  auto moved = std::shared_ptr<const CopyEffect>(new CopyEffect(destination, m_storage, m_tree, false));
+  return moved->afterMove(false);
+}
+
+std::shared_ptr<const luciole::CopyEffect>
+luciole::CopyEffect::storeTo(const Location& folder, int target, bool& changed) const {
+  validate({});
+  if (m_hidden || m_previous) {
+    throwFileError(FileErrorKind::Changed, "Invalid retained-item storage.");
+  }
+  const auto destination = folder.child(*m_destination.basename());
+  (void)currentParent(destination, target);
+  auto nextParent = checkedFd(::fcntl(target, F_DUPFD_CLOEXEC, 0));
+  auto stage = std::make_unique<CreationStage>(nextParent.get(), false);
+  stage->adopt(checkedFd(::fcntl(item(), F_DUPFD_CLOEXEC, 0)));
+  validate({});
+  if (::syscall(SYS_renameat2, parent(), m_destination.basename()->c_str(), stage->fd(), "item", RENAME_NOREPLACE)
+      != 0) {
+    throwErrno(errno);
+  }
+  changed = true;
+  m_storage->parent = std::move(nextParent);
+  m_storage->stage = std::move(stage);
+  auto moved = std::shared_ptr<const CopyEffect>(new CopyEffect(destination, m_storage, m_tree, true));
+  return moved->afterMove(true);
+}
+
+std::shared_ptr<const luciole::CopyEffect>
+luciole::CopyEffect::refreshFolder(bool empty, std::size_t& remaining, const CancelToken& token) const {
+  if (m_hidden || m_previous || !S_ISDIR(m_tree->metadata.st_mode) || !ownsProof()) {
+    throwFileError(FileErrorKind::Changed, "Invalid merged-folder history.");
+  }
+  (void)currentParent(m_destination, parent());
+  auto expected = m_tree->metadata;
+  const auto current = statFd(item());
+  // Only directory-entry bookkeeping may change as recorded children move in or out.
+  expected.st_size = current.st_size;
+  expected.st_nlink = current.st_nlink;
+  expected.st_mtim = current.st_mtim;
+  expected.st_ctim = current.st_ctim;
+  requireRevision(expected, current);
+  auto tree = std::make_shared<transfer::Tree>(
+      captureTree(parent(), *m_destination.basename(), remaining, token, current.st_dev, 0)
+  );
+  requireRevision(current, tree->metadata);
+  if (empty && !tree->children.empty()) {
+    throwFileError(FileErrorKind::Changed, "New source entries remain in a merged folder.");
+  }
+  tree->name = "item";
+  return std::shared_ptr<const CopyEffect>(new CopyEffect(m_destination, m_storage, std::move(tree), false));
 }
 
 std::shared_ptr<const luciole::CopyReceipt> luciole::CopyReceipt::capture(
