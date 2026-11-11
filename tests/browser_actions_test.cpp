@@ -480,18 +480,18 @@ namespace {
     model.applySnapshot(snapshot());
     luciole::ActionContext c{.model = model, .query = {}, .pinned = {}};
     const auto request = R::capture(c);
-    TEST_CHECK(!R::state(A::UndoRename, c, request).enabled && !R::state(A::RedoRename, c, request).enabled);
-    c.canUndoRename = true;
-    TEST_CHECK(R::state(A::UndoRename, c, request).enabled && !R::state(A::RedoRename, c, request).enabled);
+    TEST_CHECK(!R::state(A::Undo, c, request).enabled && !R::state(A::Redo, c, request).enabled);
+    c.canUndo = true;
+    TEST_CHECK(R::state(A::Undo, c, request).enabled && !R::state(A::Redo, c, request).enabled);
     c.operationsBusy = true;
-    TEST_CHECK(!R::state(A::UndoRename, c, request).enabled);
+    TEST_CHECK(!R::state(A::Undo, c, request).enabled);
     c.operationsBusy = false;
-    c.canUndoRename = false;
-    c.canRedoRename = true;
+    c.canUndo = false;
+    c.canRedo = true;
     ++c.context;
-    TEST_CHECK(R::state(A::RedoRename, c, request).enabled);
-    TEST_CHECK(luciole::shortcutMatches(A::UndoRename, XKB_KEY_z, KeyMod::Ctrl));
-    TEST_CHECK(luciole::shortcutMatches(A::RedoRename, XKB_KEY_Z, KeyMod::Ctrl | KeyMod::Shift));
+    TEST_CHECK(R::state(A::Redo, c, request).enabled);
+    TEST_CHECK(luciole::shortcutMatches(A::Undo, XKB_KEY_z, KeyMod::Ctrl));
+    TEST_CHECK(luciole::shortcutMatches(A::Redo, XKB_KEY_Z, KeyMod::Ctrl | KeyMod::Shift));
   }
   void testBulkSelection() {
     luciole::DirectoryModel model;

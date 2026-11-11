@@ -91,40 +91,40 @@ namespace {
     auto& service = job->service<luciole::BatchRenameService>();
     TEST_CHECK(service.prepare({entry(fixture.at("a")), entry(fixture.at("b"))}));
     pump.until([&] { return !service.busy(); });
-    TEST_CHECK(!workspace.hub.canUndoRename() && !workspace.hub.canRedoRename());
+    TEST_CHECK(!workspace.hub.canUndo() && !workspace.hub.canRedo());
     TEST_CHECK(service.apply());
     pump.until([&] { return !service.busy(); });
-    TEST_CHECK(workspace.hub.canUndoRename() && workspace.hub.batchRenameHistory());
-    TEST_CHECK(!workspace.hub.canRedoRename());
+    TEST_CHECK(workspace.hub.canUndo() && workspace.hub.batchRenameHistory());
+    TEST_CHECK(!workspace.hub.canRedo());
     job.reset();
     TEST_CHECK(workspace.model.close(workspace.page));
     workspace.hub.detach(workspace.page);
     workspace.hub.update(otherWindow);
-    TEST_CHECK(workspace.hub.canUndoRename());
+    TEST_CHECK(workspace.hub.canUndo());
     fixture.write("b");
-    TEST_CHECK(workspace.hub.replayRename(other, false));
-    TEST_CHECK(workspace.hub.renameReplayBusy() && !workspace.hub.canUndoRename());
+    TEST_CHECK(workspace.hub.replayHistory(other, false));
+    TEST_CHECK(workspace.hub.historyReplayBusy() && !workspace.hub.canUndo());
     const auto undoActivity = workspace.hub.activities().front();
     TEST_CHECK(undoActivity.title == "Undo batch rename");
     pump.until([&] { return !workspace.hub.busy(); });
-    TEST_CHECK(workspace.hub.canUndoRename() && !workspace.hub.canRedoRename());
+    TEST_CHECK(workspace.hub.canUndo() && !workspace.hub.canRedo());
     TEST_CHECK(fs::exists(fixture.root / "a_001") && !fs::exists(fixture.root / "a"));
     TEST_CHECK(workspace.hub.activities().front().state == ActivityState::Failed);
     TEST_CHECK(fs::remove(fixture.root / "b"));
-    TEST_CHECK(workspace.hub.replayRename(other, false));
+    TEST_CHECK(workspace.hub.replayHistory(other, false));
     pump.until([&] { return !workspace.hub.busy(); });
-    TEST_CHECK(!workspace.hub.canUndoRename() && workspace.hub.canRedoRename());
+    TEST_CHECK(!workspace.hub.canUndo() && workspace.hub.canRedo());
     TEST_CHECK(fs::exists(fixture.root / "a") && fs::exists(fixture.root / "b"));
     TEST_CHECK(workspace.hub.activities().front().state == ActivityState::Succeeded);
-    TEST_CHECK(workspace.hub.replayRename(other, true));
+    TEST_CHECK(workspace.hub.replayHistory(other, true));
     TEST_CHECK(workspace.hub.activities().front().title == "Redo batch rename");
     pump.until([&] { return !workspace.hub.busy(); });
-    TEST_CHECK(workspace.hub.canUndoRename() && !workspace.hub.canRedoRename());
+    TEST_CHECK(workspace.hub.canUndo() && !workspace.hub.canRedo());
     TEST_CHECK(fs::exists(fixture.root / "a_001") && fs::exists(fixture.root / "b_002"));
     fixture.write("b_002");
-    TEST_CHECK(workspace.hub.replayRename(other, false));
+    TEST_CHECK(workspace.hub.replayHistory(other, false));
     pump.until([&] { return !workspace.hub.busy(); });
-    TEST_CHECK(!workspace.hub.canUndoRename() && !workspace.hub.canRedoRename());
+    TEST_CHECK(!workspace.hub.canUndo() && !workspace.hub.canRedo());
     workspace.hub.detach(other);
   }
 
@@ -145,24 +145,107 @@ namespace {
     TEST_CHECK(first->service<luciole::BatchRenameService>().apply());
     TEST_CHECK(second->service<luciole::BatchRenameService>().apply());
     pump.until([&] { return !workspace.hub.busy(); });
-    TEST_CHECK(workspace.hub.canUndoRename());
-    TEST_CHECK(workspace.hub.replayRename(workspace.page, false));
+    TEST_CHECK(workspace.hub.canUndo());
+    TEST_CHECK(workspace.hub.replayHistory(workspace.page, false));
     pump.until([&] { return !workspace.hub.busy(); });
     TEST_CHECK(fs::exists(fixture.root / "a_001") && fs::exists(fixture.root / "b_002"));
     TEST_CHECK(fs::exists(fixture.root / "c") && fs::exists(fixture.root / "d"));
-    TEST_CHECK(workspace.hub.canRedoRename());
+    TEST_CHECK(workspace.hub.canRedo());
     auto single = workspace.hub.create<luciole::RenameService>(workspace.page);
     TEST_CHECK(single->service<luciole::RenameService>().prepare(fixture.at("c")));
     pump.until([&] { return !single->running(); });
-    TEST_CHECK(workspace.hub.canRedoRename());
+    TEST_CHECK(workspace.hub.canRedo());
     TEST_CHECK(single->service<luciole::RenameService>().rename("single"));
-    TEST_CHECK(!workspace.hub.canRedoRename());
+    TEST_CHECK(!workspace.hub.canRedo());
     pump.until([&] { return !single->running(); });
-    TEST_CHECK(workspace.hub.canUndoRename() && !workspace.hub.batchRenameHistory());
-    TEST_CHECK(workspace.hub.replayRename(workspace.page, false));
+    TEST_CHECK(workspace.hub.canUndo() && !workspace.hub.batchRenameHistory());
+    TEST_CHECK(workspace.hub.replayHistory(workspace.page, false));
     pump.until([&] { return !workspace.hub.busy(); });
     TEST_CHECK(fs::exists(fixture.root / "c"));
   }
+  void creationHistory(Pump& pump) {
+    Fixture fixture;
+    Workspace workspace;
+    auto job = workspace.hub.create<luciole::CreateService>(workspace.page);
+    auto& service = job->service<luciole::CreateService>();
+    TEST_CHECK(service.prepare(fixture.at("destination"), luciole::CreateKind::EmptyFile));
+    pump.until([&] { return !service.busy(); });
+    TEST_CHECK(service.create("created"));
+    pump.until([&] { return !service.busy(); });
+    TEST_CHECK(workspace.hub.canUndo() && workspace.hub.historyLabel(false) == "Undo Create File");
+    const auto otherWindow = workspace.model.addWindow();
+    const auto other = workspace.model.addTab(otherWindow);
+    Owner otherOwner;
+    workspace.hub.attach(other, otherOwner);
+    job.reset();
+    TEST_CHECK(workspace.model.close(workspace.page));
+    workspace.hub.detach(workspace.page);
+    workspace.hub.update(otherWindow);
+    TEST_CHECK(workspace.hub.replayHistory(other, false));
+    TEST_CHECK(workspace.hub.historyReplayBusy() && !workspace.hub.canUndo());
+    const auto activity = workspace.hub.activities().front();
+    TEST_CHECK(activity.title == "Undo: Create file" && activity.canCancel);
+    pump.until([&] { return !workspace.hub.busy(); });
+    TEST_CHECK(!fs::exists(fixture.root / "destination/created") && workspace.hub.canRedo());
+    fs::create_symlink("missing", fixture.root / "destination/created");
+    TEST_CHECK(workspace.hub.replayHistory(other, true));
+    pump.until([&] { return !workspace.hub.busy(); });
+    TEST_CHECK(workspace.hub.canRedo() && fs::read_symlink(fixture.root / "destination/created") == "missing");
+    TEST_CHECK(fs::remove(fixture.root / "destination/created"));
+    TEST_CHECK(workspace.hub.replayHistory(other, true));
+    pump.until([&] { return !workspace.hub.busy(); });
+    TEST_CHECK(workspace.hub.canUndo() && fs::is_regular_file(fixture.root / "destination/created"));
+    fixture.write("destination/created");
+    TEST_CHECK(workspace.hub.replayHistory(other, false));
+    pump.until([&] { return !workspace.hub.busy(); });
+    TEST_CHECK(!workspace.hub.canUndo() && !workspace.hub.canRedo());
+    TEST_CHECK(fs::is_regular_file(fixture.root / "destination/created"));
+    workspace.hub.detach(other);
+  }
+
+  void creationHistoryReplacement(Pump& pump) {
+    Fixture fixture;
+    fixture.write("source");
+    Workspace workspace;
+    auto first = workspace.hub.create<luciole::CreateService>(workspace.page);
+    auto second = workspace.hub.create<luciole::CreateService>(workspace.page);
+    TEST_CHECK(
+        first->service<luciole::CreateService>().prepare(fixture.at("destination"), luciole::CreateKind::Folder)
+    );
+    TEST_CHECK(
+        second->service<luciole::CreateService>().prepare(fixture.at("destination"), luciole::CreateKind::EmptyFile)
+    );
+    pump.until([&] { return !workspace.hub.busy(); });
+    TEST_CHECK(first->service<luciole::CreateService>().create("older"));
+    TEST_CHECK(second->service<luciole::CreateService>().create("newer"));
+    pump.until([&] { return !workspace.hub.busy(); });
+    TEST_CHECK(workspace.hub.historyLabel(false) == "Undo Create File");
+    TEST_CHECK(workspace.hub.replayHistory(workspace.page, false));
+    pump.until([&] { return !workspace.hub.busy(); });
+    TEST_CHECK(fs::is_directory(fixture.root / "destination/older") && !fs::exists(fixture.root / "destination/newer"));
+    TEST_CHECK(workspace.hub.canRedo());
+    auto rename = workspace.hub.create<luciole::RenameService>(workspace.page);
+    TEST_CHECK(rename->service<luciole::RenameService>().prepare(fixture.at("source")));
+    pump.until([&] { return !rename->running(); });
+    TEST_CHECK(workspace.hub.canRedo());
+    TEST_CHECK(rename->service<luciole::RenameService>().rename("renamed"));
+    TEST_CHECK(!workspace.hub.canRedo());
+    pump.until([&] { return !rename->running(); });
+    TEST_CHECK(workspace.hub.canUndo() && workspace.hub.historyLabel(false) == "Undo Rename");
+    auto create = workspace.hub.create<luciole::CreateService>(workspace.page);
+    TEST_CHECK(
+        create->service<luciole::CreateService>().prepare(fixture.at("destination"), luciole::CreateKind::Folder)
+    );
+    pump.until([&] { return !create->running(); });
+    TEST_CHECK(workspace.hub.canUndo());
+    TEST_CHECK(create->service<luciole::CreateService>().create("last"));
+    pump.until([&] { return !create->running(); });
+    TEST_CHECK(workspace.hub.canUndo() && workspace.hub.historyLabel(false) == "Undo Create Folder");
+    TEST_CHECK(workspace.hub.replayHistory(workspace.page, false));
+    pump.until([&] { return !workspace.hub.busy(); });
+    TEST_CHECK(!fs::exists(fixture.root / "destination/last") && fs::exists(fixture.root / "renamed"));
+  }
+
   void transferLifecycle(Pump& pump) {
     Fixture fixture;
     fixture.write("success");
@@ -311,4 +394,6 @@ int main() {
   boundedReports(pump);
   batchRenameHistory(pump);
   renameHistoryReplacement(pump);
+  creationHistory(pump);
+  creationHistoryReplacement(pump);
 }

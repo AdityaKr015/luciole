@@ -122,9 +122,9 @@ void RenameController::syncFileRename(const OperationJob& job) {
   const bool editor = &job == m_job.get() && m_fileRenameEditor != nullptr;
   if (snapshot.status == luciole::RenameStatus::Succeeded) {
     m_page.setActionMessage(
-        job.renameReplay() == RenameReplay::Undo       ? "Rename undone."
-            : job.renameReplay() == RenameReplay::Redo ? "Rename redone."
-                                                       : ""
+        job.historyReplay() == HistoryReplay::Undo       ? "Rename undone."
+            : job.historyReplay() == HistoryReplay::Redo ? "Rename redone."
+                                                         : ""
     );
     auto& browser = m_page.browser();
     const auto& current = browser.model().snapshot().location;
@@ -143,9 +143,9 @@ void RenameController::syncFileRename(const OperationJob& job) {
   } else if (!editor) {
     if (snapshot.status == luciole::RenameStatus::Error) {
       m_page.actionError(
-          (job.renameReplay() == RenameReplay::Undo       ? "Could not undo rename: "
-               : job.renameReplay() == RenameReplay::Redo ? "Could not redo rename: "
-                                                          : "Could not rename: ")
+          (job.historyReplay() == HistoryReplay::Undo       ? "Could not undo rename: "
+               : job.historyReplay() == HistoryReplay::Redo ? "Could not redo rename: "
+                                                            : "Could not rename: ")
           + renameErrorText(snapshot.error)
       );
     }

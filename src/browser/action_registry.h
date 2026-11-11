@@ -87,8 +87,8 @@ namespace luciole {
     RunProgram,
     RunInTerminal,
     Scripts,
-    UndoRename,
-    RedoRename,
+    Undo,
+    Redo,
     Operations,
     TargetTerminal
   };
@@ -120,7 +120,7 @@ namespace luciole {
     bool clipboardAvailable = false;
     bool clipboardHasFiles = false;
     bool terminalAvailable = false;
-    bool canUndoRename = false, canRedoRename = false;
+    bool canUndo = false, canRedo = false;
   };
   struct ActionState {
     bool enabled = true;

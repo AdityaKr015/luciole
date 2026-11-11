@@ -5,12 +5,16 @@
 #include "test_check.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <print>
 #include <stdexcept>
+#include <sys/inotify.h>
 #include <sys/stat.h>
+#include <thread>
 #include <unistd.h>
 
 namespace {
@@ -50,6 +54,11 @@ namespace {
     }
     void create(luciole::CreateService& service, const std::string& name) {
       TEST_CHECK(service.create(name));
+      until([&] { return !service.busy(); });
+    }
+    void replay(luciole::CreateService& service) {
+      TEST_CHECK(service.snapshot().receipt);
+      TEST_CHECK(service.replay(service.snapshot().receipt));
       until([&] { return !service.busy(); });
     }
     luciole::TemplateListing templates(luciole::TemplateCatalog& catalog) {
@@ -613,6 +622,260 @@ namespace {
       TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Error && !fs::exists(fixture.root / "denied.txt"));
     }
   }
+  void creationHistory(Pump& pump) {
+    using K = luciole::CreateKind;
+    using S = luciole::CreateStatus;
+    for (const auto kind : {K::Folder, K::EmptyFile}) {
+      Fixture fixture;
+      luciole::CreateService service;
+      TEST_CHECK(!service.replay({}));
+      pump.prepare(service, fixture.root, kind);
+      pump.create(service, "created 文");
+      TEST_CHECK(service.snapshot().status == S::Succeeded && service.snapshot().receipt);
+      for (int cycle = 0; cycle < 3; ++cycle) {
+        pump.replay(service);
+        TEST_CHECK(service.snapshot().status == S::Succeeded && service.snapshot().removed);
+        TEST_CHECK(service.snapshot().receipt && fs::is_empty(fixture.root));
+        pump.replay(service);
+        TEST_CHECK(service.snapshot().status == S::Succeeded && !service.snapshot().removed);
+        TEST_CHECK(service.snapshot().receipt);
+        TEST_CHECK(
+            kind == K::Folder ? fs::is_directory(fixture.root / "created 文")
+                              : fs::is_regular_file(fixture.root / "created 文")
+        );
+        TEST_CHECK(fs::is_empty(fixture.root / "created 文"));
+        TEST_CHECK(std::distance(fs::directory_iterator(fixture.root), fs::directory_iterator{}) == 1);
+      }
+      pump.replay(service);
+      const auto undone = service.snapshot().receipt;
+      fs::create_symlink("missing", fixture.root / "created 文");
+      TEST_CHECK(service.replay(undone));
+      pump.until([&] { return !service.busy(); });
+      TEST_CHECK(
+          service.snapshot().status == S::Error && service.snapshot().error->kind == luciole::FileErrorKind::Exists
+      );
+      TEST_CHECK(fs::read_symlink(fixture.root / "created 文") == "missing");
+      TEST_CHECK(fs::remove(fixture.root / "created 文"));
+      TEST_CHECK(service.replay(undone));
+      pump.until([&] { return !service.busy(); });
+      TEST_CHECK(service.snapshot().status == S::Succeeded && service.snapshot().receipt);
+    }
+  }
+
+  void creationHistoryGuards(Pump& pump) {
+    using S = luciole::CreateStatus;
+    using E = luciole::FileErrorKind;
+    for (int scenario = 0; scenario < 5; ++scenario) {
+      Fixture fixture;
+      const auto parent = fixture.root / "parent";
+      fs::create_directory(parent);
+      const auto created = parent / "created";
+      luciole::CreateService service;
+      pump.prepare(service, parent, scenario == 0 ? luciole::CreateKind::Folder : luciole::CreateKind::EmptyFile);
+      pump.create(service, "created");
+      const auto receipt = service.snapshot().receipt;
+      if (scenario == 0) {
+        std::ofstream(created / "keep") << "new data";
+      } else if (scenario == 1) {
+        std::ofstream(created) << "edited data";
+      } else if (scenario == 2) {
+        fs::rename(created, parent / "held");
+        std::ofstream(created) << "foreign data";
+      } else if (scenario == 3) {
+        fs::rename(parent, fixture.root / "held-parent");
+        fs::create_directory(parent);
+        std::ofstream(created) << "foreign parent";
+      } else {
+        fs::remove(created);
+      }
+      TEST_CHECK(receipt && service.replay(receipt));
+      pump.until([&] { return !service.busy(); });
+      TEST_CHECK(service.snapshot().status == S::Error && service.snapshot().error->kind == E::Changed);
+      TEST_CHECK(!service.snapshot().receipt);
+      if (scenario == 0) {
+        TEST_CHECK(contents(created / "keep") == "new data");
+      } else if (scenario == 1) {
+        TEST_CHECK(contents(created) == "edited data");
+      } else if (scenario == 2) {
+        TEST_CHECK(contents(created) == "foreign data" && fs::is_empty(parent / "held"));
+      } else if (scenario == 3) {
+        TEST_CHECK(contents(created) == "foreign parent" && fs::is_empty(fixture.root / "held-parent/created"));
+      } else {
+        TEST_CHECK(!fs::exists(created));
+      }
+      TEST_CHECK(std::ranges::none_of(fs::directory_iterator(parent), [](const auto& item) {
+        return item.path().filename().native().starts_with(".luciole-create-");
+      }));
+    }
+  }
+
+  void retainedDocumentHistory(Pump& pump) {
+    using S = luciole::CreateStatus;
+    Fixture fixture;
+    fs::create_directory(fixture.root / "output");
+    const auto source = fixture.root / "template";
+    const std::string data("original\0binary\xff", 16);
+    std::ofstream(source, std::ios::binary).write(data.data(), static_cast<std::streamsize>(data.size()));
+    luciole::CreateService service;
+    prepareDocument(pump, service, fixture.root / "output", source);
+    pump.create(service, "created.txt");
+    TEST_CHECK(service.snapshot().receipt && contents(fixture.root / "output/created.txt") == data);
+    fs::remove(source);
+    pump.replay(service);
+    TEST_CHECK(service.snapshot().status == S::Succeeded && service.snapshot().removed);
+    TEST_CHECK(fs::is_empty(fixture.root / "output"));
+    pump.replay(service);
+    TEST_CHECK(service.snapshot().status == S::Succeeded && contents(fixture.root / "output/created.txt") == data);
+    struct stat before{};
+    TEST_CHECK(::stat((fixture.root / "output/created.txt").c_str(), &before) == 0);
+    std::ofstream(fixture.root / "output/created.txt") << std::string(data.size(), 'x');
+    const struct timespec times[] = {before.st_atim, before.st_mtim};
+    TEST_CHECK(::utimensat(AT_FDCWD, (fixture.root / "output/created.txt").c_str(), times, 0) == 0);
+    pump.replay(service);
+    TEST_CHECK(
+        service.snapshot().status == S::Error && service.snapshot().error->kind == luciole::FileErrorKind::Changed
+    );
+    TEST_CHECK(contents(fixture.root / "output/created.txt") == std::string(data.size(), 'x'));
+  }
+
+  void linkHistory(Pump& pump) {
+    using K = luciole::CreateKind;
+    using S = luciole::CreateStatus;
+    for (const auto kind : {K::SymbolicLink, K::HardLink}) {
+      Fixture fixture;
+      const auto source = fixture.root / "source";
+      std::ofstream(source) << "keep source";
+      luciole::CreateService service;
+      prepareLink(pump, service, source);
+      createLink(pump, service, fixture.root, "created", kind);
+      for (int cycle = 0; cycle < 3; ++cycle) {
+        TEST_CHECK(service.snapshot().receipt && contents(source) == "keep source");
+        pump.replay(service);
+        TEST_CHECK(
+            service.snapshot().status == S::Succeeded
+            && !fs::is_symlink(fixture.root / "created")
+            && !fs::exists(fixture.root / "created")
+            && contents(source) == "keep source"
+        );
+        pump.replay(service);
+        TEST_CHECK(service.snapshot().status == S::Succeeded);
+        TEST_CHECK(
+            kind == K::HardLink ? fs::equivalent(source, fixture.root / "created")
+                                : fs::read_symlink(fixture.root / "created") == source
+        );
+      }
+      pump.replay(service);
+      if (kind == K::SymbolicLink) {
+        fs::remove(source);
+        pump.replay(service);
+        TEST_CHECK(service.snapshot().status == S::Succeeded && fs::read_symlink(fixture.root / "created") == source);
+      } else {
+        std::ofstream(source) << "changed through alias";
+        pump.replay(service);
+        TEST_CHECK(service.snapshot().status == S::Error && !fs::exists(fixture.root / "created"));
+        TEST_CHECK(contents(source) == "changed through alias");
+      }
+    }
+  }
+
+  void cancelledReplay(Pump& pump) {
+    Fixture fixture;
+    luciole::CreateService service;
+    pump.prepare(service, fixture.root, luciole::CreateKind::EmptyFile);
+    pump.create(service, "item");
+    TEST_CHECK(service.replay(service.snapshot().receipt));
+    service.cancel();
+    pump.until([&] { return !service.busy(); });
+    const auto& snapshot = service.snapshot();
+    TEST_CHECK(
+        snapshot.status == luciole::CreateStatus::Succeeded || snapshot.status == luciole::CreateStatus::Cancelled
+    );
+    TEST_CHECK(fs::exists(fixture.root / "item") != snapshot.removed);
+    TEST_CHECK(
+        std::distance(fs::directory_iterator(fixture.root), fs::directory_iterator{}) == (snapshot.removed ? 0 : 1)
+    );
+  }
+
+  void restrictiveHistoryMask(Pump& pump) {
+    for (const auto kind : {luciole::CreateKind::Folder, luciole::CreateKind::EmptyFile}) {
+      Fixture fixture;
+      struct MaskGuard {
+        mode_t previous = ::umask(0777);
+        ~MaskGuard() { ::umask(previous); }
+      } guard;
+      luciole::CreateService service;
+      pump.prepare(service, fixture.root, kind);
+      pump.create(service, "mode-zero");
+      TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Succeeded && service.snapshot().receipt);
+      const bool directoryWritable = kind != luciole::CreateKind::Folder
+          || ::faccessat(AT_FDCWD, (fixture.root / "mode-zero").c_str(), W_OK, AT_EACCESS) == 0;
+      pump.replay(service);
+      if (!directoryWritable) {
+        TEST_CHECK(
+            service.snapshot().status == luciole::CreateStatus::Error
+            && service.snapshot().error->kind == luciole::FileErrorKind::Denied
+        );
+        struct stat info{};
+        TEST_CHECK(::lstat((fixture.root / "mode-zero").c_str(), &info) == 0 && (info.st_mode & 0777) == 0);
+        fs::permissions(fixture.root / "mode-zero", fs::perms::owner_all);
+        TEST_CHECK(fs::remove(fixture.root / "mode-zero"));
+        continue;
+      }
+      TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Succeeded && fs::is_empty(fixture.root));
+      pump.replay(service);
+      TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Succeeded && service.snapshot().receipt);
+      struct stat info{};
+      TEST_CHECK(::lstat((fixture.root / "mode-zero").c_str(), &info) == 0 && (info.st_mode & 0777) == 0);
+      pump.replay(service);
+      TEST_CHECK(service.snapshot().status == luciole::CreateStatus::Succeeded && fs::is_empty(fixture.root));
+    }
+  }
+
+  void undoSourceRace(Pump& pump) {
+    unsigned injections = 0;
+    for (unsigned attempt = 0; attempt < 8; ++attempt) {
+      Fixture fixture;
+      luciole::CreateService service;
+      pump.prepare(service, fixture.root, luciole::CreateKind::EmptyFile);
+      pump.create(service, "created");
+      const int watch = ::inotify_init1(IN_CLOEXEC | IN_NONBLOCK);
+      TEST_CHECK(watch >= 0 && ::inotify_add_watch(watch, fixture.root.c_str(), IN_CREATE) >= 0);
+      bool renamed = false, inserted = false;
+      std::jthread rival([&](const std::stop_token& stop) {
+        std::array<char, 4096> events{};
+        bool started = false;
+        while (!stop.stop_requested()) {
+          started |= ::read(watch, events.data(), events.size()) > 0;
+          if (started && ::rename((fixture.root / "created").c_str(), (fixture.root / "held").c_str()) == 0) {
+            renamed = true;
+            const int foreign =
+                ::open((fixture.root / "created").c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+            if (foreign >= 0) {
+              inserted = true;
+              TEST_CHECK(::write(foreign, "foreign", 7) == 7);
+              TEST_CHECK(::close(foreign) == 0);
+            }
+            return;
+          }
+          std::this_thread::yield();
+        }
+      });
+      pump.replay(service);
+      rival.request_stop();
+      rival.join();
+      TEST_CHECK(::close(watch) == 0);
+      if (renamed) {
+        TEST_CHECK(fs::is_empty(fixture.root / "held"));
+      }
+      if (inserted) {
+        ++injections;
+        TEST_CHECK(contents(fixture.root / "created") == "foreign");
+        TEST_CHECK(!service.snapshot().receipt);
+      }
+    }
+    std::println("Creation undo source race: {} replacements injected", injections);
+  }
+
   void monitoredCreation(Pump& pump) {
     Fixture fixture;
     luciole::DirectoryModel model;
@@ -666,6 +929,13 @@ int main() {
     staleDestinations(pump, luciole::CreateKind::EmptyFile);
     validationCancellationAndPermissions(pump);
     monitoredCreation(pump);
+    creationHistory(pump);
+    creationHistoryGuards(pump);
+    retainedDocumentHistory(pump);
+    linkHistory(pump);
+    cancelledReplay(pump);
+    undoSourceRace(pump);
+    restrictiveHistoryMask(pump);
     std::println("create-service tests passed");
     return 0;
   } catch (const std::exception& error) {

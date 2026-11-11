@@ -4,14 +4,13 @@
 #include "fs/filename.h"
 #include "fs/gio_interop.h"
 #include "fs/posix_fd.h"
+#include "operations/create_receipt.h"
+#include "operations/creation_stage.h"
 
-#include <array>
 #include <cerrno>
 #include <fcntl.h>
 #include <filesystem>
-#include <linux/fs.h>
 #include <sys/stat.h>
-#include <sys/syscall.h>
 #include <unistd.h>
 #include <utility>
 
@@ -92,109 +91,45 @@ namespace {
   struct Reply {
     std::shared_ptr<Target> target;
     std::optional<luciole::Location> destination;
-    // A completed creation whose cleanup or close failed.
+    // An applied effect whose private-folder cleanup failed.
     std::optional<luciole::FileError> error;
     std::shared_ptr<LinkSource> linkSource;
+    std::shared_ptr<const luciole::CreateReceipt> receipt;
+    bool removed = false, retireHistory = false;
   };
   constexpr auto crossDeviceLink = "Hard links require a destination on the same filesystem.";
-  // Private staging keeps incomplete template contents out of the requested destination name.
-  class DocumentStage {
-  public:
-    explicit DocumentStage(int parent) : m_parent(parent) {
-      const luciole::GString uuid(g_uuid_string_random());
-      m_name = ".luciole-document-" + std::string(uuid.get());
-      if (::mkdirat(parent, m_name.c_str(), 0700) != 0) {
-        luciole::throwErrno(errno);
-      }
-      m_directory = luciole::Fd(::openat(parent, m_name.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
-      if (!m_directory.valid()) {
-        const int code = errno;
-        ::unlinkat(parent, m_name.c_str(), AT_REMOVEDIR);
-        luciole::throwErrno(code);
-      }
-    }
-    ~DocumentStage() { (void)clear(); }
-    DocumentStage(const DocumentStage&) = delete;
-    DocumentStage& operator=(const DocumentStage&) = delete;
-    int fd() const { return m_directory.get(); }
-    bool clear() const {
-      struct stat current{}, held{};
-      if (::fstat(fd(), &held) != 0 || ::fstatat(m_parent, m_name.c_str(), &current, AT_SYMLINK_NOFOLLOW) != 0) {
-        return errno == ENOENT;
-      }
-      if (!luciole::sameIdentity(current, held)) {
-        return false;
-      }
-      if (::unlinkat(fd(), "document", 0) != 0 && errno != ENOENT) {
-        return false;
-      }
-      return ::unlinkat(m_parent, m_name.c_str(), AT_REMOVEDIR) == 0;
-    }
-
-  private:
-    int m_parent;
-    std::string m_name;
-    luciole::Fd m_directory;
-  };
-  std::optional<bool> copyDocument(const Target& target, const std::string& name, const luciole::CancelToken& token) {
-    auto& source = *target.source;
-    source.requireCurrent();
-    DocumentStage stage(target.directory.get());
-    auto output = luciole::checkedFd(
-        ::openat(stage.fd(), "document", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0666)
-    );
-    std::array<char, 65536> buffer{};
-    std::uint64_t offset = 0;
-    while (offset < source.source.revision.size) {
-      if (token.cancelled()) {
-        return std::nullopt;
-      }
-      const auto count = ::pread(
-          source.file.get(), buffer.data(),
-          std::min<std::uint64_t>(buffer.size(), source.source.revision.size - offset), static_cast<off_t>(offset)
-      );
-      if (count < 0 && errno == EINTR) {
-        continue;
-      }
-      if (count == 0) {
-        luciole::throwFileError(luciole::FileErrorKind::Changed, "The template changed while copying.");
-      }
-      if (count < 0) {
-        luciole::throwErrno(errno);
-      }
-      std::size_t written = 0;
-      while (written < static_cast<std::size_t>(count)) {
-        if (token.cancelled()) {
-          return std::nullopt;
-        }
-        const auto size = ::write(output.get(), buffer.data() + written, static_cast<std::size_t>(count) - written);
-        if (size < 0 && errno == EINTR) {
-          continue;
-        }
-        if (size == 0) {
-          luciole::throwFileError(luciole::FileErrorKind::Other, "Could not write the new document.");
-        }
-        if (size < 0) {
-          luciole::throwErrno(errno);
-        }
-        written += static_cast<std::size_t>(size);
-      }
-      offset += static_cast<std::uint64_t>(count);
-    }
-    if (output.close() != 0) {
-      luciole::throwFileError(luciole::FileErrorKind::Other, "Could not close the new document cleanly.");
-    }
-    source.requireCurrent();
+  Reply publish(
+      luciole::CreationStage& stage, const Target& target, const std::string& name, luciole::CreateKind kind,
+      const luciole::CancelToken& token
+  ) {
     target.requireCurrent();
     if (token.cancelled()) {
-      return std::nullopt;
+      return Reply{};
     }
-    if (::syscall(SYS_renameat2, stage.fd(), "document", target.directory.get(), name.c_str(), RENAME_NOREPLACE) != 0) {
-      luciole::throwErrno(errno);
+    stage.publish(name);
+    Reply reply{
+        .target = {},
+        .destination = luciole::Location::fromPath((std::filesystem::path(target.path) / name).native()),
+        .error = {},
+        .linkSource = {},
+        .receipt = {}
+    };
+    try {
+      reply.receipt = luciole::CreateReceipt::capture(kind, *reply.destination, target.directory.get(), stage.item());
+    } catch (const luciole::FileErrorException&) {
+      // Publishing succeeded; failure to capture optional history must not report it as unapplied.
     }
-    // Publication is complete; cancellation cannot turn it into an uncommitted result.
-    return stage.clear();
+    if (!stage.clear()) {
+      reply.receipt.reset();
+      reply.error = luciole::FileError{
+          .kind = luciole::FileErrorKind::Other,
+          .message = "The item was created, but its private folder could not be removed: "
+              + luciole::filenameDisplayText(stage.recoveryPath())
+      };
+    }
+    return reply;
   }
+
 } // namespace
 
 struct luciole::CreateService::State {
@@ -219,12 +154,15 @@ struct luciole::CreateService::State {
           owner->active = false;
           owner->snapshot.error.reset();
           if (result) {
+            owner->snapshot.removed = result->removed;
+            owner->snapshot.retireHistory = result->retireHistory;
             owner->snapshot.error = std::move(result->error);
           } else if (result.error().kind != FileErrorKind::Cancelled) {
             owner->snapshot.error = std::move(result.error());
           }
           if (result && result->destination) {
             owner->snapshot.destination = std::move(result->destination);
+            owner->snapshot.receipt = std::move(result->receipt);
             owner->snapshot.status = owner->snapshot.error ? CreateStatus::Partial : CreateStatus::Succeeded;
             owner->target.reset();
             owner->linkSource.reset();
@@ -232,7 +170,7 @@ struct luciole::CreateService::State {
             owner->snapshot.status = CreateStatus::Cancelled;
             owner->target.reset();
             owner->linkSource.reset();
-          } else if (!result) {
+          } else if (!result || result->error) {
             owner->snapshot.status = CreateStatus::Error;
           } else {
             owner->target = std::move(result->target);
@@ -291,11 +229,16 @@ bool luciole::CreateService::prepareLink(const DirectoryEntry& source) {
       .kind = CreateKind::SymbolicLink,
       .parent = std::nullopt,
       .destination = std::nullopt,
-      .error = {}
+      .error = {},
+      .receipt = {}
   };
   State::launch(m_state, [source](const CancelToken&) {
     return Reply{
-        .target = {}, .destination = std::nullopt, .error = {}, .linkSource = std::make_shared<LinkSource>(source)
+        .target = {},
+        .destination = std::nullopt,
+        .error = {},
+        .linkSource = std::make_shared<LinkSource>(source),
+        .receipt = {}
     };
   });
   return true;
@@ -337,27 +280,22 @@ bool luciole::CreateService::createLink(const Location& parent, std::string name
         if (limit >= 0 && name.size() > static_cast<std::size_t>(limit)) {
           throwErrno(ENAMETOOLONG);
         }
-        Reply reply{
-            .target = {},
-            .destination = Location::fromPath((std::filesystem::path(*path) / name).native()),
-            .error = {},
-            .linkSource = {}
-        };
-        destination.requireCurrent();
+        CreationStage stage(destination.directory.get());
         if (token.cancelled()) {
           return Reply{};
         }
         const auto held = "/proc/self/fd/" + std::to_string(source->item.get());
         const int result = kind == CreateKind::HardLink
-            ? ::linkat(AT_FDCWD, held.c_str(), destination.directory.get(), name.c_str(), AT_SYMLINK_FOLLOW)
-            : ::symlinkat(source->path.c_str(), destination.directory.get(), name.c_str());
+            ? ::linkat(AT_FDCWD, held.c_str(), stage.fd(), "item", AT_SYMLINK_FOLLOW)
+            : ::symlinkat(source->path.c_str(), stage.fd(), "item");
         if (result != 0) {
           if (errno == EXDEV) {
             throwFileError(FileErrorKind::Unsupported, crossDeviceLink);
           }
           throwErrno(errno);
         }
-        return reply;
+        stage.adopt(checkedFd(::openat(stage.fd(), "item", O_PATH | O_NOFOLLOW | O_CLOEXEC)));
+        return publish(stage, destination, name, kind, token);
       }
   );
   return true;
@@ -371,7 +309,12 @@ bool luciole::CreateService::prepareTarget(
   m_state->target.reset();
   m_state->linkSource.reset();
   m_state->snapshot = {
-      .status = CreateStatus::Preparing, .kind = kind, .parent = parent, .destination = std::nullopt, .error = {}
+      .status = CreateStatus::Preparing,
+      .kind = kind,
+      .parent = parent,
+      .destination = std::nullopt,
+      .error = {},
+      .receipt = {}
   };
   State::launch(m_state, [parent, source = std::move(source)](const CancelToken&) mutable {
     const auto path = parent.nativePath();
@@ -382,7 +325,9 @@ bool luciole::CreateService::prepareTarget(
     if (source) {
       target->source = std::make_unique<TemplateSource>(std::move(*source));
     }
-    return Reply{.target = std::move(target), .destination = std::nullopt, .error = {}, .linkSource = {}};
+    return Reply{
+        .target = std::move(target), .destination = std::nullopt, .error = {}, .linkSource = {}, .receipt = {}
+    };
   });
   return true;
 }
@@ -401,12 +346,6 @@ bool luciole::CreateService::create(std::string name) {
   State::launch(
       m_state,
       [target = m_state->target, kind = m_state->snapshot.kind, name = std::move(name)](const CancelToken& token) {
-        Reply result{
-            .target = {},
-            .destination = Location::fromPath((std::filesystem::path(target->path) / name).native()),
-            .error = {},
-            .linkSource = {}
-        };
         target->requireCurrent();
         const auto limit = ::fpathconf(target->directory.get(), _PC_NAME_MAX);
         if (limit >= 0 && name.size() > static_cast<std::size_t>(limit)) {
@@ -419,33 +358,62 @@ bool luciole::CreateService::create(std::string name) {
           if (::mkdirat(target->directory.get(), name.c_str(), 0777) != 0) {
             throwErrno(errno);
           }
-        } else if (kind == CreateKind::Document) {
-          const auto clean = copyDocument(*target, name, token);
-          if (!clean) {
-            return Reply{};
+          Reply reply{
+              .target = {},
+              .destination = Location::fromPath((std::filesystem::path(target->path) / name).native()),
+              .error = {},
+              .linkSource = {},
+              .receipt = {}
+          };
+          try {
+            const auto item = checkedFd(
+                ::openat(target->directory.get(), name.c_str(), O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            );
+            reply.receipt = CreateReceipt::capture(kind, *reply.destination, target->directory.get(), item.get());
+          } catch (const FileErrorException&) {
+            // The folder already exists even when optional history capture fails.
           }
-          if (!*clean) {
-            result.error = FileError{
-                .kind = FileErrorKind::Other,
-                .message = "The document was created, but its temporary folder could not be removed."
-            };
-          }
-        } else {
-          // Exclusive creation refuses every existing entry, including dangling links and FIFOs.
-          auto output = checkedFd(
-              ::openat(
-                  target->directory.get(), name.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0666
-              )
-          );
-          // Linux closes the descriptor even on EINTR; retrying could close an unrelated descriptor.
-          if (output.close() != 0) {
-            result.error = FileError{
-                .kind = FileErrorKind::Other, .message = "The file was created, but it could not be closed cleanly."
-            };
-          }
+          return reply;
         }
-        return result;
+        CreationStage stage(target->directory.get());
+        stage.adopt(checkedFd(::openat(stage.fd(), "item", O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0666)));
+        if (kind == CreateKind::Document) {
+          auto& source = *target->source;
+          source.requireCurrent();
+          copyCreationData(source.file.get(), stage.item(), source.source.revision.size, token);
+          source.requireCurrent();
+        }
+        return publish(stage, *target, name, kind, token);
       }
   );
+  return true;
+}
+
+bool luciole::CreateService::replay(std::shared_ptr<const CreateReceipt> receipt) {
+  if (busy() || !receipt) {
+    return false;
+  }
+  m_state->target.reset();
+  m_state->linkSource.reset();
+  m_state->snapshot = {
+      .status = CreateStatus::Creating,
+      .kind = receipt->kind(),
+      .parent = receipt->destination().parent(),
+      .destination = receipt->destination(),
+      .error = {},
+      .receipt = {}
+  };
+  State::launch(m_state, [receipt = std::move(receipt)](const CancelToken& token) {
+    auto result = receipt->reverse(token);
+    return Reply{
+        .target = {},
+        .destination = result.applied || result.removed ? std::optional(receipt->destination()) : std::nullopt,
+        .error = std::move(result.error),
+        .linkSource = {},
+        .receipt = std::move(result.receipt),
+        .removed = result.removed,
+        .retireHistory = result.retireHistory
+    };
+  });
   return true;
 }

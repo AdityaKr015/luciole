@@ -218,9 +218,9 @@ namespace {
     if (job.kind() == JobKind::Rename) {
       const auto& service = job.service<luciole::RenameService>();
       const auto& snapshot = service.snapshot();
-      activity.title = job.renameReplay() == RenameReplay::Undo ? "Undo rename"
-          : job.renameReplay() == RenameReplay::Redo            ? "Redo rename"
-                                                                : "Rename item";
+      activity.title = job.historyReplay() == HistoryReplay::Undo ? "Undo rename"
+          : job.historyReplay() == HistoryReplay::Redo            ? "Redo rename"
+                                                                  : "Rename item";
       simple(
           activity, job.running(), service.canRename(), snapshot.status == luciole::RenameStatus::Succeeded,
           snapshot.status == luciole::RenameStatus::Cancelled, snapshot.error, details,
@@ -237,6 +237,9 @@ namespace {
           : snapshot.kind == luciole::CreateKind::EmptyFile         ? "Create file"
           : snapshot.kind == luciole::CreateKind::Document          ? "Create document"
                                                                     : "Create link";
+      if (job.historyReplay() != HistoryReplay::None) {
+        activity.title = (job.historyReplay() == HistoryReplay::Undo ? "Undo: " : "Redo: ") + activity.title;
+      }
       simple(
           activity, job.running(), service.canCreate(), snapshot.status == luciole::CreateStatus::Succeeded,
           snapshot.status == luciole::CreateStatus::Cancelled, snapshot.error, details,
@@ -244,7 +247,7 @@ namespace {
       );
       if (snapshot.status == luciole::CreateStatus::Creating) {
         activity.state = ActivityState::Working;
-        activity.summary = "Creating…";
+        activity.summary = job.historyReplay() == HistoryReplay::Undo ? "Undoing creation…" : "Creating…";
       }
       if (snapshot.status == luciole::CreateStatus::Partial) {
         activity.state = ActivityState::Partial;
@@ -364,9 +367,9 @@ namespace {
     if (job.kind() == JobKind::BatchRename) {
       const auto& service = job.service<luciole::BatchRenameService>();
       const auto& snapshot = service.snapshot();
-      activity.title = job.renameReplay() == RenameReplay::Undo ? "Undo batch rename"
-          : job.renameReplay() == RenameReplay::Redo            ? "Redo batch rename"
-                                                                : "Batch rename";
+      activity.title = job.historyReplay() == HistoryReplay::Undo ? "Undo batch rename"
+          : job.historyReplay() == HistoryReplay::Redo            ? "Redo batch rename"
+                                                                  : "Batch rename";
       if (job.running()) {
         if (service.applying()) {
           progress(activity, service.completed(), snapshot.rows ? snapshot.rows->size() : 0);

@@ -138,9 +138,9 @@ void BatchRenameController::report(const OperationJob& job) {
     const auto count = std::ranges::count(
         *snapshot.results, luciole::BatchRenameOutcome::Renamed, &luciole::BatchRenameResult::outcome
     );
-    std::string message = job.renameReplay() == RenameReplay::Undo ? std::format("{} renames undone.", count)
-        : job.renameReplay() == RenameReplay::Redo                 ? std::format("{} renames redone.", count)
-                                                                   : std::format("{} items renamed.", count);
+    std::string message = job.historyReplay() == HistoryReplay::Undo ? std::format("{} renames undone.", count)
+        : job.historyReplay() == HistoryReplay::Redo                 ? std::format("{} renames redone.", count)
+                                                                     : std::format("{} items renamed.", count);
     const auto problem =
         std::ranges::find_if(*snapshot.results, [](const auto& result) { return result.error.has_value(); });
     if (problem != snapshot.results->end()) {
@@ -160,9 +160,9 @@ void BatchRenameController::report(const OperationJob& job) {
     }
   } else if (snapshot.phase == luciole::BatchRenamePhase::Error) {
     m_page.actionError(
-        (job.renameReplay() == RenameReplay::Undo       ? "Could not undo batch rename: "
-             : job.renameReplay() == RenameReplay::Redo ? "Could not redo batch rename: "
-                                                        : "Could not rename: ")
+        (job.historyReplay() == HistoryReplay::Undo       ? "Could not undo batch rename: "
+             : job.historyReplay() == HistoryReplay::Redo ? "Could not redo batch rename: "
+                                                          : "Could not rename: ")
         + luciole::fileErrorText(snapshot.error)
     );
   }

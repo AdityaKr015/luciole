@@ -255,6 +255,12 @@ void CreateController::sync(const OperationJob& job) {
   const auto& snapshot = creator.snapshot();
   if (snapshot.status == luciole::CreateStatus::Succeeded || snapshot.status == luciole::CreateStatus::Partial) {
     auto message = createErrorText(snapshot.error);
+    if (job.historyReplay() != HistoryReplay::None) {
+      message = (snapshot.retireHistory                           ? "Creation reversal needs attention."
+                     : job.historyReplay() == HistoryReplay::Undo ? "Creation undone."
+                                                                  : "Creation redone.")
+          + (message.empty() ? std::string{} : " " + message);
+    }
     if (linkDialog && !snapshot.error && snapshot.parent) {
       message = "Link created in " + luciole::locationEditText(*snapshot.parent);
     }
@@ -262,7 +268,7 @@ void CreateController::sync(const OperationJob& job) {
     auto& browser = m_page.browser();
     if (browser.model().snapshot().location == snapshot.parent) {
       std::vector<luciole::Location> reveal;
-      if (snapshot.destination) {
+      if (snapshot.destination && !snapshot.removed) {
         reveal.push_back(*snapshot.destination);
       }
       m_page.revealOnReload(std::move(reveal));
@@ -282,7 +288,12 @@ void CreateController::sync(const OperationJob& job) {
     m_page.menuSurface()->requestLayout();
   } else if (createEditor == nullptr) {
     if (snapshot.status == luciole::CreateStatus::Error) {
-      m_page.actionError("Could not create: " + createErrorText(snapshot.error));
+      m_page.actionError(
+          (job.historyReplay() == HistoryReplay::Undo       ? "Could not undo creation: "
+               : job.historyReplay() == HistoryReplay::Redo ? "Could not redo creation: "
+                                                            : "Could not create: ")
+          + createErrorText(snapshot.error)
+      );
     }
   } else if (snapshot.status == luciole::CreateStatus::Ready || snapshot.status == luciole::CreateStatus::Error) {
     createEditor->setSaving(false);

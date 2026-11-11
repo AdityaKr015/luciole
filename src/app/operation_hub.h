@@ -19,6 +19,7 @@
 #include <memory>
 #include <optional>
 #include <ranges>
+#include <string_view>
 #include <variant>
 
 // In variant order of OperationJob::Service.
@@ -37,7 +38,7 @@ enum class JobKind : std::uint8_t {
 // Follow: the job moves to another page when its page leaves the window. Page: the job only feeds its page, as a
 // dialog's preparation does; it is cancelled when the page leaves, unless OperationHub::follow() released it first.
 enum class JobScope : std::uint8_t { Follow, Page };
-enum class RenameReplay : std::uint8_t { None, Undo, Redo };
+enum class HistoryReplay : std::uint8_t { None, Undo, Redo };
 
 // One file operation with a service instance of its own. A page starts it; the page that owns it shows it.
 class OperationJob : public std::enable_shared_from_this<OperationJob> {
@@ -63,7 +64,7 @@ public:
   bool running() const;
   // True once the service has run.
   bool ran() const { return m_ran; }
-  RenameReplay renameReplay() const { return m_renameReplay; }
+  HistoryReplay historyReplay() const { return m_historyReplay; }
   bool activityStarted() const { return m_activityStarted; }
   // Running, or prepared and waiting to start; a page disables actions that start a job meanwhile.
   bool pending() const;
@@ -87,7 +88,7 @@ private:
   bool m_mutationStarted = false;
   bool m_activityStarted = false;
   std::uint64_t m_historyGeneration = 0;
-  RenameReplay m_renameReplay = RenameReplay::None;
+  HistoryReplay m_historyReplay = HistoryReplay::None;
   std::function<void(OperationJob&)> m_idle;
 };
 
@@ -157,11 +158,12 @@ public:
   void shutdown();
   // True while any job runs.
   bool busy() const;
-  bool renameReplayBusy() const;
-  bool canUndoRename() const;
-  bool canRedoRename() const;
+  bool historyReplayBusy() const;
+  bool canUndo() const;
+  bool canRedo() const;
   bool batchRenameHistory() const { return m_batchRenameReceipt != nullptr; }
-  bool replayRename(luciole::TabId page, bool redo);
+  std::string_view historyLabel(bool redo) const;
+  bool replayHistory(luciole::TabId page, bool redo);
   std::vector<luciole::JobActivity> activities() const;
   std::shared_ptr<const std::string> activityReport(luciole::JobId id) const;
   bool cancelActivity(luciole::JobId id);
@@ -172,7 +174,7 @@ private:
   void changed(OperationJob& job);
   void notify(luciole::TabId page, OperationJob& job);
   bool retained(const OperationJob& job) const;
-  void recordRename(const OperationJob& job);
+  void recordHistory(const OperationJob& job);
   void notifyActivity();
 
   const luciole::TabWorkspace& m_workspace;
@@ -182,8 +184,10 @@ private:
   luciole::JobId m_next = 0;
   std::shared_ptr<const luciole::RenameReceipt> m_renameReceipt;
   std::shared_ptr<const luciole::BatchRenameReceipt> m_batchRenameReceipt;
+  std::shared_ptr<const luciole::CreateReceipt> m_createReceipt;
+  luciole::CreateKind m_createKind = luciole::CreateKind::Folder;
   std::uint64_t m_historyGeneration = 0;
-  bool m_renameRedo = false;
+  bool m_historyRedo = false;
   std::deque<luciole::JobActivity> m_finishedActivities;
 };
 
@@ -199,7 +203,7 @@ public:
   bool owns(const OperationJob& job) const { return m_hub.owner(job) == m_page; }
   // False once the page left its window (closed tab or pane, closed window): its dialogs close for good.
   bool attached() const { return m_hub.attached(m_page); }
-  bool batchRenameHistory() const { return m_hub.batchRenameHistory(); }
+  std::string_view historyLabel(bool redo) const { return m_hub.historyLabel(redo); }
   // An owned job by id, or null.
   OperationJob* find(luciole::JobId id) const {
     auto* job = m_hub.find(id);
@@ -213,7 +217,7 @@ public:
   }
   // True while an owned job runs or waits to start.
   bool busy() const {
-    return m_hub.renameReplayBusy() || newest([](const OperationJob& job) { return job.pending(); }) != nullptr;
+    return m_hub.historyReplayBusy() || newest([](const OperationJob& job) { return job.pending(); }) != nullptr;
   }
 
 private:

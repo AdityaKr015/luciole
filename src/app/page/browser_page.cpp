@@ -1003,8 +1003,7 @@ bool BrowserPage::shortcutKey(const KeyboardEvent& event) {
       && !event.repeat
       && dispatchShortcut(
           event,
-          {Action::CopyFiles, Action::CutFiles, Action::PasteFiles, Action::ShowPreview, Action::UndoRename,
-           Action::RedoRename}
+          {Action::CopyFiles, Action::CutFiles, Action::PasteFiles, Action::ShowPreview, Action::Undo, Action::Redo}
       )) {
     return true;
   }
@@ -1127,8 +1126,8 @@ luciole::ActionContext BrowserPage::actionContext() const {
       .clipboardAvailable = m_clipboard.available(),
       .clipboardHasFiles = m_clipboard.hasFiles(),
       .terminalAvailable = m_terminal.available(),
-      .canUndoRename = m_hub.canUndoRename(),
-      .canRedoRename = m_hub.canRedoRename()
+      .canUndo = m_hub.canUndo(),
+      .canRedo = m_hub.canRedo()
   };
 }
 
@@ -1329,8 +1328,8 @@ void BrowserPage::runAction(
       {Action::Scripts, [](BrowserPage& page, const Call&) {
         page.m_submenus.open(luciole::ActionRegistry::menuId(Action::Scripts), false);
       }},
-      {Action::UndoRename, [](BrowserPage& page, const Call&) { (void)page.m_hub.replayRename(page.m_workspaceId, false); }},
-      {Action::RedoRename, [](BrowserPage& page, const Call&) { (void)page.m_hub.replayRename(page.m_workspaceId, true); }},
+      {Action::Undo, [](BrowserPage& page, const Call&) { (void)page.m_hub.replayHistory(page.m_workspaceId, false); }},
+      {Action::Redo, [](BrowserPage& page, const Call&) { (void)page.m_hub.replayHistory(page.m_workspaceId, true); }},
       {Action::Operations, [](BrowserPage& page, const Call&) { page.m_operations.open(); }},
       {Action::TargetTerminal,
        [](BrowserPage& page, const Call& call) { page.openTerminal(call.targets.front().location); }},

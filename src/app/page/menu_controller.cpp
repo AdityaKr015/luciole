@@ -78,9 +78,11 @@ MenuController::actionEntry(Action action, const luciole::ActionRequest& request
   const auto state = m_page.actionState(action, request);
   return {
       .id = luciole::ActionRegistry::menuId(action),
-      .label = m_page.jobs().batchRenameHistory() && action == Action::UndoRename ? "Undo Batch Rename"
-          : m_page.jobs().batchRenameHistory() && action == Action::RedoRename    ? "Redo Batch Rename"
-                                                                                  : std::string(definition.label),
+      .label = std::string(
+          action == Action::Undo       ? m_page.jobs().historyLabel(false)
+              : action == Action::Redo ? m_page.jobs().historyLabel(true)
+                                       : definition.label
+      ),
       .enabled = state.enabled,
       .checkmark = !radio && state.checked != -1,
       .radio = radio,
@@ -100,8 +102,8 @@ std::vector<ContextMenuControlEntry> MenuController::folderMenuEntries(const luc
   add(Action::NewDocument);
   entries.back().hasSubmenu = true;
   add(Action::PasteFiles);
-  add(Action::UndoRename);
-  add(Action::RedoRename);
+  add(Action::Undo);
+  add(Action::Redo);
   addSeparator(entries);
   add(Action::SelectAll);
   add(Action::InvertSelection);
@@ -713,8 +715,8 @@ void MenuController::openMenu() {
       {.label = "", .separator = true}
   };
   const auto request = m_page.actionRequest(true);
-  entries.push_back(actionEntry(Action::UndoRename, request));
-  entries.push_back(actionEntry(Action::RedoRename, request));
+  entries.push_back(actionEntry(Action::Undo, request));
+  entries.push_back(actionEntry(Action::Redo, request));
   addSeparator(entries);
   entries.push_back(actionEntry(Action::Search, request));
   for (const auto action : {Action::Grid, Action::List, Action::Miller}) {

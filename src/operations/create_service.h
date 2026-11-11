@@ -11,6 +11,7 @@
 #include <string>
 
 namespace luciole {
+  class CreateReceipt;
   enum class CreateKind { Folder, EmptyFile, Document, SymbolicLink, HardLink };
   enum class CreateStatus { Idle, Preparing, Ready, Creating, Succeeded, Partial, Error, Cancelled };
   struct CreateSnapshot {
@@ -19,6 +20,8 @@ namespace luciole {
     std::optional<Location> parent;
     std::optional<Location> destination;
     std::optional<FileError> error;
+    std::shared_ptr<const CreateReceipt> receipt;
+    bool removed = false, retireHistory = false;
   };
 
   // One native file or folder creation. Preparation pins the destination while editing.
@@ -33,6 +36,7 @@ namespace luciole {
     bool prepareLink(const DirectoryEntry& source);
     bool createLink(const Location& parent, std::string name, CreateKind kind);
     bool create(std::string name);
+    bool replay(std::shared_ptr<const CreateReceipt> receipt);
     void cancel();
     bool busy() const;
     bool canCreate() const;
