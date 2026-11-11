@@ -2,16 +2,29 @@
 
 #include "app/page/active_dialog.h"
 #include "app/page/page_context.h"
+#include "imaging/image_limits.h"
+#include "imaging/svg_rasterizer.h"
+#include "luciole_app_icon.h"
 #include "luciole_build_info.h"
 #include "platform/file_launcher.h"
+#include "render/core/renderer.h"
+#include "render/core/texture_manager.h"
 #include "ui/builders.h"
+#include "ui/controls/image.h"
 #include "ui/controls/scroll_view.h"
 #include "ui/dialogs/dialog_chrome.h"
 #include "ui/palette.h"
 #include "ui/style.h"
 #include "wayland/popup_surface.h"
 
+#include <algorithm>
+#include <cmath>
 #include <format>
+#include <span>
+
+namespace {
+  constexpr float kLogoSize = 96.0F;
+} // namespace
 
 AboutController::AboutController(PageContext& page, luciole::FileLauncher& launcher)
     : m_page(page), m_launcher(launcher) {}
@@ -19,6 +32,7 @@ AboutController::AboutController(PageContext& page, luciole::FileLauncher& launc
 void AboutController::open() {
   ScrollView* scroll = nullptr;
   Label* message = nullptr;
+  Image* logo = nullptr;
   constexpr float width = 536.0F;
   auto body = ui::scrollView(
       {.out = &scroll,
@@ -30,6 +44,12 @@ void AboutController::open() {
   );
   body->content()->setAlign(FlexAlign::Stretch);
   body->content()->setGap(Style::spaceMd);
+  body->content()->addChild(
+      ui::row(
+          {.justify = FlexJustify::Center},
+          ui::image({.out = &logo, .fit = ImageFit::Contain, .width = kLogoSize, .height = kLogoSize})
+      )
+  );
   const auto text = [&](const std::string& value, bool caption = false) {
     body->content()->addChild(
         ui::label(
@@ -82,10 +102,28 @@ void AboutController::open() {
     m_page.activeDialog().bind(ActiveDialog::Kind::About, [this] {
       m_scroll = nullptr;
       m_message = nullptr;
+      m_logo = nullptr;
     });
     m_scroll = scroll;
     m_message = message;
+    m_logo = logo;
   }
+}
+
+void AboutController::layoutDialog() {
+  if (!m_logo) {
+    return;
+  }
+  auto& renderer = m_page.menuSurface()->renderTarget().renderer();
+  const auto pixels = static_cast<int>(std::ceil(kLogoSize * std::max(1.0F, renderer.renderScale())));
+  const std::span svg(reinterpret_cast<const std::uint8_t*>(luciole::kAppIconSvg), sizeof(luciole::kAppIconSvg) - 1);
+  if (const auto image = luciole::rasterizeSvg(svg, pixels, false, luciole::kMaxImagePixels)) {
+    m_logo->setSourceRaw(
+        renderer, image->rgba.data(), image->rgba.size(), image->width, image->height, image->width * 4,
+        PixmapFormat::RGBA
+    );
+  }
+  m_logo = nullptr;
 }
 
 void AboutController::launcherChanged(const std::string& error) {

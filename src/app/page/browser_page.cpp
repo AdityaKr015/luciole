@@ -2518,6 +2518,7 @@ void BrowserPage::showPopup(
     }
     m_operations.layoutDialog();
     m_trashController.layoutDialog();
+    m_aboutController.layoutDialog();
     m_activeDialog.root()->arrange(
         m_menuSurface->renderTarget().renderer(),
         {0, 0, static_cast<float>(m_menuSurface->width()), static_cast<float>(m_menuSurface->height())}

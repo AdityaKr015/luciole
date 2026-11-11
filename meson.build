@@ -89,6 +89,11 @@ completions = configure_file(
   output: 'luciole_completions.h',
   configuration: completion_config,
 )
+app_icon = configure_file(
+  input: 'src/app/app_icon.h.in',
+  output: 'luciole_app_icon.h',
+  configuration: {'APP_ICON': fs.read('assets/icons/dev.noctalia.luciole.svg')},
+)
 src_inc = include_directories('src')
 
 # One static library per module. A module's dependencies list only the modules
@@ -379,6 +384,7 @@ app = executable('luciole',
   ),
   build_info,
   completions,
+  app_icon,
   include_directories: include_directories('src', '.'),
   dependencies: [app_jobs_dep, ui_dep, clipboard_dep, platform_dep, imaging_dep, system_dep, event_loop_dep, browser_dep,
     config_dep, operations_dep, thumbnails_dep, noctalia_ui_dep, wayland_client, dependency('threads')],

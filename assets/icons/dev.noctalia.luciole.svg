@@ -5,9 +5,31 @@
    viewBox="0 0 512 512"
    version="1.1"
    id="svg37"
+   sodipodi:docname="dev.noctalia.luciole.svg"
+   inkscape:version="1.4.4 (dcaf3e7d9e, 2026-05-05)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
    xmlns:xlink="http://www.w3.org/1999/xlink"
    xmlns="http://www.w3.org/2000/svg"
    xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:zoom="1.219483"
+     inkscape:cx="554.74329"
+     inkscape:cy="718.33721"
+     inkscape:window-width="2024"
+     inkscape:window-height="1598"
+     inkscape:window-x="0"
+     inkscape:window-y="0"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="svg37" />
   <title
      id="title1">Luciole: file manager</title>
   <defs
@@ -175,7 +197,7 @@
     <radialGradient
        xlink:href="#aura"
        id="radialGradient37"
-       gradientTransform="matrix(0.95417386,0,0,1.048027,33.630804,-18.554926)"
+       gradientTransform="matrix(0.48537092,0,0,0.53311231,202.64425,189.76397)"
        cx="360.5213"
        cy="404.56973"
        fx="360.5213"
@@ -231,7 +253,7 @@
   <!-- No background: every shape is part of the mark -->
   <g
      id="g42"
-     transform="matrix(1.1688321,0,0,1.1688321,-46.879974,-53.805269)">
+     transform="matrix(1.2001455,0,0,1.2001455,-55.857133,-65.643691)">
     <path
        fill="url(#tab)"
        d="M 51,131 C 51,108 69,90 93,90 h 116 c 17,0 28,6 40,20 l 23,26 c 7,8 15,10 27,10 h 118 c 28,0 45,18 45,45 V 366 H 51 Z"
@@ -263,16 +285,16 @@
   <!-- head and unlit antennae -->
   <g
      id="g41"
-     transform="matrix(1.6381535,0,0,1.6381535,-314.06722,-226.43441)">
+     transform="matrix(1.6381535,0,0,1.6381535,-307.36637,-240.85964)">
     <ellipse
        cx="377.6308"
        cy="405.44507"
-       rx="61"
-       ry="67"
+       rx="31.029593"
+       ry="34.081684"
        fill="url(#aura)"
        opacity="0.85"
        id="ellipse25"
-       style="fill:url(#radialGradient37)" />
+       style="fill:url(#radialGradient37);stroke-width:0.508682" />
     <path
        d="m 366.6308,386.44507 c 12,5 32,3 44,-5 -4,23 -16,45 -30,50 -13,4 -21,-5 -19,-20 z"
        fill="#ffcf63"
@@ -291,7 +313,7 @@
     <g
        clip-path="url(#abdomenClip)"
        id="g30"
-       transform="translate(33.630804,-18.554926)">
+       transform="matrix(1.004252,0,0,1.004252,32.150139,-20.139312)">
       <circle
          cx="342"
          cy="431"
@@ -306,10 +328,11 @@
          filter="url(#blur)"
          id="path28" />
       <path
-         d="m 332,400 c 13,4 33.76757,10.1001 48.76757,3.1001 -6,22 -18.22943,36.59179 -30.22943,44.59179 -12,9 -20.57438,2.95364 -22.57438,-9.04636 C 325.96376,425.64553 328,410 332,400 Z"
+         d="m 332,400 c 13,4 34.14141,10.31817 49.14141,3.31817 -6,22 -18.60327,36.37372 -30.60327,44.37372 -12,9 -20.57438,2.95364 -22.57438,-9.04636 C 325.96376,425.64553 328,410 332,400 Z"
          fill="url(#body)"
          id="path29"
-         style="fill:url(#body)" />
+         style="fill:url(#body)"
+         sodipodi:nodetypes="ccccc" />
       <path
          d="m 334,420 c -2,10 1,20 6,23"
          fill="none"
