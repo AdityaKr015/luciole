@@ -364,7 +364,9 @@ namespace {
     if (job.kind() == JobKind::BatchRename) {
       const auto& service = job.service<luciole::BatchRenameService>();
       const auto& snapshot = service.snapshot();
-      activity.title = "Batch rename";
+      activity.title = job.renameReplay() == RenameReplay::Undo ? "Undo batch rename"
+          : job.renameReplay() == RenameReplay::Redo            ? "Redo batch rename"
+                                                                : "Batch rename";
       if (job.running()) {
         if (service.applying()) {
           progress(activity, service.completed(), snapshot.rows ? snapshot.rows->size() : 0);

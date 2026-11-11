@@ -11,6 +11,7 @@
 #include <vector>
 
 namespace luciole {
+  struct BatchRenameReceipt;
   enum class BatchRenameMode { Numbering, Replace };
   struct BatchRenameOptions {
     BatchRenameMode mode = BatchRenameMode::Numbering;
@@ -39,6 +40,7 @@ namespace luciole {
     std::optional<FileError> error;
     std::string report;
     bool canApply = false;
+    std::shared_ptr<const BatchRenameReceipt> receipt;
   };
   // One native containing folder, up to 4096 captured entries, in their displayed selection order.
   class BatchRenameService {
@@ -50,6 +52,7 @@ namespace luciole {
     bool prepare(std::vector<DirectoryEntry> entries);
     bool preview(BatchRenameOptions options);
     bool apply();
+    bool replay(std::shared_ptr<const BatchRenameReceipt> receipt);
     void cancel();
     bool busy() const;
     bool applying() const;

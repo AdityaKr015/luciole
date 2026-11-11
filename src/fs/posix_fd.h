@@ -29,4 +29,6 @@ namespace luciole {
   struct stat statFd(int fd);
   // Same inode and file type.
   bool sameIdentity(const struct stat& a, const struct stat& b);
+  // Rename history ignores access time; metadata/content changes invalidate a captured revision.
+  bool sameFileRevision(const struct stat& a, const struct stat& b);
 } // namespace luciole

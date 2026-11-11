@@ -39,7 +39,7 @@ public:
 
 private:
   void sync();
-  void report(const luciole::BatchRenameSnapshot& snapshot);
+  void report(const OperationJob& job);
 
   PageContext& m_page;
   // The dialog's job: previews, then applies the rename.

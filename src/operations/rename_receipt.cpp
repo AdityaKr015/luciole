@@ -17,18 +17,6 @@ struct luciole::RenameIdentity {
 };
 
 namespace {
-  bool sameRevision(const struct stat& a, const struct stat& b) {
-    return luciole::sameIdentity(a, b)
-        && a.st_size == b.st_size
-        && a.st_mode == b.st_mode
-        && a.st_uid == b.st_uid
-        && a.st_gid == b.st_gid
-        && a.st_nlink == b.st_nlink
-        && a.st_mtim.tv_sec == b.st_mtim.tv_sec
-        && a.st_mtim.tv_nsec == b.st_mtim.tv_nsec
-        && a.st_ctim.tv_sec == b.st_ctim.tv_sec
-        && a.st_ctim.tv_nsec == b.st_ctim.tv_nsec;
-  }
   std::pair<std::string, std::string> names(const luciole::Location& source, const luciole::Location& destination) {
     if (!source.isNative()
         || !destination.isNative()
@@ -63,7 +51,7 @@ std::shared_ptr<const luciole::RenameReceipt>
 luciole::RenameReceipt::capture(const Location& source, const Location& destination, int parent, int item) {
   const auto [before, after] = names(source, destination);
   const auto stamp = statFd(item);
-  if (!sameRevision(stamp, namedStamp(parent, after))) {
+  if (!sameFileRevision(stamp, namedStamp(parent, after))) {
     throwFileError(FileErrorKind::Changed, "The renamed item changed before history was captured.");
   }
   const auto currentParent =
@@ -87,8 +75,8 @@ std::shared_ptr<const luciole::RenameReceipt> luciole::RenameReceipt::reverse(co
   if (!sameIdentity(statFd(parent.get()), statFd(m_identity->parent.get()))) {
     throwFileError(FileErrorKind::Changed, "The containing folder changed. Rename history is no longer valid.");
   }
-  if (!sameRevision(m_identity->stamp, statFd(m_identity->item.get()))
-      || !sameRevision(m_identity->stamp, namedStamp(parent.get(), after))) {
+  if (!sameFileRevision(m_identity->stamp, statFd(m_identity->item.get()))
+      || !sameFileRevision(m_identity->stamp, namedStamp(parent.get(), after))) {
     throwFileError(FileErrorKind::Changed, "The renamed item changed. Rename history is no longer valid.");
   }
   if (token.cancelled()) {

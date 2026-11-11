@@ -37,6 +37,8 @@ namespace {
     std::string name;
     luciole::Fd fd;
     struct stat identity;
+    // Replay copies share the current revision among hard-link aliases.
+    std::shared_ptr<struct stat> revision;
     Item(luciole::DirectoryEntry entry, int parent, std::string name)
         : entry(std::move(entry)), name(std::move(name)),
           fd(luciole::checkedFd(::openat(parent, this->name.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC))),
@@ -45,6 +47,17 @@ namespace {
       struct stat value{};
       return ::fstatat(parent, name.c_str(), &value, AT_SYMLINK_NOFOLLOW) == 0
           && luciole::sameIdentity(value, identity);
+    }
+    bool current(int parent, const std::string& name) const {
+      if (!revision) {
+        return at(parent, name);
+      }
+      struct stat value{};
+      struct stat held{};
+      return ::fstatat(parent, name.c_str(), &value, AT_SYMLINK_NOFOLLOW) == 0
+          && ::fstat(fd.get(), &held) == 0
+          && luciole::sameFileRevision(value, *revision)
+          && luciole::sameFileRevision(held, *revision);
     }
   };
   struct Prepared {
@@ -131,8 +144,10 @@ namespace {
     prepared->requireCurrent();
     return prepared;
   }
-  std::shared_ptr<std::vector<luciole::BatchRenameRow>>
-  validate(const Prepared& plan, const std::vector<std::string>& names, const luciole::CancelToken& token) {
+  std::shared_ptr<std::vector<luciole::BatchRenameRow>> validate(
+      const Prepared& plan, const std::vector<std::string>& names, const luciole::CancelToken& token,
+      bool capturedNames = false
+  ) {
     auto rows = std::make_shared<std::vector<luciole::BatchRenameRow>>();
     std::map<std::string, std::size_t> sources, targets;
     for (std::size_t i = 0; i < names.size(); ++i) {
@@ -149,11 +164,11 @@ namespace {
     const bool writable = ::faccessat(plan.fd.get(), ".", W_OK | X_OK, AT_EACCESS) == 0;
     for (std::size_t i = 0; i < names.size() && !token.cancelled(); ++i) {
       auto& row = (*rows)[i];
-      if (!plan.items[i]->at(plan.fd.get(), plan.items[i]->name)) {
+      if (!plan.items[i]->current(plan.fd.get(), plan.items[i]->name)) {
         row.error = "Source changed. Close and select it again.";
       }
       if (row.changed) {
-        if (const auto problem = luciole::filenameProblem(row.name)) {
+        if (const auto problem = capturedNames ? std::nullopt : luciole::filenameProblem(row.name)) {
           row.error = *problem;
         }
         if (plan.nameLimit >= 0 && row.name.size() > static_cast<std::size_t>(plan.nameLimit)) {
@@ -219,11 +234,19 @@ namespace {
     luciole::Fd m_fd;
   };
   void move(const Item& item, int from, const std::string& oldName, int to, const std::string& newName) {
-    if (!item.at(from, oldName)) {
+    if (!item.current(from, oldName)) {
       luciole::throwFileError(FileErrorKind::Changed, "An item changed during the operation.");
     }
     if (::syscall(SYS_renameat2, from, oldName.c_str(), to, newName.c_str(), RENAME_NOREPLACE) != 0) {
       luciole::throwErrno(errno);
+    }
+    if (item.revision) {
+      // Do not throw after a committed move: the caller must record its new position.
+      struct stat stamp{};
+      if (::fstat(item.fd.get(), &stamp) != 0) {
+        stamp = {};
+      }
+      *item.revision = stamp;
     }
   }
   std::vector<std::vector<std::size_t>>
@@ -380,6 +403,89 @@ namespace {
   }
 } // namespace
 
+struct luciole::BatchRenameReceipt {
+  std::shared_ptr<const Prepared> plan;
+  std::shared_ptr<const std::vector<BatchRenameRow>> rows;
+};
+
+namespace {
+  using Revisions = std::map<std::pair<dev_t, ino_t>, std::shared_ptr<struct stat>>;
+
+  void captureItem(
+      Prepared& copy, const Item& original, luciole::DirectoryEntry entry, const std::string& name, Revisions& revisions
+  ) {
+    const auto stamp = luciole::statFd(original.fd.get());
+    if (original.revision && !luciole::sameFileRevision(stamp, *original.revision)) {
+      luciole::throwFileError(FileErrorKind::Changed, "A renamed item changed. Rename history is no longer valid.");
+    }
+    auto item = std::make_unique<Item>(std::move(entry), copy.fd.get(), name);
+    if (!luciole::sameFileRevision(stamp, luciole::statFd(item->fd.get()))) {
+      luciole::throwFileError(
+          FileErrorKind::Changed, "A renamed item was replaced. Rename history is no longer valid."
+      );
+    }
+    const auto [found, inserted] =
+        revisions.try_emplace(std::pair{stamp.st_dev, stamp.st_ino}, std::make_shared<struct stat>(stamp));
+    if (!inserted && !luciole::sameFileRevision(stamp, *found->second)) {
+      luciole::throwFileError(FileErrorKind::Changed, "A renamed item changed while its history was checked.");
+    }
+    item->revision = found->second;
+    copy.items.push_back(std::move(item));
+  }
+
+  std::shared_ptr<Prepared> copyParent(const Prepared& plan) {
+    auto copy = std::make_shared<Prepared>(plan.parent);
+    if (!luciole::sameIdentity(luciole::statFd(plan.fd.get()), luciole::statFd(copy->fd.get()))) {
+      luciole::throwFileError(
+          FileErrorKind::Changed, "The containing folder changed. Rename history is no longer valid."
+      );
+    }
+    return copy;
+  }
+
+  std::shared_ptr<const luciole::BatchRenameReceipt> captureHistory(
+      const Prepared& plan, const std::vector<luciole::BatchRenameRow>& rows,
+      const std::vector<luciole::BatchRenameResult>& results
+  ) {
+    using O = luciole::BatchRenameOutcome;
+    if (std::ranges::any_of(results, [](const auto& result) {
+          return result.outcome != O::Renamed && result.outcome != O::Unchanged;
+        })) {
+      return {};
+    }
+    auto reverse = copyParent(plan);
+    auto targets = std::make_shared<std::vector<luciole::BatchRenameRow>>();
+    Revisions revisions;
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+      if (!rows[i].changed) {
+        continue;
+      }
+      auto entry = plan.items[i]->entry;
+      entry.location = *results[i].actual;
+      entry.name = rows[i].name;
+      entry.displayName = rows[i].after;
+      captureItem(*reverse, *plan.items[i], std::move(entry), rows[i].name, revisions);
+      targets->push_back({rows[i].after, rows[i].before, plan.items[i]->name, {}, true});
+    }
+    if (targets->empty()) {
+      return {};
+    }
+    return std::make_shared<const luciole::BatchRenameReceipt>(std::move(reverse), std::move(targets));
+  }
+
+  std::shared_ptr<Prepared> replayPlan(const Prepared& proof, const luciole::CancelToken& token) {
+    auto plan = copyParent(proof);
+    Revisions revisions;
+    for (const auto& item : proof.items) {
+      if (token.cancelled()) {
+        luciole::throwFileError(FileErrorKind::Cancelled, "Batch rename reversal cancelled.");
+      }
+      captureItem(*plan, *item, item->entry, item->name, revisions);
+    }
+    return plan;
+  }
+} // namespace
+
 std::string
 luciole::batchRenameName(const std::string& name, bool directory, std::size_t index, const BatchRenameOptions& o) {
   if (o.pattern.size() > 4096
@@ -457,12 +563,13 @@ struct luciole::BatchRenameService::State {
   std::uint64_t version = 0;
   bool active = false;
   std::function<void()> changed;
-  enum class Kind : std::uint8_t { Prepare, Preview, Apply };
+  enum class Kind : std::uint8_t { Prepare, Preview, Apply, Replay };
   struct Reply {
     std::shared_ptr<Prepared> prepared;
     std::shared_ptr<std::vector<BatchRenameRow>> rows;
     std::shared_ptr<std::vector<BatchRenameResult>> results;
     std::string report;
+    std::shared_ptr<const BatchRenameReceipt> receipt;
   };
   void notify() const {
     const auto callback = changed;
@@ -474,14 +581,15 @@ struct luciole::BatchRenameService::State {
     owner->active = true;
     runJob<Reply>(std::move(work), [owner, kind, version = owner->version](JobResult<Reply> reply) {
       owner->active = false;
-      if (kind != Kind::Apply && owner->token.cancelled()) {
+      if (kind != Kind::Apply && kind != Kind::Replay && owner->token.cancelled()) {
         owner->snapshot.phase = BatchRenamePhase::Cancelled;
         owner->prepared.reset();
       } else if (kind == Kind::Preview && version != owner->version) {
         startPreview(owner);
         return;
       } else if (!reply) {
-        owner->snapshot.phase = BatchRenamePhase::Error;
+        owner->snapshot.phase =
+            reply.error().kind == FileErrorKind::Cancelled ? BatchRenamePhase::Cancelled : BatchRenamePhase::Error;
         owner->snapshot.error = std::move(reply.error());
       } else if (kind == Kind::Prepare) {
         owner->prepared = reply->prepared;
@@ -497,6 +605,7 @@ struct luciole::BatchRenameService::State {
         owner->snapshot.results = reply->results;
         owner->snapshot.rows = reply->rows;
         owner->snapshot.report = std::move(reply->report);
+        owner->snapshot.receipt = std::move(reply->receipt);
         owner->prepared.reset();
       }
       owner->notify();
@@ -518,8 +627,41 @@ struct luciole::BatchRenameService::State {
       if (token.cancelled()) {
         return Reply{};
       }
-      return Reply{.prepared = {}, .rows = validate(*plan, names, token), .results = {}, .report = {}};
+      return Reply{.prepared = {}, .rows = validate(*plan, names, token), .results = {}, .report = {}, .receipt = {}};
     });
+  }
+  static Reply executePlan(
+      const std::shared_ptr<State>& owner, const std::shared_ptr<Prepared>& plan,
+      std::shared_ptr<std::vector<BatchRenameRow>> rows, const CancelToken& token
+  ) {
+    auto results = execute(*plan, *rows, token, owner->completed);
+    std::shared_ptr<const BatchRenameReceipt> receipt;
+    try {
+      receipt = captureHistory(*plan, *rows, *results);
+    } catch (const FileErrorException&) {
+      // Capturing optional history cannot turn completed effects into a failed operation.
+    }
+    std::string report = "Batch rename in " + filenameDisplayText(plan->path) + "\n";
+    constexpr std::array labels{"Renamed", "Unchanged", "Failed", "Cancelled", "Needs attention", "Unconfirmed"};
+    for (std::size_t i = 0; i < rows->size(); ++i) {
+      const auto& result = (*results)[i];
+      (*rows)[i].error = result.error ? result.error->message : std::string{};
+      report += (*rows)[i].before + " -> " + (*rows)[i].after + ": " + labels[static_cast<std::size_t>(result.outcome)];
+      if (result.actual) {
+        report += "\n  " + result.actual->uri();
+      }
+      if (result.error) {
+        report += "\n  " + result.error->message;
+      }
+      report += '\n';
+    }
+    return Reply{
+        .prepared = {},
+        .rows = std::move(rows),
+        .results = std::move(results),
+        .report = std::move(report),
+        .receipt = std::move(receipt)
+    };
   }
 };
 luciole::BatchRenameService::BatchRenameService() : m_state(std::make_shared<State>()) {}
@@ -559,7 +701,9 @@ bool luciole::BatchRenameService::prepare(std::vector<DirectoryEntry> entries) {
   m_state->snapshot = {};
   m_state->snapshot.phase = BatchRenamePhase::Preparing;
   State::launch(m_state, State::Kind::Prepare, [token = m_state->token, entries = std::move(entries)] mutable {
-    return State::Reply{.prepared = prepareItems(std::move(entries), token), .rows = {}, .results = {}, .report = {}};
+    return State::Reply{
+        .prepared = prepareItems(std::move(entries), token), .rows = {}, .results = {}, .report = {}, .receipt = {}
+    };
   });
   return true;
 }
@@ -596,28 +740,43 @@ bool luciole::BatchRenameService::apply() {
         }
         auto rows = validate(*plan, names, token);
         if (!token.cancelled() && !applicable(*rows)) {
-          return State::Reply{.prepared = {}, .rows = std::move(rows), .results = {}, .report = {}};
+          return State::Reply{.prepared = {}, .rows = std::move(rows), .results = {}, .report = {}, .receipt = {}};
         }
-        auto results = execute(*plan, *rows, token, owner->completed);
-        std::string report = "Batch rename in " + filenameDisplayText(plan->path) + "\n";
-        constexpr std::array labels{"Renamed", "Unchanged", "Failed", "Cancelled", "Needs attention", "Unconfirmed"};
-        for (std::size_t i = 0; i < rows->size(); ++i) {
-          const auto& result = (*results)[i];
-          (*rows)[i].error = result.error ? result.error->message : std::string{};
-          report +=
-              (*rows)[i].before + " -> " + (*rows)[i].after + ": " + labels[static_cast<std::size_t>(result.outcome)];
-          if (result.actual) {
-            report += "\n  " + result.actual->uri();
-          }
-          if (result.error) {
-            report += "\n  " + result.error->message;
-          }
-          report += '\n';
-        }
-        return State::Reply{
-            .prepared = {}, .rows = std::move(rows), .results = std::move(results), .report = std::move(report)
-        };
+        return State::executePlan(owner, plan, std::move(rows), token);
       }
   );
+  return true;
+}
+
+bool luciole::BatchRenameService::replay(std::shared_ptr<const BatchRenameReceipt> receipt) {
+  if (busy() || !receipt) {
+    return false;
+  }
+  m_state->prepared.reset();
+  m_state->token = CancelToken{};
+  m_state->completed.store(0);
+  ++m_state->version;
+  m_state->snapshot = {};
+  m_state->snapshot.phase = BatchRenamePhase::Applying;
+  m_state->snapshot.parent = receipt->plan->parent;
+  m_state->snapshot.rows = receipt->rows;
+  State::launch(m_state, State::Kind::Replay, [owner = m_state, token = m_state->token, receipt = std::move(receipt)] {
+    auto plan = replayPlan(*receipt->plan, token);
+    std::vector<std::string> names;
+    for (const auto& row : *receipt->rows) {
+      names.push_back(row.name);
+    }
+    auto rows = validate(*plan, names, token, true);
+    if (!token.cancelled() && !applicable(*rows)) {
+      for (const auto& item : plan->items) {
+        if (!item->current(plan->fd.get(), item->name)) {
+          throwFileError(FileErrorKind::Changed, "A renamed item changed. Rename history is no longer valid.");
+        }
+      }
+      const auto problem = std::ranges::find_if(*rows, [](const auto& row) { return !row.error.empty(); });
+      throwFileError(FileErrorKind::Exists, problem == rows->end() ? "No names can be restored." : problem->error);
+    }
+    return State::executePlan(owner, plan, std::move(rows), token);
+  });
   return true;
 }

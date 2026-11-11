@@ -209,6 +209,7 @@ namespace {
     for (const auto& result : *service.snapshot().results) {
       TEST_CHECK(result.outcome == O::Renamed && result.actual && fs::exists(*result.actual->nativePath()));
     }
+    TEST_CHECK(service.snapshot().receipt);
     TEST_CHECK(std::distance(fs::directory_iterator(f.root), fs::directory_iterator{}) == 2);
   }
   void cyclesAndKinds(Pump& pump) {
@@ -234,6 +235,19 @@ namespace {
       for (int i = 2; i <= count; ++i) {
         TEST_CHECK(read(f.root / ("file" + std::to_string(i))) == std::to_string(i - 1));
       }
+      TEST_CHECK(service.replay(service.snapshot().receipt));
+      pump.settle(service);
+      TEST_CHECK(service.snapshot().phase == P::Finished && service.snapshot().receipt);
+      for (int i = 1; i <= count; ++i) {
+        TEST_CHECK(read(f.root / ("file" + std::to_string(i))) == std::to_string(i));
+      }
+      TEST_CHECK(service.replay(service.snapshot().receipt));
+      pump.settle(service);
+      TEST_CHECK(service.snapshot().phase == P::Finished && service.snapshot().receipt);
+      TEST_CHECK(read(f.root / "file1") == std::to_string(count));
+      for (int i = 2; i <= count; ++i) {
+        TEST_CHECK(read(f.root / ("file" + std::to_string(i))) == std::to_string(i - 1));
+      }
       for (int i = 1; i <= count; ++i) {
         fs::remove(f.root / ("file" + std::to_string(i)));
       }
@@ -252,6 +266,15 @@ namespace {
     TEST_CHECK(read(f.root / "result-001/child") == "child");
     TEST_CHECK(fs::read_symlink(f.root / "result-002") == "absent");
     TEST_CHECK(read(f.root / "result-003") == "raw");
+    TEST_CHECK(service.replay(service.snapshot().receipt));
+    pump.settle(service);
+    TEST_CHECK(service.snapshot().phase == P::Finished && service.snapshot().receipt);
+    TEST_CHECK(read(f.root / "dir.ext/child") == "child");
+    TEST_CHECK(fs::read_symlink(f.root / "broken") == "absent");
+    TEST_CHECK(read(f.root / raw) == "raw");
+    TEST_CHECK(service.replay(service.snapshot().receipt));
+    pump.settle(service);
+    TEST_CHECK(service.snapshot().phase == P::Finished && service.snapshot().receipt);
     pump.prepare(service, {entry(f.root / "result-002"), entry(f.root / "result-003")});
     o.mode = luciole::BatchRenameMode::Replace;
     o.find = "result";
@@ -259,6 +282,99 @@ namespace {
     pump.preview(service, o);
     pump.apply(service);
     TEST_CHECK(fs::is_symlink(f.root / "changed-002") && read(f.root / "changed-003") == "raw");
+  }
+  void replayGuards(Pump& pump) {
+    using E = luciole::FileErrorKind;
+    for (const auto kind : {E::Exists, E::Changed, E::Missing, E::NotDirectory}) {
+      Fixture f;
+      fs::create_directory(f.root / "folder");
+      const auto folder = f.root / "folder";
+      write(folder / "a", "A");
+      write(folder / "b", "B");
+      S service;
+      pump.prepare(service, {entry(folder / "a"), entry(folder / "b")});
+      pump.apply(service);
+      const auto receipt = service.snapshot().receipt;
+      TEST_CHECK(receipt && !service.replay({}));
+      if (kind == E::Exists) {
+        fs::create_symlink("missing", folder / "b");
+      } else if (kind == E::Changed) {
+        write(folder / "b_002", "changed");
+      } else if (kind == E::Missing) {
+        fs::remove(folder / "b_002");
+      } else {
+        fs::rename(folder, f.root / "held");
+        fs::create_directory(folder);
+        write(folder / "foreign", "foreign");
+      }
+      TEST_CHECK(service.replay(receipt));
+      TEST_CHECK(!service.replay(receipt));
+      pump.settle(service);
+      TEST_CHECK(service.snapshot().phase == P::Error && service.snapshot().error);
+      TEST_CHECK(service.snapshot().error->kind == (kind == E::Exists ? E::Exists : E::Changed));
+      TEST_CHECK(!service.snapshot().receipt);
+      TEST_CHECK(read((kind == E::NotDirectory ? f.root / "held" : folder) / "a_001") == "A");
+      TEST_CHECK(!fs::exists(folder / "a"));
+      if (kind == E::Exists) {
+        TEST_CHECK(fs::read_symlink(folder / "b") == "missing");
+        fs::remove(folder / "b");
+        TEST_CHECK(service.replay(receipt));
+        pump.settle(service);
+        TEST_CHECK(service.snapshot().phase == P::Finished && service.snapshot().receipt);
+        TEST_CHECK(read(folder / "a") == "A" && read(folder / "b") == "B");
+      } else if (kind == E::NotDirectory) {
+        TEST_CHECK(read(folder / "foreign") == "foreign");
+      }
+    }
+    Fixture f;
+    write(f.root / "a", "A");
+    write(f.root / "b", "B");
+    S service;
+    pump.prepare(service, {entry(f.root / "a"), entry(f.root / "b")});
+    pump.apply(service);
+    const auto receipt = service.snapshot().receipt;
+    fs::rename(f.root / "a_001", f.root / "held");
+    write(f.root / "a_001", "A");
+    TEST_CHECK(service.replay(receipt));
+    pump.settle(service);
+    TEST_CHECK(service.snapshot().phase == P::Error && service.snapshot().error->kind == E::Changed);
+    TEST_CHECK(read(f.root / "held") == "A" && read(f.root / "a_001") == "A" && read(f.root / "b_002") == "B");
+  }
+
+  void replayAliasesAndUnchanged(Pump& pump) {
+    Fixture f;
+    write(f.root / "a", "alias");
+    fs::create_hard_link(f.root / "a", f.root / "b");
+    fs::create_symlink("a", f.root / "link");
+    TEST_CHECK(::mkfifo((f.root / "fifo").c_str(), 0600) == 0);
+    S service;
+    pump.prepare(service, {entry(f.root / "a"), entry(f.root / "b"), entry(f.root / "link"), entry(f.root / "fifo")});
+    pump.apply(service);
+    for (unsigned direction = 0; direction < 4; ++direction) {
+      TEST_CHECK(service.snapshot().receipt && service.replay(service.snapshot().receipt));
+      pump.settle(service);
+      TEST_CHECK(service.snapshot().phase == P::Finished && service.snapshot().receipt);
+      const bool original = direction % 2 == 0;
+      TEST_CHECK(fs::equivalent(f.root / (original ? "a" : "a_001"), f.root / (original ? "b" : "b_002")));
+      TEST_CHECK(fs::read_symlink(f.root / (original ? "link" : "link_003")) == "a");
+      TEST_CHECK(fs::is_fifo(f.root / (original ? "fifo" : "fifo_004")));
+    }
+    Fixture g;
+    write(g.root / "change", "changed item");
+    write(g.root / "keep", "unchanged item");
+    pump.prepare(service, {entry(g.root / "change"), entry(g.root / "keep")});
+    luciole::BatchRenameOptions options;
+    options.mode = luciole::BatchRenameMode::Replace;
+    options.find = "change";
+    options.replacement = "new";
+    pump.preview(service, options);
+    pump.apply(service);
+    write(g.root / "keep", "external change to an unchanged item");
+    TEST_CHECK(service.replay(service.snapshot().receipt));
+    pump.settle(service);
+    TEST_CHECK(service.snapshot().phase == P::Finished && service.snapshot().results->size() == 1);
+    TEST_CHECK(read(g.root / "change") == "changed item");
+    TEST_CHECK(read(g.root / "keep") == "external change to an unchanged item");
   }
   void staleAndCancellation(Pump& pump) {
     Fixture f;
@@ -380,10 +496,15 @@ namespace {
           TEST_CHECK(result.outcome == service.snapshot().results->front().outcome);
         }
       }
+      if (std::ranges::any_of(*service.snapshot().results, [](const auto& result) {
+            return result.outcome != O::Renamed;
+          })) {
+        TEST_CHECK(!service.snapshot().receipt);
+      }
       TEST_CHECK(std::distance(fs::directory_iterator(f.root), fs::directory_iterator{}) == count);
     }
   }
-  void runtimeCollision(Pump& pump) {
+  void runtimeCollision(Pump& pump, bool replay) {
     Fixture f;
     constexpr int count = 256;
     std::vector<luciole::DirectoryEntry> entries;
@@ -398,6 +519,14 @@ namespace {
     o.pattern = "file{number}";
     o.digits = 1;
     pump.preview(service, o);
+    std::shared_ptr<const luciole::BatchRenameReceipt> receipt;
+    if (replay) {
+      pump.apply(service);
+      receipt = service.snapshot().receipt;
+      TEST_CHECK(receipt);
+    }
+    const auto* originalName = replay ? "file1" : "file0";
+    const auto* targetName = replay ? "file0" : "file256";
     const int watch = ::inotify_init1(IN_CLOEXEC | IN_NONBLOCK);
     TEST_CHECK(watch >= 0 && ::inotify_add_watch(watch, f.root.c_str(), IN_CREATE) >= 0);
     bool originalInserted = false, targetInserted = false;
@@ -409,14 +538,14 @@ namespace {
           seen = ::read(watch, events.data(), events.size()) > 0;
         }
         if (seen) {
-          const int original = ::open((f.root / "file0").c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+          const int original = ::open((f.root / originalName).c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
           if (original >= 0) {
             originalInserted = true;
             TEST_CHECK(::write(original, "foreign", 7) == 7);
             ::close(original);
           }
           if (originalInserted) {
-            const int target = ::open((f.root / "file256").c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+            const int target = ::open((f.root / targetName).c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
             if (target >= 0) {
               targetInserted = true;
               TEST_CHECK(::write(target, "foreign", 7) == 7);
@@ -428,7 +557,12 @@ namespace {
         std::this_thread::yield();
       }
     });
-    pump.apply(service);
+    if (replay) {
+      TEST_CHECK(service.replay(receipt));
+      pump.settle(service);
+    } else {
+      pump.apply(service);
+    }
     rival.request_stop();
     rival.join();
     ::close(watch);
@@ -438,14 +572,46 @@ namespace {
       TEST_CHECK(result.actual && read(*result.actual->nativePath()) == std::to_string(i));
     }
     if (originalInserted) {
-      TEST_CHECK(read(f.root / "file0") == "foreign");
+      TEST_CHECK(read(f.root / originalName) == "foreign");
     }
     if (targetInserted) {
-      TEST_CHECK(read(f.root / "file256") == "foreign");
+      TEST_CHECK(read(f.root / targetName) == "foreign");
       TEST_CHECK(service.snapshot().results->front().outcome == O::NeedsAttention);
       TEST_CHECK(service.snapshot().report.contains("Retained at"));
+      TEST_CHECK(!service.snapshot().receipt);
     }
-    std::println("Runtime collision fixture: original={}, destination={}", originalInserted, targetInserted);
+    std::println(
+        "Runtime collision fixture: replay={}, original={}, destination={}", replay, originalInserted, targetInserted
+    );
+  }
+
+  void replayCancellation(Pump& pump) {
+    Fixture f;
+    std::vector<luciole::DirectoryEntry> entries;
+    constexpr int count = 256;
+    for (int i = 0; i < count; ++i) {
+      const auto path = f.root / ("item" + std::to_string(i));
+      write(path, std::to_string(i));
+      entries.push_back(entry(path));
+    }
+    S service;
+    pump.prepare(service, std::move(entries));
+    pump.apply(service);
+    const auto receipt = service.snapshot().receipt;
+    TEST_CHECK(receipt && service.replay(receipt));
+    pump.until([&] { return !service.busy() || service.completed() > 0; });
+    service.cancel();
+    pump.settle(service);
+    TEST_CHECK(service.snapshot().phase == P::Finished && service.snapshot().results->size() == count);
+    bool cancelled = false;
+    for (int i = 0; i < count; ++i) {
+      const auto& result = (*service.snapshot().results)[static_cast<std::size_t>(i)];
+      TEST_CHECK(result.actual && read(*result.actual->nativePath()) == std::to_string(i));
+      TEST_CHECK(result.outcome == O::Renamed || result.outcome == O::Cancelled);
+      cancelled |= result.outcome == O::Cancelled;
+    }
+    TEST_CHECK(cancelled ? !service.snapshot().receipt : service.snapshot().receipt != nullptr);
+    TEST_CHECK(std::distance(fs::directory_iterator(f.root), fs::directory_iterator{}) == count);
   }
 } // namespace
 int main() {
@@ -453,9 +619,13 @@ int main() {
   names();
   basicAndValidation(pump);
   cyclesAndKinds(pump);
+  replayGuards(pump);
+  replayAliasesAndUnchanged(pump);
   staleAndCancellation(pump);
   parentReplacement(pump);
   cancellationAfterWork(pump);
-  runtimeCollision(pump);
+  replayCancellation(pump);
+  runtimeCollision(pump, false);
+  runtimeCollision(pump, true);
   std::println("batch rename checks passed");
 }

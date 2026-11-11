@@ -144,6 +144,7 @@ void OperationHub::changed(OperationJob& job) {
     job.m_historyGeneration = ++m_historyGeneration;
     if (job.renameReplay() == RenameReplay::None) {
       m_renameReceipt.reset();
+      m_batchRenameReceipt.reset();
       m_renameRedo = false;
     }
   }
@@ -155,7 +156,7 @@ void OperationHub::changed(OperationJob& job) {
     job.m_resultTaken = false;
   } else if (std::exchange(job.m_running, false)) {
     finished = true;
-    if (job.m_mutationStarted && job.kind() == JobKind::Rename) {
+    if (job.m_mutationStarted && (job.kind() == JobKind::Rename || job.kind() == JobKind::BatchRename)) {
       recordRename(job);
     }
     job.m_mutationStarted = false;
@@ -254,12 +255,21 @@ bool OperationHub::renameReplayBusy() const {
   });
 }
 
-bool OperationHub::canUndoRename() const { return m_renameReceipt && !m_renameRedo && !busy(); }
-bool OperationHub::canRedoRename() const { return m_renameReceipt && m_renameRedo && !busy(); }
+bool OperationHub::canUndoRename() const {
+  return (m_renameReceipt || m_batchRenameReceipt) && !m_renameRedo && !busy();
+}
+bool OperationHub::canRedoRename() const {
+  return (m_renameReceipt || m_batchRenameReceipt) && m_renameRedo && !busy();
+}
 
 bool OperationHub::replayRename(luciole::TabId page, bool redo) {
   if (!attached(page) || !(redo ? canRedoRename() : canUndoRename())) {
     return false;
+  }
+  if (m_batchRenameReceipt) {
+    auto job = create<luciole::BatchRenameService>(page);
+    job->m_renameReplay = redo ? RenameReplay::Redo : RenameReplay::Undo;
+    return job->service<luciole::BatchRenameService>().replay(m_batchRenameReceipt);
   }
   auto job = create<luciole::RenameService>(page);
   job->m_renameReplay = redo ? RenameReplay::Redo : RenameReplay::Undo;
@@ -268,6 +278,22 @@ bool OperationHub::replayRename(luciole::TabId page, bool redo) {
 
 void OperationHub::recordRename(const OperationJob& job) {
   if (job.m_historyGeneration != m_historyGeneration) {
+    return;
+  }
+  if (job.kind() == JobKind::BatchRename) {
+    const auto& snapshot = job.service<luciole::BatchRenameService>().snapshot();
+    if (snapshot.phase == luciole::BatchRenamePhase::Finished) {
+      m_batchRenameReceipt = snapshot.receipt;
+      m_renameReceipt.reset();
+      m_renameRedo = job.renameReplay() == RenameReplay::Undo;
+    } else if (
+        snapshot.error
+        && (snapshot.error->kind == luciole::FileErrorKind::Changed
+            || snapshot.error->kind == luciole::FileErrorKind::Missing
+            || snapshot.error->kind == luciole::FileErrorKind::NotDirectory)
+    ) {
+      m_batchRenameReceipt.reset();
+    }
     return;
   }
   const auto& snapshot = job.service<luciole::RenameService>().snapshot();

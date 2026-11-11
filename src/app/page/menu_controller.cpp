@@ -1,5 +1,6 @@
 #include "app/page/menu_controller.h"
 
+#include "app/operation_hub.h"
 #include "app/page/active_dialog.h"
 #include "app/page/create_controller.h"
 #include "app/page/details_header_controller.h"
@@ -77,7 +78,9 @@ MenuController::actionEntry(Action action, const luciole::ActionRequest& request
   const auto state = m_page.actionState(action, request);
   return {
       .id = luciole::ActionRegistry::menuId(action),
-      .label = std::string(definition.label),
+      .label = m_page.jobs().batchRenameHistory() && action == Action::UndoRename ? "Undo Batch Rename"
+          : m_page.jobs().batchRenameHistory() && action == Action::RedoRename    ? "Redo Batch Rename"
+                                                                                  : std::string(definition.label),
       .enabled = state.enabled,
       .checkmark = !radio && state.checked != -1,
       .radio = radio,

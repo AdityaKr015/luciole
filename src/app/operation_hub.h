@@ -160,6 +160,7 @@ public:
   bool renameReplayBusy() const;
   bool canUndoRename() const;
   bool canRedoRename() const;
+  bool batchRenameHistory() const { return m_batchRenameReceipt != nullptr; }
   bool replayRename(luciole::TabId page, bool redo);
   std::vector<luciole::JobActivity> activities() const;
   std::shared_ptr<const std::string> activityReport(luciole::JobId id) const;
@@ -180,6 +181,7 @@ private:
   std::map<luciole::TabId, Owner*> m_owners;
   luciole::JobId m_next = 0;
   std::shared_ptr<const luciole::RenameReceipt> m_renameReceipt;
+  std::shared_ptr<const luciole::BatchRenameReceipt> m_batchRenameReceipt;
   std::uint64_t m_historyGeneration = 0;
   bool m_renameRedo = false;
   std::deque<luciole::JobActivity> m_finishedActivities;
@@ -197,6 +199,7 @@ public:
   bool owns(const OperationJob& job) const { return m_hub.owner(job) == m_page; }
   // False once the page left its window (closed tab or pane, closed window): its dialogs close for good.
   bool attached() const { return m_hub.attached(m_page); }
+  bool batchRenameHistory() const { return m_hub.batchRenameHistory(); }
   // An owned job by id, or null.
   OperationJob* find(luciole::JobId id) const {
     auto* job = m_hub.find(id);
