@@ -240,6 +240,10 @@ namespace luciole::transfer {
               synchronize(stage.fd());
             }
             const auto flags = replace ? RENAME_EXCHANGE : RENAME_NOREPLACE;
+            auto copyProof = !replace && action != TransferAction::Move && work.prepareCopy
+                ? work.prepareCopy(binding.location.child(target), destination, stage.fd())
+                : nullptr;
+            work.check();
             if (::syscall(SYS_renameat2, stage.fd(), "item", destination, target.c_str(), flags) != 0) {
               if (errno == EEXIST || (replace && errno == ENOENT)) {
                 replace.reset();
@@ -265,6 +269,9 @@ namespace luciole::transfer {
               work.note(info(stage.fd(), "item"));
             }
             result.outcome = action == TransferAction::Link ? Linked : Copied;
+            if (copyProof && work.recordCopy) {
+              work.recordCopy(copyProof);
+            }
             if (action == TransferAction::Move) {
               // The sources are about to go: the published copy must survive a crash first.
               synchronize(destination);
@@ -314,6 +321,8 @@ namespace luciole::transfer {
     TransferResult merge(Node& node, int destination, TransferAction action, Work& work, const struct stat& existing) {
       // Root-only move receipts cannot describe changes inside a merged destination.
       work.recordMove = {};
+      work.prepareCopy = {};
+      work.recordCopy = {};
       using enum TransferOutcome;
       auto& source = node.source;
       TransferResult result{source.location};

@@ -57,7 +57,7 @@ namespace {
     }
     if (!all(c, r, [&](const DirectoryEntry& entry) {
           return transferLocationSupported(entry.location)
-              && entry.access.read.value_or(true)
+              && ((entry.symlink && entry.location.isNative()) || entry.access.read.value_or(true))
               && (entry.type == FileType::Directory || entry.type == FileType::Regular || entry.symlink)
               && (!cut || (entry.access.rename != false && entry.access.remove != false));
         })) {

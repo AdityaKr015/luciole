@@ -54,5 +54,5 @@ namespace luciole {
     std::vector<std::shared_ptr<const MoveEffect>> m_effects;
   };
   // Optional proof retention must leave descriptor headroom for the transfer itself.
-  std::size_t moveHistoryBudget();
+  std::size_t transferHistoryBudget(std::size_t descriptorsPerRoot);
 } // namespace luciole

@@ -13,6 +13,7 @@
 
 namespace luciole {
   class MoveReceipt;
+  class CopyReceipt;
   enum class TransferConflictChoice { Replace, Skip, KeepBoth, Cancel, Merge };
   struct TransferConflict {
     std::uint64_t id;
@@ -45,6 +46,7 @@ namespace luciole {
     TransferService& operator=(const TransferService&) = delete;
     bool start(TransferRequest request);
     bool replay(const std::shared_ptr<const MoveReceipt>& receipt);
+    bool replayCopy(const std::shared_ptr<const CopyReceipt>& receipt);
     void cancel();
     bool busy() const;
     std::size_t total() const;
@@ -61,6 +63,8 @@ namespace luciole {
     std::shared_ptr<const MoveReceipt> receipt() const;
     // Hand optional history to its application owner without retaining it in finished job reports.
     std::shared_ptr<const MoveReceipt> takeReceipt();
+    std::shared_ptr<const CopyReceipt> copyReceipt() const;
+    std::shared_ptr<const CopyReceipt> takeCopyReceipt();
     bool historyRetired() const;
     void setChangedCallback(std::function<void()> callback);
 

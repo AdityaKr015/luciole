@@ -1,4 +1,5 @@
 #include "event_loop/glib_poll_source.h"
+#include "operations/copy_receipt.h"
 #include "operations/move_receipt.h"
 #include "operations/transfer_service.h"
 #include "test_check.h"
@@ -85,10 +86,223 @@ namespace {
       TEST_CHECK(receipt && service.replay(receipt));
       until([&] { return !service.busy(); });
     }
+    void replayCopy(luciole::TransferService& service, const std::shared_ptr<const luciole::CopyReceipt>& receipt) {
+      TEST_CHECK(receipt && service.replayCopy(receipt));
+      until([&] { return !service.busy(); });
+    }
+    void cleanup(luciole::TransferService& service) {
+      service.takeCopyReceipt().reset();
+      until([] { return !luciole::CopyReceipt::cleanupPending(); });
+    }
 
   private:
     GlibPollSource m_source;
   };
+  void testCopyHistory(Pump& pump) {
+    for (const auto action : {TransferAction::Copy, TransferAction::Link}) {
+      Fixture f;
+      luciole::TransferService service;
+      const auto raw = std::string("raw-") + static_cast<char>(0xff);
+      write(f.source("文.txt"), "original");
+      fs::create_directories(f.source("folder/sub"));
+      write(f.source("folder/sub/.inside"), "nested");
+      fs::create_symlink("missing", f.source("broken"));
+      write(f.source(raw), "raw");
+      pump.run(
+          service,
+          {location(f.source("文.txt")), location(f.source("folder")), location(f.source("broken")),
+           location(f.source(raw))},
+          f.destination(""), action
+      );
+      TEST_CHECK(service.copyReceipt() && !service.receipt());
+      const auto original = fs::status(f.destination("文.txt")).permissions();
+      write(f.source("文.txt"), "source changed");
+      auto stale = service.copyReceipt();
+      std::shared_ptr<const luciole::CopyReceipt> staleHidden;
+      for (int cycle = 0; cycle < 3; ++cycle) {
+        pump.replayCopy(service, service.copyReceipt());
+        TEST_CHECK(service.copyReceipt() && !service.historyRetired() && service.completed() == 4);
+        TEST_CHECK(!fs::exists(f.destination("文.txt")) && !fs::exists(f.destination("folder")));
+        TEST_CHECK(read(f.source("文.txt")) == "source changed" && read(f.source("folder/sub/.inside")) == "nested");
+        luciole::TransferService other;
+        pump.replayCopy(other, staleHidden ? staleHidden : stale);
+        TEST_CHECK(other.historyRetired() && !other.copyReceipt());
+        if (!staleHidden) {
+          staleHidden = service.copyReceipt();
+        }
+        TEST_CHECK(
+            service.results()[0].destination
+            && fs::is_directory(fs::path(*service.results()[0].destination->nativePath()).parent_path())
+        );
+        pump.replayCopy(service, service.copyReceipt());
+        TEST_CHECK(service.copyReceipt() && !service.historyRetired());
+        if (action == TransferAction::Copy) {
+          TEST_CHECK(
+              read(f.destination("文.txt")) == "original" && read(f.destination("folder/sub/.inside")) == "nested"
+          );
+          TEST_CHECK(fs::read_symlink(f.destination("broken")) == "missing" && read(f.destination(raw)) == "raw");
+        } else {
+          TEST_CHECK(fs::read_symlink(f.destination("文.txt")) == f.source("文.txt"));
+          TEST_CHECK(fs::read_symlink(f.destination("folder")) == f.source("folder"));
+          TEST_CHECK(fs::read_symlink(f.destination("broken")) == f.source("broken"));
+        }
+        TEST_CHECK(fs::status(f.destination("文.txt")).permissions() == original);
+      }
+      TEST_CHECK(!service.retryFailed() && !service.replayCopy({}));
+      pump.replayCopy(service, service.copyReceipt());
+      stale.reset();
+      staleHidden.reset();
+      pump.cleanup(service);
+      TEST_CHECK(luciole::CopyReceipt::takeCleanupErrors().empty());
+      for (const auto& item : fs::directory_iterator(f.destination(""))) {
+        TEST_CHECK(!item.path().filename().native().starts_with(".luciole-create-"));
+      }
+    }
+  }
+  void testCopyHistoryGuards(Pump& pump) {
+    for (int scenario = 0; scenario < 7; ++scenario) {
+      Fixture f;
+      luciole::TransferService service;
+      write(f.source("a"), "A");
+      fs::create_directories(f.source("tree/sub"));
+      write(f.source("tree/sub/inside"), "original");
+      pump.run(service, {location(f.source("a")), location(f.source("tree"))}, f.destination(""), TransferAction::Copy);
+      auto receipt = service.copyReceipt();
+      TEST_CHECK(receipt);
+      fs::path retained;
+      if (scenario >= 5) {
+        pump.replayCopy(service, receipt);
+        receipt = service.copyReceipt();
+        retained = *service.results()[1].destination->nativePath();
+        if (scenario == 5) {
+          write(retained / "sub/inside", "modified retained data");
+        } else {
+          fs::create_symlink("missing", f.destination("tree"));
+        }
+      } else if (scenario <= 1) {
+        const auto path = scenario == 0 ? f.destination("a") : f.destination("tree/sub/inside");
+        struct stat stamp{};
+        TEST_CHECK(::stat(path.c_str(), &stamp) == 0);
+        write(path, scenario == 0 ? "B" : "modified");
+        const struct timespec times[]{stamp.st_atim, stamp.st_mtim};
+        TEST_CHECK(::utimensat(AT_FDCWD, path.c_str(), times, 0) == 0);
+      } else if (scenario == 2) {
+        write(f.destination("tree/sub/new"), "new data");
+      } else if (scenario == 3) {
+        fs::rename(f.destination("tree"), f.destination("held"));
+        fs::create_directory(f.destination("tree"));
+      } else {
+        fs::rename(f.root / "destination", f.root / "held-parent");
+        fs::create_directory(f.root / "destination");
+      }
+      pump.replayCopy(service, receipt);
+      TEST_CHECK(!service.copyReceipt() && service.results().size() == 2);
+      TEST_CHECK(service.historyRetired() == (scenario != 6));
+      TEST_CHECK(std::ranges::all_of(service.results(), [](const auto& result) {
+        return result.outcome == TransferOutcome::Failed;
+      }));
+      if (scenario == 6) {
+        TEST_CHECK(!fs::exists(f.destination("a")) && fs::is_symlink(f.destination("tree")));
+        TEST_CHECK(fs::remove(f.destination("tree")));
+        pump.replayCopy(service, receipt);
+        TEST_CHECK(service.copyReceipt() && read(f.destination("a")) == "A");
+      } else if (scenario >= 5) {
+        TEST_CHECK(!fs::exists(f.destination("a")) && read(retained / "sub/inside") == "modified retained data");
+      } else {
+        const auto actual = scenario == 4 ? f.root / "held-parent/a" : f.destination("a");
+        TEST_CHECK(read(actual) == (scenario == 0 ? "B" : "A"));
+      }
+      receipt.reset();
+      pump.cleanup(service);
+      const auto errors = luciole::CopyReceipt::takeCleanupErrors();
+      TEST_CHECK(errors.empty() == (scenario != 5));
+      if (scenario == 5) {
+        TEST_CHECK(
+            read(retained / "sub/inside") == "modified retained data"
+            && std::ranges::any_of(errors, [&](const auto& error) { return error.message.contains(retained.native()); })
+        );
+      }
+    }
+  }
+  void testCopyHistoryRetention(Pump& pump) {
+    Fixture f;
+    luciole::TransferService service;
+    write(f.source("a.txt"), "incoming");
+    write(f.destination("a.txt"), "existing");
+    pump.run(
+        service, {location(f.source("a.txt")), location(f.source("a.txt"))}, f.destination(""), TransferAction::Copy,
+        [](const auto&) { return TransferConflictChoice::KeepBoth; }
+    );
+    TEST_CHECK(service.copyReceipt() && read(f.destination("a (1).txt")) == "incoming");
+    TEST_CHECK(service.results()[1].outcome == TransferOutcome::Skipped);
+    pump.replayCopy(service, service.copyReceipt());
+    const fs::path retained = *service.results()[0].destination->nativePath();
+    TEST_CHECK(read(retained) == "incoming" && read(f.destination("a.txt")) == "existing");
+    pump.replayCopy(service, service.copyReceipt());
+    TEST_CHECK(read(f.destination("a (1).txt")) == "incoming" && read(f.destination("a.txt")) == "existing");
+    pump.replayCopy(service, service.copyReceipt());
+    pump.cleanup(service);
+    TEST_CHECK(!fs::exists(retained.parent_path()) && read(f.destination("a.txt")) == "existing");
+    TEST_CHECK(luciole::CopyReceipt::takeCleanupErrors().empty());
+
+    fs::path deep = f.source("deep");
+    for (int i = 0; i < 66; ++i) {
+      deep /= "child";
+    }
+    fs::create_directories(deep);
+    pump.run(service, {location(f.source("deep"))}, f.destination(""), TransferAction::Copy);
+    TEST_CHECK(service.results()[0].outcome == TransferOutcome::Copied && !service.copyReceipt());
+    pump.cleanup(service);
+  }
+  void testCopyHistoryCancellation(Pump& pump) {
+    Fixture f;
+    luciole::TransferService service;
+    std::vector<luciole::Location> sources;
+    for (int i = 0; i < 128; ++i) {
+      write(f.source(std::to_string(i)), std::to_string(i));
+      sources.push_back(location(f.source(std::to_string(i))));
+    }
+    pump.run(service, sources, f.destination(""), TransferAction::Copy);
+    auto receipt = service.copyReceipt();
+    TEST_CHECK(receipt);
+    luciole::CancelToken token;
+    token.cancel();
+    std::atomic<std::size_t> completed{0};
+    auto result = receipt->reverse(token, completed);
+    TEST_CHECK(!result.retireHistory && !result.receipt && completed.load() == 128);
+    TEST_CHECK(std::ranges::all_of(result.results, [](const auto& item) {
+      return item.outcome == TransferOutcome::Cancelled;
+    }));
+    token = luciole::CancelToken{};
+    completed.store(0);
+    std::jthread interrupt([&](const std::stop_token& stop) {
+      while (!stop.stop_requested() && completed.load() == 0) {
+        std::this_thread::yield();
+      }
+      token.cancel();
+    });
+    result = receipt->reverse(token, completed);
+    interrupt.request_stop();
+    interrupt.join();
+    TEST_CHECK(completed.load() == 128);
+    for (std::size_t i = 0; i < result.results.size(); ++i) {
+      const auto& item = result.results[i];
+      if (item.outcome == TransferOutcome::Moved) {
+        TEST_CHECK(item.destination && read(*item.destination->nativePath()) == std::to_string(i));
+        TEST_CHECK(!fs::exists(f.destination(std::to_string(i))));
+      } else {
+        TEST_CHECK(
+            item.outcome == TransferOutcome::Cancelled && read(f.destination(std::to_string(i))) == std::to_string(i)
+        );
+      }
+      TEST_CHECK(read(f.source(std::to_string(i))) == std::to_string(i));
+    }
+    result.receipt.reset();
+    receipt.reset();
+    pump.cleanup(service);
+    TEST_CHECK(luciole::CopyReceipt::takeCleanupErrors().empty() == !result.retireHistory);
+  }
+
   void testMoveHistory(Pump& pump) {
     Fixture f;
     luciole::TransferService service;
@@ -270,7 +484,7 @@ namespace {
     }
   }
 
-  void testMoveHistoryBounds(Pump& pump) {
+  void testTransferHistoryBounds(Pump& pump) {
     Fixture f;
     std::vector<luciole::Location> sources;
     for (int i = 0; i < 100; ++i) {
@@ -288,6 +502,15 @@ namespace {
       ~LimitGuard() { TEST_CHECK(::setrlimit(RLIMIT_NOFILE, &previous) == 0); }
     } guard;
     luciole::TransferService service;
+    pump.run(service, sources, f.root / "destination", TransferAction::Copy);
+    TEST_CHECK(!service.copyReceipt());
+    TEST_CHECK(std::ranges::all_of(service.results(), [](const auto& result) {
+      return result.outcome == TransferOutcome::Copied;
+    }));
+    for (int i = 0; i < 100; ++i) {
+      TEST_CHECK(read(f.destination(std::to_string(i))) == std::to_string(i));
+      TEST_CHECK(fs::remove(f.destination(std::to_string(i))));
+    }
     pump.run(service, sources, f.root / "destination", TransferAction::Move);
     TEST_CHECK(!service.receipt());
     TEST_CHECK(std::ranges::all_of(service.results(), [](const auto& result) {
@@ -898,11 +1121,15 @@ int main() {
   try {
     Pump pump;
     testSymbolicLinkDrops(pump);
+    testCopyHistory(pump);
+    testCopyHistoryGuards(pump);
+    testCopyHistoryRetention(pump);
+    testCopyHistoryCancellation(pump);
     testMoveHistory(pump);
     testMoveHistoryGuards(pump);
     testMoveHistoryAliasesAndNames(pump);
     testMoveHistoryInterruption(pump);
-    testMoveHistoryBounds(pump);
+    testTransferHistoryBounds(pump);
     testMoveAndCopy(pump);
     testConflicts(pump);
     testGuardsAndRaces(pump);
@@ -914,6 +1141,8 @@ int main() {
     testMergeBindings(pump);
     testRetry(pump);
     testMergeLimitsAndNewEntries(pump);
+    pump.until([] { return !luciole::CopyReceipt::cleanupPending(); });
+    TEST_CHECK(luciole::CopyReceipt::takeCleanupErrors().empty());
     std::println("Transfer checks passed");
     return 0;
   } catch (const std::exception& error) {

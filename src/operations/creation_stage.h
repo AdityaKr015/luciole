@@ -16,6 +16,7 @@ namespace luciole {
     CreationStage& operator=(const CreationStage&) = delete;
     int fd() const { return m_directory.get(); }
     int item() const { return m_item.get(); }
+    void validateItem() const { requireItem(); }
     void adopt(Fd item);
     void publish(const std::string& name);
     void removeItem();

@@ -1,6 +1,7 @@
 #include "app/operation_hub.h"
 #include "event_loop/glib_poll_source.h"
 #include "fs/gio_interop.h"
+#include "operations/copy_receipt.h"
 #include "test_check.h"
 
 #include <chrono>
@@ -329,7 +330,96 @@ namespace {
         {{fixture.at("b")}, fixture.at("destination"), luciole::TransferAction::Copy}
     ));
     pump.until([&] { return !copy->running(); });
-    TEST_CHECK(!workspace.hub.canUndo() && !workspace.hub.canRedo());
+    TEST_CHECK(workspace.hub.canUndo() && workspace.hub.historyLabel(false) == "Undo Copy");
+  }
+
+  void copyHistory(Pump& pump) {
+    for (const auto action : {luciole::TransferAction::Copy, luciole::TransferAction::Link}) {
+      Fixture fixture;
+      fixture.write("a");
+      fs::create_directory(fixture.root / "folder");
+      fixture.write("folder/inside");
+      Workspace workspace;
+      const auto otherWindow = workspace.model.addWindow();
+      const auto other = workspace.model.addTab(otherWindow);
+      Owner otherOwner;
+      workspace.hub.attach(other, otherOwner);
+      auto job = workspace.hub.create<luciole::TransferService>(workspace.page);
+      TEST_CHECK(job->service<luciole::TransferService>().start(
+          {{fixture.at("a"), fixture.at("folder")}, fixture.at("destination"), action}
+      ));
+      pump.until([&] { return !workspace.hub.busy(); });
+      TEST_CHECK(workspace.hub.canUndo() && !job->service<luciole::TransferService>().copyReceipt());
+      TEST_CHECK(
+          workspace.hub.historyLabel(false)
+          == (action == luciole::TransferAction::Copy ? "Undo Copy" : "Undo Create Links")
+      );
+      job.reset();
+      TEST_CHECK(workspace.model.close(workspace.page));
+      workspace.hub.detach(workspace.page);
+      workspace.hub.update(otherWindow);
+      TEST_CHECK(workspace.hub.replayHistory(other, false));
+      TEST_CHECK(
+          workspace.hub.activities().front().title
+          == (action == luciole::TransferAction::Copy ? "Undo: Copy files" : "Undo: Create links")
+      );
+      pump.until([&] { return !workspace.hub.busy(); });
+      TEST_CHECK(workspace.hub.canRedo() && !fs::exists(fixture.root / "destination/a"));
+      auto* undo =
+          workspace.hub.newest(other, [](const OperationJob& item) { return item.kind() == JobKind::Transfer; });
+      TEST_CHECK(undo);
+      const fs::path retained = *undo->service<luciole::TransferService>().results()[0].destination->nativePath();
+      TEST_CHECK(fs::exists(retained));
+      fixture.write("destination/a");
+      TEST_CHECK(workspace.hub.replayHistory(other, true));
+      pump.until([&] { return !workspace.hub.busy(); });
+      TEST_CHECK(workspace.hub.canRedo() && !fs::exists(fixture.root / "destination/folder"));
+      TEST_CHECK(fs::remove(fixture.root / "destination/a"));
+      TEST_CHECK(workspace.hub.replayHistory(other, true));
+      pump.until([&] { return !workspace.hub.busy(); });
+      TEST_CHECK(workspace.hub.canUndo() && fs::exists(fixture.root / "destination/folder"));
+      TEST_CHECK(workspace.hub.replayHistory(other, false));
+      pump.until([&] { return !workspace.hub.busy(); });
+      undo = workspace.hub.newest(other, [](const OperationJob& item) { return item.kind() == JobKind::Transfer; });
+      const fs::path discarded = *undo->service<luciole::TransferService>().results()[0].destination->nativePath();
+      auto create = workspace.hub.create<luciole::CreateService>(other);
+      TEST_CHECK(
+          create->service<luciole::CreateService>().prepare(fixture.at("destination"), luciole::CreateKind::Folder)
+      );
+      pump.until([&] { return !create->running(); });
+      TEST_CHECK(workspace.hub.canRedo());
+      TEST_CHECK(create->service<luciole::CreateService>().create("newer"));
+      pump.until([&] { return !workspace.hub.busy(); });
+      TEST_CHECK(!fs::exists(discarded.parent_path()) && fs::exists(fixture.root / "a"));
+      TEST_CHECK(workspace.hub.historyLabel(false) == "Undo Create Folder");
+      workspace.hub.shutdown();
+      pump.until([&] { return !workspace.hub.busy(); });
+      workspace.hub.detach(other);
+    }
+  }
+  void copyCleanupReport(Pump& pump) {
+    Fixture fixture;
+    fixture.write("a");
+    Workspace workspace;
+    auto job = workspace.hub.create<luciole::TransferService>(workspace.page);
+    TEST_CHECK(job->service<luciole::TransferService>().start(
+        {{fixture.at("a")}, fixture.at("destination"), luciole::TransferAction::Copy}
+    ));
+    pump.until([&] { return !workspace.hub.busy(); });
+    TEST_CHECK(workspace.hub.replayHistory(workspace.page, false));
+    pump.until([&] { return !workspace.hub.busy(); });
+    const auto* undo =
+        workspace.hub.newest(workspace.page, [](const OperationJob& item) { return item.kind() == JobKind::Transfer; });
+    const fs::path retained = *undo->service<luciole::TransferService>().results()[0].destination->nativePath();
+    std::ofstream(retained) << "changed retained data";
+    workspace.hub.shutdown();
+    pump.until([&] { return !workspace.hub.busy(); });
+    workspace.hub.update(workspace.window);
+    const auto activities = workspace.hub.activities();
+    TEST_CHECK(activities.front().title == "Discard undo data" && activities.front().state == ActivityState::Failed);
+    TEST_CHECK(activities.front().report && activities.front().report->contains(retained.native()));
+    TEST_CHECK(fs::exists(retained) && fs::exists(fixture.root / "a"));
+    TEST_CHECK(!activities.front().canCancel && !activities.front().canRetry);
   }
 
   void transferLifecycle(Pump& pump) {
@@ -484,4 +574,7 @@ int main() {
   creationHistoryReplacement(pump);
   moveHistory(pump);
   moveHistoryReplacement(pump);
+  copyHistory(pump);
+  copyCleanupReport(pump);
+  pump.until([] { return !luciole::CopyReceipt::cleanupPending(); });
 }

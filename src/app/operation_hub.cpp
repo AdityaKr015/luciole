@@ -1,5 +1,6 @@
 #include "app/operation_hub.h"
 
+#include "operations/copy_receipt.h"
 #include "operations/create_receipt.h"
 #include "operations/move_receipt.h"
 
@@ -152,6 +153,7 @@ void OperationHub::changed(OperationJob& job) {
       m_batchRenameReceipt.reset();
       m_createReceipt.reset();
       m_moveReceipt.reset();
+      m_copyReceipt.reset();
       m_historyRedo = false;
     }
   }
@@ -210,6 +212,20 @@ bool OperationHub::retained(const OperationJob& job) const {
 }
 
 void OperationHub::update(std::optional<luciole::WindowId> preferred) {
+  for (auto& error : luciole::CopyReceipt::takeCleanupErrors()) {
+    luciole::JobActivity activity;
+    activity.id = ++m_next;
+    activity.title = "Discard undo data";
+    activity.summary = "Retained copy needs inspection";
+    activity.state = luciole::ActivityState::Failed;
+    activity.finished = true;
+    activity.report = std::make_shared<const std::string>(std::move(error.message));
+    m_finishedActivities.push_front(std::move(activity));
+    while (m_finishedActivities.size() > 12) {
+      m_finishedActivities.pop_back();
+    }
+    notifyActivity();
+  }
   for (const auto& move : m_routing.update(m_workspace, preferred)) {
     const auto found = m_jobs.find(move.job);
     if (found == m_jobs.end()) {
@@ -246,6 +262,8 @@ void OperationHub::update(std::optional<luciole::WindowId> preferred) {
 }
 
 void OperationHub::shutdown() {
+  ++m_historyGeneration;
+  m_copyReceipt.reset();
   for (auto& [id, job] : m_jobs) {
     (void)id;
     if (job->kind() == JobKind::Archive) {
@@ -257,7 +275,8 @@ void OperationHub::shutdown() {
 }
 
 bool OperationHub::busy() const {
-  return std::ranges::any_of(m_jobs, [](const auto& item) { return item.second->running(); });
+  return luciole::CopyReceipt::cleanupPending()
+      || std::ranges::any_of(m_jobs, [](const auto& item) { return item.second->running(); });
 }
 
 bool OperationHub::historyReplayBusy() const {
@@ -267,13 +286,23 @@ bool OperationHub::historyReplayBusy() const {
 }
 
 bool OperationHub::canUndo() const {
-  return (m_renameReceipt || m_batchRenameReceipt || m_createReceipt || m_moveReceipt) && !m_historyRedo && !busy();
+  return (m_renameReceipt || m_batchRenameReceipt || m_createReceipt || m_moveReceipt || m_copyReceipt)
+      && !m_historyRedo
+      && !busy();
 }
 bool OperationHub::canRedo() const {
-  return (m_renameReceipt || m_batchRenameReceipt || m_createReceipt || m_moveReceipt) && m_historyRedo && !busy();
+  return (m_renameReceipt || m_batchRenameReceipt || m_createReceipt || m_moveReceipt || m_copyReceipt)
+      && m_historyRedo
+      && !busy();
 }
 
 std::string_view OperationHub::historyLabel(bool redo) const {
+  if (m_copyReceipt) {
+    if (m_copyReceipt->action() == luciole::TransferAction::Link) {
+      return redo ? "Redo Create Links" : "Undo Create Links";
+    }
+    return redo ? "Redo Copy" : "Undo Copy";
+  }
   if (m_moveReceipt) {
     return redo ? "Redo Move" : "Undo Move";
   }
@@ -303,6 +332,11 @@ bool OperationHub::replayHistory(luciole::TabId page, bool redo) {
   if (!attached(page) || !(redo ? canRedo() : canUndo())) {
     return false;
   }
+  if (m_copyReceipt) {
+    auto job = create<luciole::TransferService>(page);
+    job->m_historyReplay = redo ? HistoryReplay::Redo : HistoryReplay::Undo;
+    return job->service<luciole::TransferService>().replayCopy(m_copyReceipt);
+  }
   if (m_moveReceipt) {
     auto job = create<luciole::TransferService>(page);
     job->m_historyReplay = redo ? HistoryReplay::Redo : HistoryReplay::Undo;
@@ -327,10 +361,19 @@ void OperationHub::recordHistory(OperationJob& job) {
   if (job.kind() == JobKind::Transfer) {
     auto& service = job.service<luciole::TransferService>();
     auto receipt = service.takeReceipt();
+    auto copyReceipt = service.takeCopyReceipt();
     if (job.m_historyGeneration != m_historyGeneration) {
       return;
     }
-    if (receipt) {
+    if (copyReceipt) {
+      m_copyReceipt = std::move(copyReceipt);
+      m_moveReceipt.reset();
+      m_renameReceipt.reset();
+      m_batchRenameReceipt.reset();
+      m_createReceipt.reset();
+      m_historyRedo = job.historyReplay() == HistoryReplay::Undo;
+    } else if (receipt) {
+      m_copyReceipt.reset();
       m_moveReceipt = std::move(receipt);
       m_renameReceipt.reset();
       m_batchRenameReceipt.reset();
@@ -338,6 +381,7 @@ void OperationHub::recordHistory(OperationJob& job) {
       m_historyRedo = job.historyReplay() == HistoryReplay::Undo;
     } else if (service.historyRetired()) {
       m_moveReceipt.reset();
+      m_copyReceipt.reset();
     }
     return;
   }

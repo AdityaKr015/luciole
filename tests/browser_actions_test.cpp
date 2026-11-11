@@ -87,6 +87,28 @@ namespace {
     ++data.generation;
     model.applySnapshot(data);
     TEST_CHECK(!R::state(A::CopyFiles, c, R::capture(c)).enabled);
+    data.entries[0].location = luciole::Location::fromPath("/tmp/action-fixture/broken");
+    data.entries[0].symlink = true;
+    data.entries[0].access.read = false;
+    data.entries[0].access.rename = true;
+    data.entries[0].access.remove = true;
+    ++data.generation;
+    model.applySnapshot(data);
+    model.select(2, luciole::SelectionMode::Toggle);
+    TEST_CHECK(R::state(A::CopyFiles, c, R::capture(c)).enabled && R::state(A::CutFiles, c, R::capture(c)).enabled);
+    data.entries[0].access.remove = false;
+    ++data.generation;
+    model.applySnapshot(data);
+    TEST_CHECK(R::state(A::CopyFiles, c, R::capture(c)).enabled && !R::state(A::CutFiles, c, R::capture(c)).enabled);
+    data.entries[0].symlink = false;
+    ++data.generation;
+    model.applySnapshot(data);
+    TEST_CHECK(!R::state(A::CopyFiles, c, R::capture(c)).enabled);
+    data.entries[0].symlink = true;
+    data.entries[0].location = luciole::Location::fromUri("sftp://example.invalid/broken");
+    ++data.generation;
+    model.applySnapshot(data);
+    TEST_CHECK(!R::state(A::CopyFiles, c, R::capture(c)).enabled);
   }
   void testExecutionActions() {
     luciole::DirectoryModel model;

@@ -16,6 +16,9 @@
 // Staged publication of transfer items: each item is copied into a private folder
 // beside its destination, verified, and only then renamed into place. Merges recurse
 // into per-child commits.
+namespace luciole {
+  class CopyEffect;
+}
 namespace luciole::transfer {
   struct Source {
     std::size_t index;
@@ -44,6 +47,8 @@ namespace luciole::transfer {
     Choose choose;
     // Optional successful same-filesystem rename capture. False stops further optional capture.
     std::function<bool(const Source&, const Location&, int, int)> recordMove;
+    std::function<std::shared_ptr<const CopyEffect>(const Location&, int, int)> prepareCopy;
+    std::function<void(const std::shared_ptr<const CopyEffect>&)> recordCopy;
     bool allowMerge = true;
     std::size_t mergedItems = 0;
   };

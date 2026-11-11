@@ -267,7 +267,7 @@ void TransferController::transferChanged(OperationJob& job) {
   );
   if (job.historyReplay() != HistoryReplay::None) {
     message = std::format(
-        "{} move{} {}.", done, done == 1 ? "" : "s", job.historyReplay() == HistoryReplay::Undo ? "undone" : "redone"
+        "{} item{} {}.", done, done == 1 ? "" : "s", job.historyReplay() == HistoryReplay::Undo ? "undone" : "redone"
     );
   }
   if (const auto error = std::ranges::find_if(results, [](const auto& item) { return item.error.has_value(); });

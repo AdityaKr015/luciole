@@ -1,0 +1,377 @@
+#include "operations/copy_receipt.h"
+
+#include "fs/background_job.h"
+#include "fs/filename.h"
+#include "fs/posix_fd.h"
+#include "operations/creation_stage.h"
+#include "operations/transfer_copy.h"
+
+#include <algorithm>
+#include <cerrno>
+#include <fcntl.h>
+#include <linux/fs.h>
+#include <mutex>
+#include <print>
+#include <sys/syscall.h>
+#include <thread>
+#include <unistd.h>
+#include <utility>
+
+namespace {
+  std::atomic<unsigned> pendingCleanup{0};
+  std::mutex cleanupMutex;
+  std::vector<luciole::FileError> cleanupErrors;
+  void check(const luciole::CancelToken& token) {
+    if (token.cancelled()) {
+      luciole::throwFileError(luciole::FileErrorKind::Cancelled, "Copy reversal cancelled.");
+    }
+  }
+  bool invalidates(const luciole::FileError& error) {
+    return error.kind == luciole::FileErrorKind::Changed
+        || error.kind == luciole::FileErrorKind::Missing
+        || error.kind == luciole::FileErrorKind::NotDirectory;
+  }
+  luciole::Fd currentParent(const luciole::Location& destination, int held) {
+    const auto parent = destination.parent();
+    if (!parent || !parent->nativePath()) {
+      luciole::throwFileError(luciole::FileErrorKind::InvalidArgument, "Copy history requires native folders.");
+    }
+    auto current = luciole::checkedFd(::open(parent->nativePath()->c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+    if (!luciole::sameIdentity(luciole::statFd(current.get()), luciole::statFd(held))) {
+      luciole::throwFileError(
+          luciole::FileErrorKind::Changed, "The containing folder changed. Copy history is no longer valid."
+      );
+    }
+    return current;
+  }
+  void requireRevision(const struct stat& expected, const struct stat& actual) {
+    if (!luciole::sameFileRevision(expected, actual)) {
+      luciole::throwFileError(
+          luciole::FileErrorKind::Changed, "The copied item or its contents changed. Copy history is no longer valid."
+      );
+    }
+  }
+  luciole::transfer::Tree captureTree(
+      int parent, const std::string& name, std::size_t& remaining, const luciole::CancelToken& token, dev_t device,
+      unsigned depth
+  ) {
+    check(token);
+    if (!remaining || depth > 64) {
+      luciole::throwFileError(luciole::FileErrorKind::Unsupported, "Copy history exceeds its tree limit.");
+    }
+    --remaining;
+    luciole::transfer::Tree tree{.name = name, .metadata = luciole::transfer::info(parent, name), .children = {}};
+    if (tree.metadata.st_dev != device) {
+      luciole::throwFileError(luciole::FileErrorKind::Unsupported, "Copy history cannot cross a mounted subtree.");
+    }
+    if (S_ISDIR(tree.metadata.st_mode)) {
+      auto directory = luciole::transfer::directory(parent, name);
+      requireRevision(tree.metadata, luciole::statFd(directory.get()));
+      for (const auto& child : luciole::transfer::children(directory.get(), remaining)) {
+        tree.children.push_back(captureTree(directory.get(), child, remaining, token, device, depth + 1));
+      }
+      requireRevision(tree.metadata, luciole::statFd(directory.get()));
+    } else if (!S_ISREG(tree.metadata.st_mode) && !S_ISLNK(tree.metadata.st_mode)) {
+      luciole::throwFileError(luciole::FileErrorKind::Unsupported, "Copy history does not support special files.");
+    }
+    return tree;
+  }
+  void
+  verify(int parent, const std::string& name, const luciole::transfer::Tree& tree, const luciole::CancelToken& token) {
+    check(token);
+    requireRevision(tree.metadata, luciole::transfer::info(parent, name));
+    if (S_ISDIR(tree.metadata.st_mode)) {
+      auto directory = luciole::transfer::directory(parent, name);
+      requireRevision(tree.metadata, luciole::statFd(directory.get()));
+      if (luciole::transfer::children(directory.get(), tree.children.size() + 1).size() != tree.children.size()) {
+        luciole::throwFileError(luciole::FileErrorKind::Changed, "The copied folder's contents changed.");
+      }
+      for (const auto& child : tree.children) {
+        verify(directory.get(), child.name, child, token);
+      }
+      requireRevision(tree.metadata, luciole::statFd(directory.get()));
+    }
+  }
+} // namespace
+
+struct luciole::CopyStorage {
+  std::mutex replayMutex;
+  Fd parent, item;
+  std::shared_ptr<const transfer::Tree> cleanupTree;
+  std::unique_ptr<CreationStage> stage;
+  bool retainForInspection = false;
+  std::uint64_t generation = 0;
+  ~CopyStorage() {
+    if (!stage) {
+      return;
+    }
+    try {
+      if (retainForInspection) {
+        throwFileError(FileErrorKind::Other, "An incomplete reversal retained this item for recovery.");
+      }
+      stage->validateItem();
+      if (!cleanupTree) {
+        throwFileError(FileErrorKind::Changed, "The retained item could not be verified.");
+      }
+      verify(stage->fd(), "item", *cleanupTree, {});
+      std::atomic<std::uint64_t> bytes{0};
+      transfer::CopyWork work({}, bytes);
+      transfer::removeSource(stage->fd(), *cleanupTree, work);
+      if (stage->clear()) {
+        return;
+      }
+      throwFileError(FileErrorKind::Other, "The private folder could not be removed.");
+    } catch (const std::exception& error) {
+      auto message =
+          "Retained copy needs inspection at " + filenameDisplayText(stage->recoveryPath()) + ": " + error.what();
+      std::println(stderr, "[copy-history] {}", message);
+      const std::scoped_lock lock(cleanupMutex);
+      if (cleanupErrors.size() == 12) {
+        cleanupErrors.erase(cleanupErrors.begin());
+      }
+      cleanupErrors.push_back({.kind = FileErrorKind::Other, .message = std::move(message)});
+    }
+  }
+};
+
+luciole::CopyEffect::CopyEffect(
+    Location destination, std::shared_ptr<CopyStorage> storage, std::shared_ptr<const transfer::Tree> tree, bool hidden
+)
+    : m_destination(std::move(destination)), m_storage(std::move(storage)), m_tree(std::move(tree)), m_hidden(hidden),
+      m_generation(m_storage->generation) {}
+
+std::shared_ptr<const luciole::CopyEffect> luciole::CopyEffect::prepare(
+    const Location& destination, int parent, int stage, std::size_t& remaining, const CancelToken& token
+) {
+  (void)currentParent(destination, parent);
+  auto item = checkedFd(::openat(stage, "item", O_PATH | O_NOFOLLOW | O_CLOEXEC));
+  auto tree = std::make_shared<const transfer::Tree>(
+      captureTree(stage, "item", remaining, token, statFd(item.get()).st_dev, 0)
+  );
+  requireRevision(tree->metadata, statFd(item.get()));
+  auto owned = std::make_unique<CopyStorage>();
+  owned->parent = checkedFd(::fcntl(parent, F_DUPFD_CLOEXEC, 0));
+  owned->item = std::move(item);
+  std::shared_ptr<CopyStorage> storage(owned.release(), [worker = std::this_thread::get_id()](CopyStorage* retired) {
+    auto value = std::unique_ptr<CopyStorage>(retired);
+    if (std::this_thread::get_id() == worker && !value->stage) {
+      return;
+    }
+    ++pendingCleanup;
+    detail::runInThread([value = std::move(value)] mutable { value.reset(); }, [] { --pendingCleanup; });
+  });
+  return std::shared_ptr<const CopyEffect>(new CopyEffect(destination, std::move(storage), std::move(tree), false));
+}
+
+void luciole::CopyEffect::validate(const CancelToken& token) const {
+  (void)currentParent(m_destination, m_storage->parent.get());
+  if (m_hidden != static_cast<bool>(m_storage->stage) || m_generation != m_storage->generation) {
+    throwFileError(FileErrorKind::Changed, "The copy history entry is stale.");
+  }
+  requireRevision(m_tree->metadata, statFd(m_storage->item.get()));
+  if (m_hidden) {
+    m_storage->stage->validateItem();
+    verify(m_storage->stage->fd(), "item", *m_tree, token);
+  } else {
+    verify(m_storage->parent.get(), *m_destination.basename(), *m_tree, token);
+  }
+}
+
+void luciole::CopyEffect::vacant() const {
+  struct stat value{};
+  if (::fstatat(m_storage->parent.get(), m_destination.basename()->c_str(), &value, AT_SYMLINK_NOFOLLOW) == 0) {
+    throwFileError(
+        FileErrorKind::Exists, "The destination name is occupied: " + m_destination.displayName().value_or("Item") + "."
+    );
+  }
+  if (errno != ENOENT) {
+    throwErrno(errno);
+  }
+}
+
+std::shared_ptr<const luciole::CopyEffect> luciole::CopyEffect::afterMove(bool hidden) const {
+  auto tree = std::make_shared<transfer::Tree>(*m_tree);
+  const auto current = statFd(m_storage->item.get());
+  tree->metadata.st_ctim = current.st_ctim;
+  requireRevision(tree->metadata, current);
+  ++m_storage->generation;
+  auto result = std::shared_ptr<const CopyEffect>(new CopyEffect(m_destination, m_storage, tree, hidden));
+  result->validate({});
+  if (hidden) {
+    m_storage->cleanupTree = std::move(tree);
+  }
+  return result;
+}
+std::shared_ptr<const luciole::CopyEffect> luciole::CopyEffect::published() const { return afterMove(false); }
+
+std::shared_ptr<const luciole::CopyReceipt> luciole::CopyReceipt::capture(
+    const std::vector<std::shared_ptr<const CopyEffect>>& effects, TransferAction action, const CancelToken& token
+) {
+  if (effects.empty() || effects.size() > 4096 || action == TransferAction::Move) {
+    return {};
+  }
+  auto result = std::make_shared<CopyReceipt>();
+  result->m_action = action;
+  for (const auto& effect : effects) {
+    effect->validate(token);
+    result->m_effects.push_back(effect);
+  }
+  return result;
+}
+
+luciole::CopyReplayResult
+luciole::CopyReceipt::reverse(const CancelToken& token, std::atomic<std::size_t>& completed) const {
+  CopyReplayResult reply;
+  reply.results.reserve(size());
+  for (const auto& effect : m_effects) {
+    reply.results.emplace_back(effect->m_destination, TransferOutcome::Skipped);
+  }
+  std::vector<std::unique_lock<std::mutex>> guards;
+  bool ownsProof = false;
+  try {
+    // Replays from independently constructed service instances must not race mutable retained storage.
+    // Lock every root before preflight, without waiting for another replay.
+    guards.reserve(size());
+    for (const auto& effect : m_effects) {
+      guards.emplace_back(effect->m_storage->replayMutex, std::try_to_lock);
+      if (!guards.back().owns_lock()) {
+        throwFileError(FileErrorKind::Other, "Another copy reversal is already using this history.");
+      }
+    }
+    ownsProof = std::ranges::all_of(m_effects, [](const auto& effect) {
+      return effect->m_generation == effect->m_storage->generation
+          && effect->m_hidden == static_cast<bool>(effect->m_storage->stage);
+    });
+    if (!ownsProof) {
+      throwFileError(FileErrorKind::Changed, "The copy history entry is stale.");
+    }
+    for (const auto& effect : m_effects) {
+      check(token);
+      effect->validate(token);
+      if (effect->m_hidden) {
+        effect->vacant();
+      }
+    }
+  } catch (const std::exception&) {
+    const auto error = currentFileError();
+    reply.retireHistory = invalidates(error);
+    for (auto& result : reply.results) {
+      result.outcome = error.kind == FileErrorKind::Cancelled ? TransferOutcome::Cancelled : TransferOutcome::Failed;
+      result.error = error;
+    }
+    completed.store(size());
+    if (reply.retireHistory && ownsProof) {
+      retainIncomplete(reply.results);
+    }
+    return reply;
+  }
+  std::vector<std::shared_ptr<const CopyEffect>> inverse;
+  bool stopped = false, applied = false;
+  for (std::size_t i = 0; i < size(); ++i) {
+    auto& result = reply.results[i];
+    const auto& effect = m_effects[i];
+    auto& storage = *effect->m_storage;
+    if (stopped) {
+      result.outcome = token.cancelled() ? TransferOutcome::Cancelled : TransferOutcome::Skipped;
+      result.error = FileError{
+          .kind = token.cancelled() ? FileErrorKind::Cancelled : FileErrorKind::Other,
+          .message = "Not attempted after copy reversal stopped."
+      };
+      completed.fetch_add(1);
+      continue;
+    }
+    bool moved = false;
+    try {
+      effect->validate(token);
+      check(token);
+      if (effect->m_hidden) {
+        effect->vacant();
+        storage.stage->publish(*effect->m_destination.basename());
+        moved = applied = true;
+        result.destination = effect->m_destination;
+        result.outcome = m_action == TransferAction::Link ? TransferOutcome::Linked : TransferOutcome::Copied;
+        auto stage = std::move(storage.stage);
+        storage.cleanupTree.reset();
+        if (!stage->clear()) {
+          throwFileError(
+              FileErrorKind::Other,
+              "The copy returned, but inspect its private folder: " + filenameDisplayText(stage->recoveryPath())
+          );
+        }
+        inverse.push_back(effect->afterMove(false));
+      } else {
+        auto stage = std::make_unique<CreationStage>(storage.parent.get(), false);
+        stage->adopt(checkedFd(::fcntl(storage.item.get(), F_DUPFD_CLOEXEC, 0)));
+        effect->validate(token);
+        check(token);
+        if (::syscall(
+                SYS_renameat2, storage.parent.get(), effect->m_destination.basename()->c_str(), stage->fd(), "item",
+                RENAME_NOREPLACE
+            )
+            != 0) {
+          throwErrno(errno);
+        }
+        moved = applied = true;
+        storage.stage = std::move(stage);
+        result.destination = Location::fromPath(storage.stage->recoveryPath());
+        result.outcome = TransferOutcome::Moved;
+        inverse.push_back(effect->afterMove(true));
+      }
+    } catch (const std::exception&) {
+      auto error = currentFileError();
+      reply.retireHistory |= invalidates(error);
+      result.outcome = moved                       ? TransferOutcome::Partial
+          : error.kind == FileErrorKind::Cancelled ? TransferOutcome::Cancelled
+                                                   : TransferOutcome::Failed;
+      if (storage.stage) {
+        error.message += " Inspect retained copy: " + filenameDisplayText(storage.stage->recoveryPath());
+      }
+      result.error = std::move(error);
+      stopped = true;
+    }
+    completed.fetch_add(1);
+  }
+  if (!stopped) {
+    try {
+      reply.receipt = capture(inverse, m_action, {});
+    } catch (const FileErrorException&) {
+      // Committed removals/publications remain accurately reported if optional inverse capture fails.
+    }
+  }
+  reply.retireHistory |= applied && !reply.receipt;
+  if (reply.retireHistory) {
+    retainIncomplete(reply.results);
+  }
+  return reply;
+}
+
+void luciole::CopyReceipt::retainIncomplete(std::vector<TransferResult>& results) const {
+  for (std::size_t i = 0; i < size(); ++i) {
+    const auto& storage = m_effects[i]->m_storage;
+    if (storage->stage) {
+      storage->retainForInspection = true;
+      const auto path = storage->stage->recoveryPath();
+      results[i].destination = Location::fromPath(path);
+      if (!results[i].error) {
+        results[i].error =
+            FileError{.kind = FileErrorKind::Other, .message = "Copy retained after incomplete reversal."};
+      }
+      results[i].error->message += " Inspect retained copy: " + filenameDisplayText(path);
+    }
+  }
+}
+
+std::vector<luciole::TransferResult> luciole::CopyReceipt::unconfirmed(const FileError& error) const {
+  std::vector<TransferResult> results;
+  for (const auto& effect : m_effects) {
+    auto& result = results.emplace_back(effect->m_destination, TransferOutcome::Partial, error);
+    result.error->message = "Copy reversal could not be confirmed. Inspect the destination. " + result.error->message;
+    result.error->message += " Also inspect adjacent .luciole-create-* folders for retained items.";
+  }
+  return results;
+}
+bool luciole::CopyReceipt::cleanupPending() { return pendingCleanup.load() != 0; }
+std::vector<luciole::FileError> luciole::CopyReceipt::takeCleanupErrors() {
+  const std::scoped_lock lock(cleanupMutex);
+  return std::exchange(cleanupErrors, {});
+}

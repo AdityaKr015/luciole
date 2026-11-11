@@ -241,7 +241,7 @@ luciole::MoveReceipt::reverse(const CancelToken& token, std::atomic<std::size_t>
   return reply;
 }
 
-std::size_t luciole::moveHistoryBudget() {
+std::size_t luciole::transferHistoryBudget(std::size_t descriptorsPerRoot) {
   struct rlimit limit{};
   if (::getrlimit(RLIMIT_NOFILE, &limit) != 0) {
     return 0;
@@ -253,10 +253,10 @@ std::size_t luciole::moveHistoryBudget() {
     ++used;
     it.increment(error);
   }
-  if (error || limit.rlim_cur <= used + 128) {
+  if (error || !descriptorsPerRoot || limit.rlim_cur <= used + 128) {
     return 0;
   }
-  return static_cast<std::size_t>(std::min<rlim_t>(4096, (limit.rlim_cur - used - 128) / 3));
+  return static_cast<std::size_t>(std::min<rlim_t>(4096, (limit.rlim_cur - used - 128) / descriptorsPerRoot));
 }
 
 std::vector<luciole::TransferResult> luciole::MoveReceipt::unconfirmed(const FileError& error) const {

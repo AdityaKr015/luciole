@@ -6,6 +6,7 @@
 #include "fs/gio_interop.h"
 #include "fs/posix_fd.h"
 #include "operations/conflict_gate.h"
+#include "operations/copy_receipt.h"
 #include "operations/move_receipt.h"
 #include "operations/provider_transfer.h"
 #include "operations/transfer_copy.h"
@@ -45,6 +46,7 @@ namespace {
     std::vector<luciole::TransferResult> results;
     std::string report;
     std::shared_ptr<const luciole::MoveReceipt> receipt;
+    std::shared_ptr<const luciole::CopyReceipt> copyReceipt;
   };
 
   std::string reportUri(const luciole::Location& location) {
@@ -107,6 +109,7 @@ struct luciole::TransferService::State {
   std::size_t retryable = 0;
   std::string report;
   std::shared_ptr<const MoveReceipt> receipt;
+  std::shared_ptr<const CopyReceipt> copyReceipt;
   bool historyRetired = false;
 
   static void notify(const std::shared_ptr<State>& owner) {
@@ -371,6 +374,12 @@ std::shared_ptr<const luciole::MoveReceipt> luciole::TransferService::takeReceip
   return std::move(m_state->receipt);
 }
 bool luciole::TransferService::historyRetired() const { return m_state->historyRetired; }
+std::shared_ptr<const luciole::CopyReceipt> luciole::TransferService::copyReceipt() const {
+  return m_state->copyReceipt;
+}
+std::shared_ptr<const luciole::CopyReceipt> luciole::TransferService::takeCopyReceipt() {
+  return std::move(m_state->copyReceipt);
+}
 bool luciole::TransferService::start(TransferRequest request) { return launch(std::move(request), false); }
 bool luciole::TransferService::retryFailed() {
   return m_state->job && retryable() > 0 ? launch(m_state->job->request, true) : false;
@@ -386,6 +395,7 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
   m_state->bytes.store(0);
   m_state->token = CancelToken{};
   m_state->receipt.reset();
+  m_state->copyReceipt.reset();
   m_state->historyRetired = false;
   if (!retry) {
     ++m_state->jobId;
@@ -405,8 +415,9 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
         };
         work.allowMerge = allowMerge;
         std::vector<std::shared_ptr<const MoveEffect>> moves;
-        const auto budget = !retry && job->request.action == TransferAction::Move ? moveHistoryBudget() : 0;
-        if (budget) {
+        std::vector<std::shared_ptr<const CopyEffect>> copies;
+        const auto budget = !retry ? transferHistoryBudget(job->request.action == TransferAction::Move ? 3 : 4) : 0;
+        if (budget && job->request.action == TransferAction::Move) {
           work.recordMove = [&](const Source& source, const Location& destination, int target, int item) {
             try {
               if (moves.size() >= budget || item < 0 || !sameIdentity(source.metadata, statFd(item))) {
@@ -418,6 +429,33 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
             } catch (const FileErrorException&) {
               moves.clear();
               return false;
+            }
+          };
+        }
+        std::size_t remaining = 16384;
+        bool collectingCopies = budget && job->request.action != TransferAction::Move;
+        if (collectingCopies) {
+          work.prepareCopy = [&](const Location& destination, int parent,
+                                 int stage) -> std::shared_ptr<const CopyEffect> {
+            if (collectingCopies) {
+              try {
+                if (copies.size() < budget) {
+                  return CopyEffect::prepare(destination, parent, stage, remaining, token);
+                }
+              } catch (const FileErrorException&) {
+                // Optional history must not fail a completed copy or link transfer.
+              }
+              collectingCopies = false;
+              copies.clear();
+            }
+            return {};
+          };
+          work.recordCopy = [&](const std::shared_ptr<const CopyEffect>& prepared) {
+            try {
+              copies.push_back(prepared->published());
+            } catch (const FileErrorException&) {
+              collectingCopies = false;
+              copies.clear();
             }
           };
         }
@@ -443,6 +481,7 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
         job->outcomes = outcomes;
         auto report = jobReport(outcomes);
         std::shared_ptr<const MoveReceipt> receipt;
+        std::shared_ptr<const CopyReceipt> copyReceipt;
         const auto moved = std::ranges::count(outcomes, TransferOutcome::Moved, &TransferResult::outcome);
         const bool complete = std::ranges::all_of(outcomes, [](const auto& result) {
           return !result.error
@@ -456,13 +495,41 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
             // The transfers completed; optional history capture must not change their outcomes.
           }
         }
-        return Reply{.results = std::move(outcomes), .report = std::move(report), .receipt = std::move(receipt)};
+        const auto copied = std::ranges::count_if(outcomes, [](const auto& result) {
+          return result.outcome == TransferOutcome::Copied || result.outcome == TransferOutcome::Linked;
+        });
+        const bool copiesComplete = std::ranges::all_of(outcomes, [](const auto& result) {
+          return !result.error
+              && result.children.empty()
+              && (result.outcome == TransferOutcome::Copied
+                  || result.outcome == TransferOutcome::Linked
+                  || result.outcome == TransferOutcome::Skipped);
+        });
+        if (!retry
+            && !remote
+            && collectingCopies
+            && copiesComplete
+            && copied > 0
+            && static_cast<std::size_t>(copied) == copies.size()) {
+          try {
+            copyReceipt = CopyReceipt::capture(copies, job->request.action, token);
+          } catch (const FileErrorException&) {
+            // Successful effects remain successful if optional history cannot be captured.
+          }
+        }
+        return Reply{
+            .results = std::move(outcomes),
+            .report = std::move(report),
+            .receipt = std::move(receipt),
+            .copyReceipt = std::move(copyReceipt)
+        };
       },
       [owner = m_state, job](JobResult<Reply> result) {
         if (result) {
           owner->results = std::move(result->results);
           owner->report = std::move(result->report);
           owner->receipt = std::move(result->receipt);
+          owner->copyReceipt = std::move(result->copyReceipt);
         } else {
           owner->results.clear();
           for (const auto& source : job->request.sources) {
@@ -508,6 +575,7 @@ bool luciole::TransferService::replay(const std::shared_ptr<const MoveReceipt>& 
   m_state->results.clear();
   m_state->report.clear();
   m_state->receipt.reset();
+  m_state->copyReceipt.reset();
   m_state->historyRetired = false;
   m_state->retryable = 0;
   m_state->job.reset();
@@ -518,6 +586,50 @@ bool luciole::TransferService::replay(const std::shared_ptr<const MoveReceipt>& 
         if (result) {
           owner->results = std::move(result->results);
           owner->receipt = std::move(result->receipt);
+          owner->historyRetired = result->retireHistory;
+        } else {
+          owner->historyRetired = true;
+          owner->results = receipt->unconfirmed(result.error());
+        }
+        owner->report = jobReport(owner->results);
+        owner->active = false;
+        const auto callback = owner->changed;
+        if (callback) {
+          callback();
+        }
+      }
+  );
+  const auto callback = m_state->changed;
+  if (callback) {
+    callback();
+  }
+  return true;
+}
+
+bool luciole::TransferService::replayCopy(const std::shared_ptr<const CopyReceipt>& receipt) {
+  if (busy() || !receipt || receipt->size() == 0) {
+    return false;
+  }
+  m_state->active = true;
+  m_state->action = receipt->action();
+  m_state->total = receipt->size();
+  m_state->completed.store(0);
+  m_state->bytes.store(0);
+  m_state->token = CancelToken{};
+  m_state->results.clear();
+  m_state->report.clear();
+  m_state->receipt.reset();
+  m_state->copyReceipt.reset();
+  m_state->historyRetired = false;
+  m_state->retryable = 0;
+  m_state->job.reset();
+  ++m_state->jobId;
+  runJob<CopyReplayResult>(
+      [owner = m_state, receipt, token = m_state->token] { return receipt->reverse(token, owner->completed); },
+      [owner = m_state, receipt](JobResult<CopyReplayResult> result) {
+        if (result) {
+          owner->results = std::move(result->results);
+          owner->copyReceipt = std::move(result->receipt);
           owner->historyRetired = result->retireHistory;
         } else {
           owner->historyRetired = true;
