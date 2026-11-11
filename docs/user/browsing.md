@@ -18,7 +18,7 @@ By default, typing while browsing starts a recursive filename search rooted in t
 
 ## Views and selection
 
-[Undo/redo](file-operations.md#undo-and-redo) affects the most recent supported creation or rename in the running application, independently of the current folder or selection. When a text input is focused, its text-editing undo takes precedence.
+[Undo/redo](file-operations.md#undo-and-redo) affects the most recent supported creation, rename or native move in the running application, independently of the current folder or selection. When a text input is focused, its text-editing undo takes precedence.
 
 Use the toolbar or main menu to choose Grid (Ctrl+1), List (Ctrl+2) or Columns (Ctrl+3). Ctrl+wheel changes grid icon size. View, zoom, sort and hidden-file choices are saved as defaults for new browsing pages. Existing tabs and panes keep their own browsing state.
 

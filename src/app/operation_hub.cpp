@@ -1,6 +1,7 @@
 #include "app/operation_hub.h"
 
 #include "operations/create_receipt.h"
+#include "operations/move_receipt.h"
 
 #include <algorithm>
 #include <utility>
@@ -150,6 +151,7 @@ void OperationHub::changed(OperationJob& job) {
       m_renameReceipt.reset();
       m_batchRenameReceipt.reset();
       m_createReceipt.reset();
+      m_moveReceipt.reset();
       m_historyRedo = false;
     }
   }
@@ -162,7 +164,10 @@ void OperationHub::changed(OperationJob& job) {
   } else if (std::exchange(job.m_running, false)) {
     finished = true;
     if (job.m_mutationStarted
-        && (job.kind() == JobKind::Rename || job.kind() == JobKind::BatchRename || job.kind() == JobKind::Create)) {
+        && (job.kind() == JobKind::Rename
+            || job.kind() == JobKind::BatchRename
+            || job.kind() == JobKind::Create
+            || job.kind() == JobKind::Transfer)) {
       recordHistory(job);
     }
     job.m_mutationStarted = false;
@@ -262,13 +267,16 @@ bool OperationHub::historyReplayBusy() const {
 }
 
 bool OperationHub::canUndo() const {
-  return (m_renameReceipt || m_batchRenameReceipt || m_createReceipt) && !m_historyRedo && !busy();
+  return (m_renameReceipt || m_batchRenameReceipt || m_createReceipt || m_moveReceipt) && !m_historyRedo && !busy();
 }
 bool OperationHub::canRedo() const {
-  return (m_renameReceipt || m_batchRenameReceipt || m_createReceipt) && m_historyRedo && !busy();
+  return (m_renameReceipt || m_batchRenameReceipt || m_createReceipt || m_moveReceipt) && m_historyRedo && !busy();
 }
 
 std::string_view OperationHub::historyLabel(bool redo) const {
+  if (m_moveReceipt) {
+    return redo ? "Redo Move" : "Undo Move";
+  }
   if (m_createReceipt) {
     switch (m_createKind) {
     case luciole::CreateKind::Folder:
@@ -295,6 +303,11 @@ bool OperationHub::replayHistory(luciole::TabId page, bool redo) {
   if (!attached(page) || !(redo ? canRedo() : canUndo())) {
     return false;
   }
+  if (m_moveReceipt) {
+    auto job = create<luciole::TransferService>(page);
+    job->m_historyReplay = redo ? HistoryReplay::Redo : HistoryReplay::Undo;
+    return job->service<luciole::TransferService>().replay(m_moveReceipt);
+  }
   if (m_createReceipt) {
     auto job = create<luciole::CreateService>(page);
     job->m_historyReplay = redo ? HistoryReplay::Redo : HistoryReplay::Undo;
@@ -310,7 +323,24 @@ bool OperationHub::replayHistory(luciole::TabId page, bool redo) {
   return job->service<luciole::RenameService>().replay(m_renameReceipt);
 }
 
-void OperationHub::recordHistory(const OperationJob& job) {
+void OperationHub::recordHistory(OperationJob& job) {
+  if (job.kind() == JobKind::Transfer) {
+    auto& service = job.service<luciole::TransferService>();
+    auto receipt = service.takeReceipt();
+    if (job.m_historyGeneration != m_historyGeneration) {
+      return;
+    }
+    if (receipt) {
+      m_moveReceipt = std::move(receipt);
+      m_renameReceipt.reset();
+      m_batchRenameReceipt.reset();
+      m_createReceipt.reset();
+      m_historyRedo = job.historyReplay() == HistoryReplay::Undo;
+    } else if (service.historyRetired()) {
+      m_moveReceipt.reset();
+    }
+    return;
+  }
   if (job.m_historyGeneration != m_historyGeneration) {
     return;
   }

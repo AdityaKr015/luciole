@@ -246,6 +246,92 @@ namespace {
     TEST_CHECK(!fs::exists(fixture.root / "destination/last") && fs::exists(fixture.root / "renamed"));
   }
 
+  void moveHistory(Pump& pump) {
+    Fixture fixture;
+    fixture.write("a");
+    fixture.write("b");
+    Workspace workspace;
+    const auto otherWindow = workspace.model.addWindow();
+    const auto other = workspace.model.addTab(otherWindow);
+    Owner otherOwner;
+    workspace.hub.attach(other, otherOwner);
+    auto job = workspace.hub.create<luciole::TransferService>(workspace.page);
+    TEST_CHECK(job->service<luciole::TransferService>().start(
+        {{fixture.at("a"), fixture.at("b")}, fixture.at("destination"), luciole::TransferAction::Move}
+    ));
+    pump.until([&] { return !workspace.hub.busy(); });
+    TEST_CHECK(workspace.hub.canUndo() && workspace.hub.historyLabel(false) == "Undo Move");
+    TEST_CHECK(!job->service<luciole::TransferService>().receipt());
+    job.reset();
+    TEST_CHECK(workspace.model.close(workspace.page));
+    workspace.hub.detach(workspace.page);
+    workspace.hub.update(otherWindow);
+    fixture.write("b");
+    TEST_CHECK(workspace.hub.replayHistory(other, false));
+    TEST_CHECK(workspace.hub.historyReplayBusy() && !workspace.hub.canUndo());
+    TEST_CHECK(workspace.hub.activities().front().title == "Undo: Move files");
+    pump.until([&] { return !workspace.hub.busy(); });
+    TEST_CHECK(workspace.hub.canUndo() && !workspace.hub.canRedo());
+    TEST_CHECK(!fs::exists(fixture.root / "a") && fs::exists(fixture.root / "destination/a"));
+    TEST_CHECK(workspace.hub.activities().front().state == ActivityState::Failed);
+    TEST_CHECK(fs::remove(fixture.root / "b"));
+    TEST_CHECK(workspace.hub.replayHistory(other, false));
+    pump.until([&] { return !workspace.hub.busy(); });
+    TEST_CHECK(workspace.hub.canRedo() && workspace.hub.historyLabel(true) == "Redo Move");
+    TEST_CHECK(fs::exists(fixture.root / "a") && fs::exists(fixture.root / "b"));
+    TEST_CHECK(workspace.hub.activities().front().state == ActivityState::Succeeded);
+    TEST_CHECK(workspace.hub.replayHistory(other, true));
+    TEST_CHECK(workspace.hub.activities().front().title == "Redo: Move files");
+    pump.until([&] { return !workspace.hub.busy(); });
+    TEST_CHECK(workspace.hub.canUndo() && !workspace.hub.canRedo());
+    fixture.write("destination/b");
+    TEST_CHECK(workspace.hub.replayHistory(other, false));
+    pump.until([&] { return !workspace.hub.busy(); });
+    TEST_CHECK(!workspace.hub.canUndo() && !workspace.hub.canRedo());
+    TEST_CHECK(fs::exists(fixture.root / "destination/a") && fs::exists(fixture.root / "destination/b"));
+    workspace.hub.detach(other);
+  }
+
+  void moveHistoryReplacement(Pump& pump) {
+    Fixture fixture;
+    fixture.write("a");
+    fixture.write("b");
+    Workspace workspace;
+    auto first = workspace.hub.create<luciole::TransferService>(workspace.page);
+    auto second = workspace.hub.create<luciole::TransferService>(workspace.page);
+    TEST_CHECK(first->service<luciole::TransferService>().start(
+        {{fixture.at("a")}, fixture.at("destination"), luciole::TransferAction::Move}
+    ));
+    TEST_CHECK(second->service<luciole::TransferService>().start(
+        {{fixture.at("b")}, fixture.at("destination"), luciole::TransferAction::Move}
+    ));
+    pump.until([&] { return !workspace.hub.busy(); });
+    TEST_CHECK(workspace.hub.historyLabel(false) == "Undo Move");
+    TEST_CHECK(
+        !first->service<luciole::TransferService>().receipt() && !second->service<luciole::TransferService>().receipt()
+    );
+    TEST_CHECK(workspace.hub.replayHistory(workspace.page, false));
+    pump.until([&] { return !workspace.hub.busy(); });
+    TEST_CHECK(fs::exists(fixture.root / "destination/a") && fs::exists(fixture.root / "b"));
+    TEST_CHECK(workspace.hub.canRedo());
+    auto create = workspace.hub.create<luciole::CreateService>(workspace.page);
+    TEST_CHECK(
+        create->service<luciole::CreateService>().prepare(fixture.at("destination"), luciole::CreateKind::Folder)
+    );
+    pump.until([&] { return !create->running(); });
+    TEST_CHECK(workspace.hub.canRedo());
+    TEST_CHECK(create->service<luciole::CreateService>().create("newer"));
+    TEST_CHECK(!workspace.hub.canRedo());
+    pump.until([&] { return !create->running(); });
+    TEST_CHECK(workspace.hub.historyLabel(false) == "Undo Create Folder");
+    auto copy = workspace.hub.create<luciole::TransferService>(workspace.page);
+    TEST_CHECK(copy->service<luciole::TransferService>().start(
+        {{fixture.at("b")}, fixture.at("destination"), luciole::TransferAction::Copy}
+    ));
+    pump.until([&] { return !copy->running(); });
+    TEST_CHECK(!workspace.hub.canUndo() && !workspace.hub.canRedo());
+  }
+
   void transferLifecycle(Pump& pump) {
     Fixture fixture;
     fixture.write("success");
@@ -396,4 +482,6 @@ int main() {
   renameHistoryReplacement(pump);
   creationHistory(pump);
   creationHistoryReplacement(pump);
+  moveHistory(pump);
+  moveHistoryReplacement(pump);
 }

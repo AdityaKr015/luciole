@@ -152,6 +152,9 @@ namespace {
     activity.title = service.action() == luciole::TransferAction::Copy ? "Copy files"
         : service.action() == luciole::TransferAction::Move            ? "Move files"
                                                                        : "Create links";
+    if (job.historyReplay() != HistoryReplay::None) {
+      activity.title = (job.historyReplay() == HistoryReplay::Undo ? "Undo: " : "Redo: ") + activity.title;
+    }
     if (job.running()) {
       activity.state = service.bytes() || service.completed() ? ActivityState::Working : ActivityState::Preparing;
       activity.summary = std::format(

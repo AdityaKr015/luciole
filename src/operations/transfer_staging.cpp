@@ -165,6 +165,10 @@ namespace luciole::transfer {
           }
           work.check();
           requireUnchanged(source.metadata, info(source.parent.get(), source.name));
+          Fd historyItem;
+          if (work.recordMove) {
+            historyItem = Fd(::openat(source.parent.get(), source.name.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC));
+          }
           if (::syscall(
                   SYS_renameat2, source.parent.get(), source.name.c_str(), destination, target.c_str(), RENAME_NOREPLACE
               )
@@ -172,6 +176,9 @@ namespace luciole::transfer {
             work.note(info(destination, target));
             result.outcome = Moved;
             result.destination = binding.location.child(target);
+            if (work.recordMove && !work.recordMove(source, *result.destination, destination, historyItem.get())) {
+              work.recordMove = {};
+            }
             return result;
           }
           if (errno == EXDEV) {
@@ -305,6 +312,8 @@ namespace luciole::transfer {
     }
 
     TransferResult merge(Node& node, int destination, TransferAction action, Work& work, const struct stat& existing) {
+      // Root-only move receipts cannot describe changes inside a merged destination.
+      work.recordMove = {};
       using enum TransferOutcome;
       auto& source = node.source;
       TransferResult result{source.location};

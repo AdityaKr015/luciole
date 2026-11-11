@@ -174,7 +174,7 @@ private:
   void changed(OperationJob& job);
   void notify(luciole::TabId page, OperationJob& job);
   bool retained(const OperationJob& job) const;
-  void recordHistory(const OperationJob& job);
+  void recordHistory(OperationJob& job);
   void notifyActivity();
 
   const luciole::TabWorkspace& m_workspace;
@@ -185,6 +185,7 @@ private:
   std::shared_ptr<const luciole::RenameReceipt> m_renameReceipt;
   std::shared_ptr<const luciole::BatchRenameReceipt> m_batchRenameReceipt;
   std::shared_ptr<const luciole::CreateReceipt> m_createReceipt;
+  std::shared_ptr<const luciole::MoveReceipt> m_moveReceipt;
   luciole::CreateKind m_createKind = luciole::CreateKind::Folder;
   std::uint64_t m_historyGeneration = 0;
   bool m_historyRedo = false;

@@ -42,6 +42,8 @@ namespace luciole::transfer {
     Work(CancelToken cancel, std::atomic<std::uint64_t>& copied, Choose ask)
         : CopyWork(std::move(cancel), copied), choose(std::move(ask)) {}
     Choose choose;
+    // Optional successful same-filesystem rename capture. False stops further optional capture.
+    std::function<bool(const Source&, const Location&, int, int)> recordMove;
     bool allowMerge = true;
     std::size_t mergedItems = 0;
   };
