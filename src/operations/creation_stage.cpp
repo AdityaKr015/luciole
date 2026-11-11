@@ -70,6 +70,22 @@ void luciole::CreationStage::removeItem() {
   }
 }
 
+void luciole::CreationStage::exchange(const std::string& name, int parent, int visibleItem) {
+  requireItem();
+  if (!sameIdentity(statFd(m_parent), statFd(parent))) {
+    throwFileError(FileErrorKind::Changed, "The exchange's containing folder changed.");
+  }
+  struct stat current{};
+  if (::fstatat(parent, name.c_str(), &current, AT_SYMLINK_NOFOLLOW) != 0
+      || !sameIdentity(current, statFd(visibleItem))) {
+    throwFileError(FileErrorKind::Changed, "The item to exchange changed.");
+  }
+  if (::syscall(SYS_renameat2, fd(), "item", parent, name.c_str(), RENAME_EXCHANGE) != 0) {
+    throwErrno(errno);
+  }
+  m_parent = parent;
+}
+
 bool luciole::CreationStage::clear() {
   try {
     requireCurrent();

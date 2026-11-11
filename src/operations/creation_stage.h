@@ -19,6 +19,8 @@ namespace luciole {
     void validateItem() const { requireItem(); }
     void adopt(Fd item);
     void publish(const std::string& name);
+    // The stage borrows the new owner's parent after a successful exchange.
+    void exchange(const std::string& name, int parent, int visibleItem);
     void removeItem();
     bool clear();
     std::string recoveryPath() const;

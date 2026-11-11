@@ -47,8 +47,8 @@ namespace luciole::transfer {
     Choose choose;
     // Optional successful same-filesystem rename capture. False stops further optional capture.
     std::function<bool(const Source&, const Location&, int, int)> recordMove;
-    std::function<std::shared_ptr<const CopyEffect>(const Location&, int, int)> prepareCopy;
-    std::function<void(const std::shared_ptr<const CopyEffect>&)> recordCopy;
+    std::function<std::shared_ptr<const CopyEffect>(const Source&, const Location&, int, int, bool)> prepareCopy;
+    std::function<void(const std::shared_ptr<const CopyEffect>&, int)> recordCopy;
     bool allowMerge = true;
     std::size_t mergedItems = 0;
   };
@@ -77,6 +77,7 @@ namespace luciole::transfer {
     int fd() const { return m_fd.get(); }
     const std::string& name() const { return m_name; }
     void retain() { m_cleaned = true; }
+    void keepContents() { m_keepContents = true; }
 
   private:
     int m_parent;
@@ -84,6 +85,7 @@ namespace luciole::transfer {
     std::string m_name;
     Fd m_fd;
     bool m_cleaned = false;
+    bool m_keepContents = false;
   };
 
   Fd openSourceParent(const Source& source);

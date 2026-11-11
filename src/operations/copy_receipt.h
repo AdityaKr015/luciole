@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace luciole {
@@ -23,16 +24,25 @@ namespace luciole {
   // Worker-only proof captured from a private, unpublished copy, then checked after publication.
   class CopyEffect {
   public:
-    static std::shared_ptr<const CopyEffect>
-    prepare(const Location& destination, int parent, int stage, std::size_t& remaining, const CancelToken& token);
-    std::shared_ptr<const CopyEffect> published() const;
+    static std::shared_ptr<const CopyEffect> prepare(
+        const Location& destination, int parent, int stage, bool replacing, std::size_t& remaining,
+        const CancelToken& token
+    );
+    std::shared_ptr<const CopyEffect> published(int from) const;
+    bool replacing() const { return m_previous != nullptr; }
+    std::vector<Location> retainForRecovery() const;
 
   private:
     friend class CopyReceipt;
     CopyEffect(
         Location destination, std::shared_ptr<CopyStorage> storage, std::shared_ptr<const transfer::Tree> tree,
-        bool hidden
+        bool hidden, std::shared_ptr<const CopyEffect> previous = {}
     );
+    static std::shared_ptr<const CopyEffect> prepareAt(
+        const Location& destination, int parent, int from, const std::string& name, bool previous,
+        std::size_t& remaining, const CancelToken& token
+    );
+    bool ownsProof() const;
     void validate(const CancelToken& token) const;
     void vacant() const;
     std::shared_ptr<const CopyEffect> afterMove(bool hidden) const;
@@ -41,6 +51,7 @@ namespace luciole {
     std::shared_ptr<const transfer::Tree> m_tree;
     bool m_hidden;
     std::uint64_t m_generation;
+    std::shared_ptr<const CopyEffect> m_previous;
   };
   // One bounded selection. Undo retains unchanged copies privately; Redo publishes the same items.
   class CopyReceipt {

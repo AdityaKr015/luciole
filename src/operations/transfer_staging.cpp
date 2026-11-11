@@ -240,8 +240,8 @@ namespace luciole::transfer {
               synchronize(stage.fd());
             }
             const auto flags = replace ? RENAME_EXCHANGE : RENAME_NOREPLACE;
-            auto copyProof = !replace && action != TransferAction::Move && work.prepareCopy
-                ? work.prepareCopy(binding.location.child(target), destination, stage.fd())
+            auto copyProof = action != TransferAction::Move && work.prepareCopy
+                ? work.prepareCopy(source, binding.location.child(target), destination, stage.fd(), replace.has_value())
                 : nullptr;
             work.check();
             if (::syscall(SYS_renameat2, stage.fd(), "item", destination, target.c_str(), flags) != 0) {
@@ -270,7 +270,11 @@ namespace luciole::transfer {
             }
             result.outcome = action == TransferAction::Link ? Linked : Copied;
             if (copyProof && work.recordCopy) {
-              work.recordCopy(copyProof);
+              if (replace) {
+                // A failed retention handoff must never delete the displaced destination.
+                stage.keepContents();
+              }
+              work.recordCopy(copyProof, stage.fd());
             }
             if (action == TransferAction::Move) {
               // The sources are about to go: the published copy must survive a crash first.
@@ -319,10 +323,12 @@ namespace luciole::transfer {
     }
 
     TransferResult merge(Node& node, int destination, TransferAction action, Work& work, const struct stat& existing) {
-      // Root-only move receipts cannot describe changes inside a merged destination.
+      // Copy history captures changed leaves; move merges still need source-folder recovery.
       work.recordMove = {};
-      work.prepareCopy = {};
-      work.recordCopy = {};
+      if (action != TransferAction::Copy) {
+        work.prepareCopy = {};
+        work.recordCopy = {};
+      }
       using enum TransferOutcome;
       auto& source = node.source;
       TransferResult result{source.location};
@@ -488,7 +494,11 @@ namespace luciole::transfer {
     }
     m_cleaned = true;
     try {
-      for (const auto& name : children(m_fd.get())) {
+      const auto names = children(m_fd.get());
+      if (m_keepContents && !names.empty()) {
+        return false;
+      }
+      for (const auto& name : names) {
         removeTemporary(m_fd.get(), name, m_work);
       }
       return ::unlinkat(m_parent, m_name.c_str(), AT_REMOVEDIR) == 0;
