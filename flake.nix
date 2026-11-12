@@ -57,6 +57,7 @@
             export PATH="${
               nixpkgs.lib.makeBinPath [
                 pkgs.ffmpeg
+                pkgs.ffmpegthumbnailer
                 pkgs.poppler-utils
                 pkgs._7zz
               ]

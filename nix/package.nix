@@ -33,6 +33,7 @@
   glycin-loaders,
   stb,
   ffmpeg,
+  ffmpegthumbnailer,
   poppler-utils,
   _7zz,
   nlohmann_json,
@@ -170,6 +171,7 @@ stdenv.mkDerivation (finalAttrs: {
         lib.makeBinPath [
           xdg-terminal-exec
           ffmpeg
+          ffmpegthumbnailer
           poppler-utils
           _7zz
         ]

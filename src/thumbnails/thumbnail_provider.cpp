@@ -1,5 +1,6 @@
 #include "thumbnails/thumbnail_provider.h"
 
+#include "core/log.h"
 #include "fs/gio_ptr.h"
 #include "fs/posix_fd.h"
 #include "thumbnails/provider_process.h"
@@ -8,6 +9,7 @@
 #include "thumbnails/thumbnail_worker.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <charconv>
 #include <chrono>
 #include <cmath>
@@ -17,6 +19,63 @@
 #include <unistd.h>
 
 namespace {
+  LoadedImageFile videoFilmstrip(
+      LoadedImageFile frame, int side, GCancellable* cancel, const std::filesystem::path& directory,
+      std::chrono::steady_clock::time_point deadline
+  ) {
+    const luciole::GString helper(g_find_program_in_path("ffmpegthumbnailer"));
+    if (!helper || g_cancellable_is_cancelled(cancel)) {
+      return frame;
+    }
+    if (std::chrono::steady_clock::now() >= deadline) {
+      return frame;
+    }
+    // Only pass our bounded, re-encoded pixels to the optional helper, never the original media.
+    // This retains the source decoder's pixel/protocol limits on older thumbnailer releases too.
+    const auto bytes = luciole::writeThumbnailPng({.image = frame, .text = {}});
+    const auto inputPath = directory / "filmstrip-input.png";
+    const luciole::Fd input(::open(inputPath.c_str(), O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600));
+    if (!bytes || !input.valid()) {
+      return frame;
+    }
+    std::size_t offset = 0;
+    while (offset < bytes->size()) {
+      const auto count = ::write(input.get(), bytes->data() + offset, bytes->size() - offset);
+      if (count < 0 && errno == EINTR) {
+        continue;
+      }
+      if (count <= 0) {
+        return frame;
+      }
+      offset += static_cast<std::size_t>(count);
+    }
+    if (::lseek(input.get(), 0, SEEK_SET) < 0) {
+      return frame;
+    }
+    const auto remaining = std::min(
+        std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()),
+        std::chrono::milliseconds(2000)
+    );
+    if (remaining <= std::chrono::milliseconds::zero()) {
+      return frame;
+    }
+    const auto output = directory / "filmstrip.png";
+    const auto result = luciole::runProviderProcess(
+        {helper.get(), "-i", "/proc/self/fd/3", "-o", output.native(), "-s", std::to_string(side), "-t", "0", "-f",
+         "-c", "png"},
+        input.get(), cancel, 8U * 1024U * 1024U, 1, -1, remaining
+    );
+    if (result) {
+      if (const auto encoded = luciole::readThumbnailFile(output, 8U * 1024U * 1024U)) {
+        if (auto decorated = luciole::readThumbnailPng(*encoded, side);
+            decorated && decorated->image.width == frame.width && decorated->image.height == frame.height) {
+          return std::move(decorated->image);
+        }
+      }
+    }
+    logDebug("[thumbnail] filmstrip unavailable; keeping selected video frame");
+    return frame;
+  }
   std::optional<double> videoDuration(int source, const std::filesystem::path& directory, GCancellable* cancel) {
     const auto path = directory / "duration";
     const luciole::Fd output(::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600));
@@ -47,7 +106,7 @@ namespace {
   }
   std::expected<LoadedImageFile, std::string> videoThumbnail(
       int source, int side, const luciole::ThumbnailOptions& options, GCancellable* cancel,
-      const std::filesystem::path& output
+      const std::filesystem::path& output, luciole::ThumbnailPurpose purpose
   ) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
     const auto duration = videoDuration(source, output.parent_path(), cancel);
@@ -105,7 +164,9 @@ namespace {
         continue;
       }
       if (!darkFrame(image->image)) {
-        return std::move(image->image);
+        return purpose == luciole::ThumbnailPurpose::Thumbnail
+            ? videoFilmstrip(std::move(image->image), side, cancel, output.parent_path(), deadline)
+            : std::move(image->image);
       }
       if (dark) {
         break;
@@ -113,12 +174,18 @@ namespace {
       dark = std::move(image->image);
     }
     // A genuinely dark video is still a valid preview; do not turn it into a missing thumbnail.
-    return dark ? std::expected<LoadedImageFile, std::string>(std::move(*dark)) : std::unexpected(failure);
+    if (!dark) {
+      return std::unexpected(failure);
+    }
+    return purpose == luciole::ThumbnailPurpose::Thumbnail
+        ? videoFilmstrip(std::move(*dark), side, cancel, output.parent_path(), deadline)
+        : std::move(*dark);
   }
 } // namespace
 
 std::expected<LoadedImageFile, std::string> luciole::renderThumbnailProvider(
-    int sourceFd, const std::string& mime, int side, const ThumbnailOptions& options, GCancellable* cancellable
+    int sourceFd, const std::string& mime, int side, const ThumbnailOptions& options, GCancellable* cancellable,
+    ThumbnailPurpose purpose
 ) {
   const bool image = mime.starts_with("image/");
   if (side < 1 || side > (image ? kMaxPreviewImageSide : 1024)) {
@@ -161,7 +228,7 @@ std::expected<LoadedImageFile, std::string> luciole::renderThumbnailProvider(
         sourceFd, cancellable
     );
   } else if (mime.starts_with("video/")) {
-    return videoThumbnail(sourceFd, side, options, cancellable, output);
+    return videoThumbnail(sourceFd, side, options, cancellable, output, purpose);
   } else if (mime.starts_with("audio/")) {
     std::vector<std::string> arguments{
         "ffmpeg",

@@ -101,15 +101,32 @@ The linked libraries need their ordinary runtime packages. GVfs and a session D-
 | Glycin loaders                                | Raster images in thumbnails, previews and metadata                                 |
 | Session D-Bus and GVfs                        | Required for Trash browsing, restore and emptying; additional backends enable remote locations |
 | `glib-networking`                             | GIO TLS implementation for secure WebDAV                                           |
+| `ffmpegthumbnailer`                          | Recommended runtime helper for shared video-thumbnail filmstrip borders; CLI only, no development headers |
 | `ffmpeg`, `ffprobe`                           | Representative video frames, audio artwork and media metadata                        |
 | `pdftoppm`, `pdfinfo`                         | PDF thumbnails and metadata, normally supplied by Poppler utilities                |
 | `7zz`, `7z` or `7za`                          | System 7-Zip CLI for encrypted 7z input, searched in that order                    |
 | `xdg-terminal-exec`                           | Optional shared terminal preference/discovery for automatic terminal selection; explicit commands and known-terminal fallback also work |
 | Associated applications                       | Opening files through the user's GIO MIME associations                             |
 
-Missing optional helpers make their associated feature unavailable where no alternative provider exists; they do not prevent ordinary native directory browsing. Terminal actions can also use a configured command, inherited TERMINAL or a supported directly discovered terminal. Recommend or depend on them according to the features the package advertises. The Nix wrapper exposes FFmpeg, Poppler utilities, 7-Zip and xdg-terminal-exec on `PATH`.
+Missing optional helpers make their associated feature unavailable where no alternative provider exists; they do not prevent ordinary native directory browsing. Terminal actions can also use a configured command, inherited TERMINAL or a supported directly discovered terminal. Recommend or depend on them according to the features the package advertises. The Nix wrapper exposes FFmpeg, ffmpegthumbnailer, Poppler utilities, 7-Zip and xdg-terminal-exec on `PATH`.
 
 Archive support uses the system libarchive and its enabled formats/filters. Unencrypted RAR input depends on that build's capabilities; encrypted RAR is outside the implemented scope. Encrypted 7z input uses the system CLI through the bounded worker transport. There is no py7zr requirement, 7-Zip SDK build dependency, `7z.so` path or private C++ ABI contract. `LUCIOLE_7Z` can select an absolute executable path for an unusual installation. File Roller, Ark, unrar and a Samba server are not required by Luciole.
+
+### Shared video thumbnail appearance
+
+Recommend `ffmpegthumbnailer` when packaging video thumbnails. Luciole uses its `-f` filmstrip filter, matching the helper’s [standard desktop thumbnailer entry](https://github.com/dirkvdb/ffmpegthumbnailer/blob/master/dist/ffmpegthumbnailer.thumbnailer) commonly used by PCManFM-Qt. Those borders are cached PNG pixels, not icon-theme artwork. Only the executable and its ordinary runtime dependency closure are needed; do not add its development headers or link Luciole against its C++ library. Nix packages/development shells/checks expose it on PATH, and Arch CI installs it.
+
+Luciole first selects and validates a bounded frame through its existing FFmpeg path, then passes a private re-encoded PNG to ffmpegthumbnailer. The helper never receives the original media path, retaining source pixel/protocol limits on older releases. This uses established `-i`, `-o`, `-s`, `-t`, `-f` and `-c` options, without requiring newer protocol flags. A missing/failing helper leaves a plain thumbnail available. Native video previews generate clean frames separately and do not replace the framed shared thumbnail. Existing third-party cached images retain their original appearance. Luciole does not currently execute arbitrary `.thumbnailer` registrations or apply icon-theme-dependent borders.
+
+Availability checked in official catalogs on 2026-11-12:
+
+| Distribution | Runtime package |
+| --- | --- |
+| Arch | [`ffmpegthumbnailer`](https://archlinux.org/packages/extra/x86_64/ffmpegthumbnailer/) in Extra |
+| Fedora | [`ffmpegthumbnailer`](https://packages.fedoraproject.org/pkgs/ffmpegthumbnailer/ffmpegthumbnailer/); retain the library dependency closure |
+| Debian 13 | [`ffmpegthumbnailer`](https://packages.debian.org/trixie/ffmpegthumbnailer); the executable package, rather than only `libffmpegthumbnailer-dev` |
+
+The thumbnail test suite requires this helper in addition to its existing FFmpeg/image/PDF providers and compares generated pixels with its real filmstrip output. Missing/failing-helper cases separately verify the plain-frame fallback. Catalog checks establish availability, not runtime testing on every distribution.
 
 ### Required Trash runtime
 

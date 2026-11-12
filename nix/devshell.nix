@@ -19,6 +19,7 @@ pkgs.mkShell {
     gdb
     xdg-terminal-exec
     ffmpeg
+    ffmpegthumbnailer
     poppler-utils
     _7zz
   ];

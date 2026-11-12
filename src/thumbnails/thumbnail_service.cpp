@@ -126,7 +126,8 @@ namespace {
     const auto sourceStamp = stamp(before);
     const auto relative = std::filesystem::path(*native).lexically_relative(store.root());
     const bool insideCache = !relative.empty() && *relative.begin() != "..";
-    if (!generate && !insideCache && side <= 1024) {
+    const bool videoPreview = mime.starts_with("video/") && purpose == luciole::ThumbnailPurpose::Preview;
+    if (!generate && !insideCache && side <= 1024 && !videoPreview) {
       if (auto cached = store.read(
               source.location.uri(), side, static_cast<std::uint64_t>(before.st_mtim.tv_sec),
               static_cast<std::uint64_t>(before.st_size), sourceStamp, purpose == ThumbnailPurpose::Thumbnail
@@ -151,7 +152,7 @@ namespace {
     }
     std::expected<LoadedImageFile, std::string> decoded = std::unexpected("no thumbnail decoder");
     if (mime.starts_with("image/") || !insideCache) {
-      decoded = renderThumbnailProvider(file.get(), mime, side, options, cancel);
+      decoded = renderThumbnailProvider(file.get(), mime, side, options, cancel, purpose);
     }
     if (!decoded && !g_cancellable_is_cancelled(cancel)) {
       logDebug("[thumbnail] mime={} size={}: {}", mime, side, decoded.error());
@@ -168,7 +169,7 @@ namespace {
     if (::lstat(native->c_str(), &named) < 0 || stamp(named) != sourceStamp) {
       return result;
     }
-    if (!insideCache && side <= 1024) {
+    if (!insideCache && side <= 1024 && !videoPreview) {
       ThumbnailPng cached{
           .image = *decoded,
           .text = {

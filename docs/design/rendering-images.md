@@ -42,6 +42,14 @@ Layout requests physical pixels, including display scale. Grid thumbnails cannot
 
 Preview and Properties share [asynchronous metadata](../../src/thumbnails/preview_metadata.h). The preview presents essential content facts; Properties can expose technical and permission information. Recursive folder totals are a separate explicit Properties service, never a side effect of selecting an entry.
 
+## Shared video decoration
+
+Browsing requests send their selected video frame through the system `ffmpegthumbnailer -f` filter, matching its standard desktop thumbnailer entry. The input is a private PNG re-encoded from validated pixels, passed by descriptor, rather than the original media. This preserves Luciole’s representative-frame selection and source pixel/protocol limits. Decoration runs on the existing worker, with one CPU, at most two seconds and the remainder of the same eight-second video budget. Validate the resulting PNG and require unchanged dimensions. Missing/failed/timed-out helpers retain the selected plain frame; cancellation still prevents publication.
+
+The decorated pixels are stored in the existing shared cache, so other file managers see the same border. The sampling/style version is now `3`; old Luciole video cache entries refresh, while foreign entries remain reusable and protected. Native video preview requests skip the shared video cache, generate a clean frame and retain it in the preview service’s memory cache. They must not overwrite the browsing thumbnail. Non-native/cache-only previews can only use existing cache content, including any baked-in decoration. This is an application-owned adapter for ffmpegthumbnailer, not a general `.thumbnailer` discovery implementation or an icon-theme overlay.
+
+See [PACKAGING.md](../../PACKAGING.md#shared-video-thumbnail-appearance) for runtime availability and fallback behavior.
+
 ## File type detection
 
 Directory listings and recursive filename search request GIO’s `standard::content-type` and `standard::fast-content-type` in their existing cancellable asynchronous batches. Worker-backed single-file details query both attributes too. The shared reader in [file_metadata.cpp](../../src/fs/file_metadata.cpp) prefers a valid regular type and uses the filename-only fast type when the provider omits or returns an invalid regular attribute. A valid `application/octet-stream` result remains authoritative. GIO can inspect content when a filename is insufficient, so extensionless text, dotfiles such as `.bash_history` and extensionless images no longer depend on filename guesses alone.

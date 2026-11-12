@@ -844,6 +844,78 @@ namespace {
     const auto elapsed = std::chrono::steady_clock::now() - timeoutStarted;
     TEST_CHECK(!still && elapsed >= 7s && elapsed < 12s);
   }
+  void testVideoFilmstrips(const Fixture& fixture) {
+    const luciole::GString helper(g_find_program_in_path("ffmpegthumbnailer"));
+    TEST_CHECK(helper);
+    const auto video = fixture.root / "filmstrip café\n.mp4";
+    command(
+        {"ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=128x64:r=10:d=1", "-c:v", "mpeg4",
+         "-threads", "1", video.native()}
+    );
+    const int input = ::open(video.c_str(), O_RDONLY | O_CLOEXEC);
+    TEST_CHECK(input >= 0);
+    const GioPtr<GCancellable> cancel(g_cancellable_new());
+    const auto render = [&](luciole::ThumbnailPurpose purpose) {
+      return luciole::renderThumbnailProvider(input, "video/mp4", 128, {}, cancel.get(), purpose);
+    };
+    const auto plain = render(luciole::ThumbnailPurpose::Preview);
+    const auto framed = render(luciole::ThumbnailPurpose::Thumbnail);
+    TEST_CHECK(plain && framed && plain->width == 128 && plain->height == 64);
+    const auto pngInput = fixture.root / "selected-frame.png";
+    const auto referencePath = fixture.root / "reference-filmstrip.png";
+    write(pngInput, png(*plain));
+    command(
+        {helper.get(), "-i", pngInput.native(), "-o", referencePath.native(), "-s", "128", "-t", "0", "-f", "-c", "png"}
+    );
+    const auto bytes = luciole::readThumbnailFile(referencePath, 8U * 1024U * 1024U);
+    TEST_CHECK(bytes);
+    const auto reference = luciole::readThumbnailPng(*bytes, 128);
+    TEST_CHECK(reference && framed->width == reference->image.width && framed->height == reference->image.height);
+    TEST_CHECK(framed->rgba == reference->image.rgba && framed->rgba != plain->rgba);
+    const auto center = (static_cast<std::size_t>(framed->height / 2) * framed->width + framed->width / 2) * 4;
+    TEST_CHECK(framed->rgba[center] > 200 && framed->rgba[center + 1] < 20);
+
+    // Missing and failing optional helpers keep the already selected frame.
+    const auto bin = fixture.root / "filmstrip-bin";
+    fs::create_directory(bin);
+    for (const auto* program : {"ffmpeg", "ffprobe"}) {
+      const luciole::GString executable(g_find_program_in_path(program));
+      TEST_CHECK(executable);
+      fs::create_symlink(executable.get(), bin / program);
+    }
+    const std::string previousPath = ::getenv("PATH");
+    ::setenv("PATH", bin.c_str(), 1);
+    const auto missing = render(luciole::ThumbnailPurpose::Thumbnail);
+    ::setenv("PATH", previousPath.c_str(), 1);
+    TEST_CHECK(missing && missing->rgba == plain->rgba);
+    const luciole::GString failing(g_find_program_in_path("false"));
+    TEST_CHECK(failing);
+    fs::create_symlink(failing.get(), bin / "ffmpegthumbnailer");
+    ::setenv("PATH", bin.c_str(), 1);
+    const auto failed = render(luciole::ThumbnailPurpose::Thumbnail);
+    ::setenv("PATH", previousPath.c_str(), 1);
+    TEST_CHECK(failed && failed->rgba == plain->rgba);
+    ::close(input);
+
+    Pump pump;
+    const auto entry = source(video, pump);
+    luciole::ThumbnailService thumbnails;
+    const auto thumbnail = thumbnails.request(entry, 128);
+    pump.until([&] { return thumbnail && thumbnail->ready; });
+    TEST_CHECK(thumbnail->pixels && thumbnail->pixels->rgba == framed->rgba);
+    luciole::ThumbnailStore store;
+    const auto cachePath = store.root() / "normal" / luciole::ThumbnailStore::filename(entry.location.uri());
+    pump.until([&] { return fs::exists(cachePath); });
+    const auto cached = luciole::readThumbnailFile(cachePath, 8U * 1024U * 1024U);
+    TEST_CHECK(cached);
+    luciole::ThumbnailService previews(luciole::ThumbnailPurpose::Preview);
+    const auto preview = previews.request(entry, 128);
+    pump.until([&] { return preview && preview->ready; });
+    TEST_CHECK(preview->pixels && preview->pixels->rgba == plain->rgba);
+    pump.drain();
+    TEST_CHECK(luciole::readThumbnailFile(cachePath, 8U * 1024U * 1024U) == cached);
+  }
+
   void testVideoFrameSelection(const Fixture& fixture) {
     const auto intro = fixture.root / "black-intro.mp4";
     command(
@@ -901,7 +973,10 @@ namespace {
     luciole::ThumbnailService service;
     const auto asset = service.request(entry, 128);
     pump.until([&] { return asset && asset->ready; });
-    TEST_CHECK(asset->pixels && asset->pixels->rgba[0] > 200 && asset->pixels->rgba[1] < 20);
+    TEST_CHECK(asset->pixels);
+    const auto center =
+        (static_cast<std::size_t>(asset->pixels->height / 2) * asset->pixels->width + asset->pixels->width / 2) * 4;
+    TEST_CHECK(asset->pixels->rgba[center] > 200 && asset->pixels->rgba[center + 1] < 20);
     pump.until([&] {
       const auto cached = store.read(entry.location.uri(), 128, *entry.modifiedSeconds, entry.size);
       return cached
@@ -1223,6 +1298,7 @@ int main(int argc, char** argv) {
     testCacheLimits();
     testBatchAndLargerCache();
     testProviders(fixture);
+    testVideoFilmstrips(fixture);
     testVideoFrameSelection(fixture);
     testSvgThumbnails(fixture);
     testCacheLanesAndCancellation(fixture);

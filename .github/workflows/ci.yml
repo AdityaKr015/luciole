@@ -49,7 +49,7 @@ jobs:
             gdk-pixbuf2 glycin libheif libwebp librsvg libpng \
             tomlplusplus acl libarchive xz \
             nlohmann-json stb \
-            python ffmpeg poppler 7zip \
+            python ffmpeg ffmpegthumbnailer poppler 7zip \
             just clang
 
       - uses: actions/checkout@v6
