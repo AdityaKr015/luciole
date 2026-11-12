@@ -206,6 +206,30 @@ int main(int argc, char** argv) {
       }
     });
     const auto deadline = g_get_monotonic_time() + 5000000;
+    if (mode.starts_with("terminal-")) {
+      launcher->setTerminalCommand(
+          mode == "terminal-setting"       ? "foot"
+              : mode == "terminal-missing" ? "missing-luciole-terminal"
+                                           : ""
+      );
+      const auto apps = query(*launcher, false);
+      TEST_CHECK(!apps.choices.empty());
+      for (int i = 2; i < argc; ++i) {
+        const auto location = luciole::Location::fromPath(argv[i]);
+        if (mode == "terminal-with") {
+          launcher->openWith(location, apps.choices.front());
+        } else {
+          launcher->open(location);
+        }
+      }
+      while (launcher->busy()) {
+        (void)g_main_context_iteration(nullptr, false);
+        TEST_CHECK(g_get_monotonic_time() < deadline);
+        g_usleep(1000);
+      }
+      TEST_CHECK(callbacks == argc - 2 && errors == (mode == "terminal-missing" ? argc - 2 : 0));
+      return 0;
+    }
     if (mode == "dbus") {
       std::vector<luciole::Location> locations;
       for (int i = 2; i < argc; ++i) {

@@ -73,7 +73,7 @@ void SettingsController::toggle() {
   m_viewLifetime = std::make_shared<int>(0);
   auto root = std::make_unique<SettingsDialog>(
       [this](luciole::OverrideEdit edit) {
-        m_preferences.submit({edit});
+        m_preferences.submit({std::move(edit)});
         if (auto* surface = m_page.menuSurface()) {
           surface->requestLayout();
         }

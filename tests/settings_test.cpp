@@ -44,6 +44,23 @@ namespace {
     return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
   }
 
+  void testTerminalCommand() {
+    Fixture fixture;
+    luciole::ConfigService service(fixture.paths());
+    TEST_CHECK(service.reload() && service.settings().browser.terminalCommand.empty());
+    fixture.write("config.toml", "[browser]\nterminal_command = 'foot --app-id=Luciole'\n");
+    TEST_CHECK(service.reload() && service.settings().browser.terminalCommand == "foot --app-id=Luciole");
+    const std::array edit{luciole::OverrideEdit{luciole::BrowserPreference::TerminalCommand, std::string("kitty")}};
+    TEST_CHECK(service.saveOverrides(edit) == luciole::AtomicWriteState::Durable);
+    TEST_CHECK(service.reload() && service.settings().browser.terminalCommand == "kitty");
+    const std::array reset{luciole::OverrideEdit{luciole::BrowserPreference::TerminalCommand, std::nullopt}};
+    TEST_CHECK(service.saveOverrides(reset) == luciole::AtomicWriteState::Durable);
+    TEST_CHECK(service.reload() && service.settings().browser.terminalCommand == "foot --app-id=Luciole");
+    fixture.write("config.toml", "[browser]\nterminal_command = 42\n");
+    TEST_CHECK(!service.reload() && service.settings().browser.terminalCommand == "foot --app-id=Luciole");
+    fixture.write("config.toml", "[browser]\nterminal_command = \"foot\\nkitty\"\n");
+    TEST_CHECK(!service.reload());
+  }
   void testBackupPreference() {
     Fixture fixture;
     luciole::ConfigService service(fixture.paths());
@@ -936,6 +953,7 @@ namespace {
 
 int main() {
   try {
+    testTerminalCommand();
     testSchemaAndDiagnostics();
     testPresentationSettings();
     testBackupPreference();

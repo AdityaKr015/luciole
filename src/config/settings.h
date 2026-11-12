@@ -37,6 +37,7 @@ namespace luciole {
     DetailsColumnOrder columnOrder = kDefaultDetailsColumnOrder;
     DetailsColumnWidths columnWidths = kDefaultDetailsColumnWidths;
     ThumbnailOptions thumbnails;
+    std::string terminalCommand;
     bool operator==(const BrowserSettings&) const = default;
   };
 
@@ -101,6 +102,7 @@ namespace luciole {
     ThumbnailMaxFileMib,
     ThumbnailMaxMegapixels,
     ThumbnailCacheMib,
+    TerminalCommand,
     Count
   };
 
@@ -122,6 +124,7 @@ namespace luciole {
   // each key to its TOML name, codec, bounds, and BrowserSettings field.
   struct BrowserPreference {
     using Id = BrowserPreferenceId;
+    static constexpr PreferenceKey<std::string> TerminalCommand{Id::TerminalCommand};
     static constexpr PreferenceKey<luciole::ActivationMode> ActivationMode{Id::ActivationMode};
     static constexpr PreferenceKey<luciole::TypingMode> TypingMode{Id::TypingMode};
     static constexpr PreferenceKey<bool> ShowHidden{Id::ShowHidden};
@@ -194,7 +197,7 @@ namespace luciole {
     BrowserPreferenceId m_preference;
     std::variant<
         std::monostate, bool, int, SortField, ViewMode, ViewDensity, DetailsColumnOrder, ActivationMode, TypingMode,
-        ThumbnailPolicy>
+        ThumbnailPolicy, std::string>
         m_value;
   };
 

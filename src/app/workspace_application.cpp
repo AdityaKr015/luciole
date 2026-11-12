@@ -49,8 +49,9 @@ WorkspaceApplication::WorkspaceApplication(
     WaylandConnection& connection, RenderContext& renderer, TextInputService& input,
     luciole::WaylandTextClipboard& clipboard, luciole::BrowserSettings settings
 )
-    : m_connection(connection), m_renderer(renderer), m_input(input), m_clipboard(clipboard), m_defaults(settings),
-      m_preferences(luciole::ConfigPaths::fromEnvironment()), m_pins(luciole::StateStore::pathFromEnvironment()) {
+    : m_connection(connection), m_renderer(renderer), m_input(input), m_clipboard(clipboard),
+      m_defaults(std::move(settings)), m_preferences(luciole::ConfigPaths::fromEnvironment()),
+      m_pins(luciole::StateStore::pathFromEnvironment()) {
   m_preferences.setChangedCallback([this](const std::string& error) {
     if (m_preferences.settings()) {
       m_defaults = m_preferences.settings()->browser;

@@ -88,6 +88,18 @@ def run_case(binary, mode, names):
             "os.execv(sys.argv[1],sys.argv[1:])\n"
         )
         guard.chmod(0o700)
+        if mode.startswith("terminal-"):
+            desktop.write_text(desktop.read_text().replace("NoDisplay=true", "NoDisplay=false") + "Terminal=true\n")
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            foot = bin_dir / "foot"
+            foot.write_text(f"#!{sys.executable}\nimport os,sys\na=sys.argv[1:]\nassert a.pop(0)=='--'\nos.execv(a[0],a)\n")
+            foot.chmod(0o700)
+            kitty = bin_dir / "kitty"
+            kitty.write_text(f"#!{sys.executable}\nraise SystemExit('wrong terminal selected')\n")
+            kitty.chmod(0o700)
+            helper = bin_dir / "xdg-terminal-exec"
+            helper.symlink_to(foot)
         paths = []
         for name in names:
             path = os.fsencode(root) + b"/" + name
@@ -119,12 +131,17 @@ def run_case(binary, mode, names):
             XDG_ACTIVATION_TOKEN="inherited-stale",
             DESKTOP_STARTUP_ID="inherited-startup",
         )
+        if mode.startswith("terminal-"):
+            env.pop("GIO_LAUNCH_DESKTOP", None)
+            env["PATH"] = str(root / "bin")
+            env["TERMINAL"] = "kitty" if mode == "terminal-setting" else "foot" if mode != "terminal-auto" else ""
+            env["TERM"] = "must-not-be-used-as-an-executable"
         result = subprocess.run(
             [binary, mode, *paths], env=env, capture_output=True, timeout=10, check=False
         )
         if result.returncode != 0:
             raise AssertionError((result.returncode, result.stdout.decode(errors="replace"), result.stderr.decode(errors="replace")))
-        if mode in ("open", "sequential", "with", "other", "default", "batch", "batch-single", "tokens"):
+        if mode in ("open", "sequential", "with", "other", "default", "batch", "batch-single", "tokens", "terminal-setting", "terminal-env", "terminal-with", "terminal-auto"):
             deadline = time.monotonic() + 5
             expected = sorted(path.hex() for path in paths)
             while True:
@@ -145,6 +162,8 @@ def run_case(binary, mode, names):
             invocations = [json.loads(line) for line in log.read_text().splitlines()]
             if len(invocations) != (1 if mode == "batch" else len(paths)):
                 raise AssertionError("desktop multi/single-URI dispatch ignored")
+        if mode == "terminal-missing" and log.exists():
+            raise AssertionError("invalid terminal preference silently fell back")
         if token_log.exists():
             values = [json.loads(line) for line in token_log.read_text().splitlines()]
             if mode == "tokens":
@@ -167,7 +186,7 @@ def run_case(binary, mode, names):
             raise AssertionError("desktop dispatch escaped its fixture")
         # Debug diagnostics identify stages and requests, without recording file payloads.
         diagnostics = result.stderr.decode(errors="replace")
-        if mode not in ("catalog", "default-error", "mixed-catalog", "activation-destroy", "dbus") and "GIO completion" not in diagnostics:
+        if mode not in ("catalog", "default-error", "mixed-catalog", "activation-destroy", "dbus", "terminal-missing") and "GIO completion" not in diagnostics:
             raise AssertionError("missing launch timing diagnostics")
         if mode in ("open", "sequential") and ("handler=fixture.desktop" not in diagnostics or "desktop handoff" not in diagnostics):
             raise AssertionError("missing desktop handoff timing")
@@ -177,6 +196,8 @@ def run_case(binary, mode, names):
 
 def main():
     binary = sys.argv[1]
+    for mode in ("terminal-setting", "terminal-env", "terminal-with", "terminal-auto", "terminal-missing"):
+        run_case(binary, mode, [b"plain.txt", "space ' $() % café\n.txt".encode(), b"raw-\xff.txt"])
     run_case(binary, "open", [b"plain.txt", "space ' $() <literal> café\n.txt".encode(), b"raw-\xff.txt"])
     run_case(binary, "sequential", [b"first.txt", b"second.txt", b"third.txt"])
     run_case(binary, "with", [b"explicit.txt", "space ' $() café\n.txt".encode(), b"raw-\xff.txt"])

@@ -29,6 +29,7 @@ private:
   // Caption heading for a group of rows within the current section.
   void group(const std::string& title);
   template <class T> void addChoice(luciole::PreferenceKey<T> key, const std::string& title, const Choices<T>& choices);
+  void addTerminal();
   void addBool(luciole::PreferenceKey<bool> key, const std::string& title);
   void addNumber(
       luciole::PreferenceKey<int> key, const std::string& title, const std::vector<int>& values,

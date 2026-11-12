@@ -1,10 +1,13 @@
 #include "fs/gio_interop.h"
 #include "platform/program_launcher.h"
+#include "platform/terminal_command.h"
+#include "platform/terminal_launcher.h"
 #include "test_check.h"
 
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <gio/gdesktopappinfo.h>
 #include <nlohmann/json.hpp>
 #include <print>
 #include <sys/stat.h>
@@ -81,12 +84,106 @@ namespace {
       return waitRecord(log, ++launches);
     }
   };
+  void testTerminalPolicy(Fixture& f) {
+    const std::string originalPath = g_getenv("PATH");
+    const auto bin = f.root / "bin";
+    for (const auto* name : {"foot", "kitty", "wezterm", "xdg-terminal-exec"}) {
+      write(bin / name, "#!" + f.python + "\n", true);
+    }
+    g_setenv("PATH", bin.c_str(), true);
+    g_setenv("TERMINAL", "kitty", true);
+    g_setenv("TERM", "not-a-program", true);
+    TEST_CHECK(terminalArguments("foot", true) == (std::vector<std::string>{(bin / "foot").native(), "--"}));
+    TEST_CHECK(terminalArguments("", true) == (std::vector<std::string>{(bin / "kitty").native(), "--"}));
+    auto literal = terminalArguments("foot --title='space %U $(touch CANARY)'", true);
+    TEST_CHECK(literal[1] == "--title=space %U $(touch CANARY)" && literal.back() == "--");
+    TEST_CHECK(!fs::exists(f.root / "CANARY"));
+    fails(FileErrorKind::Unavailable, [&] { terminalArguments("not-installed", true); });
+    fails(FileErrorKind::InvalidArgument, [&] { terminalArguments("foot '", true); });
+    fails(FileErrorKind::InvalidArgument, [&] { terminalArguments("foot\nkitty", true); });
+    fails(FileErrorKind::InvalidArgument, [&] { terminalArguments(std::string(4097, 'x'), true); });
+    g_unsetenv("TERMINAL");
+    TEST_CHECK(terminalArguments("", true, "/a b").at(1) == "--dir=/a b");
+    fs::remove(bin / "xdg-terminal-exec");
+    TEST_CHECK(terminalArguments("", false) == (std::vector<std::string>{(bin / "foot").native()}));
+    TEST_CHECK(
+        terminalArguments("wezterm", true) == (std::vector<std::string>{(bin / "wezterm").native(), "start", "--"})
+    );
+    fs::remove(bin / "foot");
+    fs::remove(bin / "kitty");
+    fs::remove(bin / "wezterm");
+    fails(FileErrorKind::Unavailable, [&] { terminalArguments("", true); });
+    g_setenv("PATH", originalPath.c_str(), true);
+
+    // A terminal emulator fixture forwards arguments verbatim without a shell.
+    write(
+        bin / "foot",
+        "#!"
+            + f.python
+            + "\nimport os,sys\na=sys.argv[1:]\nif not a:\n open("
+            + (std::string("\"") + (f.root / "terminal-cwd").native() + "\"")
+            + ",'w').write(os.getcwd())\n sys.exit(0)\nassert a.pop(0)=='--'\nos.execv(a[0],a)\n",
+        true
+    );
+    TerminalLauncher terminal;
+    terminal.setCommand("missing-luciole-terminal");
+    TEST_CHECK(!terminal.available());
+    terminal.setCommand("foot");
+    TEST_CHECK(terminal.available());
+    std::optional<std::string> completed;
+    terminal.open(f.cwd, [&](const std::string& error) { completed = error; });
+    const auto deadline = g_get_monotonic_time() + 5000000;
+    while (!completed) {
+      (void)g_main_context_iteration(nullptr, false);
+      TEST_CHECK(g_get_monotonic_time() < deadline);
+      g_usleep(1000);
+    }
+    TEST_CHECK(completed->empty());
+    std::ifstream directory(f.root / "terminal-cwd");
+    std::string cwd;
+    std::getline(directory, cwd);
+    TEST_CHECK(cwd == *f.cwd.nativePath());
+    const auto desktopPath = f.root / "terminal % ' launcher.desktop";
+    const auto runner = f.root / "terminal-recorder.py";
+    write(runner, f.recorder, true);
+    write(
+        desktopPath,
+        "[Desktop Entry]\nType=Application\nName=Terminal fixture\nTerminal=true\nExec="
+            + f.python
+            + " "
+            + runner.native()
+            + " %c %k %U\n"
+    );
+    const GioPtr<GDesktopAppInfo> original(g_desktop_app_info_new_from_filename(desktopPath.c_str()));
+    TEST_CHECK(original);
+    const auto app = terminalApplication(G_APP_INFO(original.get()), "foot");
+    TEST_CHECK(!g_desktop_app_info_get_boolean(G_DESKTOP_APP_INFO(app.get()), "Terminal"));
+    TEST_CHECK(g_desktop_app_info_get_boolean(original.get(), "Terminal"));
+    const auto location = Location::fromPath((f.root / "raw-\xff ' % café.txt").native());
+    GList* uris = g_list_append(nullptr, const_cast<char*>(location.uri().c_str()));
+    TEST_CHECK(g_app_info_launch_uris(app.get(), uris, nullptr, nullptr));
+    g_list_free(uris);
+    const auto record = waitRecord(f.log, ++f.launches);
+    TEST_CHECK(record["argv"][1] == hex("Terminal fixture"));
+    TEST_CHECK(record["argv"][2] == hex(Location::fromPath(desktopPath.native()).uri()));
+    TEST_CHECK(record["argv"][3] == hex(*location.nativePath()));
+    const auto nativeProgram = prepareProgram(Location::fromPath(runner.native()), {});
+    launchProgram(nativeProgram, f.cwd, {location}, true, "terminal-fresh", {}, "foot");
+    const auto nativeRecord = waitRecord(f.log, ++f.launches);
+    TEST_CHECK(nativeRecord["argv"][1] == hex(*location.nativePath()) && nativeRecord["token"] == "terminal-fresh");
+    const auto desktopProgram = prepareProgram(Location::fromPath(desktopPath.native()), {});
+    launchProgram(desktopProgram, f.cwd, {location}, false, "desktop-fresh", {}, "foot");
+    const auto desktopRecord = waitRecord(f.log, ++f.launches);
+    TEST_CHECK(desktopRecord["argv"][2] == hex(Location::fromPath(desktopPath.native()).uri()));
+    TEST_CHECK(desktopRecord["argv"][3] == hex(*location.nativePath()));
+    fs::remove(bin / "foot");
+  }
   void testPrograms(Fixture& f) {
     const auto file = f.root / "runner ; $(touch CANARY).py";
     write(file, f.recorder, true);
     const auto location = Location::fromPath(file.native());
     const auto program = prepareProgram(location, {});
-    TEST_CHECK(!program.desktop && records(f.log).empty());
+    TEST_CHECK(!program.desktop && records(f.log).size() == f.launches);
     const auto raw = (f.root / (std::string("raw-") + static_cast<char>(0xff) + ".txt")).native();
     const auto strange = (f.root / "space café #?% ' $(touch CANARY).txt").native();
     const auto args = std::vector{Location::fromPath(raw), Location::fromPath(strange)};
@@ -234,11 +331,13 @@ int main() {
   g_setenv("DESKTOP_STARTUP_ID", "must-not-inherit", true);
   const std::string search = (root / "bin").native() + ":" + g_getenv("PATH");
   g_setenv("PATH", search.c_str(), true);
+  g_unsetenv("TERMINAL");
   g_unsetenv("GIO_LAUNCH_DESKTOP");
   g_unsetenv("DISPLAY");
   g_unsetenv("WAYLAND_DISPLAY");
   try {
     Fixture fixture(root, python.get());
+    testTerminalPolicy(fixture);
     testPrograms(fixture);
     testRefusals(fixture);
     testDesktop(fixture);

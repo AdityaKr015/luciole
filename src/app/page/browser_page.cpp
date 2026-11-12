@@ -115,6 +115,8 @@ BrowserPage::BrowserPage(
     return viewport;
   });
   m_browser.setExpandableFolders(settings.expandableFolders && settings.viewMode == luciole::ViewMode::List);
+  m_terminal.setCommand(settings.terminalCommand);
+  m_launcher.setTerminalCommand(settings.terminalCommand);
   m_sidebar.load(settings);
   m_detailsHeader.load(settings);
   m_activationMode = settings.activationMode;
@@ -1560,6 +1562,8 @@ void BrowserPage::showContaining(const luciole::Location& location) {
 }
 
 void BrowserPage::applySettings(const luciole::BrowserSettings& settings, bool force) {
+  m_terminal.setCommand(settings.terminalCommand);
+  m_launcher.setTerminalCommand(settings.terminalCommand);
   const auto before = m_savedSettings;
   if (!force && before == settings) {
     return;

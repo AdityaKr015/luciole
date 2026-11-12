@@ -3,6 +3,7 @@
 #include "ui/builders.h"
 #include "ui/controls/button.h"
 #include "ui/controls/card_style.h"
+#include "ui/controls/input.h"
 #include "ui/controls/select.h"
 #include "ui/controls/stepper.h"
 #include "ui/dialogs/dialog_chrome.h"
@@ -71,6 +72,8 @@ SettingsDialog::SettingsDialog(
   );
   addBool(P::ShowHidden, "Show hidden files");
   addBool(P::ShowBackups, "Show backup files (*~)");
+  group("Terminal");
+  addTerminal();
   group("Sorting");
   addChoice(
       P::SortBy, "Sort by",
@@ -295,6 +298,39 @@ void SettingsDialog::addChoice(luciole::PreferenceKey<T> key, const std::string&
     select->setSelectedIndexSilently(static_cast<std::size_t>(found - choices.begin()));
   };
   addRow<T>(key, title, show, std::move(control));
+}
+
+void SettingsDialog::addTerminal() {
+  auto control = std::make_unique<Input>();
+  auto* input = control.get();
+  input->setMinLayoutWidth(180.0F);
+  input->setSize(180.0F, Style::controlHeight);
+  input->setPlaceholder("Automatic");
+  const auto commit = [this, input] {
+    const auto value = input->value();
+    if (value != m_current.terminalCommand) {
+      send(P::TerminalCommand, std::optional(value));
+    }
+  };
+  input->setOnSubmit([commit](const std::string&) { commit(); });
+  input->setOnFocusLoss(commit);
+  addRow<std::string>(
+      P::TerminalCommand, "Terminal command",
+      [input](const std::string& value) {
+        if (!input->inputArea()->focused()) {
+          input->setValue(value);
+        }
+      },
+      std::move(control)
+  );
+  m_section->addChild(
+      ui::label(
+          {.text = "For example: foot or kitty. Leave empty to use $TERMINAL, then automatic discovery.",
+           .fontSize = Style::fontSizeCaption,
+           .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
+           .maxLines = 3}
+      )
+  );
 }
 
 void SettingsDialog::addBool(luciole::PreferenceKey<bool> key, const std::string& title) {

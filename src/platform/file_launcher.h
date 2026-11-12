@@ -29,6 +29,7 @@ namespace luciole {
     using ActivationReply = std::function<void(std::string)>;
     using ActivationProvider = std::function<void(const std::string&, ActivationReply)>;
     void setActivationProvider(ActivationProvider provider);
+    void setTerminalCommand(std::string command);
     void open(const Location& location);
     void applications(
         std::string mime, std::function<void(ApplicationList)> callback, bool includeOther = false,

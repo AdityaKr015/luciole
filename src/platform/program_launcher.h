@@ -25,7 +25,8 @@ namespace luciole {
   PreparedProgram prepareProgram(const Location& location, const CancelToken& token);
   void launchProgram(
       const PreparedProgram& program, const Location& workingDirectory, const std::vector<Location>& arguments,
-      bool terminal, const std::string& activationToken, const CancelToken& token
+      bool terminal, const std::string& activationToken, const CancelToken& token,
+      const std::string& terminalCommand = {}
   );
   Location scriptsDirectory();
   ScriptListing listScripts(const CancelToken& token);

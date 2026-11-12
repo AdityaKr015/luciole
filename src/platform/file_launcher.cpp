@@ -4,6 +4,7 @@
 #include "fs/gio_interop.h"
 #include "fs/name_matching.h"
 #include "platform/launch_context.h"
+#include "platform/terminal_command.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -15,14 +16,6 @@ namespace {
 }
 
 struct luciole::FileLauncher::State {
-  struct Launch {
-    std::shared_ptr<State> state;
-    GioPtr<GAppLaunchContext> context{g_app_launch_context_new()};
-    std::uint64_t serial;
-    gint64 started;
-    ~Launch() { g_signal_handlers_disconnect_by_data(context.get(), this); }
-    double elapsedMs() const { return static_cast<double>(g_get_monotonic_time() - started) / 1000.0; }
-  };
   GioPtr<GCancellable> cancellable{g_cancellable_new()};
   std::function<void(const std::string&)> changed;
   std::size_t active = 0;
@@ -30,6 +23,11 @@ struct luciole::FileLauncher::State {
   std::uint64_t querySerial = 0;
   GioPtr<GCancellable> queryCancel;
   ActivationProvider activation;
+  std::string terminalCommand;
+  static void dispatch(
+      const std::shared_ptr<State>& state, const std::vector<Location>& locations, ApplicationChoice application,
+      GioPtr<GAppLaunchContext> supplied = {}, std::uint64_t serial = 0, gint64 started = 0
+  );
   static void context(
       const std::shared_ptr<State>& state, const std::string& appId,
       std::function<void(GioPtr<GAppLaunchContext>)> ready
@@ -239,8 +237,29 @@ void luciole::FileLauncher::openWith(const Location& location, const Application
   openWith(std::vector{location}, application);
 }
 void luciole::FileLauncher::openWith(const std::vector<Location>& locations, const ApplicationChoice& application) {
+  State::dispatch(m_state, locations, application);
+}
+void luciole::FileLauncher::State::dispatch(
+    const std::shared_ptr<State>& state, const std::vector<Location>& locations, ApplicationChoice application,
+    GioPtr<GAppLaunchContext> supplied, std::uint64_t serial, gint64 started
+) {
   if (!application.app || locations.empty()) {
     return;
+  }
+  try {
+    auto prepared = terminalApplication(application.app.get(), state->terminalCommand);
+    application.app = std::shared_ptr<GAppInfo>(prepared.release(), g_object_unref);
+  } catch (const FileErrorException& failure) {
+    if (const auto changed = state->changed; changed && !g_cancellable_is_cancelled(state->cancellable.get())) {
+      changed(failure.what());
+    }
+    return;
+  }
+  if (serial == 0) {
+    serial = ++state->nextSerial;
+  }
+  if (started == 0) {
+    started = g_get_monotonic_time();
   }
   struct LaunchWith {
     std::shared_ptr<State> state;
@@ -248,11 +267,31 @@ void luciole::FileLauncher::openWith(const std::vector<Location>& locations, con
     GioPtr<GAppLaunchContext> context{g_app_launch_context_new()};
     std::vector<std::string> uris;
     GList* list = nullptr;
-    ~LaunchWith() { g_list_free(list); }
+    std::uint64_t serial;
+    gint64 started;
+    ~LaunchWith() {
+      g_signal_handlers_disconnect_by_data(context.get(), this);
+      g_list_free(list);
+    }
   };
-  ++m_state->active;
-  State::context(m_state, application.id, [state = m_state, locations, application](GioPtr<GAppLaunchContext> context) {
-    auto* request = new LaunchWith{state, application.app, std::move(context), {}};
+  ++state->active;
+  auto launch = [state, locations, application, serial, started](GioPtr<GAppLaunchContext> context) {
+    auto* request = new LaunchWith{state, application.app, std::move(context), {}, nullptr, serial, started};
+    g_signal_connect(
+        request->context.get(), "launched",
+        G_CALLBACK(+[](GAppLaunchContext*, GAppInfo*, GVariant* platform, gpointer data) {
+          const auto& request = *static_cast<LaunchWith*>(data);
+          gint32 pid = 0;
+          if (platform) {
+            (void)g_variant_lookup(platform, "pid", "i", &pid);
+          }
+          kLog.debug(
+              "request {}: desktop handoff at {:.2f} ms (pid={}, not viewer readiness)", request.serial,
+              static_cast<double>(g_get_monotonic_time() - request.started) / 1000.0, pid
+          );
+        }),
+        request
+    );
     request->uris.reserve(locations.size());
     for (const auto& location : locations) {
       request->uris.push_back(location.uri());
@@ -267,83 +306,85 @@ void luciole::FileLauncher::openWith(const std::vector<Location>& locations, con
           const std::unique_ptr<LaunchWith> request(static_cast<LaunchWith*>(data));
           GError* error = nullptr;
           const bool success = g_app_info_launch_uris_finish(G_APP_INFO(app), result, &error);
-          kLog.debug("Open With GIO completion ({})", success ? "success" : "failed");
+          kLog.debug(
+              "request {}: GIO completion at {:.2f} ms ({})", request->serial,
+              static_cast<double>(g_get_monotonic_time() - request->started) / 1000.0, success ? "success" : "failed"
+          );
           --request->state->active;
           const std::string message = error ? error->message : success ? "" : "Could not open this file.";
           g_clear_error(&error);
-          if (request->state->changed && !g_cancellable_is_cancelled(request->state->cancellable.get())) {
-            request->state->changed(message);
+          if (const auto changed = request->state->changed;
+              changed && !g_cancellable_is_cancelled(request->state->cancellable.get())) {
+            changed(message);
           }
         },
         request
     );
-  });
+  };
+  if (supplied) {
+    launch(std::move(supplied));
+  } else {
+    State::context(state, application.id, std::move(launch));
+  }
 }
 void luciole::FileLauncher::setChangedCallback(std::function<void(const std::string&)> callback) {
   m_state->changed = std::move(callback);
 }
 bool luciole::FileLauncher::busy() const { return m_state->active != 0; }
+void luciole::FileLauncher::setTerminalCommand(std::string command) { m_state->terminalCommand = std::move(command); }
 void luciole::FileLauncher::open(const Location& location) {
-  const auto started = g_get_monotonic_time();
   const auto serial = ++m_state->nextSerial;
+  const auto started = g_get_monotonic_time();
   kLog.debug("request {}: begin", serial);
   ++m_state->active;
   State::context(m_state, {}, [state = m_state, location, serial, started](GioPtr<GAppLaunchContext> context) {
-    auto* launch = new State::Launch{state, std::move(context), serial, started};
-    kLog.debug("request {}: context ready at {:.2f} ms", serial, launch->elapsedMs());
-    g_signal_connect(
-        launch->context.get(), "launch-started",
-        G_CALLBACK(+[](GAppLaunchContext*, GAppInfo* app, GVariant*, gpointer data) {
-          const auto& request = *static_cast<State::Launch*>(data);
-          const char* handler = g_app_info_get_id(app);
-          kLog.debug(
-              "request {}: handler={} at {:.2f} ms", request.serial, handler ? handler : "unknown", request.elapsedMs()
-          );
-        }),
-        launch
-    );
-    g_signal_connect(
-        launch->context.get(), "launched",
-        G_CALLBACK(+[](GAppLaunchContext*, GAppInfo*, GVariant* platform, gpointer data) {
-          const auto& request = *static_cast<State::Launch*>(data);
-          gint32 pid = 0;
-          if (platform) {
-            (void)g_variant_lookup(platform, "pid", "i", &pid);
-          }
-          kLog.debug(
-              "request {}: desktop handoff at {:.2f} ms (pid={}, not viewer readiness)", request.serial,
-              request.elapsedMs(), pid
-          );
-        }),
-        launch
-    );
-    g_app_info_launch_default_for_uri_async(
-        location.uri().c_str(), launch->context.get(), state->cancellable.get(),
-        [](GObject*, GAsyncResult* result, gpointer data) {
-          const std::unique_ptr<State::Launch> request(static_cast<State::Launch*>(data));
-          const auto& state = request->state;
-          GError* error = nullptr;
-          const bool launched = g_app_info_launch_default_for_uri_finish(result, &error);
-          --state->active;
-          const bool cancelled = g_cancellable_is_cancelled(state->cancellable.get());
-          kLog.debug(
-              "request {}: GIO completion at {:.2f} ms ({})", request->serial, request->elapsedMs(),
-              cancelled      ? "cancelled"
-                  : launched ? "success"
-                             : "failed"
-          );
-          const auto callback = state->changed;
-          const std::string message = error != nullptr ? error->message : (launched ? "" : "Could not open this file.");
-          g_clear_error(&error);
-          if (callback && !cancelled) {
-            callback(message);
-          }
-        },
-        launch
-    );
+    struct Request {
+      std::shared_ptr<State> state;
+      Location location;
+      GioPtr<GAppLaunchContext> context;
+      gint64 started;
+      std::uint64_t serial;
+    };
+    auto* request = new Request{state, location, std::move(context), started, serial};
     kLog.debug(
-        "request {}: GIO call returned at {:.2f} ms", serial,
+        "request {}: context ready at {:.2f} ms", request->serial,
         static_cast<double>(g_get_monotonic_time() - started) / 1000.0
+    );
+    const auto file = gioFile(location);
+    g_file_query_default_handler_async(
+        file.get(), G_PRIORITY_DEFAULT, state->cancellable.get(),
+        [](GObject* source, GAsyncResult* result, gpointer data) {
+          const std::unique_ptr<Request> request(static_cast<Request*>(data));
+          const auto& state = request->state;
+          --state->active;
+          GError* raw = nullptr;
+          const GioPtr<GAppInfo> application(g_file_query_default_handler_finish(G_FILE(source), result, &raw));
+          const GErrorPtr error(raw);
+          if (g_cancellable_is_cancelled(state->cancellable.get())) {
+            kLog.debug("request {}: GIO completion (cancelled handler lookup)", request->serial);
+            return;
+          }
+          if (!application) {
+            kLog.debug("request {}: GIO completion (handler lookup failed)", request->serial);
+            if (const auto changed = state->changed) {
+              changed(error ? error->message : "No application is associated with this file.");
+            }
+            return;
+          }
+          const char* id = g_app_info_get_id(application.get());
+          kLog.debug(
+              "request {}: handler={} at {:.2f} ms", request->serial, id ? id : "unknown",
+              static_cast<double>(g_get_monotonic_time() - request->started) / 1000.0
+          );
+          ApplicationChoice choice;
+          choice.id = id ? id : "";
+          choice.app = std::shared_ptr<GAppInfo>(G_APP_INFO(g_object_ref(application.get())), g_object_unref);
+          State::dispatch(
+              state, {request->location}, std::move(choice), std::move(request->context), request->serial,
+              request->started
+          );
+        },
+        request
     );
   });
 }

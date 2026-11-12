@@ -4,6 +4,7 @@
 #include "app/page/page_context.h"
 #include "app/page/submenu_controller.h"
 #include "browser/browser_controller.h"
+#include "config/settings.h"
 #include "fs/background_job.h"
 #include "platform/desktop_integration.h"
 #include "render/scene/input_dispatcher.h"
@@ -137,8 +138,8 @@ void ExecutionController::launch(
         luciole::runJob<bool>(
             token,
             [program = std::move(program), folder, arguments = std::move(arguments), terminal,
-             activation = std::move(activation), token] {
-              luciole::launchProgram(program, folder, arguments, terminal, activation, token);
+             activation = std::move(activation), token, terminalCommand = m_page.settings().terminalCommand] {
+              luciole::launchProgram(program, folder, arguments, terminal, activation, token, terminalCommand);
               return true;
             },
             [this, lifetime, request, token](auto result) {

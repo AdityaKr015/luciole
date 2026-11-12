@@ -63,12 +63,16 @@ namespace {
     std::span<const Named<T>> names;
   };
   template <> struct Rule<bool> {};
+  template <> struct Rule<std::string> {};
   template <> struct Rule<int> {
     bool (*accepts)(int);
     std::string_view expected;
   };
   template <> struct Rule<luciole::DetailsColumnOrder> {};
 
+  bool accepts(const Rule<std::string>& /*rule*/, const std::string& value) {
+    return value.size() <= 4096 && !value.contains('\0') && value.find_first_of("\r\n") == std::string::npos;
+  }
   bool accepts(const Rule<bool>& /*rule*/, bool /*value*/) { return true; }
   bool accepts(const Rule<int>& rule, int value) { return rule.accepts(value); }
   bool accepts(const Rule<luciole::DetailsColumnOrder>& /*rule*/, const luciole::DetailsColumnOrder& order) {
@@ -78,6 +82,16 @@ namespace {
     requires std::is_enum_v<T>
   bool accepts(const Rule<T>& rule, T value) {
     return std::ranges::contains(rule.names, value, &Named<T>::value);
+  }
+
+  std::optional<std::string> decode(const Rule<std::string>& /*rule*/, const toml::node& node) {
+    return node.value_exact<std::string>();
+  }
+  std::string expected(const Rule<std::string>& /*rule*/) {
+    return "expected a single-line command of at most 4096 bytes";
+  }
+  void encode(toml::table& table, std::string_view key, const Rule<std::string>& /*rule*/, const std::string& value) {
+    table.insert(key, value);
   }
 
   // Shape only; callers check accepts() as well.
@@ -296,6 +310,7 @@ namespace {
           P::ThumbnailCacheMib, "thumbnail_cache_mib", [](S& s) -> auto& { return s.thumbnails.cacheMiB; },
           {between<16, 1024>, "expected an integer from 16 to 1024"}
       ),
+      describe(P::TerminalCommand, "terminal_command", [](S& s) -> auto& { return s.terminalCommand; }),
   };
   constexpr std::size_t kPreferenceCount = std::tuple_size_v<decltype(kPreferences)>;
   static_assert(kPreferenceCount == std::to_underlying(luciole::BrowserPreferenceId::Count));
@@ -494,6 +509,8 @@ template <class T> const T& luciole::preferenceValue(const BrowserSettings& sett
   return preferenceValue(const_cast<BrowserSettings&>(settings), key);
 }
 
+template std::string& luciole::preferenceValue(BrowserSettings&, PreferenceKey<std::string>);
+template const std::string& luciole::preferenceValue(const BrowserSettings&, PreferenceKey<std::string>);
 template bool& luciole::preferenceValue(BrowserSettings&, PreferenceKey<bool>);
 template int& luciole::preferenceValue(BrowserSettings&, PreferenceKey<int>);
 template luciole::ActivationMode& luciole::preferenceValue(BrowserSettings&, PreferenceKey<ActivationMode>);
@@ -650,7 +667,7 @@ luciole::AtomicWriteState luciole::ConfigService::saveOverrides(std::span<const 
       }
   );
   if (result.state != AtomicWriteState::NotCommitted) {
-    m_settings = candidate;
+    m_settings = std::move(candidate);
   }
   if (!result.error.empty() && m_issues.empty()) {
     m_issues.push_back(ioIssue(m_paths.overrides, result.error));

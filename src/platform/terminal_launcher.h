@@ -12,6 +12,7 @@ namespace luciole {
     ~TerminalLauncher();
     TerminalLauncher(const TerminalLauncher&) = delete;
     TerminalLauncher& operator=(const TerminalLauncher&) = delete;
+    void setCommand(std::string command);
     bool available() const;
     void open(const Location& folder, std::function<void(std::string)> completed);
 

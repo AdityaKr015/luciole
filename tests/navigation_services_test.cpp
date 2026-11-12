@@ -154,6 +154,7 @@ namespace {
     g_setenv("PATH", fixture.path.c_str(), true);
     g_setenv("LUCIOLE_TEST_TERMINAL_LOG", log.c_str(), true);
     luciole::TerminalLauncher launcher;
+    launcher.setCommand(helper.native());
     g_setenv("PATH", original.c_str(), true);
     TEST_CHECK(launcher.available());
     const auto target = fixture.path / "quotes ' $() ; newline\n日本語";
@@ -200,6 +201,10 @@ namespace {
   }
 } // namespace
 int main() {
+  g_unsetenv("DISPLAY");
+  g_unsetenv("WAYLAND_DISPLAY");
+  g_unsetenv("WAYLAND_SOCKET");
+  g_unsetenv("TERMINAL");
   try {
     identityChecks();
     completionChecks();

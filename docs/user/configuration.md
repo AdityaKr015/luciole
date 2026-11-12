@@ -61,6 +61,7 @@ All keys below belong in `[browser]`. Dimensions are logical pixels unless state
 | `show_backups` | `true` | Non-directory backup names ending in `~` |
 | `activation_mode` | `"double_click"` | `"single_click"`, `"double_click"` |
 | `typing_mode` | `"search"` | `"search"` recursively searches filenames; `"typeahead"` selects names |
+| `terminal_command` | `""` | Terminal command and optional arguments, for example `"foot"`; empty uses `$TERMINAL`, then automatic discovery |
 | `sort_by` | `"name"` | `"name"`, `"type"`, `"size"`, `"modified"`, `"accessed"`, `"created"`, `"owner"`, `"group"`, `"permissions"`, `"location"` |
 | `sort_descending` | `false` | Reverse sort direction |
 | `directories_first` | `true` | Group folders before files |
@@ -119,3 +120,15 @@ Places state lives in `$XDG_STATE_HOME/luciole/state.toml`, defaulting to `~/.lo
 Thumbnails use the shared `$XDG_CACHE_HOME/thumbnails/` cache plus a Luciole ownership ledger under `$XDG_CACHE_HOME/luciole/`. The default cache root is `~/.cache`. Custom actions live in the [Scripts directory](scripts.md).
 
 An optional `colors.toml` beside the settings files supplies the supported Noctalia palette handoff. The installed template is `share/luciole/templates/colors.toml`; broader palette/font/UI-scale preferences remain planned. See [Packaging](../../PACKAGING.md#configuration-and-writable-data) for the complete ownership and installation notes.
+
+## Terminal selection
+
+Settings → General → Terminal sets Luciole's terminal command, for example `foot`, `kitty` or `foot --app-id=Luciole`. Press Enter or leave the field to save. This preference applies to Open Terminal Here, Run in Terminal and opening files with terminal-based applications, including Open With and explicitly confirmed terminal application launchers. It does not change another application's terminal preference or the file's associated editor.
+
+Selection order is the configured command, then the process's inherited `TERMINAL` environment variable, then automatic discovery. `TERM` is never an executable preference. Empty `terminal_command` means automatic selection; an explicit missing or malformed command reports an error instead of choosing another terminal. Restart after changing the environment inherited by Luciole; saved preferences apply live across windows.
+
+Automatic discovery tries `xdg-terminal-exec` first, then `x-terminal-emulator` and supported terminal executables. The helper honors shared terminal preferences; without a preference it may choose any eligible installed terminal. Set Luciole's command or `TERMINAL` to choose a particular one when several are installed. With neither helper present, Luciole tries Foot, Kitty, Alacritty, Ghostty, WezTerm, Konsole, GNOME Terminal, Console, Ptyxis, Xfce Terminal and XTerm in that order.
+
+Commands support quoted arguments and `~/` in the executable path, without shell expansion, substitutions or environment assignments. Common terminals get their execution separator automatically. An explicitly supplied trailing `--`, `-e` or `-x` is preserved; custom terminal wrappers can use one of those forms. New terminal processes start in the requested folder; the shared helper also receives its directory option. Automatic executable discovery cannot infer a favorite terminal from the fact that several are installed.
+
+The terminal preference applies only when an application asks for a terminal. Graphical or client desktop entries marked `Terminal=false` keep their normal behavior. For example, an Emacs Client entry may reuse an existing Emacs frame, including one running inside a terminal; selecting Kitty here does not override the editor's session policy.

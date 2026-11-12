@@ -4,6 +4,7 @@
 #include "fs/gio_interop.h"
 #include "fs/posix_fd.h"
 #include "platform/launch_context.h"
+#include "platform/terminal_command.h"
 
 #include <algorithm>
 #include <array>
@@ -88,46 +89,6 @@ namespace {
     }
     return text;
   }
-  std::string desktopCommand(const std::string& command, const Location& location) {
-    std::string result;
-    bool quoted = false;
-    for (std::size_t index = 0; index < command.size(); ++index) {
-      const char value = command[index];
-      if (value == '\\' && index + 1 < command.size()) {
-        result += value;
-        result += command[++index];
-      } else if (value == '"') {
-        quoted = !quoted;
-        result += value;
-      } else if (value == '%' && index + 1 < command.size()) {
-        const char code = command[++index];
-        if (code != 'k') {
-          result += '%';
-          result += code;
-          continue;
-        }
-        if (quoted
-            || (index > 1 && command[index - 2] != ' ' && command[index - 2] != '\t')
-            || (index + 1 < command.size() && command[index + 1] != ' ' && command[index + 1] != '\t')) {
-          throwFileError(FileErrorKind::Unsupported, "The launcher location field must be a separate argument.");
-        }
-        // GDesktopAppInfo created from captured contents has no filename. Supply
-        // the original URI for %k, escaping its percent bytes for GIO's later pass.
-        std::string uri;
-        for (const char ch : location.uri()) {
-          uri += ch;
-          if (ch == '%') {
-            uri += '%';
-          }
-        }
-        const luciole::GString escaped(g_shell_quote(uri.c_str()));
-        result += escaped.get();
-      } else {
-        result += value;
-      }
-    }
-    return result;
-  }
   void loadDesktop(PreparedProgram& prepared, ProgramData& data) {
     const auto text = desktopText(data.descriptor.get(), data.stamp);
     const std::unique_ptr<GKeyFile, decltype(&g_key_file_unref)> key(g_key_file_new(), g_key_file_unref);
@@ -148,7 +109,7 @@ namespace {
     if (std::strlen(command.get()) > 8192) {
       throwFileError(FileErrorKind::InvalidArgument, "The launcher command exceeds 8 KiB.");
     }
-    const auto expanded = desktopCommand(command.get(), data.location);
+    const auto expanded = desktopExecCommand(command.get(), data.location.uri());
     g_key_file_set_string(key.get(), "Desktop Entry", "Exec", expanded.c_str());
     // Launch the captured key file, never reread an untrusted pathname after confirmation.
     data.application.reset(g_desktop_app_info_new_from_keyfile(key.get()));
@@ -217,7 +178,7 @@ luciole::PreparedProgram luciole::prepareProgram(const Location& location, const
 
 void luciole::launchProgram(
     const PreparedProgram& program, const Location& workingDirectory, const std::vector<Location>& arguments,
-    bool terminal, const std::string& activationToken, const CancelToken& token
+    bool terminal, const std::string& activationToken, const CancelToken& token, const std::string& terminalCommand
 ) {
   if (!program.data || arguments.size() > 4096) {
     throwFileError(FileErrorKind::InvalidArgument, "Invalid program or too many selected files.");
@@ -227,13 +188,14 @@ void luciole::launchProgram(
     if (terminal) {
       throwFileError(FileErrorKind::Unsupported, "Application launchers choose their own terminal behavior.");
     }
+    const auto application = terminalApplication(G_APP_INFO(program.data->application.get()), terminalCommand);
     GList* uris = nullptr;
     for (const auto& item : arguments) {
       uris = g_list_append(uris, const_cast<char*>(item.uri().c_str())); // Borrowed for this synchronous GIO call.
     }
     const auto context = launchContext(activationToken);
     GError* raw = nullptr;
-    const bool ok = g_app_info_launch_uris(G_APP_INFO(program.data->application.get()), uris, context.get(), &raw);
+    const bool ok = g_app_info_launch_uris(application.get(), uris, context.get(), &raw);
     g_list_free(uris);
     const GErrorPtr error(raw);
     if (!ok) {
@@ -248,11 +210,7 @@ void luciole::launchProgram(
   std::vector<std::string> argv;
   argv.reserve(arguments.size() + 4);
   if (terminal) {
-    const GString helper(g_find_program_in_path("xdg-terminal-exec"));
-    if (!helper) {
-      throwFileError(FileErrorKind::Unavailable, "Run in Terminal requires xdg-terminal-exec.");
-    }
-    argv = {helper.get(), "--dir=" + *cwd, "--"};
+    argv = terminalArguments(terminalCommand, true, *cwd);
   }
   argv.push_back(*program.data->location.nativePath());
   std::size_t bytes = 0;
