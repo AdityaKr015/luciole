@@ -13,11 +13,12 @@ luciole::FileDetails luciole::readFileDetails(const Location& location, const Ca
       gioFile(location).get(),
       G_FILE_ATTRIBUTE_STANDARD_TYPE
       "," G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME "," G_FILE_ATTRIBUTE_STANDARD_SIZE
-      "," G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE "," G_FILE_ATTRIBUTE_TIME_MODIFIED
-      "," G_FILE_ATTRIBUTE_TIME_ACCESS "," G_FILE_ATTRIBUTE_TIME_CREATED "," G_FILE_ATTRIBUTE_OWNER_USER
-      "," G_FILE_ATTRIBUTE_OWNER_GROUP "," G_FILE_ATTRIBUTE_UNIX_MODE "," G_FILE_ATTRIBUTE_ETAG_VALUE
-      "," G_FILE_ATTRIBUTE_TIME_CHANGED ",time::changed-nsec," G_FILE_ATTRIBUTE_TIME_CHANGED_USEC
-      "," G_FILE_ATTRIBUTE_ID_FILE "," G_FILE_ATTRIBUTE_ID_FILESYSTEM "," G_FILE_ATTRIBUTE_STANDARD_SYMLINK_TARGET,
+      "," G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE "," G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE
+      "," G_FILE_ATTRIBUTE_TIME_MODIFIED "," G_FILE_ATTRIBUTE_TIME_ACCESS "," G_FILE_ATTRIBUTE_TIME_CREATED
+      "," G_FILE_ATTRIBUTE_OWNER_USER "," G_FILE_ATTRIBUTE_OWNER_GROUP "," G_FILE_ATTRIBUTE_UNIX_MODE
+      "," G_FILE_ATTRIBUTE_ETAG_VALUE "," G_FILE_ATTRIBUTE_TIME_CHANGED
+      ",time::changed-nsec," G_FILE_ATTRIBUTE_TIME_CHANGED_USEC "," G_FILE_ATTRIBUTE_ID_FILE
+      "," G_FILE_ATTRIBUTE_ID_FILESYSTEM "," G_FILE_ATTRIBUTE_STANDARD_SYMLINK_TARGET,
       G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, gioCancellable(token), &rawError
   ));
   const GErrorPtr error(rawError);
@@ -44,7 +45,7 @@ luciole::FileDetails luciole::readFileDetails(const Location& location, const Ca
       == G_FILE_ATTRIBUTE_TYPE_STRING) {
     details.displayName = g_file_info_get_display_name(info.get());
   }
-  if (auto mime = readFastContentType(info.get())) {
+  if (auto mime = readContentType(info.get())) {
     const GString description(g_content_type_get_description(mime->c_str()));
     if (description) {
       details.typeDescription = description.get();

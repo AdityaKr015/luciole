@@ -1,6 +1,8 @@
 #include "event_loop/glib_poll_source.h"
 #include "fs/directory_session.h"
+#include "fs/file_query.h"
 #include "fs/gio_interop.h"
+#include "fs/recursive_search.h"
 #include "test_check.h"
 
 #include <algorithm>
@@ -11,6 +13,7 @@
 #include <print>
 #include <stdexcept>
 #include <string>
+#include <sys/stat.h>
 #include <thread>
 #include <unistd.h>
 
@@ -106,6 +109,68 @@ namespace {
       }
       TEST_CHECK(rejected);
     }
+  }
+
+  void testContentTypes(Pump& pump) {
+    Fixture fixture;
+    fixture.write(".bash_history", "cd Documents\nprintf hello\n");
+    fixture.write("extensionless", "ordinary text without an extension\n");
+    fixture.write("binary", std::string("\0\1\2\3\0\xff", 6));
+    gsize pngSize = 0;
+    const luciole::GString png(
+        reinterpret_cast<char*>(g_base64_decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a4V0AAAAASUVORK5CYII=", &pngSize
+        ))
+    );
+    fixture.write("image-without-extension", std::string(png.get(), pngSize));
+    fs::create_symlink(".bash_history", fixture.path / "history-link");
+    TEST_CHECK(::mkfifo((fixture.path / "pipe").c_str(), 0600) == 0);
+    DirectorySession session;
+    session.open(fixture.location());
+    ready(pump, session);
+    TEST_CHECK(entry(session, ".bash_history").contentType == "text/plain");
+    TEST_CHECK(entry(session, "extensionless").contentType == "text/plain");
+    TEST_CHECK(entry(session, "binary").contentType == "application/octet-stream");
+    TEST_CHECK(entry(session, "image-without-extension").contentType == "image/png");
+    TEST_CHECK(entry(session, "history-link").symlink && entry(session, "history-link").contentType == "inode/symlink");
+    TEST_CHECK(entry(session, "pipe").type == luciole::FileType::Special);
+    const auto details = luciole::readFileDetails(Location::fromPath((fixture.path / ".bash_history").native()), {});
+    const luciole::GString textDescription(g_content_type_get_description("text/plain"));
+    TEST_CHECK(details.typeDescription == textDescription.get());
+    TEST_CHECK(
+        luciole::readFileDetails(Location::fromPath((fixture.path / "history-link").native()), {}).type
+        == luciole::FileType::Symlink
+    );
+    TEST_CHECK(
+        luciole::readFileDetails(Location::fromPath((fixture.path / "pipe").native()), {}).type
+        == luciole::FileType::Special
+    );
+    luciole::RecursiveSearch search;
+    search.start(fixture.location(), "bash_history", true);
+    pump.until([&] { return search.snapshot().status != DirectoryStatus::Loading; });
+    TEST_CHECK(
+        search.snapshot().status == DirectoryStatus::Ready
+        && search.snapshot().entries.size() == 1
+        && search.snapshot().entries.front().contentType == "text/plain"
+    );
+    fixture.write("extensionless", std::string("\0\1\2\3\0\xff", 6));
+    pump.until([&] {
+      return session.snapshot().status == DirectoryStatus::Ready
+          && entry(session, "extensionless").contentType == "application/octet-stream";
+    });
+
+    const luciole::GioPtr<GFileInfo> info(g_file_info_new());
+    TEST_CHECK(!luciole::readContentType(info.get()));
+    g_file_info_set_attribute_string(info.get(), G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE, "text/plain");
+    TEST_CHECK(luciole::readContentType(info.get()) == "text/plain");
+    g_file_info_set_content_type(info.get(), "application/octet-stream");
+    TEST_CHECK(luciole::readContentType(info.get()) == "application/octet-stream");
+    g_file_info_set_content_type(info.get(), "");
+    TEST_CHECK(luciole::readContentType(info.get()) == "text/plain");
+    g_file_info_set_content_type(info.get(), "\xff");
+    TEST_CHECK(luciole::readContentType(info.get()) == "text/plain");
+    g_file_info_set_attribute_uint32(info.get(), G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE, 42);
+    TEST_CHECK(luciole::readContentType(info.get()) == "text/plain");
   }
 
   void testEnumerationAndMonitoring(Pump& pump) {
@@ -267,15 +332,15 @@ namespace {
 
   void testMetadataAbsenceAndTypes() {
     const luciole::GioPtr<GFileInfo> info(g_file_info_new());
-    TEST_CHECK(!luciole::readFastContentType(info.get()));
+    TEST_CHECK(!luciole::readContentType(info.get()));
     g_file_info_set_attribute_boolean(info.get(), G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE, true);
-    TEST_CHECK(!luciole::readFastContentType(info.get()));
+    TEST_CHECK(!luciole::readContentType(info.get()));
     g_file_info_set_attribute_string(info.get(), G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE, "");
-    TEST_CHECK(!luciole::readFastContentType(info.get()));
+    TEST_CHECK(!luciole::readContentType(info.get()));
     g_file_info_set_attribute_string(info.get(), G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE, "\xff");
-    TEST_CHECK(!luciole::readFastContentType(info.get()));
+    TEST_CHECK(!luciole::readContentType(info.get()));
     g_file_info_set_attribute_string(info.get(), G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE, "text/plain");
-    TEST_CHECK(luciole::readFastContentType(info.get()) == "text/plain");
+    TEST_CHECK(luciole::readContentType(info.get()) == "text/plain");
     TEST_CHECK(
         unknown(luciole::readFileAccess(info.get()))
         && !luciole::readFilesystemInfo(info.get()).readOnly.has_value()
@@ -386,6 +451,7 @@ int main() {
   try {
     testLocations();
     Pump pump;
+    testContentTypes(pump);
     testEnumerationAndMonitoring(pump);
     testGenerationAndLifetime(pump);
     testChangesDuringLoading(pump);

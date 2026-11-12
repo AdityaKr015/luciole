@@ -34,6 +34,12 @@ Layout requests physical pixels, including display scale. Grid thumbnails cannot
 
 Preview and Properties share [asynchronous metadata](../../src/thumbnails/preview_metadata.h). The preview presents essential content facts; Properties can expose technical and permission information. Recursive folder totals are a separate explicit Properties service, never a side effect of selecting an entry.
 
+## File type detection
+
+Directory listings and recursive filename search request GIO’s `standard::content-type` and `standard::fast-content-type` in their existing cancellable asynchronous batches. Worker-backed single-file details query both attributes too. The shared reader in [file_metadata.cpp](../../src/fs/file_metadata.cpp) prefers a valid regular type and uses the filename-only fast type when the provider omits or returns an invalid regular attribute. A valid `application/octet-stream` result remains authoritative. GIO can inspect content when a filename is insufficient, so extensionless text, dotfiles such as `.bash_history` and extensionless images no longer depend on filename guesses alone.
+
+The resulting DirectoryEntry type drives icons, list type labels, preview selection and the Properties MIME field. File-tooltip details use the same provider policy through the worker query. Do not add filename-specific MIME overrides or move queries into layout/render callbacks. Retain no-follow-symlink flags; regular and special file handling belongs to GIO. This uses existing GIO and shared MIME data, with no decoder or packaging dependency changes.
+
 ## Verification
 
 Use [thumbnail](../../tests/thumbnail_test.cpp), [preview](../../tests/preview_service_test.cpp), [metadata](../../tests/preview_metadata_test.cpp) and [icon](../../tests/file_icon_test.cpp) suites for deterministic contracts. Verify image sizing, placeholder transitions, scrolling, fractional scale and pane resizing in an isolated actual window. Loader failures, graphics-reset injection and hardware/monitor coverage must be reported at the level actually tested; old successful CPU fixtures are not proof of GPU recovery or universal format coverage.

@@ -28,7 +28,8 @@ namespace luciole {
   EntryMetadata readEntryMetadata(GFileInfo* info);
   FileAccess readFileAccess(GFileInfo* info);
   FilesystemInfo readFilesystemInfo(GFileInfo* info);
-  std::optional<std::string> readFastContentType(GFileInfo* info);
+  // Prefer the provider's regular MIME type, falling back to its filename-only type when unavailable.
+  std::optional<std::string> readContentType(GFileInfo* info);
   FileIconSource readIconSource(GIcon* icon);
   FileIconSource readFileIcon(GFileInfo* info, const Location& location);
   TrashInfo readTrashInfo(GFileInfo* info);

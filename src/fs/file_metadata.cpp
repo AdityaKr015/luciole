@@ -11,16 +11,17 @@ namespace {
   }
 } // namespace
 
-std::optional<std::string> luciole::readFastContentType(GFileInfo* info) {
-  if (g_file_info_get_attribute_type(info, G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE)
-      != G_FILE_ATTRIBUTE_TYPE_STRING) {
-    return std::nullopt;
+std::optional<std::string> luciole::readContentType(GFileInfo* info) {
+  for (const auto* attribute : {G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE, G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE}) {
+    if (g_file_info_get_attribute_type(info, attribute) != G_FILE_ATTRIBUTE_TYPE_STRING) {
+      continue;
+    }
+    const char* value = g_file_info_get_attribute_string(info, attribute);
+    if (value != nullptr && *value != '\0' && g_utf8_validate(value, -1, nullptr)) {
+      return value;
+    }
   }
-  const char* value = g_file_info_get_attribute_string(info, G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE);
-  if (value == nullptr || *value == '\0' || !g_utf8_validate(value, -1, nullptr)) {
-    return std::nullopt;
-  }
-  return value;
+  return std::nullopt;
 }
 
 luciole::FileAccess luciole::readFileAccess(GFileInfo* info) {

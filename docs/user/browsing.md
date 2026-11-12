@@ -62,6 +62,8 @@ The side preview is on by default. Resize its divider to change the saved width;
 
 The preview shows essential content facts such as file size, dimensions, format and duration when available. Properties (Alt+Return) includes additional technical and permission information. See [file operations](file-operations.md#properties-and-permissions).
 
+File types use the system MIME database and GIO content detection when the name alone is insufficient. For example, a text `.bash_history` can show as Plain text document with MIME `text/plain`; an unrecognized binary stays a generic file. The detected type is shared by the list, preview and Properties.
+
 ## Background operations
 
 The toolbar's File Operations button shows the number of active jobs. Open it, or use File operations in the main menu, for progress and recent results across the running application's tabs and windows. See [file operations](file-operations.md#file-operations-popover) for cancellation, reports and retry behavior.

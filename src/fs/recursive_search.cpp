@@ -14,7 +14,7 @@ namespace {
       "standard::icon,standard::size,time::modified,etag::value,id::file,id::filesystem,"
       "time::access,time::created,owner::user,owner::group,unix::mode,"
       "access::can-read,access::can-write,access::can-execute,access::can-rename,access::can-trash,access::can-delete,"
-      "trash::orig-path,trash::deletion-date,standard::fast-content-type";
+      "trash::orig-path,trash::deletion-date,standard::content-type,standard::fast-content-type";
   constexpr unsigned int kMaxDepth = 256;
   constexpr std::size_t kMaxPending = 65536;
 
@@ -218,7 +218,7 @@ struct luciole::RecursiveSearch::State : std::enable_shared_from_this<State> {
          .icon = readFileIcon(info, location),
          .trash = location.isTrash() ? readTrashInfo(info) : TrashInfo{},
          .identity = readFileIdentity(info),
-         .contentType = readFastContentType(info),
+         .contentType = readContentType(info),
          .details = readEntryMetadata(info)}
     );
   }

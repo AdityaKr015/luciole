@@ -31,7 +31,8 @@ namespace luciole {
     FileIconSource icon{};
     TrashInfo trash{};
     std::optional<FileIdentity> identity = std::nullopt;
-    std::optional<std::string> contentType = std::nullopt; // Provider's fast type; no content sniffing requested.
+    std::optional<std::string> contentType =
+        std::nullopt; // Provider's regular MIME type, with its fast type as a fallback.
     EntryMetadata details{};
     std::optional<std::string> contentRevision = std::nullopt; // Provider change time, including subsecond precision.
   };

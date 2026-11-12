@@ -22,8 +22,8 @@ namespace {
       "," G_FILE_ATTRIBUTE_ACCESS_CAN_READ "," G_FILE_ATTRIBUTE_ACCESS_CAN_WRITE "," G_FILE_ATTRIBUTE_ACCESS_CAN_EXECUTE
       "," G_FILE_ATTRIBUTE_ACCESS_CAN_RENAME "," G_FILE_ATTRIBUTE_ACCESS_CAN_TRASH
       "," G_FILE_ATTRIBUTE_ACCESS_CAN_DELETE "," G_FILE_ATTRIBUTE_TRASH_ORIG_PATH
-      "," G_FILE_ATTRIBUTE_TRASH_DELETION_DATE "," G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE
-      "," G_FILE_ATTRIBUTE_ID_FILE "," G_FILE_ATTRIBUTE_ID_FILESYSTEM;
+      "," G_FILE_ATTRIBUTE_TRASH_DELETION_DATE "," G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE
+      "," G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE "," G_FILE_ATTRIBUTE_ID_FILE "," G_FILE_ATTRIBUTE_ID_FILESYSTEM;
   constexpr int kBatchSize = 64;
   constexpr unsigned int kMonitorDelayMs = 80;
 
@@ -301,7 +301,7 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
     }
     entry.details = readEntryMetadata(info);
     entry.identity = readFileIdentity(info);
-    entry.contentType = readFastContentType(info);
+    entry.contentType = readContentType(info);
     if (g_file_info_has_attribute(info, G_FILE_ATTRIBUTE_STANDARD_SIZE)) {
       const auto size = g_file_info_get_size(info);
       if (size >= 0) {

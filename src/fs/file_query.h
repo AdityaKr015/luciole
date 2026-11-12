@@ -22,10 +22,10 @@ namespace luciole {
     EntryMetadata metadata{};
     std::optional<std::string> etag = std::nullopt, contentRevision = std::nullopt;
   };
-  // Blocking typed query for workers. Never follows links or reads file contents.
+  // Blocking typed query for workers. Never follows links; GIO may inspect content to determine MIME type.
   FileDetails readFileDetails(const Location& location, const CancelToken& token);
 
-  // Queries one item without following links or enumerating children. No content sniffing.
+  // Queries one item without following links or enumerating children. MIME detection stays on the worker.
   // Cancelled replies are suppressed; done runs on the initiating main context.
   void queryFileDetails(
       const Location& location, const CancelToken& token,
