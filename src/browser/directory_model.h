@@ -80,10 +80,12 @@ namespace luciole {
       std::string sortKey;
       std::string filterKey;
       std::string typeLabel;
-      std::optional<std::string> typeSortKey;
-      std::array<std::optional<std::string>, 3> detailSortKeys{};
+      // Points into m_alternateSortKeys; nodes keep their addresses across rehash.
+      const std::string* alternateSortKey = nullptr;
+      bool knownType = false;
     };
 
+    void prepareSortKeys();
     void rebuildProjection();
     void reconcileSelection();
     void notify() const;
@@ -95,6 +97,9 @@ namespace luciole {
     FilterOptions m_filter;
     std::string m_filterKey;
     std::unordered_map<EntryId, Presentation> m_presentations;
+    // One selected text-sort field, shared by repeated values/containing folders.
+    std::unordered_map<std::string, std::string> m_alternateSortKeys;
+    std::optional<SortField> m_preparedSortField;
     std::vector<EntryId> m_rows;
     std::unordered_map<EntryId, EntryId> m_treeParents;
     std::unordered_map<EntryId, std::size_t> m_positions;

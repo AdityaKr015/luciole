@@ -162,6 +162,102 @@ namespace {
     TEST_CHECK(reordered && reordered->front() == luciole::DetailsColumn::Owner);
   }
 
+  void testTextSortRefresh() {
+    auto a = entry(1, "item2"), b = entry(2, "item10"), c = entry(4, "item1"), unknown = entry(3, "zzz");
+    a.details.owner = "beta";
+    b.details.owner = c.details.owner = "alpha";
+    a.details.group = c.details.group = "group2";
+    b.details.group = "group10";
+    a.location = Location::fromPath("/tmp/z/item2");
+    b.location = Location::fromPath("/tmp/a/item10");
+    c.location = Location::fromPath("/tmp/a/item1");
+    unknown.location = Location::fromPath("/");
+    a.contentType = "text/plain";
+    b.contentType = c.contentType = "image/png";
+    DirectoryModel model;
+    model.applySnapshot(snapshot({unknown, b, c, a}));
+    TEST_CHECK(model.select(2) && model.setScrollAnchor(2));
+    const auto check = [&](SortField field, const std::vector<EntryId>& ascending,
+                           const std::vector<EntryId>& descending) {
+      model.setSort({field, false, false});
+      rows(model, ascending);
+      model.setSort({field, true, false});
+      rows(model, descending);
+      // A different key pool may have been selected since the prior visit to this field.
+      model.setSort({SortField::Size, false, false});
+      model.setSort({field, false, false});
+      rows(model, ascending);
+      TEST_CHECK(model.selection().focused == 2 && model.selection().anchor == 2 && model.scrollAnchor() == 2);
+      selected(model, {2});
+    };
+    check(SortField::Owner, {4, 2, 1, 3}, {1, 2, 4, 3});
+    check(SortField::Group, {4, 1, 2, 3}, {2, 1, 4, 3});
+    check(SortField::Type, {1, 4, 2, 3}, {2, 4, 1, 3});
+    check(SortField::Location, {4, 2, 1, 3}, {1, 2, 4, 3});
+
+    a.details.owner.reset();
+    b.details.owner = "zeta";
+    unknown.details.owner = ""; // Empty is known, not missing metadata.
+    b.details.group = "group1";
+    c.details.group.reset();
+    unknown.details.group = "";
+    b.displayName = "item0";
+    b.location = Location::fromPath("/tmp/0/item10");
+    a.contentType = unknown.contentType = "image/png";
+    b.contentType = "application/octet-stream";
+    c.contentType = "text/plain";
+    // Refresh while Location is already selected, with different source indices and parent values.
+    model.applySnapshot(snapshot({a, c, b, unknown}, 2));
+    rows(model, {2, 4, 1, 3});
+    check(SortField::Owner, {3, 4, 2, 1}, {2, 4, 3, 1});
+    check(SortField::Group, {3, 2, 1, 4}, {1, 2, 3, 4});
+    check(SortField::Type, {4, 1, 3, 2}, {3, 1, 4, 2});
+    check(SortField::Name, {2, 4, 1, 3}, {3, 1, 4, 2});
+    TEST_CHECK(model.entry(2)->name == "item10" && model.entry(2)->displayName == "item0");
+    // Removing IDs and adding a new row must not retain an old presentation by source index.
+    auto replacement = entry(9, "item3");
+    replacement.details.owner = "alpha";
+    model.applySnapshot(snapshot({replacement, b}, 3));
+    TEST_CHECK(model.entry(1) == nullptr && model.entry(3) == nullptr && model.entry(4) == nullptr);
+    rows(model, {2, 9});
+    model.setSort({SortField::Owner, false, false});
+    rows(model, {9, 2});
+  }
+
+  void testTextSortKeyPoolLifetime() {
+    constexpr EntryId count = 512;
+    std::vector<DirectoryEntry> entries;
+    entries.reserve(count);
+    for (EntryId id = 1; id <= count; ++id) {
+      auto item = entry(id, "café-" + std::to_string(id));
+      item.details.owner = "owner" + std::to_string(id);
+      item.details.group = "group" + std::to_string(count + 1 - id);
+      item.location = Location::fromPath("/tmp/folder" + std::to_string(id) + "/item");
+      entries.push_back(std::move(item));
+    }
+    std::ranges::reverse(entries);
+    DirectoryModel model;
+    model.applySnapshot(snapshot(std::move(entries)));
+    for (int pass = 0; pass < 2; ++pass) {
+      for (const auto field : {SortField::Owner, SortField::Group, SortField::Location}) {
+        for (const bool descending : {false, true}) {
+          model.setSort({field, descending, false});
+          const bool reverse = descending != (field == SortField::Group);
+          for (std::size_t i = 0; i < count; ++i) {
+            TEST_CHECK(model.rows()[i] == (reverse ? count - i : i + 1));
+          }
+          model.setFilter({.showHidden = false, .text = "CAFÉ"});
+          TEST_CHECK(model.rows().size() == count);
+          model.setFilter({});
+        }
+      }
+      auto refreshed = model.snapshot();
+      ++refreshed.generation;
+      std::ranges::reverse(refreshed.entries);
+      model.applySnapshot(std::move(refreshed));
+    }
+  }
+
   void testDetailsLayout() {
     const auto wide = luciole::DetailsColumns::forWidth(1000);
     TEST_CHECK(wide.contentWidth == 1000 && wide.nameWidth == 566 && wide.showType);
@@ -555,6 +651,8 @@ int main() {
     std::setlocale(LC_ALL, "C");
     testSortAndMetadata();
     testExtendedMetadataSort();
+    testTextSortRefresh();
+    testTextSortKeyPoolLifetime();
     testDetailsLayout();
     testDetailsColumnMoves();
     testDetailsColumnInsertion();
