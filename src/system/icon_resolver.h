@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <gio/gio.h>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -37,6 +38,8 @@ public:
   // legacy "prefer scalable, then largest" behavior for callers that have no size.
   const std::string& resolve(const std::string& iconName, int targetSize = 0);
 
+  // Caller owns the settings object; nullptr when the desktop schema is absent.
+  static GSettings* createThemeSettings();
   static bool checkThemeChanged();
   static bool checkThemePlanChanged();
   static void invalidateThemeContent();

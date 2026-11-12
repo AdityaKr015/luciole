@@ -1,0 +1,123 @@
+#include "event_loop/glib_poll_source.h"
+#include "fs/gio_interop.h"
+#include "imaging/pixbuf_image_decoder.h"
+#include "system/icon_resolver.h"
+#include "system/icon_theme_poll_source.h"
+#include "test_check.h"
+#include "thumbnails/file_icon_cache.h"
+
+#include <algorithm>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <functional>
+#include <memory>
+#include <string_view>
+
+namespace {
+  class Pump {
+  public:
+    void until(IconThemePollSource* icons, const std::function<bool()>& done) {
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+      while (!done()) {
+        TEST_CHECK(std::chrono::steady_clock::now() < deadline);
+        std::vector<pollfd> fds;
+        const auto glibStart = m_glib.addPollFds(fds);
+        const auto iconStart = icons != nullptr ? icons->addPollFds(fds) : fds.size();
+        int timeout = m_glib.pollTimeoutMs();
+        timeout = timeout < 0 ? 20 : std::min(timeout, 20);
+        if (icons != nullptr) {
+          timeout = std::min(timeout, icons->pollTimeoutMs());
+        }
+        TEST_CHECK(::poll(fds.data(), fds.size(), timeout) >= 0);
+        m_glib.dispatch(fds, glibStart);
+        if (icons != nullptr) {
+          icons->dispatch(fds, iconStart);
+        }
+      }
+    }
+
+  private:
+    GlibPollSource m_glib;
+  };
+
+  void writeColor(const std::filesystem::path& path, const std::string& color) {
+    std::ofstream(path)
+        << "<svg xmlns='http://www.w3.org/2000/svg' width='48' height='48'>"
+           "<path fill='"
+        << color
+        << "' d='M0 0h48v48H0z'/></svg>";
+  }
+
+  void run(const std::filesystem::path& root, bool hasSchema) {
+    Pump pump;
+    const luciole::GioPtr<GSettings> settings(IconResolver::createThemeSettings());
+    TEST_CHECK((settings != nullptr) == hasSchema);
+    if (settings) {
+      TEST_CHECK(g_settings_set_string(settings.get(), "icon-theme", "Red"));
+    }
+    luciole::FileIconCache cache;
+    const luciole::FileIconSource source{.names = {"folder"}, .filePath = {}, .desktopFile = {}};
+    auto watcher = std::make_unique<IconThemePollSource>();
+    int changes = 0;
+    watcher->setChangeCallback([&] {
+      ++changes;
+      cache.invalidate();
+    });
+    TEST_CHECK(IconResolver::activeThemeName() == (hasSchema ? "Red" : "Blue"));
+    auto image = cache.request(source, 48);
+    pump.until(watcher.get(), [&] { return image->ready; });
+    TEST_CHECK(image->pixels && image->pixels->rgba[hasSchema ? 0 : 2] == 255);
+
+    if (settings) {
+      TEST_CHECK(g_settings_set_string(settings.get(), "icon-theme", "Blue"));
+      pump.until(watcher.get(), [&] { return changes > 0; });
+    } else {
+      std::ofstream(root / "config/gtk-3.0/settings.ini") << "[Settings]\ngtk-icon-theme-name=Red\n";
+      pump.until(watcher.get(), [&] { return changes > 0; });
+    }
+    const auto switched = cache.request(source, 48);
+    TEST_CHECK(switched != image);
+    pump.until(watcher.get(), [&] { return switched->ready; });
+    TEST_CHECK(switched->pixels && switched->pixels->rgba[hasSchema ? 2 : 0] == 255);
+    const std::string current = hasSchema ? "Blue" : "Red";
+    const auto artwork = root / "data/icons" / current / "scalable/places/folder.svg";
+    for (const bool atomic : {false, true}) {
+      const auto before = changes;
+      const auto path = atomic ? artwork.parent_path() / "replacement.tmp" : artwork;
+      writeColor(path, atomic ? "#0000ff" : "#00ff00");
+      if (atomic) {
+        std::filesystem::rename(path, artwork);
+      }
+      pump.until(watcher.get(), [&] { return changes > before; });
+      image = cache.request(source, 48);
+      pump.until(watcher.get(), [&] { return image->ready; });
+      TEST_CHECK(image->pixels && image->pixels->rgba[atomic ? 2 : 1] == 255);
+    }
+    if (settings) {
+      const auto before = changes;
+      std::ofstream(root / "config/gtk-3.0/settings.ini") << "[Settings]\ngtk-icon-theme-name=Red\n";
+      TEST_CHECK(g_settings_set_string(settings.get(), "icon-theme", "Missing"));
+      pump.until(watcher.get(), [&] { return changes > before; });
+      TEST_CHECK(IconResolver::activeThemeName() == "Red");
+      // Pending settings notifications cannot reach a destroyed watcher.
+      TEST_CHECK(g_settings_set_string(settings.get(), "icon-theme", "Red"));
+      watcher.reset();
+      bool dispatched = false;
+      g_idle_add(
+          +[](gpointer data) -> gboolean {
+            *static_cast<bool*>(data) = true;
+            return G_SOURCE_REMOVE;
+          },
+          &dispatched
+      );
+      pump.until(nullptr, [&] { return dispatched; });
+    }
+  }
+} // namespace
+
+int main(int argc, char* argv[]) {
+  TEST_CHECK(argc == 3);
+  luciole::installPixbufImageDecoder();
+  run(argv[1], std::string_view(argv[2]) == "schema");
+}

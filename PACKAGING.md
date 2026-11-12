@@ -97,6 +97,7 @@ The linked libraries need their ordinary runtime packages. The following data, p
 | Fontconfig and usable text fonts              | Application text; the bundled glyph font does not replace ordinary fonts           |
 | Shared MIME database                          | Type descriptions, application associations and provider format detection          |
 | Icon theme                                    | File, folder and application artwork; the Nix wrapper supplies Adwaita             |
+| Desktop settings schemas and GSettings backend | `org.gnome.desktop.interface` icon-theme selection and live changes; normally gsettings-desktop-schemas and dconf |
 | Glycin loaders                                | Raster images in thumbnails, previews and metadata                                 |
 | Session D-Bus and GVfs                        | Trash and supported mounted remote locations                                       |
 | `glib-networking`                             | GIO TLS implementation for secure WebDAV                                           |
@@ -212,6 +213,8 @@ nix build path:.#default
 nix develop path:. -c just build debug
 nix flake check path:.
 ```
+
+The wrapper and development shell expose the desktop settings schema through `XDG_DATA_DIRS` and dconf through `GIO_EXTRA_MODULES`. Without the schema, icon selection falls back to GTK settings.ini, which can name an older theme. Native packages should expose the corresponding schema/backend using their normal desktop integration. Tests additionally require `glib-compile-schemas` for private schema fixtures.
 
 The wrapper supplies runtime helper paths, GVfs/TLS modules, Glycin loader data, the shared MIME database and Adwaita icons without requiring the Noctalia shell. Assets use the package's own compiled store path. Home Manager and hjem can generate `config.toml` from an attribute set, TOML string or file path and validate it at build time when a package is selected. Their empty default settings leave the base file absent. GUI overrides stay separate. The NixOS module installs the selected package; none of these modules installs an always-running Luciole service or changes the default file manager.
 

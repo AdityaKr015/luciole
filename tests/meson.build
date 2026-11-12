@@ -4,6 +4,7 @@ gio_env = ['G_DEBUG=fatal-warnings', 'GIO_USE_VFS=local']
 python = import('python').find_installation('python3')
 # The launcher suite starts its own private bus, never the desktop session bus.
 find_program('dbus-daemon')
+find_program('glib-compile-schemas')
 
 activation_server = custom_target('launch-activation-server-header',
   input: protocol_root / 'staging/xdg-activation/xdg-activation-v1.xml',
@@ -35,6 +36,7 @@ test_table = [
   {'name': 'provider-transfer', 'deps': [operations_dep, event_loop_dep], 'env': gio_env},
   {'name': 'transfer-service', 'deps': [operations_dep, event_loop_dep], 'timeout': 90, 'env': gio_env},
   {'name': 'places', 'deps': [browser_dep, event_loop_dep], 'env': gio_env},
+  {'name': 'icon-theme', 'deps': [thumbnails_dep, imaging_dep, system_dep, event_loop_dep], 'wrapper': files('icon_theme_test.py')},
   {'name': 'file-icon', 'deps': [thumbnails_dep, imaging_dep, system_dep, event_loop_dep], 'env': gio_env},
   {'name': 'file-tooltip', 'deps': [ui_dep, fs_dep, event_loop_dep], 'env': gio_env},
   {'name': 'view-preference-writer', 'deps': [config_dep, event_loop_dep], 'env': ['G_DEBUG=fatal-warnings']},

@@ -241,25 +241,7 @@ namespace {
   };
 
   GSettings* iconSettings() {
-    static std::unique_ptr<GSettings, GSettingsDeleter> settings = [] {
-      GSettingsSchemaSource* source = g_settings_schema_source_get_default();
-      if (source == nullptr) {
-        return std::unique_ptr<GSettings, GSettingsDeleter>{nullptr};
-      }
-
-      GSettingsSchema* schema = g_settings_schema_source_lookup(source, "org.gnome.desktop.interface", TRUE);
-      if (schema == nullptr) {
-        return std::unique_ptr<GSettings, GSettingsDeleter>{nullptr};
-      }
-
-      const bool hasIconThemeKey = g_settings_schema_has_key(schema, "icon-theme") != FALSE;
-      g_settings_schema_unref(schema);
-      if (!hasIconThemeKey) {
-        return std::unique_ptr<GSettings, GSettingsDeleter>{nullptr};
-      }
-
-      return std::unique_ptr<GSettings, GSettingsDeleter>{g_settings_new("org.gnome.desktop.interface")};
-    }();
+    static std::unique_ptr<GSettings, GSettingsDeleter> settings{IconResolver::createThemeSettings()};
     return settings.get();
   }
 
@@ -563,6 +545,7 @@ namespace {
     if (!state.initialized) {
       state.plan = buildThemePlan();
       state.initialized = true;
+      kLog.debug("active icon theme: {}", state.plan.activeTheme);
     }
   }
 
@@ -577,6 +560,7 @@ namespace {
         || (includeContentChanges && next.contentSignature != state.plan.contentSignature);
     state.plan = std::move(next);
     if (changed) {
+      kLog.debug("icon theme refreshed: {}", state.plan.activeTheme);
       ++state.generation;
     }
     return changed;
@@ -587,6 +571,21 @@ namespace {
 IconResolver::IconResolver(bool cacheMissing) : m_cacheMissing(cacheMissing) { rebuild(); }
 
 IconResolver::IconResolver() : IconResolver(false) {}
+
+GSettings* IconResolver::createThemeSettings() {
+  GSettingsSchemaSource* source = g_settings_schema_source_get_default();
+  GSettingsSchema* schema =
+      source != nullptr ? g_settings_schema_source_lookup(source, "org.gnome.desktop.interface", TRUE) : nullptr;
+  if (schema == nullptr) {
+    kLog.debug("desktop settings schema unavailable; using GTK icon-theme fallback");
+    return nullptr;
+  }
+  GSettings* settings = g_settings_schema_has_key(schema, "icon-theme") != FALSE
+      ? g_settings_new_full(schema, nullptr, nullptr)
+      : nullptr;
+  g_settings_schema_unref(schema);
+  return settings;
+}
 
 bool IconResolver::checkThemeChanged() {
   auto& state = iconThemeState();

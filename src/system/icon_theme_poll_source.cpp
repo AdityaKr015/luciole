@@ -63,7 +63,27 @@ struct IconThemePollSource::Impl {
   bool contentPending = false;
   bool metadataPending = false;
 
-  Impl() { resetWatches(); }
+  GSettings* settings = IconResolver::createThemeSettings();
+
+  Impl() {
+    if (settings != nullptr) {
+      g_signal_connect(
+          settings, "changed::icon-theme",
+          G_CALLBACK(+[](GSettings*, gchar*, gpointer data) { static_cast<Impl*>(data)->queueChange(false, true); }),
+          this
+      );
+      // GSettings notifications require a read after connecting the handler.
+      g_free(g_settings_get_string(settings, "icon-theme"));
+    }
+    resetWatches();
+  }
+
+  ~Impl() {
+    if (settings != nullptr) {
+      g_signal_handlers_disconnect_by_data(settings, this);
+      g_object_unref(settings);
+    }
+  }
 
   void resetWatches() {
     for (const auto& watch : watches) {

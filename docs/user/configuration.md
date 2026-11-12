@@ -40,6 +40,10 @@ luciole config validate /path/to/config.toml
 
 `schema_version` is optional; when present it must be integer `1`.
 
+## Icon theme
+
+File and folder artwork follows the desktop icon theme. Theme selection changes and edits to active SVG/PNG artwork refresh automatically. If desktop settings support is unavailable, Luciole uses the icon theme named by GTK settings.ini. Nix users need a fresh development shell after updating runtime dependencies.
+
 ## Browser preferences
 
 All keys below belong in `[browser]`. Dimensions are logical pixels unless stated otherwise. View, grid zoom and sorting choices become defaults for new pages; existing pages retain their visit state. Interaction, sidebar, thumbnail and preview preferences apply across the application.

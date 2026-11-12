@@ -16,6 +16,8 @@
   cairo,
   glib,
   glib-networking,
+  gsettings-desktop-schemas,
+  dconf,
   dbus,
   gvfs,
   pango,
@@ -125,7 +127,10 @@ stdenv.mkDerivation (finalAttrs: {
     makeWrapper
   ];
 
-  nativeCheckInputs = [ dbus ];
+  nativeCheckInputs = [
+    dbus
+    glib
+  ];
 
   buildInputs = [
     wayland
@@ -173,9 +178,10 @@ stdenv.mkDerivation (finalAttrs: {
         lib.makeSearchPath "lib/gio/modules" [
           gvfs
           glib-networking
+          dconf.lib
         ]
       }" \
-      --suffix XDG_DATA_DIRS : "${
+      --suffix XDG_DATA_DIRS : "${glib.getSchemaDataDirPath gsettings-desktop-schemas}:${
         lib.makeSearchPath "share" [
           adwaita-icon-theme
           shared-mime-info

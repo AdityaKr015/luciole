@@ -18,6 +18,10 @@ Preserve PrepareFrame → Update → Layout → Render.
 
 Callbacks schedule the required phase. They do not synchronously rebuild a scene from an arbitrary worker or input callback. Virtual cells release work when hidden, retired or rebound; bounded pooling must not retain every file in a large directory.
 
+## Icon theme updates
+
+Luciole owns icon selection and monitoring in `src/system/icon_resolver.*` and `icon_theme_poll_source.*`. Desktop GSettings selects the theme when its schema is available; GTK settings.ini provides a fallback. The main-loop watcher observes `changed::icon-theme`, reads the key after connecting, and debounces selection changes alongside existing artwork file watches. Accepted changes invalidate the application icon cache and rebind browser artwork. GSettings objects are optional when the schema is absent; observer teardown disconnects callbacks. The `icon-theme` suite uses private schemas/settings and artwork to exercise selection, fallback, live changes and file replacement.
+
 ## Thumbnail and preview pipeline
 
 [ThumbnailService](../../src/thumbnails/thumbnail_service.h) owns bounded generation requests, revisions, visibility priority and cancellation. [PreviewService](../../src/thumbnails/preview_service.h) requests appropriate preview content. Their generation policy, freedesktop disk store and FFmpeg/Poppler providers remain Luciole-owned.
