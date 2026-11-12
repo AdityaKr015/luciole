@@ -6,6 +6,7 @@
 #include "operations/copy_history_tree.h"
 #include "operations/creation_stage.h"
 #include "operations/history_revisions.h"
+#include "operations/provider_copy_receipt.h"
 #include "operations/transfer_copy.h"
 
 #include <algorithm>
@@ -826,8 +827,15 @@ std::vector<luciole::TransferResult> luciole::CopyReceipt::unconfirmed(const Fil
   }
   return results;
 }
-bool luciole::CopyReceipt::cleanupPending() { return pendingCleanup.load() != 0; }
+bool luciole::CopyReceipt::cleanupPending() {
+  return pendingCleanup.load() != 0 || ProviderCopyReceipt::cleanupPending();
+}
 std::vector<luciole::FileError> luciole::CopyReceipt::takeCleanupErrors() {
   const std::scoped_lock lock(cleanupMutex);
-  return std::exchange(cleanupErrors, {});
+  auto errors = std::exchange(cleanupErrors, {});
+  auto providerErrors = ProviderCopyReceipt::takeCleanupErrors();
+  for (auto& error : providerErrors) {
+    errors.push_back(std::move(error));
+  }
+  return errors;
 }

@@ -3,6 +3,7 @@
 #include "fs/filename.h"
 #include "fs/gio_interop.h"
 #include "operations/copy_receipt.h"
+#include "operations/provider_copy_receipt.h"
 #include "operations/transfer_staging.h"
 
 #include <algorithm>
@@ -339,6 +340,13 @@ struct luciole::ProviderTransfer::State {
   TransferRequest request;
   std::vector<std::unique_ptr<Node>> roots;
   std::size_t entries = 0;
+  bool collectingRemote = false;
+  provider_history::Budget historyBudget;
+  std::vector<std::shared_ptr<const ProviderCopyEffect>> remoteEffects;
+  void disableRemoteHistory() {
+    collectingRemote = false;
+    remoteEffects.clear();
+  }
   explicit State(TransferRequest request) : request(std::move(request)) {}
 
   void download(Node& node, const Location& target, GFileInfo* parentInfo, GFileInfo* existing, transfer::Work& work) {
@@ -521,6 +529,7 @@ struct luciole::ProviderTransfer::State {
             throwFileError(FileErrorKind::Exists, "No unused destination filename was found.");
           }
         } else if (choice == TransferConflictChoice::Merge && request.allowMerge && folders) {
+          disableRemoteHistory();
           node.merged = true;
           node.result.destination = target;
           node.destinationStamp = std::move(existing);
@@ -533,6 +542,9 @@ struct luciole::ProviderTransfer::State {
         } else if (choice != TransferConflictChoice::Replace) {
           throwFileError(FileErrorKind::Unsupported, "The selected conflict action is unavailable.");
         }
+      }
+      if (existing && !node.merged) {
+        disableRemoteHistory();
       }
       if (node.merged) {
         unchanged(node.destinationStamp.get(), info(*node.result.destination, token).get(), false);
@@ -575,6 +587,18 @@ struct luciole::ProviderTransfer::State {
         const auto item = stage.child("item"), backup = stage.child("previous");
         copy(tree, item, token, bytes);
         validate(tree, token);
+        std::shared_ptr<const ProviderCopyEffect> remoteProof;
+        if (collectingRemote) {
+          try {
+            if (remoteEffects.size() == 128) {
+              disableRemoteHistory();
+            } else {
+              remoteProof = ProviderCopyEffect::prepare(target, item, historyBudget, token);
+            }
+          } catch (const FileErrorException&) {
+            disableRemoteHistory();
+          }
+        }
         unchanged(parent.get(), info(node.parent, token).get(), false);
         if (existing) {
           unchanged(existing.get(), info(target, token).get());
@@ -600,6 +624,14 @@ struct luciole::ProviderTransfer::State {
         node.result.destination = target;
         node.published = true;
         node.destinationStamp = info(target, token);
+        if (remoteProof && collectingRemote) {
+          try {
+            remoteProof->published(token);
+            remoteEffects.push_back(std::move(remoteProof));
+          } catch (const FileErrorException&) {
+            disableRemoteHistory();
+          }
+        }
         if (request.action == TransferAction::Move) {
           removeSource(tree, token);
         }
@@ -644,10 +676,14 @@ std::size_t luciole::ProviderTransfer::retryable() const {
 }
 std::vector<luciole::TransferResult> luciole::ProviderTransfer::run(
     const CancelToken& token, std::atomic<std::uint64_t>& bytes, std::atomic<std::size_t>& completed,
-    const Choose& choose, transfer::Work* nativeCopies
+    const Choose& choose, transfer::Work* nativeCopies, bool captureRemoteCopies
 ) {
   auto& state = *m_state;
+  if (!captureRemoteCopies) {
+    state.disableRemoteHistory();
+  }
   if (state.roots.empty()) {
+    state.collectingRemote = captureRemoteCopies && state.request.action == TransferAction::Copy;
     for (const auto& source : state.request.sources) {
       state.roots.push_back(std::make_unique<Node>(source, state.request.destination, state.roots.size()));
     }
@@ -699,4 +735,17 @@ std::optional<std::size_t> luciole::ProviderTransfer::completedCopies() const {
     count += *copied;
   }
   return count;
+}
+
+std::shared_ptr<const luciole::CopyReceipt> luciole::ProviderTransfer::takeCopyReceipt(const CancelToken& token) {
+  const auto count = completedCopies();
+  auto effects = std::move(m_state->remoteEffects);
+  const bool complete = std::exchange(m_state->collectingRemote, false) && count && *count == effects.size();
+  if (complete) {
+    try {
+      return ProviderCopyReceipt::capture(effects, token);
+    } catch (const FileErrorException&) { /* Optional history does not change completed copy outcomes. */
+    }
+  }
+  return {};
 }

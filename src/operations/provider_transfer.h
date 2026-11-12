@@ -11,6 +11,7 @@ namespace luciole {
   namespace transfer {
     struct Work;
   }
+  class CopyReceipt;
   // Worker-owned state for jobs involving a verified GIO remote provider.
   class ProviderTransfer {
   public:
@@ -20,7 +21,8 @@ namespace luciole {
     // Local destinations can reuse native publication/history hooks; remote targets and moves ignore them.
     std::vector<TransferResult>
     run(const CancelToken& token, std::atomic<std::uint64_t>& bytes, std::atomic<std::size_t>& completed,
-        const Choose& choose, transfer::Work* nativeCopies = nullptr);
+        const Choose& choose, transfer::Work* nativeCopies = nullptr, bool captureRemoteCopies = false);
+    std::shared_ptr<const CopyReceipt> takeCopyReceipt(const CancelToken& token);
     // Counts committed leaves, excluding merges/skips, only when the whole selection completed.
     std::optional<std::size_t> completedCopies() const;
     std::size_t retryable() const;

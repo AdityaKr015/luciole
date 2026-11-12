@@ -417,6 +417,27 @@ namespace {
         && std::ranges::all_of(job.nodes, [&](const auto& node) { return !node || completeCopy(completeCopy, *node); });
     return copiesComplete ? std::optional(copied) : std::nullopt;
   }
+  bool
+  completedMoves(const Job& job, const std::vector<TransferResult>& outcomes, std::size_t& moved, std::size_t& merged) {
+    const auto countMove = [&](auto&& self, const Node& node) -> bool {
+      if (node.result.error
+          || (node.result.outcome != TransferOutcome::Moved && node.result.outcome != TransferOutcome::Skipped)) {
+        return false;
+      }
+      if (node.result.outcome == TransferOutcome::Moved) {
+        node.merging ? ++merged : ++moved;
+      }
+      return std::ranges::all_of(node.children, [&](const auto& child) { return self(self, *child); });
+    };
+    return std::ranges::all_of(
+               outcomes,
+               [](const auto& result) {
+                 return !result.error
+                     && (result.outcome == TransferOutcome::Moved || result.outcome == TransferOutcome::Skipped);
+               }
+           )
+        && std::ranges::all_of(job.nodes, [&](const auto& node) { return !node || countMove(countMove, *node); });
+  }
   Fd copyHistoryParent(const Location& destination) {
     const auto root = destination.nativePath();
     if (!root) {
@@ -685,7 +706,10 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
                     const auto answer = owner->gate.ask(std::move(conflict), token, [owner] { State::notify(owner); });
                     return answer ? answer->choice : TransferConflictChoice::Cancel;
                   },
-                  &work
+                  &work,
+                  !retry
+                      && job->request.action == TransferAction::Copy
+                      && job->request.destination.uri().starts_with("sftp:")
               )
             : retry ? retryJob(*job, work, owner->completed)
                     : runFirst(*job, work, owner->completed);
@@ -694,27 +718,7 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
         std::shared_ptr<const MoveReceipt> receipt;
         std::shared_ptr<const CopyReceipt> copyReceipt;
         std::size_t moved = 0, merged = 0;
-        const auto completeMove = [&](auto&& self, const Node& node) -> bool {
-          if (node.result.error
-              || (node.result.outcome != TransferOutcome::Moved && node.result.outcome != TransferOutcome::Skipped)) {
-            return false;
-          }
-          if (node.result.outcome == TransferOutcome::Moved) {
-            node.merging ? ++merged : ++moved;
-          }
-          return std::ranges::all_of(node.children, [&](const auto& child) { return self(self, *child); });
-        };
-        const bool movesComplete =
-            std::ranges::all_of(
-                outcomes,
-                [](const auto& result) {
-                  return !result.error
-                      && (result.outcome == TransferOutcome::Moved || result.outcome == TransferOutcome::Skipped);
-                }
-            )
-            && std::ranges::all_of(job->nodes, [&](const auto& node) {
-                 return !node || completeMove(completeMove, *node);
-               });
+        const bool movesComplete = completedMoves(*job, outcomes, moved, merged);
         bool moveCaptureChanged = false;
         if (!retry
             && !remote
@@ -763,6 +767,9 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
             // Successful effects remain successful if optional history cannot be captured.
             captureChanged = true;
           }
+        }
+        if (!copyReceipt && !retry && job->provider) {
+          copyReceipt = job->provider->takeCopyReceipt(token);
         }
         if (!copyReceipt && (captureChanged || !copied)) {
           for (const auto& prepared : preparedCopies) {
