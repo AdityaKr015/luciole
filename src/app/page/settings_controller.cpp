@@ -17,6 +17,11 @@
 #include <algorithm>
 #include <utility>
 
+namespace {
+  constexpr float kDialogWidth = 880.0F;
+  constexpr float kDialogHeight = 640.0F;
+} // namespace
+
 SettingsController::SettingsController(
     PageContext& page, luciole::ViewPreferenceWriter& preferences, luciole::ThumbnailService& thumbnails,
     WaylandConnection& connection, RenderContext& renderer, std::function<void()> clearThumbnails
@@ -44,6 +49,18 @@ void SettingsController::onFrame() {
       }
     }
   }
+}
+
+void SettingsController::layoutDialog(float width) {
+  if (!m_view) {
+    return;
+  }
+  const float height = std::min(kDialogHeight, static_cast<float>(m_page.surface().height()) - 64.0F);
+  if (width != m_view->width() || height != m_view->height()) {
+    closeSelectDropdown();
+  }
+  m_view->setCompact(width < 720.0F);
+  m_view->setSize(width, height);
 }
 
 void SettingsController::sync() {
@@ -84,8 +101,8 @@ void SettingsController::toggle() {
   m_view = root.get();
   sync();
   auto& surface = m_page.surface();
-  const float width = std::min(880.0F, static_cast<float>(surface.width()) - 32.0F);
-  const float height = std::min(640.0F, static_cast<float>(surface.height()) - 64.0F);
+  const float width = std::min(kDialogWidth, static_cast<float>(surface.width()) - 32.0F);
+  const float height = std::min(kDialogHeight, static_cast<float>(surface.height()) - 64.0F);
   m_view->setCompact(width < 720.0F);
   root->setSize(width, height);
   m_page.showPopup(
@@ -98,7 +115,8 @@ void SettingsController::toggle() {
     return;
   }
   m_page.activeDialog().bind(ActiveDialog::Kind::Settings, [this] { teardown(); });
-  m_page.setDialogSize(width, height);
+  // Keep the preferred width so a dialog opened in a small window can grow again.
+  m_page.setDialogSize(kDialogWidth, height);
   m_page.menuDispatcher().setFocusChangeCallback([this](InputArea*, InputArea* focused) {
     if (m_view) {
       m_view->reveal(focused);

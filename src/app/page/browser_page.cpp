@@ -2491,6 +2491,7 @@ void BrowserPage::showPopup(
           static_cast<std::uint32_t>(std::min(m_dialogWidth, static_cast<float>(m_surface->width()) - 32.0F));
       LayoutConstraints constraints;
       constraints.setExactWidth(static_cast<float>(width));
+      m_settingsController.layoutDialog(static_cast<float>(width));
       m_propertiesController.layoutDialog(static_cast<float>(width));
       m_batchRename.layoutDialog(static_cast<float>(width));
       m_dialogHeight = m_activeDialog.root()->measure(m_menuSurface->renderTarget().renderer(), constraints).height;

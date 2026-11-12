@@ -10,6 +10,10 @@ The worker serializes typed edits and reload requests, coalescing pending edits 
 
 File monitors follow canonical files, existing path components and resolved declarative targets. Coalesced events trigger worker reads; the read after watch installation closes the read/install gap. Callbacks publish during Update. Only relevant global changes should replace a live preference; an unrelated reload must not reset the current visit's view/zoom/history state. Ordinary close drains pending preference saves.
 
+## Settings layout
+
+[SettingsController](../../src/app/page/settings_controller.cpp) retains the preferred 880-pixel dialog width independently of the opening window size. The common popup layout in [BrowserPage](../../src/app/page/browser_page.cpp) calls `layoutDialog()` before measuring Settings on each requested layout. It reapplies the parent-constrained height up to 640 pixels and the compact navigation breakpoint. Parent configuration already requests popup layout and recenters the dialog. Resize the existing view so its category, scroll state, focus and drafts survive; dismiss an open select dropdown when its anchor geometry changes. Do not persist the temporarily constrained popup dimensions as its preferred size.
+
 ## Atomic writes
 
 [atomic_file.cpp](../../src/fs/atomic_file.cpp) implements anchored local transactions. Cooperating writers use a persistent advisory lock. Preserve that lock across ordinary cleanup; unlinking it can split writer coordination. New private directories use 0700 and data/temporary/lock files use 0600.
