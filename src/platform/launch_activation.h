@@ -23,6 +23,8 @@ namespace luciole {
         wl_surface* surface, wl_seat* seat, std::uint32_t serial, const std::string& appId,
         std::function<void(std::string)> completed
     );
+    // Asks the compositor to focus `surface` on behalf of the launch that issued `token`.
+    void activate(const std::string& token, wl_surface* surface);
 
   private:
     struct Pending;

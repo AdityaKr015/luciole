@@ -23,6 +23,7 @@ namespace luciole {
     void requestActivation(
         wl_surface* source, std::uint32_t serial, const std::string& appId, std::function<void(std::string)> completed
     );
+    void activate(const std::string& token, wl_surface* surface);
     void onGlobal(wl_registry*, std::uint32_t, std::string_view, std::uint32_t) override;
     void onGlobalRemove(std::uint32_t name) override;
     void releaseGlobals() override;

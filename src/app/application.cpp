@@ -1,9 +1,11 @@
 #include "app/application.h"
 
 #include "app/file_manager_service.h"
+#include "app/instance_service.h"
 #include "app/library_setup.h"
 #include "app/main_loop.h"
 #include "app/workspace_application.h"
+#include "browser/location_presentation.h"
 #include "clipboard/text_clipboard.h"
 #include "config/settings.h"
 #include "core/input/key_symbols.h"
@@ -12,6 +14,7 @@
 #include "event_loop/deferred_call_poll_source.h"
 #include "event_loop/glib_poll_source.h"
 #include "event_loop/timer_poll_source.h"
+#include "fs/gio_ptr.h"
 #include "platform/desktop_integration.h"
 #include "render/gl_shared_context.h"
 #include "render/render_context.h"
@@ -80,6 +83,15 @@ namespace {
     });
   }
 
+  // Relative arguments (`xdg-open .`) name paths under the launching shell's directory.
+  std::optional<luciole::Location> launchLocation(const std::optional<std::string>& text) {
+    if (!text) {
+      return std::nullopt;
+    }
+    const luciole::GString cwd(g_get_current_dir());
+    return luciole::resolveLocationText(*text, luciole::Location::fromPath(cwd.get()));
+  }
+
 } // namespace
 
 int luciole::runApplication(const std::optional<std::string>& initialLocation, bool fileManagerActivation) {
@@ -89,6 +101,20 @@ int luciole::runApplication(const std::optional<std::string>& initialLocation, b
   mallopt(M_ARENA_MAX, 2);
 #endif
   initLogLevelFromEnvironment();
+  std::optional<luciole::Location> location;
+  try {
+    location = launchLocation(initialLocation);
+  } catch (const std::exception& error) {
+    std::println(stderr, "luciole: {}", error.what());
+    return EXIT_FAILURE;
+  }
+  luciole::InstanceService instance;
+  if (!fileManagerActivation && instance.role() == luciole::InstanceService::Role::Secondary) {
+    const char* token = std::getenv("XDG_ACTIVATION_TOKEN");
+    if (instance.forward(location, token != nullptr ? token : "")) {
+      return EXIT_SUCCESS;
+    }
+  }
   initializeKeys();
   Input::setValidateKeyMatcher([](std::uint32_t sym, std::uint32_t modifiers) {
     return modifiers == 0 && KeySymbol::isEnter(sym);
@@ -127,8 +153,9 @@ int luciole::runApplication(const std::optional<std::string>& initialLocation, b
     WorkspaceApplication application(connection, renderer, textInput, clipboard, config.settings().browser);
     application.imageTextures().initialize(&graphics);
     if (!fileManagerActivation) {
-      application.start(initialLocation);
+      application.start(std::move(location));
     }
+    instance.setHandler([&application](const luciole::InstanceRequest& request) { application.open(request); });
     luciole::FileManagerService fileManager(
         [&application](const luciole::FileManagerRequest& request) { application.show(request); }, fileManagerActivation
     );
@@ -155,18 +182,20 @@ int luciole::runApplication(const std::optional<std::string>& initialLocation, b
     icons.setChangeCallback([&application] { application.iconsChanged(); });
     MainLoop loop(
         connection, {&deferred, &timers, &repeat, &glib, &icons, &application.imageTextures()},
-        [&application, &fileManager] {
+        [&application, &fileManager, &instance] {
           const bool running = application.running();
           if (fileManager.awaitingRequest()) {
             return g_stopRequested == 0;
           }
           if (!application.hasWindows()) {
             fileManager.release();
+            instance.release();
           }
           return running;
         }
     );
     loop.run();
+    instance.release();
     connection.setOutputChangeCallback({});
     connection.setPointerEventCallback({});
     connection.setKeyboardEventCallback({});

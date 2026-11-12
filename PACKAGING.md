@@ -21,7 +21,7 @@ Use the description from the Nix package metadata:
 | Homepage               | <https://github.com/noctalia-dev/luciole>                             |
 | Version                | [VERSION](VERSION), read by Meson                                     |
 | License                | MIT ([LICENSE](LICENSE)); preserve the bundled Tabler font notice too |
-| D-Bus interface / name | `org.freedesktop.FileManager1`                                        |
+| D-Bus names            | `org.freedesktop.FileManager1`; `dev.noctalia.luciole` (single instance) |
 
 Use **Luciole** as the display name and lowercase `luciole` for the command/package and application-owned paths. Nix modules expose `programs.luciole`; environment overrides use the `LUCIOLE_` prefix. There are no legacy-name aliases or automatic configuration/state migrations.
 
@@ -184,6 +184,8 @@ Do not leave that development override in an installed launcher. `DESTDIR` stage
 The generated `org.freedesktop.FileManager1.service` invokes the configured absolute binary path with `--file-manager-service`. Keep that path aligned with the installation prefix. Its graphical activation needs the session's Wayland environment.
 
 This is an on-demand session service, not an always-running background daemon. Installing it does not register an `inode/directory` MIME default. The generic service name can overlap another file manager's activation provider; handle provider selection through the distribution's packaging policy rather than silently overwriting another package's file.
+
+Luciole also owns its application name, `dev.noctalia.luciole`, and exports `org.freedesktop.Application` at `/dev/noctalia/luciole`. A later `luciole` launch hands its folder and `XDG_ACTIVATION_TOKEN` to the running process and exits. No service file is installed for that name; the desktop entry still starts the binary, which performs the handoff.
 
 ### Shell completions
 

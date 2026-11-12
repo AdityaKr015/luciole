@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/file_manager_service.h"
+#include "app/instance_service.h"
 #include "app/operation_hub.h"
 #include "app/page/browser_page.h"
 #include "app/palette_watcher.h"
@@ -60,7 +61,9 @@ public:
   SharedTextureCache& imageTextures();
 
   ~WorkspaceApplication();
-  void start(const std::optional<std::string>& initial);
+  void start(std::optional<luciole::Location> initial);
+  // Another launch of Luciole: one new window with a tab per location, focused with the launch's token.
+  void open(const luciole::InstanceRequest& request);
   // FileManager1 request: one new window, one tab per folder; items are selected in their parent.
   void show(const luciole::FileManagerRequest& request);
   bool hasWindows() const;

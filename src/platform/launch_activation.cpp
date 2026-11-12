@@ -49,6 +49,11 @@ void luciole::LaunchActivation::request(
   m_pending.emplace(token, std::move(pending));
   xdg_activation_token_v1_commit(token);
 }
+void luciole::LaunchActivation::activate(const std::string& token, wl_surface* surface) {
+  if (m_manager && surface && !token.empty()) {
+    xdg_activation_v1_activate(m_manager, token.c_str(), surface);
+  }
+}
 void luciole::LaunchActivation::finish(xdg_activation_token_v1* token, std::string value) {
   const auto found = m_pending.find(token);
   if (found == m_pending.end()) {

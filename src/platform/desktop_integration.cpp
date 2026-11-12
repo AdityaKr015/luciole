@@ -23,6 +23,12 @@ void luciole::DesktopIntegration::requestActivation(
   }
 }
 
+void luciole::DesktopIntegration::activate(const std::string& token, wl_surface* surface) {
+  if (m_activation) {
+    m_activation->activate(token, surface);
+  }
+}
+
 void luciole::DesktopIntegration::onGlobal(
     wl_registry* registry, std::uint32_t name, std::string_view interface, std::uint32_t version
 ) {

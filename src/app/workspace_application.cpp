@@ -167,18 +167,34 @@ WorkspaceApplication::~WorkspaceApplication() {
   m_pages.clear();
 }
 
-void WorkspaceApplication::start(const std::optional<std::string>& initial) {
+void WorkspaceApplication::start(std::optional<luciole::Location> initial) {
   const auto id = newWindow();
   if (!id) {
     throw std::runtime_error("Cannot create a Luciole window.");
   }
-  std::optional<luciole::Location> location;
-  if (initial) {
-    // Relative arguments (`xdg-open .`) name paths under the launching shell's directory.
-    const luciole::GString cwd(g_get_current_dir());
-    location = luciole::resolveLocationText(*initial, luciole::Location::fromPath(cwd.get()));
+  newTab(id, std::move(initial));
+}
+
+void WorkspaceApplication::open(const luciole::InstanceRequest& request) {
+  const auto window = newWindow();
+  if (!window) {
+    throw std::runtime_error("Cannot create a Luciole window.");
   }
-  newTab(id, std::move(location));
+  auto& host = *m_hosts.at(window);
+  luciole::TabId first = request.locations.empty() ? newTab(window, std::nullopt) : 0;
+  for (const auto& location : request.locations) {
+    const auto tab = newTab(window, location);
+    if (!tab) {
+      break;
+    }
+    first = first ? first : tab;
+  }
+  if (!first) {
+    host.surface.close();
+    throw std::runtime_error("Close a tab before opening another window.");
+  }
+  select(window, first);
+  m_connection.extension<luciole::DesktopIntegration>().activate(request.activationToken, host.surface.wlSurface());
 }
 
 void WorkspaceApplication::show(const luciole::FileManagerRequest& request) {

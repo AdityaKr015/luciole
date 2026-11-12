@@ -12,6 +12,8 @@ luciole 'file:///path/to/folder'
 
 Without an argument, Luciole opens Home. Supply one directory path or URI to start elsewhere. Remote locations require the corresponding installed GIO/GVfs backend and an already mounted/authenticated location. Luciole' own connect-to-server and credential dialogs are not implemented yet.
 
+Every window runs in one Luciole process. Starting `luciole` while it is already running opens a new window in that process, so additional windows cost far less memory than separate instances. A relative path names a folder under the directory where the command ran. The process exits when its last window closes.
+
 Use `luciole --help` for command syntax and `luciole --version` for the version and build revision. These commands do not open a window. Bash, Zsh and Fish completions are installed by the package; `luciole completions bash` also prints the Bash completion script.
 
 ## Build from the source directory
