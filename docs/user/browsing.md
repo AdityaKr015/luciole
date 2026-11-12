@@ -4,6 +4,8 @@
 
 The location bar shows clickable folder breadcrumbs. Double-click a breadcrumb or unused space in the bar to edit the path; Ctrl+L also starts editing. Tab accepts a path completion when one is available. Home and its descendants use Home as the breadcrumb root; you can still navigate above it.
 
+The mouse's Back and Forward side buttons navigate folder history, like the toolbar arrows or Alt+Left/Alt+Right. Each press navigates once; releasing the button does not navigate again. In split view, pressing a side button over a browsing pane focuses that pane and uses its own history. Over shared chrome, the active pane's history is used. Side buttons do not navigate behind an open dialog or during a captured drag, and do nothing when the corresponding history is empty.
+
 By default, typing while browsing starts a recursive filename search rooted in the current folder. The separate search field remains next to the location bar. Clear the query to return to the folder listing. Settings → General can change typing to name selection instead. Content search and an indexing service are not part of the current search.
 
 | Action | Shortcut |

@@ -38,6 +38,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <format>
+#include <linux/input-event-codes.h>
 #include <map>
 #include <memory>
 #include <string>
@@ -582,6 +583,36 @@ void WorkspaceApplication::pointer(const PointerEvent& event) {
         select(host->id, tab);
       }
       host->tabDrag = false;
+      return;
+    }
+  }
+  if (event.type == PointerEvent::Type::Button) {
+    // Wayland uses evdev codes, not GTK/X11's numbered mouse buttons.
+    const bool back = event.button == BTN_SIDE || event.button == BTN_BACK;
+    const bool forward = event.button == BTN_EXTRA || event.button == BTN_FORWARD;
+    if (back || forward) {
+      if (event.pressed && !host->pressedTab && !active.overlay()) {
+        auto target = window.active;
+        for (auto tab : host->mounted) {
+          if (m_pages.at(tab)->contains(x, y)) {
+            target = tab;
+            break;
+          }
+        }
+        auto& page = *m_pages.at(target);
+        if (!page.overlay()) {
+          if (target != window.active) {
+            m_model.focus(host->id, target);
+            host->surface.requestLayout();
+            prepare(*host);
+          }
+          const auto action = back ? luciole::BrowserAction::Back : luciole::BrowserAction::Forward;
+          PageContext& actions = page;
+          if (actions.actionState(action, actions.actionRequest(false)).enabled) {
+            actions.dispatchAction(action);
+          }
+        }
+      }
       return;
     }
   }
