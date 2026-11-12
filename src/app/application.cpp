@@ -23,6 +23,10 @@
 #include "wayland/wayland_connection.h"
 #include "xdg-shell-client-protocol.h"
 
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
+
 #include <array>
 #include <csignal>
 #include <cstdlib>
@@ -79,6 +83,11 @@ namespace {
 } // namespace
 
 int luciole::runApplication(const std::optional<std::string>& initialLocation, bool fileManagerActivation) {
+#ifdef __GLIBC__
+  // Every short-lived worker thread (GIO tasks, decoders, Mesa) would otherwise get its own arena and keep its freed
+  // memory resident; two arenas hold the same work with several MB less RSS.
+  mallopt(M_ARENA_MAX, 2);
+#endif
   initLogLevelFromEnvironment();
   initializeKeys();
   Input::setValidateKeyMatcher([](std::uint32_t sym, std::uint32_t modifiers) {
