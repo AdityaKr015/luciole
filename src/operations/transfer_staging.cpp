@@ -295,14 +295,14 @@ namespace luciole::transfer {
               );
             }
             if (replace) {
+              if (copyProof) {
+                // Preserve the displaced item even if alias validation rejects the handoff.
+                stage.keepContents();
+              }
               work.note(info(stage.fd(), "item"));
             }
             result.outcome = action == TransferAction::Link ? Linked : Copied;
             if (copyProof && work.recordCopy) {
-              if (replace) {
-                // A failed retention handoff must never delete the displaced destination.
-                stage.keepContents();
-              }
               work.recordCopy(copyProof, stage.fd());
             }
             if (action == TransferAction::Move) {

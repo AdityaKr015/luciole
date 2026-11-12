@@ -1,5 +1,7 @@
 #include "operations/transfer_copy.h"
 
+#include "operations/history_revisions.h"
+
 #include <cerrno>
 #include <cstring>
 #include <dirent.h>
@@ -264,10 +266,23 @@ namespace luciole::transfer {
 
   struct stat CopyWork::expected(const struct stat& original) const {
     const auto found = changedLinks.find({original.st_dev, original.st_ino});
-    return found != changedLinks.end() && sameContent(original, found->second) ? found->second : original;
+    const auto result = found != changedLinks.end() && sameContent(original, found->second) ? found->second : original;
+    return history ? history->expected(result) : result;
   }
 
-  void CopyWork::note(const struct stat& value) { changedLinks[{value.st_dev, value.st_ino}] = value; }
+  void CopyWork::note(const struct stat& value) {
+    if (history) {
+      history->observed(value, false);
+    }
+    changedLinks[{value.st_dev, value.st_ino}] = value;
+  }
+
+  void CopyWork::noteUnlinked(const struct stat& value) {
+    if (history) {
+      history->observed(value, true);
+    }
+    changedLinks[{value.st_dev, value.st_ino}] = value;
+  }
 
   void CopyWork::check() const {
     if (token.cancelled()) {
@@ -365,7 +380,7 @@ namespace luciole::transfer {
     if (::unlinkat(parent, tree.name.c_str(), folder ? AT_REMOVEDIR : 0) != 0) {
       fail("Could not remove copied source");
     }
-    work.note(statFd(pinned.get()));
+    work.noteUnlinked(statFd(pinned.get()));
   }
 
   void removeTemporary(int parent, const std::string& name, CopyWork& work) {
@@ -384,6 +399,6 @@ namespace luciole::transfer {
     if (::unlinkat(parent, name.c_str(), folder ? AT_REMOVEDIR : 0) != 0) {
       fail("Could not clean temporary item");
     }
-    work.note(statFd(pinned.get()));
+    work.noteUnlinked(statFd(pinned.get()));
   }
 } // namespace luciole::transfer

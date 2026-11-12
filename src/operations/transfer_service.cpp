@@ -7,6 +7,7 @@
 #include "fs/posix_fd.h"
 #include "operations/conflict_gate.h"
 #include "operations/copy_receipt.h"
+#include "operations/history_revisions.h"
 #include "operations/move_receipt.h"
 #include "operations/provider_transfer.h"
 #include "operations/transfer_copy.h"
@@ -386,6 +387,33 @@ bool luciole::TransferService::retryFailed() {
 }
 namespace {
   using namespace luciole;
+  std::optional<std::size_t> completedCopies(const Job& job, const std::vector<TransferResult>& outcomes) {
+    std::size_t copied = 0;
+    const auto completeCopy = [&](auto&& self, const Node& node) -> bool {
+      if (node.result.error
+          || (node.result.outcome != TransferOutcome::Copied
+              && node.result.outcome != TransferOutcome::Linked
+              && node.result.outcome != TransferOutcome::Skipped)) {
+        return false;
+      }
+      if (!node.merging) {
+        copied +=
+            node.result.outcome == TransferOutcome::Copied || node.result.outcome == TransferOutcome::Linked ? 1 : 0;
+      }
+      return std::ranges::all_of(node.children, [&](const auto& child) { return self(self, *child); });
+    };
+    const bool copiesComplete = std::ranges::all_of(
+                                    outcomes,
+                                    [](const auto& result) {
+                                      return !result.error
+                                          && (result.outcome == TransferOutcome::Copied
+                                              || result.outcome == TransferOutcome::Linked
+                                              || result.outcome == TransferOutcome::Skipped);
+                                    }
+                                )
+        && std::ranges::all_of(job.nodes, [&](const auto& node) { return !node || completeCopy(completeCopy, *node); });
+    return copiesComplete ? std::optional(copied) : std::nullopt;
+  }
   // Worker-local optional history collection; prepared proofs outlive every source.
   struct MoveCapture {
     struct PreparedMove {
@@ -399,11 +427,12 @@ namespace {
     std::size_t budget, remaining = 16384;
     bool collecting;
     CancelToken token;
+    std::shared_ptr<HistoryRevisions> revisions;
     std::vector<std::shared_ptr<const MoveEffect>> moves;
     std::vector<PreparedMove> preparedMoves;
     std::vector<RetainedFolder> retainedFolders;
-    MoveCapture(std::size_t limit, CancelToken cancel)
-        : budget(limit), collecting(limit != 0), token(std::move(cancel)) {}
+    MoveCapture(std::size_t limit, CancelToken cancel, std::shared_ptr<HistoryRevisions> history)
+        : budget(limit), collecting(limit != 0), token(std::move(cancel)), revisions(std::move(history)) {}
     bool room() const { return moves.size() + preparedMoves.size() + retainedFolders.size() < budget; }
     void attach(Work& work) {
       if (collecting) {
@@ -413,7 +442,10 @@ namespace {
               collecting = false;
               return false;
             }
-            moves.push_back(MoveEffect::capture(source.location, destination, source.parent.get(), target, item));
+            revisions->renamed(source.metadata, statFd(item));
+            moves.push_back(
+                MoveEffect::capture(source.location, destination, source.parent.get(), target, item, revisions)
+            );
             return true;
           } catch (const FileErrorException&) {
             collecting = false;
@@ -425,7 +457,7 @@ namespace {
           if (collecting && room()) {
             try {
               auto proof = MoveEffect::prepareReplacement(
-                  source.location, destination, source.parent.get(), target, remaining, token
+                  source.location, destination, source.parent.get(), target, remaining, token, revisions
               );
               if (proof) {
                 preparedMoves.push_back({proof, source.index});
@@ -448,7 +480,7 @@ namespace {
         work.recordMerge = [&](const Source& source, const Location& folder, int target) {
           if (collecting && room() && remaining) {
             try {
-              auto proof = MoveFolder::retain(source.location, source.parent.get(), folder, target, token);
+              auto proof = MoveFolder::retain(source.location, source.parent.get(), folder, target, token, revisions);
               if (proof) {
                 --remaining;
                 retainedFolders.push_back({std::move(proof), source.index});
@@ -501,6 +533,8 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
             conflictAsker(owner->gate, [owner] { State::notify(owner); }, token, allowMerge, policies)
         };
         work.allowMerge = allowMerge;
+        auto revisions = std::make_shared<HistoryRevisions>();
+        work.history = revisions;
         std::vector<std::shared_ptr<const CopyEffect>> copies;
         struct PreparedCopy {
           std::shared_ptr<const CopyEffect> effect;
@@ -510,7 +544,7 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
         std::vector<PreparedCopy> preparedCopies;
         const auto budget = !retry ? transferHistoryBudget(job->request.action == TransferAction::Move ? 9 : 6) : 0;
         std::size_t remaining = 16384;
-        MoveCapture moveHistory(job->request.action == TransferAction::Move ? budget : 0, token);
+        MoveCapture moveHistory(job->request.action == TransferAction::Move ? budget : 0, token, revisions);
         moveHistory.attach(work);
         bool collectingCopies = budget && job->request.action != TransferAction::Move;
         if (collectingCopies) {
@@ -519,7 +553,7 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
             if (collectingCopies) {
               try {
                 if (preparedCopies.size() < budget) {
-                  auto proof = CopyEffect::prepare(destination, parent, stage, replacing, remaining, token);
+                  auto proof = CopyEffect::prepare(destination, parent, stage, replacing, remaining, token, revisions);
                   preparedCopies.push_back({proof, source.index});
                   return proof;
                 }
@@ -600,7 +634,7 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
             for (const auto& retained : moveHistory.retainedFolders) {
               folders.push_back(retained.effect);
             }
-            receipt = MoveReceipt::capture(moveHistory.moves, job->changedLinks, folders);
+            receipt = MoveReceipt::capture(moveHistory.moves, folders);
           } catch (const FileErrorException&) {
             moveCaptureChanged = true;
           }
@@ -626,34 +660,9 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
             retain(retained);
           }
         }
-        std::size_t copied = 0;
-        const auto completeCopy = [&](auto&& self, const Node& node) -> bool {
-          if (node.result.error
-              || (node.result.outcome != TransferOutcome::Copied
-                  && node.result.outcome != TransferOutcome::Linked
-                  && node.result.outcome != TransferOutcome::Skipped)) {
-            return false;
-          }
-          if (!node.merging) {
-            copied += node.result.outcome == TransferOutcome::Copied || node.result.outcome == TransferOutcome::Linked
-                ? 1
-                : 0;
-          }
-          return std::ranges::all_of(node.children, [&](const auto& child) { return self(self, *child); });
-        };
-        const bool copiesComplete = std::ranges::all_of(
-                                        outcomes,
-                                        [](const auto& result) {
-                                          return !result.error
-                                              && (result.outcome == TransferOutcome::Copied
-                                                  || result.outcome == TransferOutcome::Linked
-                                                  || result.outcome == TransferOutcome::Skipped);
-                                        }
-                                    )
-            && std::ranges::all_of(job->nodes,
-                                   [&](const auto& node) { return !node || completeCopy(completeCopy, *node); });
+        const auto copied = completedCopies(*job, outcomes);
         bool captureChanged = false;
-        if (!retry && !remote && collectingCopies && copiesComplete && copied > 0 && copied == copies.size()) {
+        if (!retry && !remote && collectingCopies && copied && *copied > 0 && *copied == copies.size()) {
           try {
             copyReceipt = CopyReceipt::capture(copies, job->request.action, token);
           } catch (const FileErrorException&) {
@@ -661,7 +670,7 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
             captureChanged = true;
           }
         }
-        if (!copyReceipt && (captureChanged || !copiesComplete)) {
+        if (!copyReceipt && (captureChanged || !copied)) {
           for (const auto& prepared : preparedCopies) {
             for (const auto& retained : prepared.effect->retainForRecovery()) {
               if (prepared.source < outcomes.size()) {

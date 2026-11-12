@@ -5,6 +5,7 @@
 #include "test_check.h"
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <glib.h>
@@ -409,8 +410,10 @@ namespace {
     auto job = workspace.hub.create<luciole::TransferService>(workspace.page);
     auto& service = job->service<luciole::TransferService>();
     TEST_CHECK(service.start({{fixture.at("tree")}, fixture.at("destination"), luciole::TransferAction::Copy}));
+    std::uint64_t answeredConflict = 0;
     pump.until([&] {
-      if (const auto conflict = service.conflict()) {
+      if (const auto conflict = service.conflict(); conflict && conflict->id != answeredConflict) {
+        answeredConflict = conflict->id;
         TEST_CHECK(service.resolve(
             conflict->id,
             conflict->canMerge ? luciole::TransferConflictChoice::Merge : luciole::TransferConflictChoice::Replace
@@ -466,8 +469,10 @@ namespace {
     auto job = workspace.hub.create<luciole::TransferService>(workspace.page);
     auto& service = job->service<luciole::TransferService>();
     TEST_CHECK(service.start({{fixture.at("tree")}, fixture.at("destination"), luciole::TransferAction::Move}));
+    std::uint64_t answeredConflict = 0;
     pump.until([&] {
-      if (const auto conflict = service.conflict()) {
+      if (const auto conflict = service.conflict(); conflict && conflict->id != answeredConflict) {
+        answeredConflict = conflict->id;
         TEST_CHECK(service.resolve(
             conflict->id,
             conflict->canMerge ? luciole::TransferConflictChoice::Merge : luciole::TransferConflictChoice::Replace
@@ -513,6 +518,56 @@ namespace {
     workspace.hub.detach(other);
   }
 
+  void repeatedTransferHistory(Pump& pump) {
+    for (const auto action : {luciole::TransferAction::Copy, luciole::TransferAction::Move}) {
+      Fixture fixture;
+      fs::create_directory(fixture.root / "one");
+      fs::create_directory(fixture.root / "two");
+      fixture.write("one/item");
+      fixture.write("two/item");
+      fixture.write("destination/item");
+      fs::create_hard_link(fixture.root / "destination/item", fixture.root / "alias");
+      Workspace workspace;
+      auto job = workspace.hub.create<luciole::TransferService>(workspace.page);
+      auto& service = job->service<luciole::TransferService>();
+      TEST_CHECK(service.start({{fixture.at("one/item"), fixture.at("two/item")}, fixture.at("destination"), action}));
+      std::uint64_t answeredConflict = 0;
+      pump.until([&] {
+        if (const auto conflict = service.conflict(); conflict && conflict->id != answeredConflict) {
+          answeredConflict = conflict->id;
+          TEST_CHECK(service.resolve(conflict->id, luciole::TransferConflictChoice::Replace));
+        }
+        return !workspace.hub.busy();
+      });
+      TEST_CHECK(workspace.hub.canUndo());
+      const auto otherWindow = workspace.model.addWindow(), other = workspace.model.addTab(otherWindow);
+      Owner otherOwner;
+      workspace.hub.attach(other, otherOwner);
+      job.reset();
+      TEST_CHECK(workspace.model.close(workspace.page));
+      workspace.hub.detach(workspace.page);
+      workspace.hub.update(otherWindow);
+      TEST_CHECK(workspace.hub.replayHistory(other, false));
+      pump.until([&] { return !workspace.hub.busy(); });
+      TEST_CHECK(workspace.hub.canRedo() && fs::equivalent(fixture.root / "destination/item", fixture.root / "alias"));
+      TEST_CHECK(fs::exists(fixture.root / "one/item") && fs::exists(fixture.root / "two/item"));
+      TEST_CHECK(workspace.hub.activities().front().state == ActivityState::Succeeded);
+      TEST_CHECK(workspace.hub.replayHistory(other, true));
+      pump.until([&] { return !workspace.hub.busy(); });
+      TEST_CHECK(workspace.hub.canUndo());
+      TEST_CHECK(workspace.hub.activities().front().state == ActivityState::Succeeded);
+      workspace.hub.shutdown();
+      pump.until([&] { return !workspace.hub.busy(); });
+      workspace.hub.detach(other);
+      for (const auto& path : fs::recursive_directory_iterator(fixture.root)) {
+        TEST_CHECK(!path.path().filename().native().starts_with(".luciole-create-"));
+      }
+      std::ifstream input(fixture.root / "alias");
+      std::string contents;
+      std::getline(input, contents);
+      TEST_CHECK(contents == "destination/item");
+    }
+  }
   void copyCleanupReport(Pump& pump) {
     Fixture fixture;
     fixture.write("a");
@@ -577,8 +632,10 @@ namespace {
     TEST_CHECK(service.retryFailed());
     live = workspace.hub.activities();
     TEST_CHECK(live.size() == 1 && live[0].id == job->id() && !live[0].finished);
+    std::uint64_t answeredConflict = 0;
     pump.until([&] {
-      if (auto conflict = service.conflict()) {
+      if (const auto conflict = service.conflict(); conflict && conflict->id != answeredConflict) {
+        answeredConflict = conflict->id;
         TEST_CHECK(service.resolve(conflict->id, luciole::TransferConflictChoice::Replace));
       }
       return !service.busy();
@@ -693,6 +750,7 @@ int main() {
   copyHistory(pump);
   replacementMergeHistory(pump);
   moveReplacementMergeHistory(pump);
+  repeatedTransferHistory(pump);
   copyCleanupReport(pump);
   pump.until([] { return !luciole::CopyReceipt::cleanupPending(); });
 }

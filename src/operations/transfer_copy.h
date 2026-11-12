@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <limits>
 #include <map>
+#include <memory>
 #include <string>
 #include <sys/stat.h>
 #include <utility>
@@ -16,6 +17,9 @@
 
 // Native-filesystem copy primitives for transfer jobs. Everything here runs on the
 // worker thread and works on descriptors relative to pinned parent folders.
+namespace luciole {
+  class HistoryRevisions;
+}
 namespace luciole::transfer {
   struct TransferCancelled : FileErrorException {
     TransferCancelled() : FileErrorException({.kind = FileErrorKind::Cancelled, .message = "Transfer cancelled."}) {}
@@ -41,6 +45,7 @@ namespace luciole::transfer {
     std::atomic<std::uint64_t>& bytes;
     // Metadata of items this job renamed or unlinked, so later checks accept the job's own changes.
     std::map<std::pair<dev_t, ino_t>, struct stat> changedLinks;
+    std::shared_ptr<HistoryRevisions> history;
     std::vector<char> buffer;
     bool metadataIncomplete = false;
     // Kernel copy paths the destination filesystem rejected; later files skip straight to the next one.
@@ -48,6 +53,7 @@ namespace luciole::transfer {
     bool rangeUnsupported = false;
     struct stat expected(const struct stat& original) const;
     void note(const struct stat& value);
+    void noteUnlinked(const struct stat& value);
     void check() const;
   };
 

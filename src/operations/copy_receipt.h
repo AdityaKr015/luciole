@@ -13,6 +13,7 @@
 
 namespace luciole {
   struct CopyStorage;
+  class HistoryRevisions;
   namespace transfer {
     struct Tree;
   }
@@ -27,7 +28,7 @@ namespace luciole {
   public:
     static std::shared_ptr<const CopyEffect> prepare(
         const Location& destination, int parent, int stage, bool replacing, std::size_t& remaining,
-        const CancelToken& token
+        const CancelToken& token, std::shared_ptr<HistoryRevisions> revisions = {}
     );
     std::shared_ptr<const CopyEffect> published(int from) const;
     bool replacing() const { return m_previous != nullptr; }
@@ -39,6 +40,8 @@ namespace luciole {
     friend class MoveFolder;
     friend class MoveReceipt;
     int item() const;
+    std::shared_ptr<HistoryRevisions> revisions() const;
+    void verifyAt(const CopyEffect& actual, const CancelToken& token) const;
     Location currentLocation() const;
     int parent() const;
     std::mutex& mutex() const;
@@ -51,8 +54,8 @@ namespace luciole {
         bool hidden, std::shared_ptr<const CopyEffect> previous = {}
     );
     static std::shared_ptr<const CopyEffect> prepareAt(
-        const Location& destination, int parent, int from, const std::string& name, bool previous,
-        std::size_t& remaining, const CancelToken& token
+        const Location& destination, int parent, int from, const std::string& name, std::size_t& remaining,
+        const CancelToken& token, std::shared_ptr<HistoryRevisions> revisions
     );
     bool ownsProof() const;
     void validate(const CancelToken& token) const;
@@ -82,5 +85,7 @@ namespace luciole {
     void retainIncomplete(std::vector<TransferResult>& results) const;
     std::vector<std::shared_ptr<const CopyEffect>> m_effects;
     TransferAction m_action = TransferAction::Copy;
+    std::shared_ptr<HistoryRevisions> m_revisions;
+    std::uint64_t m_generation = 0;
   };
 } // namespace luciole

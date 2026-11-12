@@ -264,6 +264,7 @@ void OperationHub::update(std::optional<luciole::WindowId> preferred) {
 void OperationHub::shutdown() {
   ++m_historyGeneration;
   m_copyReceipt.reset();
+  m_moveReceipt.reset();
   for (auto& [id, job] : m_jobs) {
     (void)id;
     if (job->kind() == JobKind::Archive) {
