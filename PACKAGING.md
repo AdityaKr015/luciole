@@ -101,7 +101,7 @@ The linked libraries need their ordinary runtime packages. GVfs and a session D-
 | Glycin loaders                                | Raster images in thumbnails, previews and metadata                                 |
 | Session D-Bus and GVfs                        | Required for Trash browsing, restore and emptying; additional backends enable remote locations |
 | `glib-networking`                             | GIO TLS implementation for secure WebDAV                                           |
-| `ffmpeg`, `ffprobe`                           | Video/audio artwork and media metadata                                             |
+| `ffmpeg`, `ffprobe`                           | Representative video frames, audio artwork and media metadata                        |
 | `pdftoppm`, `pdfinfo`                         | PDF thumbnails and metadata, normally supplied by Poppler utilities                |
 | `7zz`, `7z` or `7za`                          | System 7-Zip CLI for encrypted 7z input, searched in that order                    |
 | `xdg-terminal-exec`                           | Optional shared terminal preference/discovery for automatic terminal selection; explicit commands and known-terminal fallback also work |

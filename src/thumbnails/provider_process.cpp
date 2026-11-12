@@ -72,7 +72,7 @@ namespace {
 
 std::expected<void, std::string> luciole::runProviderProcess(
     std::vector<std::string> args, int input, GCancellable* cancellable, std::uint64_t fileBytes, unsigned maxCpus,
-    int output
+    int output, std::chrono::milliseconds timeout
 ) {
   if (g_cancellable_is_cancelled(cancellable)) {
     return std::unexpected("thumbnail request cancelled");
@@ -114,7 +114,7 @@ std::expected<void, std::string> luciole::runProviderProcess(
     return std::unexpected("cannot start thumbnail provider");
   }
   // Waiting occurs only on a thumbnail worker. The child is also CPU/address-space/output bounded.
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
   struct Wait {
     std::mutex mutex;
     std::condition_variable condition;

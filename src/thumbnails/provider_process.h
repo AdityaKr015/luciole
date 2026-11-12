@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <expected>
 #include <gio/gio.h>
@@ -11,6 +12,6 @@ namespace luciole {
   // Optional stdout capture duplicates the supplied descriptor; the caller retains ownership.
   std::expected<void, std::string> runProviderProcess(
       std::vector<std::string> args, int input, GCancellable* cancellable, std::uint64_t fileBytes = 8U * 1024U * 1024U,
-      unsigned maxCpus = 0, int output = -1
+      unsigned maxCpus = 0, int output = -1, std::chrono::milliseconds timeout = std::chrono::seconds(8)
   );
 } // namespace luciole

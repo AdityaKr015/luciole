@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <fstream>
 #include <gdk-pixbuf/gdk-pixbuf.h>
+#include <png.h>
 #include <print>
 #include <stdexcept>
 #include <sys/stat.h>
@@ -109,6 +110,112 @@ namespace {
     }
     throw std::runtime_error("missing thumbnail fixture");
   }
+  std::vector<std::uint8_t> sharedPng(luciole::ThumbnailPng thumbnail, int compression) {
+    std::vector<std::uint8_t> bytes;
+    auto* writer = png_create_write_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
+    TEST_CHECK(writer != nullptr);
+    auto* info = png_create_info_struct(writer);
+    TEST_CHECK(info != nullptr);
+    if (setjmp(png_jmpbuf(writer)) != 0) {
+      png_destroy_write_struct(&writer, &info);
+      throw std::runtime_error("cannot write shared-cache PNG fixture");
+    }
+    png_set_write_fn(
+        writer, &bytes,
+        [](png_structp stream, png_bytep data, png_size_t length) {
+          auto& result = *static_cast<std::vector<std::uint8_t>*>(png_get_io_ptr(stream));
+          result.insert(result.end(), data, data + length);
+        },
+        nullptr
+    );
+    png_set_IHDR(
+        writer, info, thumbnail.image.width, thumbnail.image.height, 8, PNG_COLOR_TYPE_RGBA, PNG_INTERLACE_NONE,
+        PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT
+    );
+    std::vector<png_text> fields;
+    for (auto& [key, value] : thumbnail.text) {
+      png_text field{};
+      field.compression = compression;
+      field.key = const_cast<char*>(key.c_str());
+      field.text = value.data();
+      field.text_length = value.size();
+      field.itxt_length = value.size();
+      fields.push_back(field);
+    }
+    png_set_text(writer, info, fields.data(), static_cast<int>(fields.size()));
+    png_write_info(writer, info);
+    for (int y = 0; y < thumbnail.image.height; ++y) {
+      png_write_row(writer, thumbnail.image.rgba.data() + static_cast<std::size_t>(y) * thumbnail.image.width * 4);
+    }
+    png_write_end(writer, info);
+    png_destroy_write_struct(&writer, &info);
+    return bytes;
+  }
+  void testSharedCacheInterop(const Fixture& fixture) {
+    Pump pump;
+    const auto path = fixture.root / "long-path-to-an-existing-third-party-thumbnail.png";
+    write(path, png(picture()));
+    const auto entry = source(path, pump);
+    luciole::ThumbnailStore store;
+    fs::create_directories(store.root() / "normal");
+    const auto target = store.root() / "normal" / luciole::ThumbnailStore::filename(entry.location.uri());
+    luciole::ThumbnailPng foreign{
+        .image = picture(),
+        .text = {
+            {"Thumb::URI", entry.location.uri()},
+            {"Thumb::MTime", std::to_string(*entry.modifiedSeconds)},
+            {"Thumb::Size", std::to_string(*entry.size)},
+            {"Software", "another file manager"}
+        }
+    };
+    std::ranges::fill(foreign.image.rgba, 220);
+    const GioPtr<GCancellable> cancel(g_cancellable_new());
+    for (const int compression : {PNG_TEXT_COMPRESSION_zTXt, PNG_ITXT_COMPRESSION_NONE, PNG_ITXT_COMPRESSION_zTXt}) {
+      const auto bytes = sharedPng(foreign, compression);
+      const auto decoded = luciole::readThumbnailPng(bytes, 128);
+      TEST_CHECK(decoded && decoded->text == foreign.text && decoded->image.rgba == foreign.image.rgba);
+      write(target, bytes);
+      struct stat before{}, after{};
+      TEST_CHECK(::lstat(target.c_str(), &before) == 0);
+      luciole::ThumbnailService service;
+      const auto asset = service.request(entry, 256);
+      pump.until([&] { return asset && asset->ready; });
+      TEST_CHECK(asset->pixels && asset->pixels->rgba == foreign.image.rgba);
+      TEST_CHECK(!store.read(entry.location.uri(), 256, *entry.modifiedSeconds, entry.size));
+      auto replacement = foreign;
+      replacement.image = picture();
+      store.write(std::move(replacement), 128, 16U * 1024U * 1024U, cancel.get());
+      TEST_CHECK(luciole::readThumbnailFile(target, 8U * 1024U * 1024U) == bytes);
+      TEST_CHECK(
+          ::lstat(target.c_str(), &after) == 0
+          && before.st_ino == after.st_ino
+          && before.st_mtim.tv_sec == after.st_mtim.tv_sec
+          && before.st_mtim.tv_nsec == after.st_mtim.tv_nsec
+      );
+      TEST_CHECK(store.clear().empty() && fs::exists(target));
+    }
+    {
+      luciole::ThumbnailService preview(luciole::ThumbnailPurpose::Preview);
+      const auto asset = preview.request(entry, 256);
+      pump.until([&] { return asset && asset->ready; });
+      TEST_CHECK(asset->pixels && asset->pixels->rgba != foreign.image.rgba);
+      pump.until([&] { return store.read(entry.location.uri(), 256, *entry.modifiedSeconds, entry.size).has_value(); });
+      TEST_CHECK(store.clear().empty() && fs::exists(target));
+    }
+    // A stale ownership record must not authorize replacing another application's newer file.
+    fs::remove(target);
+    store.write(foreign, 128, 16U * 1024U * 1024U, cancel.get());
+    fs::rename(target, target.string() + ".old");
+    const auto replacement = sharedPng(foreign, PNG_TEXT_COMPRESSION_zTXt);
+    write(target, replacement);
+    store.write(foreign, 128, 16U * 1024U * 1024U, cancel.get());
+    TEST_CHECK(luciole::readThumbnailFile(target, 8U * 1024U * 1024U) == replacement);
+    TEST_CHECK(store.clear().empty() && fs::exists(target));
+    auto oversized = foreign;
+    oversized.text["Description"] = std::string(131073, 'x');
+    TEST_CHECK(!luciole::readThumbnailPng(sharedPng(std::move(oversized), PNG_TEXT_COMPRESSION_zTXt), 128));
+  }
+
   void testCodecs() {
     const GioPtr<GCancellable> cancel(g_cancellable_new());
     const auto original = picture();
@@ -737,6 +844,91 @@ namespace {
     const auto elapsed = std::chrono::steady_clock::now() - timeoutStarted;
     TEST_CHECK(!still && elapsed >= 7s && elapsed < 12s);
   }
+  void testVideoFrameSelection(const Fixture& fixture) {
+    const auto intro = fixture.root / "black-intro.mp4";
+    command(
+        {"ffmpeg",
+         "-nostdin",
+         "-v",
+         "error",
+         "-f",
+         "lavfi",
+         "-i",
+         "color=c=black:s=96x48:r=10:d=2",
+         "-f",
+         "lavfi",
+         "-i",
+         "color=c=red:s=96x48:r=10:d=4",
+         "-filter_complex",
+         "[0:v][1:v]concat=n=2:v=1:a=0[v]",
+         "-map",
+         "[v]",
+         "-c:v",
+         "mpeg4",
+         "-g",
+         "600",
+         "-threads",
+         "1",
+         intro.native()}
+    );
+    const auto black = fixture.root / "all-black.mp4";
+    command(
+        {"ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=96x48:r=10:d=2", "-c:v", "mpeg4",
+         "-threads", "1", black.native()}
+    );
+    const GioPtr<GCancellable> cancel(g_cancellable_new());
+    const int descriptor = ::open(black.c_str(), O_RDONLY | O_CLOEXEC);
+    TEST_CHECK(descriptor >= 0);
+    auto dark = luciole::renderThumbnailProvider(descriptor, "video/mp4", 128, {}, cancel.get());
+    ::close(descriptor);
+    TEST_CHECK(dark && dark->rgba[0] < 12 && dark->rgba[1] < 12 && dark->rgba[2] < 12);
+    Pump pump;
+    const auto entry = source(intro, pump);
+    luciole::ThumbnailStore store;
+    auto old = picture();
+    std::ranges::fill(old.rgba, 0);
+    for (std::size_t i = 3; i < old.rgba.size(); i += 4) {
+      old.rgba[i] = 255;
+    }
+    store.write(
+        {.image = old,
+         .text =
+             {{"Thumb::URI", entry.location.uri()},
+              {"Thumb::MTime", std::to_string(*entry.modifiedSeconds)},
+              {"Thumb::Size", std::to_string(*entry.size)}}},
+        128, 16U * 1024U * 1024U, cancel.get()
+    );
+    luciole::ThumbnailService service;
+    const auto asset = service.request(entry, 128);
+    pump.until([&] { return asset && asset->ready; });
+    TEST_CHECK(asset->pixels && asset->pixels->rgba[0] > 200 && asset->pixels->rgba[1] < 20);
+    pump.until([&] {
+      const auto cached = store.read(entry.location.uri(), 128, *entry.modifiedSeconds, entry.size);
+      return cached
+          && cached->text.contains("X-Luciole::VideoVersion")
+          && cached->text.at("X-Luciole::VideoVersion") == luciole::kVideoThumbnailVersion;
+    });
+    const auto target = store.root() / "normal" / luciole::ThumbnailStore::filename(entry.location.uri());
+    fs::rename(target, target.string() + ".old");
+    luciole::ThumbnailPng foreign{
+        .image = picture(),
+        .text = {
+            {"Thumb::URI", entry.location.uri()},
+            {"Thumb::MTime", std::to_string(*entry.modifiedSeconds)},
+            {"Thumb::Size", std::to_string(*entry.size)},
+            {"Software", "ffmpegthumbnailer"}
+        }
+    };
+    const auto bytes = sharedPng(foreign, PNG_TEXT_COMPRESSION_zTXt);
+    write(target, bytes);
+    service.invalidate();
+    const auto reused = service.request(entry, 128);
+    pump.until([&] { return reused && reused->ready; });
+    TEST_CHECK(reused->pixels && reused->pixels->rgba == foreign.image.rgba);
+    pump.drain();
+    TEST_CHECK(luciole::readThumbnailFile(target, 8U * 1024U * 1024U) == bytes);
+  }
+
   void testSvgThumbnails(const Fixture& fixture) {
     const auto path = fixture.root / "vector café\n.svg";
     const auto linked = fixture.root / "linked.png";
@@ -1023,6 +1215,7 @@ int main(int argc, char** argv) {
       benchmarkThumbnails(std::string(args[1]), args.size() == 3 ? std::stoul(std::string(args[2])) : 48, videos);
       return 0;
     }
+    testSharedCacheInterop(fixture);
     testCodecs();
     testRasterFormats();
     testWorkerTransport();
@@ -1030,6 +1223,7 @@ int main(int argc, char** argv) {
     testCacheLimits();
     testBatchAndLargerCache();
     testProviders(fixture);
+    testVideoFrameSelection(fixture);
     testSvgThumbnails(fixture);
     testCacheLanesAndCancellation(fixture);
     testPublicationAndSourceChanges(fixture);

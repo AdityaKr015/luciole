@@ -1,13 +1,36 @@
 #include "thumbnails/thumbnail_codec.h"
 
+#include "fs/gio_ptr.h"
 #include "imaging/png_decoder.h"
 
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <gio/gio.h>
 #include <png.h>
 
 namespace {
+  constexpr std::size_t kMaxText = 131072;
+  std::expected<std::string, std::string> textValue(std::span<const std::uint8_t> data, bool compressed) {
+    if (!compressed) {
+      if (data.size() > kMaxText) {
+        return std::unexpected("oversized PNG metadata");
+      }
+      return std::string(reinterpret_cast<const char*>(data.data()), data.size());
+    }
+    const luciole::GioPtr<GZlibDecompressor> decoder(g_zlib_decompressor_new(G_ZLIB_COMPRESSOR_FORMAT_ZLIB));
+    std::string value(kMaxText + 1, '\0');
+    gsize consumed = 0, produced = 0;
+    const auto result = g_converter_convert(
+        G_CONVERTER(decoder.get()), data.data(), data.size(), value.data(), value.size(), G_CONVERTER_INPUT_AT_END,
+        &consumed, &produced, nullptr
+    );
+    if (result != G_CONVERTER_FINISHED || consumed != data.size() || produced > kMaxText) {
+      return std::unexpected("invalid or oversized compressed PNG metadata");
+    }
+    value.resize(produced);
+    return value;
+  }
   std::uint32_t read32(const std::uint8_t* p) {
     return (static_cast<std::uint32_t>(p[0]) << 24)
         | (static_cast<std::uint32_t>(p[1]) << 16)
@@ -46,6 +69,7 @@ luciole::readThumbnailPng(std::span<const std::uint8_t> bytes, int maxSide) {
   }
   ThumbnailPng result;
   bool ended = false, filter = false;
+  std::size_t textBytes = 0;
   const auto pixelChunk = [](std::string_view type, std::uint32_t length) {
     return type == "IHDR"
         || type == "IDAT"
@@ -67,18 +91,51 @@ luciole::readThumbnailPng(std::span<const std::uint8_t> bytes, int maxSide) {
     if (offset == 8 && (type != "IHDR" || length != 13)) {
       return std::unexpected("missing PNG header");
     }
-    if (type == "tEXt") {
-      if (length > 131072) {
+    if (type == "tEXt" || type == "zTXt" || type == "iTXt") {
+      if (length > kMaxText) {
         return std::unexpected("oversized PNG metadata");
       }
-      const auto* begin = reinterpret_cast<const char*>(p + 8);
-      const auto* split = static_cast<const char*>(std::memchr(begin, 0, length));
-      if (!split || split == begin || split - begin > 79 || result.text.size() >= 64) {
+      const auto data = bytes.subspan(offset + 8, length);
+      const auto split = std::ranges::find(data, 0);
+      const auto keySize = static_cast<std::size_t>(split - data.begin());
+      if (split == data.end() || keySize == 0 || keySize > 79 || result.text.size() >= 64) {
         return std::unexpected("invalid PNG metadata");
       }
-      if (!result.text.emplace(std::string(begin, split), std::string(split + 1, begin + length)).second) {
+      auto valueBytes = data.subspan(keySize + 1);
+      bool compressed = false;
+      if (type == "zTXt") {
+        if (valueBytes.empty() || valueBytes.front() != 0) {
+          return std::unexpected("invalid PNG text compression");
+        }
+        compressed = true;
+        valueBytes = valueBytes.subspan(1);
+      } else if (type == "iTXt") {
+        if (valueBytes.size() < 2 || valueBytes[0] > 1 || valueBytes[1] != 0) {
+          return std::unexpected("invalid international PNG text");
+        }
+        compressed = valueBytes[0] != 0;
+        valueBytes = valueBytes.subspan(2);
+        for (int field = 0; field < 2; ++field) {
+          const auto end = std::ranges::find(valueBytes, 0);
+          if (end == valueBytes.end()) {
+            return std::unexpected("invalid international PNG text");
+          }
+          valueBytes = valueBytes.subspan(static_cast<std::size_t>(end - valueBytes.begin()) + 1);
+        }
+      }
+      auto value = textValue(valueBytes, compressed);
+      if (!value || value->contains('\0') || textBytes + value->size() > 256U * 1024U) {
+        return std::unexpected("invalid or oversized PNG metadata");
+      }
+      if (type == "iTXt" && !g_utf8_validate(value->data(), static_cast<gssize>(value->size()), nullptr)) {
+        return std::unexpected("invalid international PNG text");
+      }
+      textBytes += value->size();
+      if (!result.text.emplace(std::string(reinterpret_cast<const char*>(data.data()), keySize), std::move(*value))
+               .second) {
         return std::unexpected("duplicate PNG metadata");
       }
+      filter = filter || type != "tEXt";
     } else if (!pixelChunk(type, length)) {
       if ((p[4] & 32U) == 0) {
         return std::unexpected("unsupported critical PNG chunk");

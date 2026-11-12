@@ -1,13 +1,121 @@
 #include "thumbnails/thumbnail_provider.h"
 
 #include "fs/gio_ptr.h"
+#include "fs/posix_fd.h"
 #include "thumbnails/provider_process.h"
 #include "thumbnails/thumbnail_codec.h"
 #include "thumbnails/thumbnail_store.h"
 #include "thumbnails/thumbnail_worker.h"
 
 #include <algorithm>
+#include <charconv>
+#include <chrono>
+#include <cmath>
+#include <fcntl.h>
 #include <filesystem>
+#include <optional>
+#include <unistd.h>
+
+namespace {
+  std::optional<double> videoDuration(int source, const std::filesystem::path& directory, GCancellable* cancel) {
+    const auto path = directory / "duration";
+    const luciole::Fd output(::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600));
+    if (!output.valid()
+        || !luciole::runProviderProcess(
+            {"ffprobe", "-v", "error", "-protocol_whitelist", "file,pipe", "-show_entries", "format=duration", "-of",
+             "default=noprint_wrappers=1:nokey=1", "/proc/self/fd/3"},
+            source, cancel, 4096, 1, output.get(), std::chrono::seconds(2)
+        )) {
+      return std::nullopt;
+    }
+    const auto bytes = luciole::readThumbnailFile(path, 4096);
+    if (!bytes || bytes->empty()) {
+      return std::nullopt;
+    }
+    const auto* begin = reinterpret_cast<const char*>(bytes->data());
+    double duration = 0;
+    const auto parsed = std::from_chars(begin, begin + bytes->size(), duration);
+    return parsed.ec == std::errc{} && std::isfinite(duration) && duration > 0 ? std::optional(duration) : std::nullopt;
+  }
+  bool darkFrame(const LoadedImageFile& image) {
+    std::size_t dark = 0;
+    const auto pixels = image.rgba.size() / 4;
+    for (std::size_t i = 0; i < image.rgba.size(); i += 4) {
+      dark += image.rgba[i] < 12 && image.rgba[i + 1] < 12 && image.rgba[i + 2] < 12;
+    }
+    return pixels != 0 && dark * 100 >= pixels * 98;
+  }
+  std::expected<LoadedImageFile, std::string> videoThumbnail(
+      int source, int side, const luciole::ThumbnailOptions& options, GCancellable* cancel,
+      const std::filesystem::path& output
+  ) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+    const auto duration = videoDuration(source, output.parent_path(), cancel);
+    const std::vector<double> positions =
+        duration && *duration >= 1 ? std::vector{*duration * 0.1, *duration / 3, 0.0} : std::vector{0.0};
+    std::optional<LoadedImageFile> dark;
+    std::string failure = "no video frame available";
+    for (const auto position : positions) {
+      if (g_cancellable_is_cancelled(cancel)) {
+        return std::unexpected("thumbnail request cancelled");
+      }
+      const auto remaining =
+          std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+      if (remaining <= std::chrono::milliseconds::zero()) {
+        break;
+      }
+      std::vector<std::string> arguments{
+          "ffmpeg",
+          "-nostdin",
+          "-v",
+          "error",
+          "-xerror",
+          "-threads",
+          "1",
+          "-max_pixels",
+          std::to_string(static_cast<std::uint64_t>(options.maxMegapixels) * 1'000'000U),
+          "-filter_threads",
+          "1",
+          "-protocol_whitelist",
+          "file,pipe"
+      };
+      if (position > 0) {
+        arguments.insert(arguments.end(), {"-ss", std::to_string(position)});
+      } else {
+        arguments.insert(arguments.end(), {"-skip_frame:v", "nokey"});
+      }
+      arguments.insert(
+          arguments.end(),
+          {"-i", "/proc/self/fd/3", "-map", "0:V:0", "-frames:v", "1", "-an", "-sn", "-threads", "1", "-vf",
+           "scale=" + std::to_string(side) + ':' + std::to_string(side) + ":force_original_aspect_ratio=decrease", "-y",
+           output.native()}
+      );
+      (void)::unlink(output.c_str());
+      const auto result =
+          luciole::runProviderProcess(std::move(arguments), source, cancel, 8U * 1024U * 1024U, 0, -1, remaining);
+      if (!result) {
+        failure = result.error();
+        continue;
+      }
+      const auto bytes = luciole::readThumbnailFile(output, 8U * 1024U * 1024U);
+      auto image = bytes ? luciole::readThumbnailPng(*bytes, side)
+                         : std::expected<luciole::ThumbnailPng, std::string>(std::unexpected("no video frame output"));
+      if (!image) {
+        failure = image.error();
+        continue;
+      }
+      if (!darkFrame(image->image)) {
+        return std::move(image->image);
+      }
+      if (dark) {
+        break;
+      }
+      dark = std::move(image->image);
+    }
+    // A genuinely dark video is still a valid preview; do not turn it into a missing thumbnail.
+    return dark ? std::expected<LoadedImageFile, std::string>(std::move(*dark)) : std::unexpected(failure);
+  }
+} // namespace
 
 std::expected<LoadedImageFile, std::string> luciole::renderThumbnailProvider(
     int sourceFd, const std::string& mime, int side, const ThumbnailOptions& options, GCancellable* cancellable
@@ -52,8 +160,9 @@ std::expected<LoadedImageFile, std::string> luciole::renderThumbnailProvider(
          (directory / "result").native()},
         sourceFd, cancellable
     );
-  } else if (mime.starts_with("video/") || mime.starts_with("audio/")) {
-    const bool video = mime.starts_with("video/");
+  } else if (mime.starts_with("video/")) {
+    return videoThumbnail(sourceFd, side, options, cancellable, output);
+  } else if (mime.starts_with("audio/")) {
     std::vector<std::string> arguments{
         "ffmpeg",
         "-nostdin",
@@ -69,16 +178,10 @@ std::expected<LoadedImageFile, std::string> luciole::renderThumbnailProvider(
         "-protocol_whitelist",
         "file,pipe"
     };
-    // A tiny still needs one keyframe, not a full-resolution multi-frame histogram.
-    // Starting at the beginning also works for very short and single-GOP clips.
-    if (video) {
-      arguments.insert(arguments.end(), {"-skip_frame:v", "nokey"});
-    }
     arguments.insert(
         arguments.end(),
-        {"-i", "/proc/self/fd/3", "-map", video ? "0:V:0" : "0:v:0", "-frames:v", "1", "-an", "-sn", "-threads", "1",
-         "-vf",
-         std::string(video ? "scale=" : "thumbnail=4,scale=")
+        {"-i", "/proc/self/fd/3", "-map", "0:v:0", "-frames:v", "1", "-an", "-sn", "-threads", "1", "-vf",
+         std::string("thumbnail=4,scale=")
              + std::to_string(side)
              + ':'
              + std::to_string(side)

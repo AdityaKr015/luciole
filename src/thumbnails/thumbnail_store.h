@@ -21,7 +21,7 @@ namespace luciole {
     static std::string filename(const std::string& uri);
     std::optional<ThumbnailPng> read(
         const std::string& uri, int side, std::uint64_t mtime, std::optional<std::uint64_t> size,
-        const std::string& stamp = {}
+        const std::string& stamp = {}, bool allowSmallerForeign = false
     );
     void write(ThumbnailPng thumbnail, int side, std::uint64_t budget, GCancellable* cancellable);
     // At most eight prepared images, committed under one ownership-ledger transaction.

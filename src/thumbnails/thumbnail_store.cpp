@@ -123,13 +123,24 @@ luciole::readThumbnailFile(const std::filesystem::path& path, std::size_t maximu
   return bytes;
 }
 std::optional<luciole::ThumbnailPng> luciole::ThumbnailStore::read(
-    const std::string& uri, int side, std::uint64_t mtime, std::optional<std::uint64_t> size, const std::string& stamp
+    const std::string& uri, int side, std::uint64_t mtime, std::optional<std::uint64_t> size, const std::string& stamp,
+    bool allowSmallerForeign
 ) {
   const auto leaf = filename(uri);
+  std::vector<int> sizes;
   for (const int cachedSide : {128, 256, 512, 1024}) {
-    if (cachedSide < side) {
-      continue;
+    if (cachedSide >= side) {
+      sizes.push_back(cachedSide);
     }
+  }
+  if (allowSmallerForeign) {
+    for (const int cachedSide : {1024, 512, 256, 128}) {
+      if (cachedSide < side) {
+        sizes.push_back(cachedSide);
+      }
+    }
+  }
+  for (const int cachedSide : sizes) {
     const auto bytes = readThumbnailFile(m_root / directory(cachedSide) / leaf, 8U * 1024U * 1024U);
     if (!bytes) {
       continue;
@@ -146,6 +157,9 @@ std::optional<luciole::ThumbnailPng> luciole::ThumbnailStore::read(
       continue;
     }
     if (!stamp.empty() && image->text.contains("X-Luciole::Stamp") && image->text.at("X-Luciole::Stamp") != stamp) {
+      continue;
+    }
+    if (cachedSide < side && image->text.contains("Software") && image->text.at("Software") == "Luciole") {
       continue;
     }
     if (std::max(image->image.width, image->image.height) > side) {
@@ -241,6 +255,24 @@ void luciole::ThumbnailStore::writeBatch(
             if (g_cancellable_is_cancelled(cancellable)) {
               break;
             }
+            // Shared-cache images can belong to another file manager, even if stale or unreadable.
+            // Never claim them merely because their URI hashes to the same destination.
+            const auto target = m_root / entry.name;
+            const auto owned =
+                std::ranges::find_if(index, [&](const auto& item) { return item["name"] == entry.name; });
+            struct stat previous{};
+            std::string previousIdentity;
+            if (::lstat(target.c_str(), &previous) == 0) {
+              if (owned == index.end()
+                  || !S_ISREG(previous.st_mode)
+                  || previous.st_uid != ::getuid()
+                  || cacheIdentity(previous) != (*owned)["identity"].template get<std::string>()) {
+                continue;
+              }
+              previousIdentity = cacheIdentity(previous);
+            } else if (errno != ENOENT) {
+              continue;
+            }
             for (auto it = index.begin(); it != index.end();) {
               if ((*it)["name"] == entry.name) {
                 bytes -= (*it)["bytes"].get<std::uint64_t>();
@@ -279,10 +311,18 @@ void luciole::ThumbnailStore::writeBatch(
               }
               offset += static_cast<std::size_t>(count);
             }
-            if (g_cancellable_is_cancelled(cancellable)
-                || ::rename(pattern.c_str(), (m_root / entry.name).c_str()) < 0) {
+            if (g_cancellable_is_cancelled(cancellable)) {
               (void)::unlink(pattern.c_str());
               break;
+            }
+            if (!previousIdentity.empty()) {
+              removeOwned(m_root, entry.name, previousIdentity);
+            }
+            // A competing publisher must not be overwritten between the ownership check and publication.
+            const bool published = ::link(pattern.c_str(), target.c_str()) == 0;
+            (void)::unlink(pattern.c_str());
+            if (!published) {
+              continue;
             }
             struct stat info{};
             if (::fstat(file.get(), &info) < 0) {

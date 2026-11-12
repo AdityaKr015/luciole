@@ -49,7 +49,7 @@ namespace {
   };
   LoadResult load(
       const luciole::DirectoryEntry& source, int side, const luciole::ThumbnailOptions& options, GCancellable* cancel,
-      bool generate
+      bool generate, luciole::ThumbnailPurpose purpose
   ) {
     using namespace luciole;
     LoadResult result;
@@ -57,7 +57,10 @@ namespace {
     const auto native = source.location.nativePath();
     if (!native) {
       if (options.policy == ThumbnailPolicy::All && source.modifiedSeconds) {
-        if (auto cached = store.read(source.location.uri(), side, *source.modifiedSeconds, source.size)) {
+        if (auto cached = store.read(
+                source.location.uri(), side, *source.modifiedSeconds, source.size, {},
+                purpose == ThumbnailPurpose::Thumbnail
+            )) {
           result.image.pixels = std::make_shared<const LoadedImageFile>(std::move(cached->image));
         }
       }
@@ -126,13 +129,20 @@ namespace {
     if (!generate && !insideCache && side <= 1024) {
       if (auto cached = store.read(
               source.location.uri(), side, static_cast<std::uint64_t>(before.st_mtim.tv_sec),
-              static_cast<std::uint64_t>(before.st_size), sourceStamp
+              static_cast<std::uint64_t>(before.st_size), sourceStamp, purpose == ThumbnailPurpose::Thumbnail
           )) {
-        struct stat after{};
-        if (::fstat(file.get(), &after) == 0 && stamp(after) == sourceStamp && !g_cancellable_is_cancelled(cancel)) {
-          result.image.pixels = std::make_shared<const LoadedImageFile>(std::move(cached->image));
+        const bool oldVideo = mime.starts_with("video/")
+            && cached->text.contains("Software")
+            && cached->text.at("Software") == "Luciole"
+            && (!cached->text.contains("X-Luciole::VideoVersion")
+                || cached->text.at("X-Luciole::VideoVersion") != kVideoThumbnailVersion);
+        if (!oldVideo) {
+          struct stat after{};
+          if (::fstat(file.get(), &after) == 0 && stamp(after) == sourceStamp && !g_cancellable_is_cancelled(cancel)) {
+            result.image.pixels = std::make_shared<const LoadedImageFile>(std::move(cached->image));
+          }
+          return result;
         }
-        return result;
       }
     }
     if (!generate) {
@@ -169,6 +179,9 @@ namespace {
               {"Software", "Luciole"}
           }
       };
+      if (mime.starts_with("video/")) {
+        cached.text["X-Luciole::VideoVersion"] = kVideoThumbnailVersion;
+      }
       result.write.emplace(ThumbnailCacheWrite{std::move(cached), side});
     }
     result.image.pixels = std::make_shared<const LoadedImageFile>(std::move(*decoded));
@@ -444,7 +457,8 @@ struct luciole::ThumbnailService::State : std::enable_shared_from_this<State> {
       const auto& request = *static_cast<Request*>(data);
       auto result = std::make_unique<Result>();
       try {
-        result->loaded = load(request.source, request.side, request.options, cancel, request.generate);
+        result->loaded =
+            load(request.source, request.side, request.options, cancel, request.generate, request.owner->purpose);
       } catch (const std::exception& error) {
         result->error = error.what();
       }
