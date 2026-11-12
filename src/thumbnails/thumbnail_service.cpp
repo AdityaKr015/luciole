@@ -66,28 +66,27 @@ namespace {
     if (g_cancellable_is_cancelled(cancel)) {
       return result;
     }
-    const GioPtr<GFileInfo> filesystem(g_file_query_filesystem_info(
-        gioFile(source.location).get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE, cancel, nullptr
-    ));
-    const bool local = filesystem
-        && g_file_info_has_attribute(filesystem.get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE)
-        && !g_file_info_get_attribute_boolean(filesystem.get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE);
-    if (!local) {
-      if (options.policy == ThumbnailPolicy::All && source.modifiedSeconds) {
-        if (auto cached = store.read(source.location.uri(), side, *source.modifiedSeconds, source.size)) {
-          result.image.pixels = std::make_shared<const LoadedImageFile>(std::move(cached->image));
-        }
+    if (options.policy == ThumbnailPolicy::Local) {
+      const GioPtr<GFileInfo> filesystem(g_file_query_filesystem_info(
+          gioFile(source.location).get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE, cancel, nullptr
+      ));
+      if (!filesystem
+          || !g_file_info_has_attribute(filesystem.get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE)
+          || g_file_info_get_attribute_boolean(filesystem.get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE)) {
+        return result;
       }
-      return result;
     }
+    const auto mime = source.contentType.value_or("");
+    const bool media = mime.starts_with("video/") || mime.starts_with("audio/");
     const luciole::Fd file(::open(native->c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK));
     struct stat before{};
     if (!file.valid()
         || ::fstat(file.get(), &before) < 0
         || !S_ISREG(before.st_mode)
         || before.st_size <= 0
-        || static_cast<std::uint64_t>(before.st_size)
-            > static_cast<std::uint64_t>(options.maxFileMiB) * 1024U * 1024U) {
+        || (!media
+            && static_cast<std::uint64_t>(before.st_size)
+                > static_cast<std::uint64_t>(options.maxFileMiB) * 1024U * 1024U)) {
       return result;
     }
     if ((source.size && *source.size != static_cast<std::uint64_t>(before.st_size))
@@ -141,7 +140,6 @@ namespace {
       return result;
     }
     std::expected<LoadedImageFile, std::string> decoded = std::unexpected("no thumbnail decoder");
-    const auto mime = source.contentType.value_or("");
     if (mime.starts_with("image/") || !insideCache) {
       decoded = renderThumbnailProvider(file.get(), mime, side, options, cancel);
     }

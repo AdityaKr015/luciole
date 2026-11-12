@@ -160,13 +160,14 @@ SettingsDialog::SettingsDialog(
   );
   m_section->addChild(
       ui::label(
-          {.text = "Remote locations use existing cached thumbnails.",
+          {.text =
+               "All locations can generate thumbnails on mounted shares. Unmounted locations use cached thumbnails.",
            .fontSize = Style::fontSizeCaption,
            .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
            .maxLines = 2}
       )
   );
-  addNumber(P::ThumbnailMaxFileMib, "Source file limit", {1, 1024}, "MiB");
+  addNumber(P::ThumbnailMaxFileMib, "Image/PDF size limit", {1, 1024}, "MiB");
   addNumber(P::ThumbnailMaxMegapixels, "Image pixel limit", {1, 64}, "MP");
   addNumber(P::ThumbnailCacheMib, "Disk cache limit", {16, 1024}, "MiB");
   m_section->addChild(

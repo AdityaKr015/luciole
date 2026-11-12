@@ -684,6 +684,31 @@ namespace {
     still = render(audio, "audio/mpeg");
     TEST_CHECK(still && still->width == 128 && still->height == 64);
     TEST_CHECK(!render(plain, "audio/x-wav"));
+    // Seekable media must not inherit the whole-file image/PDF input cap.
+    // Sparse padding gives these real fixtures a source size above the default 64 MiB limit.
+    Pump pump;
+    luciole::ThumbnailService service;
+    auto options = luciole::ThumbnailOptions{};
+    options.policy = luciole::ThumbnailPolicy::All;
+    options.maxFileMiB = 1;
+    service.setOptions(options);
+    for (const auto& original : {video, audio}) {
+      const auto padded = fixture.root / ("padded-" + original.filename().native());
+      fs::copy_file(original, padded);
+      fs::resize_file(padded, 65U * 1024U * 1024U);
+      const auto entry = source(padded, pump);
+      TEST_CHECK(entry.size && *entry.size > 64U * 1024U * 1024U);
+      const auto thumbnail = service.request(entry, 128);
+      pump.until([&] { return thumbnail && thumbnail->ready; });
+      TEST_CHECK(thumbnail->pixels && thumbnail->pixels->width > 0 && thumbnail->pixels->height > 0);
+    }
+    const auto oversizedImage = fixture.root / "byte-limited.png";
+    write(oversizedImage, png(picture()));
+    fs::resize_file(oversizedImage, 2U * 1024U * 1024U);
+    const auto limitedImage = service.request(source(oversizedImage, pump), 128);
+    pump.until([&] { return limitedImage && limitedImage->ready; });
+    TEST_CHECK(!limitedImage->pixels);
+
     const std::string originalPath = std::getenv("PATH");
     ::setenv("PATH", "/luciole-thumbnail-test-no-tools", 1);
     TEST_CHECK(!render(document, "application/pdf") && !render(video, "video/mp4"));
