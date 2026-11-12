@@ -97,6 +97,7 @@ namespace {
     Pump pump;
     BrowserController source({}, false);
     source.setShowBackups(false);
+    source.setSearchRecursive(false);
     const auto current = Location::fromPath((fixture.path / "a" / "nested").native());
     source.open(Location::fromPath(fixture.path.native()));
     pump.ready(source);
@@ -109,7 +110,7 @@ namespace {
     MillerColumns columns;
     columns.start(source);
     TEST_CHECK(std::ranges::all_of(columns.columns(), [](const auto& column) {
-      return !column->browser->model().filter().showBackups;
+      return !column->browser->model().filter().showBackups && !column->browser->searchRecursive();
     }));
     TEST_CHECK(columns.columns().front()->browser->model().snapshot().status == DirectoryStatus::Idle);
     pump.loaded(columns);

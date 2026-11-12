@@ -576,7 +576,7 @@ namespace {
     fixture.write("config.toml", base);
     fixture.write("settings.toml", "[browser]\ngrid_icon_size = 96\n");
     for (const auto activation : {A::SingleClick, A::DoubleClick}) {
-      for (const auto typing : {T::Search, T::Typeahead}) {
+      for (const auto typing : {T::Search, T::Filter, T::Typeahead}) {
         const std::array edits{
             luciole::OverrideEdit{P::ActivationMode, activation}, luciole::OverrideEdit{P::TypingMode, typing}
         };

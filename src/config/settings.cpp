@@ -31,7 +31,9 @@ namespace {
       {{luciole::ActivationMode::SingleClick, "single_click"}, {luciole::ActivationMode::DoubleClick, "double_click"}}
   );
   constexpr auto kTypingModes = std::to_array<Named<luciole::TypingMode>>(
-      {{luciole::TypingMode::Search, "search"}, {luciole::TypingMode::Typeahead, "typeahead"}}
+      {{luciole::TypingMode::Search, "search"},
+       {luciole::TypingMode::Typeahead, "typeahead"},
+       {luciole::TypingMode::Filter, "filter"}}
   );
   constexpr auto kSortFields = std::to_array<Named<luciole::SortField>>(
       {{luciole::SortField::Name, "name"},

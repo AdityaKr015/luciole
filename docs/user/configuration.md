@@ -62,7 +62,7 @@ All keys below belong in `[browser]`. Dimensions are logical pixels unless state
 | `show_hidden` | `false` | Hidden entries |
 | `show_backups` | `true` | Non-directory backup names ending in `~` |
 | `activation_mode` | `"double_click"` | `"single_click"`, `"double_click"` |
-| `typing_mode` | `"search"` | `"search"` recursively searches filenames; `"typeahead"` selects names |
+| `typing_mode` | `"search"` | `"search"` recursively searches filenames; `"filter"` filters names in the current folder only; `"typeahead"` selects names |
 | `terminal_command` | `""` | Terminal command and optional arguments, for example `"foot"`; empty uses `$TERMINAL`, then automatic discovery |
 | `sort_by` | `"name"` | `"name"`, `"type"`, `"size"`, `"modified"`, `"accessed"`, `"created"`, `"owner"`, `"group"`, `"permissions"`, `"location"` |
 | `sort_descending` | `false` | Reverse sort direction |

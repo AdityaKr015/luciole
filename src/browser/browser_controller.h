@@ -57,7 +57,10 @@ namespace luciole {
     void stop();
     void toggleHidden();
     void setShowBackups(bool showBackups);
-    // Programmatic/history changes apply immediately; editor changes use the trailing debounce.
+    // Current-folder filtering projects the live listing; recursive search traverses descendants.
+    void setSearchRecursive(bool recursive);
+    bool searchRecursive() const { return m_searchRecursive; }
+    // Programmatic/history changes apply immediately; recursive editor changes use the trailing debounce.
     void setSearchQuery(std::string text);
     void editSearchQuery(std::string text);
     void submitSearchQuery();
@@ -91,6 +94,7 @@ namespace luciole {
     void scheduleSearch();
     void startSearch();
     void publishPendingSearch();
+    void applyQueryFilter();
     DirectoryModel m_model;
     std::unique_ptr<DirectoryTree> m_tree;
     DirectorySession m_session;
@@ -100,6 +104,7 @@ namespace luciole {
     bool m_searchPending = false;
     bool m_searchComposing = false;
     bool m_searchActive = false;
+    bool m_searchRecursive = true;
     std::uint64_t m_revision = 0;
     std::uint64_t m_contextSerial = 0;
     struct Reference {

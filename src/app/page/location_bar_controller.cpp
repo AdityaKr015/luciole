@@ -310,6 +310,11 @@ bool LocationBarController::syncLocation(const std::optional<luciole::Location>&
 
 void LocationBarController::sync() {
   m_location->setInvalid(m_locationInvalid);
+  const bool recursive = m_page.browser().searchRecursive();
+  m_filterInput->setPlaceholder(recursive ? "Search files…" : "Filter files…");
+  m_filterInput->inputArea()->setTooltip(
+      recursive ? "Search names in this folder and all subfolders" : "Filter names in the current folder only"
+  );
   if (!m_filterInput->composing() && m_filterInput->value() != m_page.browser().searchQuery()) {
     m_filterInput->setValue(m_page.browser().searchQuery());
   }

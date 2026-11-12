@@ -14,6 +14,12 @@ File monitors follow canonical files, existing path components and resolved decl
 
 [SettingsController](../../src/app/page/settings_controller.cpp) retains the preferred 880-pixel dialog width independently of the opening window size. The common popup layout in [BrowserPage](../../src/app/page/browser_page.cpp) calls `layoutDialog()` before measuring Settings on each requested layout. It reapplies the parent-constrained height up to 640 pixels and the compact navigation breakpoint. Parent configuration already requests popup layout and recenters the dialog. Resize the existing view so its category, scroll state, focus and drafts survive; dismiss an open select dropdown when its anchor geometry changes. Do not persist the temporarily constrained popup dimensions as its preferred size.
 
+## Typing and query scope
+
+`browser.typing_mode` accepts `search` (default), `filter` and `typeahead`. The Settings General page uses the existing Select control for all three. Search and filter typing, including input-method commits, use the same toolbar field; current-folder mode updates its placeholder and tooltip. Explicit field entry and Ctrl+F use that same scope. Typeahead retains recursive explicit search. Preference changes update every existing pane and Miller controller.
+
+[BrowserController](../../src/browser/browser_controller.cpp) owns the scope. Recursive queries keep their 175 ms debounce and worker traversal. Local edits project the current DirectorySession listing through DirectoryModel’s folded literal name filter, without starting traversal or re-reading the folder on each keystroke. Session monitor updates remain visible under the filter; refresh, navigation history and duplication retain the scope. Filtering temporarily projects only the root listing when expandable list folders are enabled. Mode changes cancel pending recursive work before publishing the appropriate source. Miller child and ancestor controllers inherit the source scope.
+
 ## Atomic writes
 
 [atomic_file.cpp](../../src/fs/atomic_file.cpp) implements anchored local transactions. Cooperating writers use a persistent advisory lock. Preserve that lock across ordinary cleanup; unlinking it can split writer coordination. New private directories use 0700 and data/temporary/lock files use 0600.

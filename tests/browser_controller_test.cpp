@@ -506,6 +506,106 @@ namespace {
     TEST_CHECK(browser.searchQuery().empty() && browser.model().selectedIds().empty() && !browser.canForward());
   }
 
+  void testCurrentFolderFilter() {
+    Fixture fixture;
+    const auto root = Location::fromPath(fixture.path.native());
+    fs::create_directory(fixture.path / "Templates");
+    std::ofstream(fixture.path / "Template1.csv") << "first";
+    std::ofstream(fixture.path / "Template2.csv") << "second";
+    std::ofstream(fixture.path / "Templates" / "nested-temp.csv") << "nested";
+    std::ofstream(fixture.path / "child" / "nested-temp.csv") << "nested";
+    std::ofstream(fixture.path / "Straße.txt") << "unicode";
+    std::ofstream(fixture.path / "*.txt") << "literal";
+    Pump pump;
+    BrowserController browser({}, false);
+    browser.setSearchRecursive(false);
+    browser.open(root);
+    pump.ready(browser);
+    const auto first = id(browser, "Template1.csv");
+    const auto listingSize = browser.model().rows().size();
+    const auto generation = browser.model().snapshot().generation;
+    const auto context = browser.contextSerial();
+    browser.editSearchQuery("temp");
+    TEST_CHECK(
+        browser.model().rows().size() == 3
+        && !browser.searchPending()
+        && browser.model().snapshot().status == DirectoryStatus::Ready
+        && browser.model().snapshot().generation == generation
+        && browser.contextSerial() != context
+        && id(browser, "Template1.csv") == first
+    );
+    for (const auto row : browser.model().rows()) {
+      TEST_CHECK(browser.model().entry(row)->location.parent() == root);
+    }
+    browser.model().select(first);
+    browser.editSearchQuery("STRASSE");
+    TEST_CHECK(
+        browser.model().rows() == std::vector{id(browser, "Straße.txt")} && browser.model().selection().selected.empty()
+    );
+    browser.editSearchQuery("*");
+    TEST_CHECK(browser.model().rows() == std::vector{id(browser, "*.txt")});
+    browser.editSearchQuery({});
+    TEST_CHECK(browser.model().rows().size() == listingSize);
+    browser.editSearchQuery("temp");
+    BrowserController duplicate({}, false);
+    duplicate.duplicateFrom(browser);
+    pump.ready(duplicate);
+    TEST_CHECK(
+        !duplicate.searchRecursive() && duplicate.searchQuery() == "temp" && duplicate.model().rows().size() == 3
+    );
+    browser.activate(id(browser, "Templates"));
+    pump.ready(browser);
+    TEST_CHECK(browser.searchQuery().empty() && browser.model().rows().size() == 1);
+    TEST_CHECK(browser.back());
+    pump.ready(browser);
+    TEST_CHECK(browser.searchQuery() == "temp" && browser.model().rows().size() == 3);
+    browser.setSearchRecursive(true);
+    pump.ready(browser);
+    TEST_CHECK(browser.model().rows().size() == 5 && browser.model().filter().text.empty());
+    browser.editSearchQuery("pending");
+    TEST_CHECK(browser.searchPending());
+    browser.setSearchRecursive(false);
+    TEST_CHECK(!browser.searchPending() && browser.model().rows().empty());
+    browser.editSearchQuery("temp");
+    TEST_CHECK(browser.model().rows().size() == 3);
+    pump.drainFor(220ms);
+    TEST_CHECK(browser.model().rows().size() == 3 && !browser.searchPending());
+    std::ofstream(fixture.path / "Template3.csv") << "live";
+    pump.until([&] { return browser.model().rows().size() == 4; });
+    fs::rename(fixture.path / "Template3.csv", fixture.path / "renamed.csv");
+    pump.until([&] { return browser.model().rows().size() == 3; });
+    std::ofstream(fixture.path / ".temp-hidden") << "hidden";
+    std::ofstream(fixture.path / "temp-backup~") << "backup";
+    pump.until([&] { return browser.model().rows().size() == 4; });
+    browser.setShowBackups(false);
+    TEST_CHECK(browser.model().rows().size() == 3);
+    browser.toggleHidden();
+    TEST_CHECK(browser.model().rows().size() == 4);
+    browser.refresh();
+    pump.ready(browser);
+    TEST_CHECK(browser.model().rows().size() == 4 && browser.searchQuery() == "temp");
+    browser.editSearchQuery({});
+    browser.setExpandableFolders(true);
+    TEST_CHECK(browser.toggleFolder(id(browser, "child")));
+    pump.until([&] {
+      return std::ranges::any_of(browser.model().rows(), [&](auto row) {
+        return browser.model().entry(row)->name == "nested-temp.csv";
+      });
+    });
+    browser.editSearchQuery("temp");
+    TEST_CHECK(browser.model().rows().size() == 4);
+    for (const auto row : browser.model().rows()) {
+      TEST_CHECK(browser.model().entry(row)->location.parent() == root);
+    }
+    browser.editSearchQuery({});
+    TEST_CHECK(browser.toggleFolder(id(browser, "child")));
+    pump.until([&] {
+      return std::ranges::any_of(browser.model().rows(), [&](auto row) {
+        return browser.model().entry(row)->name == "nested-temp.csv";
+      });
+    });
+  }
+
   void testDebouncedSearch() {
     Fixture fixture;
     Pump pump;
@@ -691,6 +791,7 @@ int main() {
     testSearchLifetimeAndPartialFailure();
     testLocationPresentation();
     testHistoryState();
+    testCurrentFolderFilter();
     testDebouncedSearch();
     testSearchCompositionAndTimeoutLifetime();
     std::println("browser controller checks passed");

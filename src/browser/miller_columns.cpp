@@ -17,6 +17,7 @@ luciole::MillerColumns::makeColumn(BrowserController& source, const Location& lo
       ),
       location, std::nullopt, defaultWidth
   });
+  column->browser->setSearchRecursive(source.searchRecursive());
   if (inheritHistory) {
     column->browser->duplicateFrom(source);
   }

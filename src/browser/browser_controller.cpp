@@ -57,7 +57,7 @@ luciole::BrowserController::BrowserController(SortOptions sort, bool showHidden,
     }
   });
   m_session.setChangedCallback([this] {
-    if (!m_switchingSources && m_query.empty()) {
+    if (!m_switchingSources && (m_query.empty() || !m_searchRecursive)) {
       publish(m_session.snapshot());
     }
   });
@@ -144,7 +144,7 @@ void luciole::BrowserController::loadVisit() {
   m_switchingSources = true;
   m_search.cancel();
   m_switchingSources = false;
-  if (query.empty()) {
+  if (query.empty() || !m_searchRecursive) {
     m_session.open(destination);
   } else {
     // Browse metadata continues loading independently of the search projection.
@@ -243,8 +243,8 @@ bool luciole::BrowserController::up() {
 
 void luciole::BrowserController::refresh() {
   m_message.clear();
-  if (m_query.empty()) {
-    if (m_tree) {
+  if (m_query.empty() || !m_searchRecursive) {
+    if (m_tree && m_query.empty()) {
       m_tree->refresh();
     }
     m_session.refresh();
@@ -260,7 +260,7 @@ void luciole::BrowserController::stop() {
   m_restoring = false;
   m_restoredViewport.reset();
   advanceContext();
-  if (m_query.empty()) {
+  if (m_query.empty() || !m_searchRecursive) {
     m_session.cancel();
   } else {
     m_searchActive = false;
@@ -275,7 +275,7 @@ void luciole::BrowserController::toggleHidden() {
   auto filter = m_model.filter();
   filter.showHidden = !filter.showHidden;
   m_model.setFilter(std::move(filter));
-  if (!m_query.empty()) {
+  if (!m_query.empty() && m_searchRecursive) {
     refresh();
   }
 }
@@ -287,9 +287,32 @@ void luciole::BrowserController::setShowBackups(bool showBackups) {
   auto filter = m_model.filter();
   filter.showBackups = showBackups;
   m_model.setFilter(std::move(filter));
-  if (!m_query.empty()) {
+  if (!m_query.empty() && m_searchRecursive) {
     refresh();
   }
+}
+
+void luciole::BrowserController::setSearchRecursive(bool recursive) {
+  if (m_searchRecursive == recursive) {
+    return;
+  }
+  m_searchRecursive = recursive;
+  m_restoring = false;
+  m_restoredViewport.reset();
+  advanceContext();
+  m_searchActive = false;
+  m_search.cancel();
+  if (recursive && !m_query.empty()) {
+    startSearch();
+  } else {
+    publish(m_session.snapshot());
+  }
+}
+
+void luciole::BrowserController::applyQueryFilter() {
+  auto filter = m_model.filter();
+  filter.text = m_searchRecursive ? std::string{} : m_query;
+  m_model.setFilter(std::move(filter));
 }
 
 void luciole::BrowserController::cancelSearchTimeout() {
@@ -326,7 +349,7 @@ void luciole::BrowserController::scheduleSearch() {
 
 void luciole::BrowserController::startSearch() {
   cancelSearchTimeout();
-  if (m_query.empty() || !m_session.snapshot().location) {
+  if (!m_searchRecursive || m_query.empty() || !m_session.snapshot().location) {
     return;
   }
   m_searchActive = true;
@@ -355,6 +378,14 @@ void luciole::BrowserController::editSearchQuery(std::string text) {
   m_query = std::move(text);
   m_message.clear();
   m_search.cancel();
+  if (!m_searchRecursive) {
+    if (m_tree && (m_query.empty() || m_model.filter().text.empty())) {
+      publish(m_session.snapshot());
+    } else {
+      applyQueryFilter();
+    }
+    return;
+  }
   if (m_query.empty()) {
     publish(m_session.snapshot());
     return;
@@ -399,7 +430,7 @@ void luciole::BrowserController::setSearchQuery(std::string text) {
   m_searchActive = false;
   m_query = std::move(text);
   m_message.clear();
-  if (m_query.empty()) {
+  if (m_query.empty() || !m_searchRecursive) {
     m_search.cancel();
     publish(m_session.snapshot());
   } else {
@@ -410,6 +441,7 @@ void luciole::BrowserController::setSearchQuery(std::string text) {
 void luciole::BrowserController::publish(DirectorySnapshot snapshot) {
   snapshot.generation = m_revision = std::max(m_revision, m_model.snapshot().generation) + 1;
   m_publishing = true;
+  applyQueryFilter();
   if (m_tree && m_query.empty()) {
     m_tree->setRoot(std::move(snapshot));
   } else {
@@ -545,6 +577,7 @@ void luciole::BrowserController::duplicateFrom(BrowserController& source) {
   }
   source.saveVisit();
   m_defaults = source.m_defaults;
+  m_searchRecursive = source.m_searchRecursive;
   m_history = source.m_history;
   m_historyIndex = source.m_historyIndex;
   m_model.setSort(source.m_model.sort());

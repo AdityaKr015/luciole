@@ -6,7 +6,9 @@ The location bar shows clickable folder breadcrumbs. Double-click a breadcrumb o
 
 The mouse's Back and Forward side buttons navigate folder history, like the toolbar arrows or Alt+Left/Alt+Right. Each press navigates once; releasing the button does not navigate again. In split view, pressing a side button over a browsing pane focuses that pane and uses its own history. Over shared chrome, the active pane's history is used. Side buttons do not navigate behind an open dialog or during a captured drag, and do nothing when the corresponding history is empty.
 
-By default, typing while browsing starts a recursive filename search rooted in the current folder. The separate search field remains next to the location bar. Clear the query to return to the folder listing. Settings → General can change typing to name selection instead. Content search and an indexing service are not part of the current search.
+By default, typing while browsing starts a recursive filename search rooted in the current folder. Settings → General → When typing also offers Filter current folder and Select names. Filtering immediately narrows the live folder listing by a literal, case-insensitive name substring, without looking inside subfolders. For example, `temp` matches `Template1.csv`, `Template2.csv` and `Templates` in the current folder, but not files inside `Templates`. Hidden-file and backup-file visibility still apply.
+
+The field next to the location bar shows Search files… for recursive search, or Filter files… in current-folder mode. Clicking it or pressing Ctrl+F uses the same scope. Clear the query or press Escape to return to the folder listing. Select names changes typing to name selection while keeping explicit searches recursive. Content search and an indexing service are not part of the current search.
 
 | Action | Shortcut |
 | --- | --- |

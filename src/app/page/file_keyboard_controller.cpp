@@ -133,7 +133,7 @@ bool FileKeyboardController::typeKey(const KeyboardEvent& event) {
   }
   if (event.pressed
       && !event.preedit
-      && m_typingMode == luciole::TypingMode::Search
+      && m_typingMode != luciole::TypingMode::Typeahead
       && m_page.fileList() != nullptr
       && m_page.dispatcher().focusedArea() == m_page.fileList()->focusArea()
       && (event.modifiers & (KeyMod::Ctrl | KeyMod::Alt | KeyMod::Super)) == 0
@@ -178,7 +178,7 @@ void FileKeyboardController::applyTypeahead(const std::string& text, TextInputCh
 }
 
 TextInputState FileKeyboardController::textInputState() const {
-  if (m_typingMode == luciole::TypingMode::Search) {
+  if (m_typingMode != luciole::TypingMode::Typeahead) {
     return m_locationBar.filterInput().textInputState();
   }
   const auto bounds = m_status.statusRect();

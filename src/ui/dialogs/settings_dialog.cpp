@@ -68,7 +68,9 @@ SettingsDialog::SettingsDialog(
   );
   addChoice(
       P::TypingMode, "When typing",
-      {{"Search subfolders", luciole::TypingMode::Search}, {"Select names", luciole::TypingMode::Typeahead}}
+      {{"Search subfolders", luciole::TypingMode::Search},
+       {"Filter current folder", luciole::TypingMode::Filter},
+       {"Select names", luciole::TypingMode::Typeahead}}
   );
   addBool(P::ShowHidden, "Show hidden files");
   addBool(P::ShowBackups, "Show backup files (*~)");
