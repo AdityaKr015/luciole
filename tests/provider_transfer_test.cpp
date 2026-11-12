@@ -1,11 +1,16 @@
 #include "event_loop/glib_poll_source.h"
 #include "fs/gio_interop.h"
+#include "operations/copy_receipt.h"
+#include "operations/history_revisions.h"
 #include "operations/provider_transfer.h"
 #include "operations/transfer_service.h"
+#include "operations/transfer_staging.h"
 #include "test_check.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <print>
@@ -107,6 +112,244 @@ namespace {
     }
     TEST_CHECK(*done);
   }
+  struct DownloadResult {
+    std::vector<TransferResult> results;
+    std::shared_ptr<const CopyReceipt> receipt;
+  };
+  DownloadResult download(
+      const std::vector<Location>& sources, const Location& destination,
+      const ProviderTransfer::Choose& choose = [](const auto& conflict) {
+        return conflict.canMerge ? Merge : TransferConflictChoice::Replace;
+      }
+  ) {
+    const TransferRequest request{sources, destination, TransferAction::Copy};
+    if (std::ranges::any_of(sources, [](const auto& source) { return !source.isNative(); })) {
+      TransferService service;
+      TEST_CHECK(service.start(request));
+      wait(service, choose);
+      return {service.results(), service.takeCopyReceipt()};
+    }
+    // CI exercises the same provider publication path against ordinary temporary files.
+    ProviderTransfer provider(request);
+    std::atomic<std::uint64_t> bytes{0};
+    std::atomic<std::size_t> completed{0};
+    transfer::Work work({}, bytes, {});
+    work.history = std::make_shared<HistoryRevisions>();
+    const auto retention = checkedFd(::open(destination.nativePath()->c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+    std::size_t remaining = 16384;
+    std::vector<std::shared_ptr<const CopyEffect>> effects, prepared;
+    work.checkpointCopy = [&](const auto& target, bool replacing) {
+      if (replacing) {
+        effects = CopyReceipt::checkpoint(effects, target, TransferAction::Copy, {});
+      }
+    };
+    work.prepareCopy = [&](std::size_t, const auto& target, int parent, int stage, bool replacing) {
+      auto effect = CopyEffect::prepare(target, parent, stage, replacing, remaining, {}, work.history);
+      prepared.push_back(effect);
+      return effect;
+    };
+    work.recordCopy = [&](const auto& effect, int stage) {
+      effects.push_back(effect->published(stage, retention.get()));
+    };
+    auto results = provider.run({}, bytes, completed, choose, &work);
+    const auto count = provider.completedCopies();
+    auto receipt = count && *count > 0 && *count == effects.size()
+        ? CopyReceipt::capture(effects, TransferAction::Copy, {})
+        : nullptr;
+    return {std::move(results), std::move(receipt)};
+  }
+  std::shared_ptr<const CopyReceipt> reverse(const std::shared_ptr<const CopyReceipt>& receipt) {
+    TEST_CHECK(receipt);
+    TransferService service;
+    TEST_CHECK(service.replayCopy(receipt));
+    wait(service);
+    for (const auto& result : service.results()) {
+      if (result.error) {
+        std::println(stderr, "replay: {}", result.error->message);
+      }
+      TEST_CHECK(!result.error);
+    }
+    TEST_CHECK(service.copyReceipt());
+    return service.takeCopyReceipt();
+  }
+  void drainHistory() {
+    const auto deadline = g_get_monotonic_time() + 10000000;
+    while (CopyReceipt::cleanupPending()) {
+      while (g_main_context_iteration(nullptr, false)) {
+      }
+      TEST_CHECK(g_get_monotonic_time() < deadline);
+      g_usleep(1000);
+    }
+    TEST_CHECK(CopyReceipt::takeCleanupErrors().empty());
+  }
+  void downloadFailureProofs(const fs::path& root) {
+    for (int mode = 0; mode < 6; ++mode) {
+      const auto fixture = root / std::to_string(mode);
+      fs::create_directories(fixture / "source");
+      fs::create_directories(fixture / "destination");
+      write(fixture / "source/item", "incoming");
+      if (mode != 5) {
+        write(fixture / "destination/item", "previous");
+      }
+      const auto source = Location::fromPath((fixture / "source/item").native());
+      const auto destination = Location::fromPath((fixture / "destination").native());
+      ProviderTransfer provider({{source}, destination, TransferAction::Copy});
+      std::atomic<std::uint64_t> bytes{0};
+      std::atomic<std::size_t> completed{0};
+      transfer::Work work({}, bytes, {});
+      work.history = std::make_shared<HistoryRevisions>();
+      std::size_t remaining = 16384;
+      if (mode != 3) {
+        work.prepareCopy = [&](std::size_t, const auto& target, int parent, int stage, bool replacing) {
+          auto proof = CopyEffect::prepare(target, parent, stage, replacing, remaining, {}, work.history);
+          if (mode == 0) {
+            fs::rename(fixture / "destination", fixture / "held");
+            fs::create_directory(fixture / "destination");
+          } else if (mode == 1) {
+            write(fixture / "destination/item", "changed later version");
+          } else if (mode == 4) {
+            work.token.cancel();
+          } else if (mode == 5) {
+            write(fixture / "destination/item", "new occupant");
+          }
+          return proof;
+        };
+        work.recordCopy = [](const auto&, int) {
+          throwFileError(FileErrorKind::Other, "Injected retention handoff failure.");
+        };
+      }
+      const auto results = provider.run(
+          work.token, bytes, completed, [](const auto&) { return TransferConflictChoice::Replace; }, &work
+      );
+      const auto& result = results.front();
+      if (mode == 0) {
+        TEST_CHECK(result.outcome == Failed && result.error->kind == FileErrorKind::Changed);
+        TEST_CHECK(fs::is_empty(fixture / "destination") && read(fixture / "held/item") == "previous");
+      } else if (mode == 1) {
+        TEST_CHECK(result.outcome == Failed && result.error->kind == FileErrorKind::Changed);
+        TEST_CHECK(read(fixture / "destination/item") == "changed later version");
+      } else if (mode == 2) {
+        TEST_CHECK(result.outcome == Partial && !provider.completedCopies());
+        TEST_CHECK(read(fixture / "destination/item") == "incoming");
+        bool retained = false;
+        for (const auto& item : fs::directory_iterator(fixture / "destination")) {
+          if (item.path().filename().native().starts_with(".luciole-transfer-")) {
+            TEST_CHECK(read(item.path() / "item") == "previous");
+            TEST_CHECK(result.error->message.contains(item.path().filename().native()));
+            retained = true;
+          }
+        }
+        TEST_CHECK(retained);
+      } else if (mode == 3) {
+        TEST_CHECK(result.outcome == Copied && !result.error);
+        TEST_CHECK(read(fixture / "destination/item") == "incoming");
+        TEST_CHECK(std::distance(fs::directory_iterator(fixture / "destination"), fs::directory_iterator{}) == 1);
+      } else if (mode == 4) {
+        TEST_CHECK(result.outcome == Cancelled && result.error->kind == FileErrorKind::Cancelled);
+        TEST_CHECK(read(fixture / "destination/item") == "previous");
+      } else {
+        TEST_CHECK(result.outcome == Failed && result.error->kind == FileErrorKind::Exists);
+        TEST_CHECK(read(fixture / "destination/item") == "new occupant");
+      }
+      TEST_CHECK(read(fixture / "source/item") == "incoming");
+    }
+    fs::remove_all(root);
+    drainHistory();
+  }
+
+  void downloadHistory(const fs::path& root, const Location& remote, const fs::path& backend) {
+    fs::create_directories(root / "destination");
+    fs::create_directories(backend / "tree/nested");
+    write(backend / "tree/nested/file.txt", "downloaded tree");
+    write(backend / "café.txt", "downloaded file");
+    const auto target = Location::fromPath((root / "destination").native());
+    {
+      auto done = download({remote.child("tree"), remote.child("café.txt")}, target);
+      TEST_CHECK(done.receipt && done.receipt->size() == 2);
+      TEST_CHECK(read(root / "destination/tree/nested/file.txt") == "downloaded tree");
+      // Reversal never reads or recreates the original remote source.
+      fs::rename(backend / "tree", backend / "tree-offline");
+      fs::rename(backend / "café.txt", backend / "café-offline.txt");
+      auto redo = reverse(done.receipt);
+      TEST_CHECK(!fs::exists(root / "destination/tree") && !fs::exists(root / "destination/café.txt"));
+      auto undo = reverse(redo);
+      TEST_CHECK(read(root / "destination/tree/nested/file.txt") == "downloaded tree");
+      TEST_CHECK(read(root / "destination/café.txt") == "downloaded file");
+      fs::rename(backend / "tree-offline", backend / "tree");
+      fs::rename(backend / "café-offline.txt", backend / "café.txt");
+    }
+    drainHistory();
+    {
+      fs::remove_all(root / "destination/tree");
+      write(root / "destination/tree", "old file replaced by folder");
+      struct stat old{};
+      TEST_CHECK(::lstat((root / "destination/tree").c_str(), &old) == 0);
+      auto done = download({remote.child("tree")}, target);
+      TEST_CHECK(done.receipt);
+      auto redo = reverse(done.receipt);
+      struct stat restored{};
+      TEST_CHECK(::lstat((root / "destination/tree").c_str(), &restored) == 0);
+      TEST_CHECK(old.st_ino == restored.st_ino && read(root / "destination/tree") == "old file replaced by folder");
+      auto undo = reverse(redo);
+      TEST_CHECK(read(root / "destination/tree/nested/file.txt") == "downloaded tree");
+    }
+    drainHistory();
+    {
+      write(root / "destination/tree/nested/file.txt", "merge predecessor");
+      write(root / "destination/tree/keep.txt", "destination-only");
+      write(backend / "tree/new.txt", "new merge child");
+      auto done = download({remote.child("tree")}, target);
+      TEST_CHECK(done.receipt && done.receipt->size() == 2);
+      write(root / "destination/tree/keep.txt", "later destination-only edit");
+      auto redo = reverse(done.receipt);
+      TEST_CHECK(read(root / "destination/tree/nested/file.txt") == "merge predecessor");
+      TEST_CHECK(!fs::exists(root / "destination/tree/new.txt"));
+      TEST_CHECK(read(root / "destination/tree/keep.txt") == "later destination-only edit");
+      auto undo = reverse(redo);
+      TEST_CHECK(read(root / "destination/tree/nested/file.txt") == "downloaded tree");
+      TEST_CHECK(read(root / "destination/tree/new.txt") == "new merge child");
+    }
+    drainHistory();
+    {
+      auto skipped = download({remote.child("café.txt")}, target, [](const auto&) { return Skip; });
+      TEST_CHECK(!skipped.receipt && skipped.results.front().outcome == Skipped);
+      auto numbered = download({remote.child("café.txt")}, target, [](const auto&) { return KeepBoth; });
+      TEST_CHECK(numbered.receipt && read(root / "destination/café (1).txt") == "downloaded file");
+      auto redo = reverse(numbered.receipt);
+      write(root / "destination/café (1).txt", "unrelated later file");
+      TransferService refusal;
+      TEST_CHECK(refusal.replayCopy(redo));
+      wait(refusal);
+      TEST_CHECK(refusal.results().front().error->kind == FileErrorKind::Exists);
+      TEST_CHECK(read(root / "destination/café (1).txt") == "unrelated later file");
+      fs::remove(root / "destination/café (1).txt");
+      auto undo = reverse(redo);
+      write(root / "destination/café (1).txt", "edited download");
+      TEST_CHECK(refusal.replayCopy(undo));
+      wait(refusal);
+      TEST_CHECK(refusal.historyRetired() && refusal.results().front().error->kind == FileErrorKind::Changed);
+      TEST_CHECK(read(root / "destination/café (1).txt") == "edited download");
+    }
+    drainHistory();
+    {
+      fs::remove(root / "destination/café.txt");
+      auto done = download({remote.child("café.txt")}, target);
+      TEST_CHECK(done.receipt);
+      const CancelToken cancelled;
+      cancelled.cancel();
+      std::atomic<std::size_t> completed{0};
+      const auto reply = done.receipt->reverse(cancelled, completed);
+      TEST_CHECK(!reply.receipt && reply.results.front().error->kind == FileErrorKind::Cancelled);
+      TEST_CHECK(read(root / "destination/café.txt") == "downloaded file");
+      auto redo = reverse(done.receipt);
+      auto undo = reverse(redo);
+    }
+    drainHistory();
+    for (const auto& item : fs::recursive_directory_iterator(root)) {
+      TEST_CHECK(!item.path().filename().native().starts_with(".luciole-"));
+    }
+  }
+
   void portable(
       const fs::path& root, const Location& remote, const fs::path& backend, const Location& readOnly,
       const fs::path& readOnlyBackend
@@ -453,6 +696,7 @@ int main(int argc, char** argv) {
     fs::create_directories(local);
     portable(local, remote.child(name), backend, readOnly, argv[6]);
     mount(remote);
+    downloadHistory(local / "history", remote.child(name).child("history"), backend / "history");
   } else if (argc == 5 && std::string_view(argv[1]) == "--provider") {
     const auto remote = Location::fromUri(argv[2]);
     TEST_CHECK(!remote.isNative() && transferLocationSupported(remote));
@@ -464,6 +708,7 @@ int main(int argc, char** argv) {
     fs::create_directories(local);
     const auto testRoot = remote.child(name);
     run(local, testRoot, backend, true);
+    downloadHistory(local / "history", testRoot.child("history"), backend / "history");
     write(local / "destination/to-remote.txt", "destination survives disconnect");
     TransferService disconnected;
     TEST_CHECK(disconnected.start(
@@ -485,6 +730,8 @@ int main(int argc, char** argv) {
     const fs::path root(directory);
     fs::create_directory(root / "remote");
     run(root, Location::fromPath((root / "remote").native()), root / "remote", false);
+    downloadHistory(root / "history", Location::fromPath((root / "remote-history").native()), root / "remote-history");
+    downloadFailureProofs(root / "history-failures");
     for (const auto* uri : {"trash:///file", "https://example.invalid/a", "sftp://user:secret@example.invalid/a"}) {
       TEST_CHECK(!transferLocationSupported(Location::fromUri(uri)));
     }

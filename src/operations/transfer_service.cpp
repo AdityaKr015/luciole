@@ -388,6 +388,9 @@ bool luciole::TransferService::retryFailed() {
 namespace {
   using namespace luciole;
   std::optional<std::size_t> completedCopies(const Job& job, const std::vector<TransferResult>& outcomes) {
+    if (job.provider) {
+      return job.provider->completedCopies();
+    }
     std::size_t copied = 0;
     const auto completeCopy = [&](auto&& self, const Node& node) -> bool {
       if (node.result.error
@@ -619,7 +622,8 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
         );
         moveHistory.attach(work);
         Fd copyRetentionParent;
-        bool collectingCopies = budget && job->request.action != TransferAction::Move;
+        bool collectingCopies =
+            budget && job->request.action != TransferAction::Move && job->request.destination.isNative();
         if (collectingCopies) {
           work.checkpointCopy = [&](const Location& destination, bool replacing) {
             if (!collectingCopies || !replacing) {
@@ -633,7 +637,7 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
               copies.clear();
             }
           };
-          work.prepareCopy = [&](const Source& source, const Location& destination, int parent, int stage,
+          work.prepareCopy = [&](std::size_t source, const Location& destination, int parent, int stage,
                                  bool replacing) -> std::shared_ptr<const CopyEffect> {
             if (collectingCopies) {
               try {
@@ -642,7 +646,7 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
                     copyRetentionParent = copyHistoryParent(job->request.destination);
                   }
                   auto proof = CopyEffect::prepare(destination, parent, stage, replacing, remaining, token, revisions);
-                  preparedCopies.push_back({proof, source.index});
+                  preparedCopies.push_back({proof, source});
                   return proof;
                 }
               } catch (const FileErrorException&) {
@@ -680,7 +684,8 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
                   [&](TransferConflict conflict) {
                     const auto answer = owner->gate.ask(std::move(conflict), token, [owner] { State::notify(owner); });
                     return answer ? answer->choice : TransferConflictChoice::Cancel;
-                  }
+                  },
+                  &work
               )
             : retry ? retryJob(*job, work, owner->completed)
                     : runFirst(*job, work, owner->completed);
@@ -751,7 +756,7 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
         }
         const auto copied = completedCopies(*job, outcomes);
         bool captureChanged = checkpointFailed;
-        if (!retry && !remote && collectingCopies && copied && *copied > 0 && *copied == publishedCopies) {
+        if (!retry && collectingCopies && copied && *copied > 0 && *copied == publishedCopies) {
           try {
             copyReceipt = CopyReceipt::capture(copies, job->request.action, token);
           } catch (const FileErrorException&) {

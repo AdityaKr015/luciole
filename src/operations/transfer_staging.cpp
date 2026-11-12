@@ -273,7 +273,9 @@ namespace luciole::transfer {
             }
             const auto flags = replace ? RENAME_EXCHANGE : RENAME_NOREPLACE;
             auto copyProof = action != TransferAction::Move && work.prepareCopy
-                ? work.prepareCopy(source, binding.location.child(target), destination, stage.fd(), replace.has_value())
+                ? work.prepareCopy(
+                      source.index, binding.location.child(target), destination, stage.fd(), replace.has_value()
+                  )
                 : nullptr;
             work.check();
             if (::syscall(SYS_renameat2, stage.fd(), "item", destination, target.c_str(), flags) != 0) {

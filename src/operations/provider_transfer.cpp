@@ -2,10 +2,16 @@
 
 #include "fs/filename.h"
 #include "fs/gio_interop.h"
+#include "operations/copy_receipt.h"
+#include "operations/transfer_staging.h"
 
 #include <algorithm>
+#include <fcntl.h>
 #include <format>
+#include <linux/fs.h>
 #include <set>
+#include <sys/syscall.h>
+#include <unistd.h>
 #include <utility>
 
 namespace {
@@ -298,9 +304,25 @@ namespace {
     Info captured, destinationStamp;
     std::vector<std::unique_ptr<Node>> children;
     bool merged = false, published = false;
-    Node(Location source, Location parent)
-        : source(std::move(source)), parent(std::move(parent)), result(this->source) {}
+    std::size_t sourceIndex;
+    Node(Location source, Location parent, std::size_t index)
+        : source(std::move(source)), parent(std::move(parent)), result(this->source), sourceIndex(index) {}
   };
+  std::optional<std::size_t> copiedCount(const Node& node) {
+    if (node.result.error
+        || (node.result.outcome != TransferOutcome::Copied && node.result.outcome != TransferOutcome::Skipped)) {
+      return std::nullopt;
+    }
+    std::size_t count = !node.merged && node.result.outcome == TransferOutcome::Copied ? 1 : 0;
+    for (const auto& child : node.children) {
+      const auto copied = copiedCount(*child);
+      if (!copied) {
+        return std::nullopt;
+      }
+      count += *copied;
+    }
+    return count;
+  }
   std::size_t retries(const Node& node) {
     if (node.result.retryable) {
       return 1;
@@ -319,8 +341,88 @@ struct luciole::ProviderTransfer::State {
   std::size_t entries = 0;
   explicit State(TransferRequest request) : request(std::move(request)) {}
 
+  void download(Node& node, const Location& target, GFileInfo* parentInfo, GFileInfo* existing, transfer::Work& work) {
+    const auto parent = checkedFd(::open(node.parent.nativePath()->c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+    const auto parentStamp = statFd(parent.get());
+    const auto name = *target.basename();
+    const auto previous = existing ? std::optional(transfer::info(parent.get(), name)) : std::nullopt;
+    if (work.checkpointCopy) {
+      work.checkpointCopy(target, previous.has_value());
+    }
+    transfer::Stage stage(parent.get(), work);
+    try {
+      std::size_t count = 0;
+      auto tree = capture(node.source, work.token, count);
+      copy(tree, node.parent.child(stage.name()).child("item"), work.token, work.bytes);
+      validate(tree, work.token);
+      const auto validateDestination = [&] {
+        unchanged(parentInfo, info(node.parent, work.token).get(), false);
+        const auto current = checkedFd(::open(node.parent.nativePath()->c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+        if (!sameIdentity(parentStamp, statFd(current.get()))) {
+          throwFileError(FileErrorKind::Changed, "The destination folder changed during the download.");
+        }
+        const auto stageNow = transfer::directory(parent.get(), stage.name());
+        if (!sameIdentity(statFd(stage.fd()), statFd(stageNow.get()))) {
+          throwFileError(FileErrorKind::Changed, "The download staging folder changed.");
+        }
+      };
+      validateDestination();
+      if (previous) {
+        unchanged(existing, info(target, work.token).get());
+        transfer::requireUnchanged(*previous, transfer::info(parent.get(), name));
+        transfer::synchronize(stage.fd());
+      }
+      auto proof = work.prepareCopy
+          ? work.prepareCopy(node.sourceIndex, target, parent.get(), stage.fd(), previous.has_value())
+          : nullptr;
+      work.check();
+      validateDestination();
+      if (previous) {
+        transfer::requireUnchanged(*previous, transfer::info(parent.get(), name));
+      }
+      if (::syscall(
+              SYS_renameat2, stage.fd(), "item", parent.get(), name.c_str(),
+              previous ? RENAME_EXCHANGE : RENAME_NOREPLACE
+          )
+          != 0) {
+        transfer::fail("Could not publish downloaded item");
+      }
+      node.published = true;
+      node.result.destination = target;
+      if (previous) {
+        if (!transfer::sameContent(*previous, transfer::info(stage.fd(), "item"))) {
+          stage.keepContents();
+          throwFileError(FileErrorKind::Changed, "The previous destination changed during publication.");
+        }
+        if (proof) {
+          stage.keepContents();
+        }
+        work.note(transfer::info(stage.fd(), "item"));
+      }
+      if (proof && work.recordCopy) {
+        work.recordCopy(proof, stage.fd());
+      }
+      node.destinationStamp = info(target, work.token);
+      if (!stage.clear()) {
+        throwFileError(
+            FileErrorKind::Other,
+            "Download staging cleanup could not be completed. Inspect " + node.parent.child(stage.name()).uri()
+        );
+      }
+      node.result.outcome = TransferOutcome::Copied;
+      node.result.error.reset();
+    } catch (...) {
+      auto error = currentFileError();
+      if (!stage.clear()) {
+        error.message += " Previous or temporary items remain in " + node.parent.child(stage.name()).uri();
+      }
+      throw FileErrorException(std::move(error));
+    }
+  }
+
   void execute(
-      Node& node, const CancelToken& token, std::atomic<std::uint64_t>& bytes, const Choose& choose, unsigned depth = 0
+      Node& node, const CancelToken& token, std::atomic<std::uint64_t>& bytes, const Choose& choose,
+      transfer::Work* nativeCopies, unsigned depth = 0
   ) {
     if (node.result.outcome == TransferOutcome::Copied
         || node.result.outcome == TransferOutcome::Moved
@@ -426,7 +528,7 @@ struct luciole::ProviderTransfer::State {
             if (++entries > 100000) {
               throwFileError(FileErrorKind::Unsupported, "The transfer entry limit was reached.");
             }
-            node.children.push_back(std::make_unique<Node>(node.source.child(child), target));
+            node.children.push_back(std::make_unique<Node>(node.source.child(child), target, node.sourceIndex));
           }
         } else if (choice != TransferConflictChoice::Replace) {
           throwFileError(FileErrorKind::Unsupported, "The selected conflict action is unavailable.");
@@ -435,7 +537,7 @@ struct luciole::ProviderTransfer::State {
       if (node.merged) {
         unchanged(node.destinationStamp.get(), info(*node.result.destination, token).get(), false);
         for (auto& child : node.children) {
-          execute(*child, token, bytes, choose, depth + 1);
+          execute(*child, token, bytes, choose, nativeCopies, depth + 1);
         }
         node.result.children.clear();
         bool complete = true;
@@ -456,6 +558,10 @@ struct luciole::ProviderTransfer::State {
         node.result.error = complete
             ? std::nullopt
             : std::optional(FileError{FileErrorKind::Other, "Some folder contents were not transferred."});
+        return;
+      }
+      if (nativeCopies && request.action == TransferAction::Copy && node.parent.isNative()) {
+        download(node, target, parent.get(), existing.get(), *nativeCopies);
         return;
       }
       // A private sibling stages the entire item before its final name becomes visible.
@@ -538,12 +644,12 @@ std::size_t luciole::ProviderTransfer::retryable() const {
 }
 std::vector<luciole::TransferResult> luciole::ProviderTransfer::run(
     const CancelToken& token, std::atomic<std::uint64_t>& bytes, std::atomic<std::size_t>& completed,
-    const Choose& choose
+    const Choose& choose, transfer::Work* nativeCopies
 ) {
   auto& state = *m_state;
   if (state.roots.empty()) {
     for (const auto& source : state.request.sources) {
-      state.roots.push_back(std::make_unique<Node>(source, state.request.destination));
+      state.roots.push_back(std::make_unique<Node>(source, state.request.destination, state.roots.size()));
     }
   }
   std::vector<TransferResult> results;
@@ -572,7 +678,7 @@ std::vector<luciole::TransferResult> luciole::ProviderTransfer::run(
       if (covered) {
         node->result.outcome = TransferOutcome::Skipped;
       } else {
-        state.execute(*node, token, bytes, choose);
+        state.execute(*node, token, bytes, choose, nativeCopies);
       }
     } catch (...) {
       node->result.error = currentFileError();
@@ -581,4 +687,16 @@ std::vector<luciole::TransferResult> luciole::ProviderTransfer::run(
     completed.fetch_add(1);
   }
   return results;
+}
+
+std::optional<std::size_t> luciole::ProviderTransfer::completedCopies() const {
+  std::size_t count = 0;
+  for (const auto& node : m_state->roots) {
+    const auto copied = copiedCount(*node);
+    if (!copied) {
+      return std::nullopt;
+    }
+    count += *copied;
+  }
+  return count;
 }
