@@ -139,22 +139,37 @@ struct luciole::ProviderCopyStorage {
   Location destination, anchor;
   std::string nonce;
   provider_history::Tree tree;
+  std::optional<provider_history::Tree> previous;
+  bool previousStored = false;
   bool anchorAttempted = false, anchorCreated = false, markerReady = false, published = false, hidden = false,
        retain = false;
-  ProviderCopyStorage(Location target, Location storage, std::string secret, provider_history::Tree proof)
-      : destination(std::move(target)), anchor(std::move(storage)), nonce(std::move(secret)), tree(std::move(proof)) {}
+  ProviderCopyStorage(
+      Location target, Location storage, std::string secret, provider_history::Tree proof,
+      std::optional<provider_history::Tree> predecessor
+  )
+      : destination(std::move(target)), anchor(std::move(storage)), nonce(std::move(secret)), tree(std::move(proof)),
+        previous(std::move(predecessor)) {}
 
   Location current() const { return hidden ? anchor.child("item") : destination; }
+  std::vector<std::string> storageNames() const {
+    if (hidden) {
+      return {kMarker, "item"};
+    }
+    return previousStored ? std::vector<std::string>{kMarker, "previous"} : std::vector<std::string>{kMarker};
+  }
   void validate(const CancelToken& token) const {
     marker(anchor, nonce, token);
     const auto names = ph::children(anchor, token, 2);
-    const std::vector<std::string> expected =
-        hidden ? std::vector<std::string>{kMarker, "item"} : std::vector<std::string>{kMarker};
-    if (names != expected) {
+    if (names != storageNames() || (previous && !previousStored)) {
       throwFileError(FileErrorKind::Changed, "Remote history contains unknown entries.");
     }
     ph::verify(current(), tree, token);
-    vacant(hidden ? destination : anchor.child("item"), token);
+    if (previous) {
+      ph::verify(hidden ? destination : anchor.child("previous"), *previous, token);
+      vacant(anchor.child(hidden ? "previous" : "item"), token);
+    } else {
+      vacant(hidden ? destination : anchor.child("item"), token);
+    }
   }
   void cleanup() const {
     if (!anchorCreated) {
@@ -176,13 +191,14 @@ struct luciole::ProviderCopyStorage {
       }
     } else {
       marker(anchor, nonce, deadline.token);
-      const auto expected = hidden ? std::vector<std::string>{kMarker, "item"} : std::vector<std::string>{kMarker};
-      if (ph::children(anchor, deadline.token, 2) != expected) {
+      if (ph::children(anchor, deadline.token, 2) != storageNames()) {
         throwFileError(FileErrorKind::Changed, "Unrecorded remote history data was preserved.");
       }
-      if (hidden) {
-        ph::verify(anchor.child("item"), tree, deadline.token);
-        ph::remove(anchor.child("item"), tree, deadline.token);
+      if (hidden || previousStored) {
+        const auto location = anchor.child(hidden ? "item" : "previous");
+        const auto& proof = hidden ? tree : *previous;
+        ph::verify(location, proof, deadline.token);
+        ph::remove(location, proof, deadline.token);
       }
       marker(anchor, nonce, deadline.token);
       ph::erase(anchor.child(kMarker), deadline.token);
@@ -192,9 +208,11 @@ struct luciole::ProviderCopyStorage {
 };
 
 std::shared_ptr<const luciole::ProviderCopyEffect> luciole::ProviderCopyEffect::prepare(
-    const Location& destination, const Location& staged, provider_history::Budget& budget, const CancelToken& token
+    const Location& destination, const Location& staged, provider_history::Budget& budget, const CancelToken& token,
+    bool replacement
 ) {
   auto tree = provider_history::capture(staged, budget, token);
+  auto previous = replacement ? std::optional(provider_history::capture(destination, budget, token)) : std::nullopt;
   const auto parent = destination.parent();
   if (!parent) {
     throwFileError(FileErrorKind::Unsupported, "Remote copy history requires a containing folder.");
@@ -202,7 +220,8 @@ std::shared_ptr<const luciole::ProviderCopyEffect> luciole::ProviderCopyEffect::
   const GString uuid(g_uuid_string_random()), nonce(g_uuid_string_random());
   auto storage = std::shared_ptr<ProviderCopyStorage>(
       new ProviderCopyStorage(
-          destination, parent->child(std::string(".luciole-history-") + uuid.get()), nonce.get(), std::move(tree)
+          destination, parent->child(std::string(".luciole-history-") + uuid.get()), nonce.get(), std::move(tree),
+          std::move(previous)
       ),
       [](ProviderCopyStorage* raw) {
         auto owned = std::unique_ptr<ProviderCopyStorage>(raw);
@@ -235,9 +254,20 @@ std::shared_ptr<const luciole::ProviderCopyEffect> luciole::ProviderCopyEffect::
   return std::shared_ptr<const ProviderCopyEffect>(new ProviderCopyEffect(std::move(storage)));
 }
 
-void luciole::ProviderCopyEffect::published(const CancelToken& token) const {
+void luciole::ProviderCopyEffect::published(const CancelToken& token, const std::optional<Location>& previous) const {
+  if (m_storage->previous) {
+    if (!previous) {
+      throwFileError(FileErrorKind::Changed, "The overwritten destination was not retained.");
+    }
+    ph::verify(*previous, *m_storage->previous, token);
+    // An accepted rename can lose its reply. Preserve the anchor after any unconfirmed retention attempt.
+    m_storage->retain = true;
+    ph::move(*previous, m_storage->anchor.child("previous"), token);
+    m_storage->previousStored = true;
+  }
   m_storage->validate(token);
   m_storage->published = true;
+  m_storage->retain = false;
 }
 
 struct luciole::ProviderCopyReceipt::State {
@@ -256,11 +286,18 @@ std::shared_ptr<const luciole::CopyReceipt> luciole::ProviderCopyReceipt::captur
   }
   auto state = std::make_shared<State>();
   std::set<std::string> destinations;
-  for (const auto& effect : effects) {
-    if (!effect->m_storage->published || !destinations.insert(effect->m_storage->destination.uri()).second) {
-      throwFileError(FileErrorKind::Changed, "The remote copy selection cannot supply history.");
+  try {
+    for (const auto& effect : effects) {
+      if (!effect->m_storage->published || !destinations.insert(effect->m_storage->destination.uri()).second) {
+        throwFileError(FileErrorKind::Changed, "The remote copy selection cannot supply history.");
+      }
+      effect->m_storage->validate(token);
     }
-    effect->m_storage->validate(token);
+  } catch (...) {
+    for (const auto& effect : effects) {
+      effect->m_storage->retain |= effect->m_storage->hidden || effect->m_storage->previousStored;
+    }
+    throw;
   }
   state->effects = effects;
   return std::shared_ptr<const CopyReceipt>(new ProviderCopyReceipt(std::move(state), 0));
@@ -282,7 +319,7 @@ std::vector<luciole::TransferResult> luciole::ProviderCopyReceipt::unconfirmed(c
   const std::unique_lock lock(m_state->mutex, std::try_to_lock);
   if (lock.owns_lock() && m_generation == m_state->generation) {
     for (const auto& effect : m_state->effects) {
-      effect->m_storage->retain |= effect->m_storage->hidden;
+      effect->m_storage->retain |= effect->m_storage->hidden || effect->m_storage->previousStored;
     }
   }
   return failureResults(error);
@@ -316,7 +353,7 @@ luciole::ProviderCopyReceipt::reverse(const CancelToken& token, std::atomic<std:
     reply.retireHistory = invalidates(error);
     if (reply.retireHistory && lock.owns_lock() && m_generation == m_state->generation) {
       for (const auto& effect : m_state->effects) {
-        effect->m_storage->retain |= effect->m_storage->hidden;
+        effect->m_storage->retain |= effect->m_storage->hidden || effect->m_storage->previousStored;
       }
     }
     completed.store(size());
@@ -326,22 +363,37 @@ luciole::ProviderCopyReceipt::reverse(const CancelToken& token, std::atomic<std:
   for (std::size_t i = 0; i < size(); ++i) {
     auto& item = *m_state->effects[i]->m_storage;
     auto& result = reply.results[i];
-    result.source = item.current();
+    result.source = item.previous ? item.destination : item.current();
     if (stopped) {
       result.error = FileError{FileErrorKind::Other, "Not attempted after remote reversal stopped."};
       completed.fetch_add(1);
       continue;
     }
     bool attempted = false, moved = false;
-    const auto from = item.current(), to = item.hidden ? item.destination : item.anchor.child("item");
+    const auto from = item.previous ? item.destination : item.current();
+    const auto to = item.previous ? item.anchor.child(item.hidden ? "previous" : "item")
+        : item.hidden             ? item.destination
+                                  : item.anchor.child("item");
     try {
       item.validate(token);
       provider_history::check(token);
       attempted = true;
       provider_history::move(from, to, token);
       moved = applied = true;
-      item.hidden = !item.hidden;
       result.destination = to;
+      if (item.previous) {
+        result.children.emplace_back(from, TransferOutcome::Moved);
+        result.children.back().destination = to;
+        const auto restore = item.anchor.child(item.hidden ? "item" : "previous");
+        ph::verify(to, item.hidden ? *item.previous : item.tree, token);
+        ph::verify(restore, item.hidden ? item.tree : *item.previous, token);
+        vacant(item.destination, token);
+        ph::move(restore, item.destination, token);
+        result.children.emplace_back(restore, TransferOutcome::Moved);
+        result.children.back().destination = item.destination;
+        result.destination = item.destination;
+      }
+      item.hidden = !item.hidden;
       item.validate(token);
       result.outcome = TransferOutcome::Moved;
     } catch (...) {
@@ -351,7 +403,8 @@ luciole::ProviderCopyReceipt::reverse(const CancelToken& token, std::atomic<std:
         // A failed provider reply can follow an accepted rename. Do not assume zero effects.
         try {
           CleanupDeadline deadline;
-          provider_history::verify(from, item.tree, deadline.token);
+          // Prove the entire old state, including both versions for replacement replay.
+          item.validate(deadline.token);
           uncertain = false;
         } catch (...) {
         }
@@ -360,10 +413,10 @@ luciole::ProviderCopyReceipt::reverse(const CancelToken& token, std::atomic<std:
       if (reply.retireHistory) {
         ++m_state->generation;
         for (const auto& effect : m_state->effects) {
-          effect->m_storage->retain |= effect->m_storage->hidden || uncertain;
+          effect->m_storage->retain |= effect->m_storage->hidden || effect->m_storage->previousStored || uncertain;
         }
       }
-      error.message += " Inspect " + from.uri() + " and " + to.uri();
+      error.message += " Inspect " + from.uri() + " and " + item.anchor.uri();
       result.error = std::move(error);
       result.outcome = moved || uncertain ? TransferOutcome::Partial
           : token.cancelled()             ? TransferOutcome::Cancelled

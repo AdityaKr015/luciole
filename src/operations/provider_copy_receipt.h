@@ -3,14 +3,17 @@
 #include "operations/copy_receipt.h"
 #include "operations/provider_copy_proof.h"
 
+#include <optional>
+
 namespace luciole {
   struct ProviderCopyStorage;
   class ProviderCopyEffect {
   public:
     static std::shared_ptr<const ProviderCopyEffect> prepare(
-        const Location& destination, const Location& staged, provider_history::Budget& budget, const CancelToken& token
+        const Location& destination, const Location& staged, provider_history::Budget& budget, const CancelToken& token,
+        bool replacement = false
     );
-    void published(const CancelToken& token) const;
+    void published(const CancelToken& token, const std::optional<Location>& previous = std::nullopt) const;
 
   private:
     friend class ProviderCopyReceipt;

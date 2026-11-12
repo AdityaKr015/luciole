@@ -543,9 +543,6 @@ struct luciole::ProviderTransfer::State {
           throwFileError(FileErrorKind::Unsupported, "The selected conflict action is unavailable.");
         }
       }
-      if (existing && !node.merged) {
-        disableRemoteHistory();
-      }
       if (node.merged) {
         unchanged(node.destinationStamp.get(), info(*node.result.destination, token).get(), false);
         for (auto& child : node.children) {
@@ -593,7 +590,8 @@ struct luciole::ProviderTransfer::State {
             if (remoteEffects.size() == 128) {
               disableRemoteHistory();
             } else {
-              remoteProof = ProviderCopyEffect::prepare(target, item, historyBudget, token);
+              remoteProof =
+                  ProviderCopyEffect::prepare(target, item, historyBudget, token, static_cast<bool>(existing));
             }
           } catch (const FileErrorException&) {
             disableRemoteHistory();
@@ -626,10 +624,17 @@ struct luciole::ProviderTransfer::State {
         node.destinationStamp = info(target, token);
         if (remoteProof && collectingRemote) {
           try {
-            remoteProof->published(token);
+            remoteProof->published(token, existing ? std::optional(backup) : std::nullopt);
             remoteEffects.push_back(std::move(remoteProof));
-          } catch (const FileErrorException&) {
+          } catch (const FileErrorException& error) {
             disableRemoteHistory();
+            if (existing) {
+              retain = true;
+              throwFileError(
+                  error.error().kind,
+                  error.error().message + " Replacement data remains for inspection at " + stage.uri()
+              );
+            }
           }
         }
         if (request.action == TransferAction::Move) {

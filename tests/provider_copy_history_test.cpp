@@ -210,11 +210,149 @@ namespace {
     noStages(backend);
     {
       const auto result = upload({source}, remote, [](const auto&) { return Replace; });
-      TEST_CHECK(result.outcomes.front().outcome == Copied && !result.receipt);
+      TEST_CHECK(result.outcomes.front().outcome == Copied && result.receipt);
     }
     drain();
     noStages(backend);
   }
+  void replacements(const fs::path& local, const Location& remote, const fs::path& backend) {
+    // Replace is distinct from merging: both complete versions must survive repeated replay.
+    for (unsigned variant = 0; variant < 5; ++variant) {
+      const auto name = std::to_string(variant);
+      const auto origin = local / name / "café\nitem";
+      const auto destination = backend / name / "café\nitem";
+      fs::create_directories(origin.parent_path());
+      fs::create_directories(destination.parent_path());
+      const bool incomingFolder = variant == 1 || variant == 3;
+      const bool previousFolder = variant == 2 || variant == 3;
+      if (incomingFolder) {
+        fs::create_directories(origin / "nested");
+        write(origin / "nested/.new", "incoming tree");
+        fs::create_symlink("missing target", origin / "dangling");
+      } else {
+        write(origin, "incoming file");
+      }
+      if (previousFolder) {
+        fs::create_directories(destination / "nested");
+        write(destination / "nested/.old", "previous tree");
+        TEST_CHECK(::chmod(destination.c_str(), 0750) == 0);
+      } else if (variant == 4) {
+        fs::create_symlink("unrelated-target", destination);
+        write(destination.parent_path() / "unrelated-target", "leave target alone");
+      } else {
+        write(destination, "previous file");
+      }
+      {
+        auto done =
+            upload({Location::fromPath(origin.native())}, remote.child(name), [](const auto&) { return Replace; });
+        TEST_CHECK(done.receipt && done.outcomes.front().outcome == Copied);
+        fs::remove_all(origin);
+        auto redo = reversed(done.receipt);
+        for (unsigned turn = 0; turn < 3; ++turn) {
+          if (previousFolder) {
+            TEST_CHECK(read(destination / "nested/.old") == "previous tree");
+            TEST_CHECK(!fs::exists(destination / "nested/.new"));
+            struct stat mode{};
+            TEST_CHECK(::lstat(destination.c_str(), &mode) == 0 && (mode.st_mode & 0777U) == 0750U);
+          } else if (variant == 4) {
+            TEST_CHECK(fs::read_symlink(destination) == "unrelated-target");
+            TEST_CHECK(read(destination.parent_path() / "unrelated-target") == "leave target alone");
+          } else {
+            TEST_CHECK(read(destination) == "previous file");
+          }
+          auto undo = reversed(redo);
+          if (incomingFolder) {
+            TEST_CHECK(read(destination / "nested/.new") == "incoming tree");
+            TEST_CHECK(fs::read_symlink(destination / "dangling") == "missing target");
+          } else {
+            TEST_CHECK(read(destination) == "incoming file" && !fs::is_symlink(destination));
+          }
+          redo = reversed(undo);
+        }
+      }
+      drain();
+      noStages(destination.parent_path());
+    }
+  }
+  void replacementRefusal(const fs::path& local, const Location& remote, const fs::path& backend) {
+    fs::create_directories(local);
+    fs::create_directories(backend);
+    write(local / "item", "incoming bytes");
+    const auto source = Location::fromPath((local / "item").native());
+    for (unsigned variant = 0; variant < 3; ++variant) {
+      fs::create_directory(backend / std::to_string(variant));
+      const auto destination = backend / std::to_string(variant) / "item";
+      write(destination, "previous bytes");
+      fs::path retained;
+      {
+        auto done = upload({source}, remote.child(std::to_string(variant)), [](const auto&) { return Replace; });
+        TEST_CHECK(done.receipt);
+        retained = anchor(destination.parent_path());
+        auto receipt = done.receipt;
+        if (variant == 2) {
+          receipt = reversed(receipt);
+        }
+        const auto changed = variant == 0 ? destination : retained / (variant == 1 ? "previous" : "item");
+        const auto time = fs::last_write_time(changed);
+        write(changed, variant == 0 ? "modified bytes" : "tampered bytes");
+        fs::last_write_time(changed, time);
+        const auto visible = read(destination);
+        const auto blocked = replay(receipt);
+        TEST_CHECK(!blocked.receipt && blocked.outcomes.front().error->kind == FileErrorKind::Changed);
+        TEST_CHECK(read(destination) == visible);
+      }
+      drain(true);
+      TEST_CHECK(fs::exists(retained / (variant == 2 ? "item" : "previous")));
+      fs::remove_all(retained);
+    }
+    // Both versions count toward the same content budget; an optional proof failure creates no anchor.
+    write(backend / "item", "previous bytes");
+    provider_history::Budget budget;
+    budget.bytes = 20;
+    bool refused = false;
+    try {
+      (void)ProviderCopyEffect::prepare(remote.child("item"), source, budget, {}, true);
+    } catch (const FileErrorException& error) {
+      refused = error.error().kind == FileErrorKind::Unsupported;
+    }
+    TEST_CHECK(refused && read(backend / "item") == "previous bytes");
+    drain();
+    noStages(backend);
+  }
+
+  void replacementSelection(const fs::path& local, const Location& remote, const fs::path& backend) {
+    fs::create_directories(local);
+    fs::create_directories(backend);
+    write(local / "a", "incoming a");
+    write(local / "b", "incoming b");
+    write(backend / "b", "previous b");
+    {
+      auto done = upload(
+          {Location::fromPath((local / "a").native()), Location::fromPath((local / "b").native())}, remote,
+          [](const auto&) { return Replace; }
+      );
+      TEST_CHECK(done.receipt && done.receipt->size() == 2);
+      CancelToken cancel;
+      cancel.cancel();
+      std::atomic<std::size_t> count{0};
+      const auto cancelled = done.receipt->reverse(cancel, count);
+      TEST_CHECK(!cancelled.receipt && !cancelled.retireHistory);
+      TEST_CHECK(read(backend / "a") == "incoming a" && read(backend / "b") == "incoming b");
+      auto redo = reversed(done.receipt);
+      TEST_CHECK(!fs::exists(backend / "a") && read(backend / "b") == "previous b");
+      auto undo = reversed(redo);
+      write(backend / "b", "external b");
+      const auto refused = replay(undo);
+      TEST_CHECK(!refused.receipt && refused.outcomes.back().error->kind == FileErrorKind::Changed);
+      TEST_CHECK(read(backend / "a") == "incoming a" && read(backend / "b") == "external b");
+    }
+    drain(true);
+    const auto retained = anchor(backend);
+    TEST_CHECK(read(retained / "previous") == "previous b");
+    fs::remove_all(retained);
+    noStages(backend);
+  }
+
   void cancellationAndDiscard(const fs::path& local, const Location& remote, const fs::path& backend) {
     fs::create_directories(local / "source");
     fs::create_directories(backend);
@@ -414,24 +552,38 @@ namespace {
     noStages(backend);
   }
 
-  void lostReply(const fs::path& local, const Location& remote, const fs::path& backend, const fs::path& arm) {
+  void lostReply(
+      const fs::path& local, const Location& remote, const fs::path& backend, const fs::path& arm,
+      bool replacement = false, bool restore = false
+  ) {
     fs::create_directories(local);
     fs::create_directories(backend);
     write(local / "item", "survives lost rename reply");
+    if (replacement) {
+      write(backend / "item", "previous destination");
+    }
     fs::path retained;
     {
-      auto done = upload({Location::fromPath((local / "item").native())}, remote);
+      auto done = upload({Location::fromPath((local / "item").native())}, remote, [](const auto&) { return Replace; });
       TEST_CHECK(done.receipt);
       retained = anchor(backend);
       const auto temporary = fs::path(arm.string() + ".tmp");
-      write(temporary, (backend / "item").native());
+      write(temporary, (restore ? retained / "previous" : backend / "item").native());
       fs::rename(temporary, arm);
       TransferService service;
       TEST_CHECK(service.replayCopy(done.receipt));
       wait(service);
       TEST_CHECK(service.historyRetired() && !service.copyReceipt());
       TEST_CHECK(service.results().front().outcome == Partial && service.results().front().error);
-      TEST_CHECK(!fs::exists(backend / "item") && read(retained / "item") == "survives lost rename reply");
+      TEST_CHECK(read(retained / "item") == "survives lost rename reply");
+      if (restore) {
+        TEST_CHECK(read(backend / "item") == "previous destination");
+      } else {
+        TEST_CHECK(!fs::exists(backend / "item"));
+        if (replacement) {
+          TEST_CHECK(read(retained / "previous") == "previous destination");
+        }
+      }
       TEST_CHECK(service.report().contains("Inspect") && service.report().contains(retained.filename().native()));
       fs::remove(arm);
     }
@@ -444,6 +596,9 @@ namespace {
   void run(const fs::path& local, const Location& remote, const fs::path& backend) {
     basic(local / "basic", remote.child("basic"), backend / "basic");
     collisionsAndEdits(local / "collisions", remote.child("collisions"), backend / "collisions");
+    replacements(local / "replacements", remote.child("replacements"), backend / "replacements");
+    replacementRefusal(local / "replace-refusal", remote.child("replace-refusal"), backend / "replace-refusal");
+    replacementSelection(local / "replace-selection", remote.child("replace-selection"), backend / "replace-selection");
     cancellationAndDiscard(local / "cancel", remote.child("cancel"), backend / "cancel");
     cleanupRefusal(local / "refusal", remote.child("refusal"), backend / "refusal");
     budget(local / "budget", remote.child("budget"), backend / "budget");
@@ -459,14 +614,20 @@ namespace {
 
 int main(int argc, char* argv[]) {
   GlibPollSource glib;
-  if (argc == 6 && std::string_view(argv[1]) == "--lost-reply") {
+  if (argc == 6
+      && (std::string_view(argv[1]) == "--lost-reply"
+          || std::string_view(argv[1]) == "--lost-replacement"
+          || std::string_view(argv[1]) == "--lost-restore")) {
     const auto remote = Location::fromUri(argv[2]);
     TEST_CHECK(remote.uri().starts_with("sftp:"));
     mount(remote);
     const luciole::GString uuid(g_uuid_string_random());
     const auto name = std::string("lost-reply-") + uuid.get();
     const auto backend = fs::path(argv[3]) / name, local = fs::path(argv[4]) / name;
-    lostReply(local, remote.child(name), backend, argv[5]);
+    lostReply(
+        local, remote.child(name), backend, argv[5], std::string_view(argv[1]) != "--lost-reply",
+        std::string_view(argv[1]) == "--lost-restore"
+    );
   } else if (argc == 5 && std::string_view(argv[1]) == "--provider") {
     const auto remote = Location::fromUri(argv[2]);
     TEST_CHECK(remote.uri().starts_with("sftp:"));
