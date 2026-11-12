@@ -96,6 +96,39 @@ void luciole::CopyHistoryTree::replace(
   }
 }
 
+void luciole::CopyHistoryTree::rewind(
+    std::span<const std::string> path, const transfer::Tree& copied, const transfer::Tree* previous,
+    const HistoryRevisions& revisions, const CancelToken& token
+) {
+  if (path.empty() || path.size() > 64) {
+    changed();
+  }
+  auto* node = &m_tree;
+  for (std::size_t n = 0; n < path.size(); ++n) {
+    check(token);
+    if (!S_ISDIR(node->metadata.st_mode)) {
+      changed();
+    }
+    m_changedFolders.emplace(node->metadata.st_dev, node->metadata.st_ino);
+    const auto found = std::ranges::find(node->children, path[n], &transfer::Tree::name);
+    if (found == node->children.end()) {
+      changed();
+    }
+    if (n + 1 == path.size()) {
+      compare(*found, copied, revisions, token);
+      if (previous) {
+        auto restored = *previous;
+        restored.name = path[n];
+        *found = std::move(restored);
+      } else {
+        node->children.erase(found);
+      }
+    } else {
+      node = &*found;
+    }
+  }
+}
+
 void luciole::CopyHistoryTree::matches(
     const transfer::Tree& previous, const HistoryRevisions& revisions, const CancelToken& token
 ) const {

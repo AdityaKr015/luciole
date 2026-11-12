@@ -20,6 +20,10 @@ namespace luciole {
         std::span<const std::string> path, const transfer::Tree& incoming, const transfer::Tree* previous,
         const HistoryRevisions& revisions, const CancelToken& token
     );
+    void rewind(
+        std::span<const std::string> path, const transfer::Tree& copied, const transfer::Tree* previous,
+        const HistoryRevisions& revisions, const CancelToken& token
+    );
     void matches(const transfer::Tree& previous, const HistoryRevisions& revisions, const CancelToken& token) const;
     transfer::Tree finish(
         int parent, const std::string& name, HistoryRevisions& revisions, const CancelToken& token,

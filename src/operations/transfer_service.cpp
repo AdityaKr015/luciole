@@ -414,6 +414,13 @@ namespace {
         && std::ranges::all_of(job.nodes, [&](const auto& node) { return !node || completeCopy(completeCopy, *node); });
     return copiesComplete ? std::optional(copied) : std::nullopt;
   }
+  Fd copyHistoryParent(const Location& destination) {
+    const auto root = destination.nativePath();
+    if (!root) {
+      throwFileError(FileErrorKind::Unsupported, "Copy history requires a native destination.");
+    }
+    return checkedFd(::open(root->c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+  }
   // Worker-local optional history collection; prepared proofs outlive every source.
   struct MoveCapture {
     struct PreparedMove {
@@ -590,6 +597,8 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
         auto revisions = std::make_shared<HistoryRevisions>();
         work.history = revisions;
         std::vector<std::shared_ptr<const CopyEffect>> copies;
+        std::size_t publishedCopies = 0;
+        bool checkpointFailed = false;
         struct PreparedCopy {
           std::shared_ptr<const CopyEffect> effect;
           std::size_t source;
@@ -605,17 +614,25 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
         Fd copyRetentionParent;
         bool collectingCopies = budget && job->request.action != TransferAction::Move;
         if (collectingCopies) {
+          work.checkpointCopy = [&](const Location& destination, bool replacing) {
+            if (!collectingCopies || !replacing) {
+              return;
+            }
+            try {
+              copies = CopyReceipt::checkpoint(copies, destination, job->request.action, token);
+            } catch (const FileErrorException&) {
+              checkpointFailed = true;
+              collectingCopies = false;
+              copies.clear();
+            }
+          };
           work.prepareCopy = [&](const Source& source, const Location& destination, int parent, int stage,
                                  bool replacing) -> std::shared_ptr<const CopyEffect> {
             if (collectingCopies) {
               try {
                 if (preparedCopies.size() < budget) {
                   if (!copyRetentionParent.valid()) {
-                    const auto root = job->request.destination.nativePath();
-                    if (!root) {
-                      throwFileError(FileErrorKind::Unsupported, "Copy history requires a native destination.");
-                    }
-                    copyRetentionParent = checkedFd(::open(root->c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+                    copyRetentionParent = copyHistoryParent(job->request.destination);
                   }
                   auto proof = CopyEffect::prepare(destination, parent, stage, replacing, remaining, token, revisions);
                   preparedCopies.push_back({proof, source.index});
@@ -632,6 +649,7 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
           work.recordCopy = [&](const std::shared_ptr<const CopyEffect>& prepared, int stage) {
             try {
               copies.push_back(prepared->published(stage, copyRetentionParent.get()));
+              ++publishedCopies;
             } catch (const FileErrorException&) {
               collectingCopies = false;
               copies.clear();
@@ -725,8 +743,8 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
           }
         }
         const auto copied = completedCopies(*job, outcomes);
-        bool captureChanged = false;
-        if (!retry && !remote && collectingCopies && copied && *copied > 0 && *copied == copies.size()) {
+        bool captureChanged = checkpointFailed;
+        if (!retry && !remote && collectingCopies && copied && *copied > 0 && *copied == publishedCopies) {
           try {
             copyReceipt = CopyReceipt::capture(copies, job->request.action, token);
           } catch (const FileErrorException&) {

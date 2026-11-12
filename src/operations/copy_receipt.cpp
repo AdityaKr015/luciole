@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <linux/fs.h>
 #include <mutex>
+#include <optional>
 #include <print>
 #include <sys/syscall.h>
 #include <thread>
@@ -27,6 +28,23 @@ namespace {
     if (token.cancelled()) {
       luciole::throwFileError(luciole::FileErrorKind::Cancelled, "Copy reversal cancelled.");
     }
+  }
+  std::optional<std::vector<std::string>> relativePath(const luciole::Location& ancestor, luciole::Location location) {
+    std::vector<std::string> path;
+    while (path.size() <= 64) {
+      if (location == ancestor) {
+        std::ranges::reverse(path);
+        return path;
+      }
+      const auto parent = location.parent();
+      const auto name = location.basename();
+      if (!parent || !name) {
+        break;
+      }
+      path.push_back(*name);
+      location = *parent;
+    }
+    return std::nullopt;
   }
   bool invalidates(const luciole::FileError& error) {
     return error.kind == luciole::FileErrorKind::Changed
@@ -248,14 +266,15 @@ void luciole::CopyEffect::vacant() const {
   }
 }
 
-std::shared_ptr<const luciole::CopyEffect> luciole::CopyEffect::afterMove(bool hidden) const {
+std::shared_ptr<const luciole::CopyEffect>
+luciole::CopyEffect::afterMove(bool hidden, const std::map<std::string, int>& parents) const {
   auto tree = std::make_shared<transfer::Tree>(*m_tree);
   const auto current = statFd(m_storage->item.get());
   revisions()->renamed(tree->metadata, current);
   tree->metadata = current;
   ++m_storage->generation;
   auto result = std::shared_ptr<const CopyEffect>(new CopyEffect(m_destination, m_storage, tree, hidden));
-  result->validate({});
+  result->validate({}, parents);
   if (hidden) {
     m_storage->cleanupTree = std::move(tree);
   }
@@ -387,6 +406,97 @@ luciole::CopyEffect::refreshFolder(bool empty, std::size_t& remaining, const Can
   return std::shared_ptr<const CopyEffect>(new CopyEffect(m_destination, m_storage, std::move(tree), false));
 }
 
+std::vector<std::shared_ptr<const luciole::CopyEffect>> luciole::CopyReceipt::checkpoint(
+    const std::vector<std::shared_ptr<const CopyEffect>>& effects, const Location& destination, TransferAction action,
+    const CancelToken& token
+) {
+  const auto prefix = destination.uri() + "/";
+  const bool replacesChildren = action == TransferAction::Copy && std::ranges::any_of(effects, [&](const auto& effect) {
+                                  if (!effect->m_destination.uri().starts_with(prefix)) {
+                                    return false;
+                                  }
+                                  const auto path = relativePath(destination, effect->m_destination);
+                                  return path && !path->empty();
+                                });
+  if (!replacesChildren) {
+    return effects;
+  }
+  const auto proof = capture(effects, action, token);
+  if (!proof) {
+    throwFileError(FileErrorKind::Changed, "Earlier copy results cannot be verified.");
+  }
+  return proof->m_effects;
+}
+
+std::shared_ptr<const luciole::CopyEffect> luciole::CopyReceipt::restoreParent(
+    const std::shared_ptr<const CopyEffect>& effect, const std::vector<std::shared_ptr<const CopyEffect>>& children,
+    const CancelToken& token
+) {
+  const auto& previous = effect->m_previous;
+  if (!previous || !previous->m_hidden || !S_ISDIR(previous->m_tree->metadata.st_mode)) {
+    throwFileError(FileErrorKind::Changed, "A replaced parent has no retained folder proof.");
+  }
+  try {
+    previous->validate(token);
+    CopyHistoryTree original(*previous->m_tree);
+    std::map<std::string, int> parents;
+    for (const auto& child : children) {
+      check(token);
+      const auto path = relativePath(effect->m_destination, child->m_destination);
+      if (!path || path->empty() || child->m_hidden) {
+        throwFileError(FileErrorKind::Changed, "Invalid earlier child copy.");
+      }
+      auto actual = checkedFd(::fcntl(previous->item(), F_DUPFD_CLOEXEC, 0));
+      for (std::size_t n = 0; n + 1 < path->size(); ++n) {
+        actual = transfer::directory(actual.get(), (*path)[n]);
+      }
+      for (const auto* item : {child.get(), child->m_previous.get()}) {
+        if (!item) {
+          continue;
+        }
+        if (!sameIdentity(statFd(actual.get()), statFd(item->parent()))) {
+          throwFileError(FileErrorKind::Changed, "An earlier child belongs to a different parent.");
+        }
+        parents[item->m_destination.parent()->uri()] = item->parent();
+      }
+      original.rewind(
+          *path, *child->m_tree, child->m_previous ? child->m_previous->m_tree.get() : nullptr, *effect->revisions(),
+          token
+      );
+    }
+    CopyReceipt earlier;
+    earlier.m_effects = children;
+    earlier.m_action = TransferAction::Copy;
+    earlier.m_revisions = effect->revisions();
+    earlier.m_generation = earlier.m_revisions->generation();
+    std::atomic<std::size_t> completed{0};
+    const auto restored = earlier.reverseImpl(token, completed, parents, previous->m_storage->stage->parent(), false);
+    if (restored.retireHistory || std::ranges::any_of(restored.results, [](const auto& item) {
+          return item.error || item.outcome != TransferOutcome::Moved;
+        })) {
+      throwFileError(FileErrorKind::Other, "The retained parent could not be fully reconstructed.");
+    }
+    auto tree = std::make_shared<transfer::Tree>(
+        original.finish(previous->m_storage->stage->fd(), "item", *effect->revisions(), token)
+    );
+    ++previous->m_storage->generation;
+    previous->m_storage->cleanupTree = tree;
+    auto initial = std::shared_ptr<const CopyEffect>(
+        new CopyEffect(previous->m_destination, previous->m_storage, std::move(tree), true)
+    );
+    initial->validate(token);
+    return std::shared_ptr<const CopyEffect>(
+        new CopyEffect(effect->m_destination, effect->m_storage, effect->m_tree, false, std::move(initial))
+    );
+  } catch (...) {
+    (void)previous->retainForRecovery();
+    for (const auto& child : children) {
+      (void)child->retainForRecovery();
+    }
+    throw;
+  }
+}
+
 std::shared_ptr<const luciole::CopyReceipt> luciole::CopyReceipt::capture(
     const std::vector<std::shared_ptr<const CopyEffect>>& effects, TransferAction action, const CancelToken& token
 ) {
@@ -454,8 +564,44 @@ std::shared_ptr<const luciole::CopyReceipt> luciole::CopyReceipt::capture(
       parent = parent->parent();
     }
     if (!absorbed) {
+      std::vector<std::shared_ptr<const CopyEffect>> descendants;
+      std::vector<bool> removed(result->m_effects.size(), false);
+      for (std::size_t index = 0; index < result->m_effects.size(); ++index) {
+        auto& child = result->m_effects[index];
+        const auto path = relativePath(effect->m_destination, child->m_destination);
+        if (!path || path->empty()) {
+          continue;
+        }
+        if (trees[index]) {
+          auto tree = std::make_shared<transfer::Tree>(
+              trees[index]->finish(child->parent(), *child->m_destination.basename(), *result->m_revisions, token)
+          );
+          child = std::shared_ptr<const CopyEffect>(
+              new CopyEffect(child->m_destination, child->m_storage, std::move(tree), false, child->m_previous)
+          );
+        }
+        descendants.push_back(child);
+        removed[index] = true;
+      }
+      auto next = effect;
+      if (!descendants.empty()) {
+        if (action != TransferAction::Copy) {
+          throwFileError(FileErrorKind::Changed, "Invalid ancestor transfer history.");
+        }
+        next = restoreParent(effect, descendants, token);
+        for (std::size_t n = removed.size(); n > 0; --n) {
+          if (removed[n - 1]) {
+            result->m_effects.erase(result->m_effects.begin() + static_cast<std::ptrdiff_t>(n - 1));
+            trees.erase(trees.begin() + static_cast<std::ptrdiff_t>(n - 1));
+          }
+        }
+        latest.clear();
+        for (std::size_t n = 0; n < result->m_effects.size(); ++n) {
+          latest.emplace(result->m_effects[n]->m_destination.uri(), n);
+        }
+      }
       latest.emplace(effect->m_destination.uri(), result->m_effects.size());
-      result->m_effects.push_back(effect);
+      result->m_effects.push_back(std::move(next));
       trees.push_back({});
     }
   }
@@ -477,6 +623,13 @@ std::shared_ptr<const luciole::CopyReceipt> luciole::CopyReceipt::capture(
 
 luciole::CopyReplayResult
 luciole::CopyReceipt::reverse(const CancelToken& token, std::atomic<std::size_t>& completed) const {
+  return reverseImpl(token, completed, {}, -1, true);
+}
+
+luciole::CopyReplayResult luciole::CopyReceipt::reverseImpl(
+    const CancelToken& token, std::atomic<std::size_t>& completed, const std::map<std::string, int>& parents,
+    int retentionParent, bool captureInverse
+) const {
   const auto revisionGuard = m_revisions->lock();
   CopyReplayResult reply;
   reply.results.reserve(size());
@@ -506,7 +659,7 @@ luciole::CopyReceipt::reverse(const CancelToken& token, std::atomic<std::size_t>
     }
     for (const auto& effect : m_effects) {
       check(token);
-      effect->validate(token);
+      effect->validate(token, parents);
       if (effect->m_hidden && !effect->m_previous) {
         effect->vacant();
       }
@@ -541,7 +694,7 @@ luciole::CopyReceipt::reverse(const CancelToken& token, std::atomic<std::size_t>
     }
     bool moved = false;
     try {
-      effect->validate(token);
+      effect->validate(token, parents);
       check(token);
       if (effect->m_previous) {
         auto& previous = *effect->m_previous->m_storage;
@@ -555,8 +708,8 @@ luciole::CopyReceipt::reverse(const CancelToken& token, std::atomic<std::size_t>
         result.destination = effect->m_destination;
         result.children.emplace_back(effect->m_destination, TransferOutcome::Moved).destination = retainedPath;
         result.children.emplace_back(retainedPath, TransferOutcome::Moved).destination = effect->m_destination;
-        auto retained = effect->afterMove(true);
-        auto restored = effect->m_previous->afterMove(false);
+        auto retained = effect->afterMove(true, parents);
+        auto restored = effect->m_previous->afterMove(false, parents);
         inverse.push_back(
             std::shared_ptr<const CopyEffect>(new CopyEffect(
                 restored->m_destination, restored->m_storage, restored->m_tree, false, std::move(retained)
@@ -576,11 +729,12 @@ luciole::CopyReceipt::reverse(const CancelToken& token, std::atomic<std::size_t>
               "The copy returned, but inspect its private folder: " + filenameDisplayText(stage->recoveryPath())
           );
         }
-        inverse.push_back(effect->afterMove(false));
+        inverse.push_back(effect->afterMove(false, parents));
       } else {
-        auto stage = std::make_unique<CreationStage>(storage.parent.get(), false);
+        auto stage =
+            std::make_unique<CreationStage>(retentionParent >= 0 ? retentionParent : storage.parent.get(), false);
         stage->adopt(checkedFd(::fcntl(storage.item.get(), F_DUPFD_CLOEXEC, 0)));
-        effect->validate(token);
+        effect->validate(token, parents);
         check(token);
         if (::syscall(
                 SYS_renameat2, storage.parent.get(), effect->m_destination.basename()->c_str(), stage->fd(), "item",
@@ -593,7 +747,7 @@ luciole::CopyReceipt::reverse(const CancelToken& token, std::atomic<std::size_t>
         storage.stage = std::move(stage);
         result.destination = Location::fromPath(storage.stage->recoveryPath());
         result.outcome = TransferOutcome::Moved;
-        inverse.push_back(effect->afterMove(true));
+        inverse.push_back(effect->afterMove(true, parents));
       }
     } catch (const std::exception&) {
       auto error = currentFileError();
@@ -612,14 +766,14 @@ luciole::CopyReceipt::reverse(const CancelToken& token, std::atomic<std::size_t>
   if (applied) {
     m_revisions->advance();
   }
-  if (!stopped) {
+  if (!stopped && captureInverse) {
     try {
       reply.receipt = capture(inverse, m_action, {});
     } catch (const FileErrorException&) {
       // Committed removals/publications remain accurately reported if optional inverse capture fails.
     }
   }
-  reply.retireHistory |= applied && !reply.receipt;
+  reply.retireHistory |= applied && (stopped || (captureInverse && !reply.receipt));
   if (reply.retireHistory) {
     retainIncomplete(reply.results);
   }

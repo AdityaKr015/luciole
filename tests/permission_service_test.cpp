@@ -1,6 +1,7 @@
 #include "event_loop/glib_poll_source.h"
 #include "fs/filename.h"
 #include "fs/gio_interop.h"
+#include "operations/permission_jobs.h"
 #include "operations/permission_service.h"
 #include "test_check.h"
 
@@ -1062,11 +1063,27 @@ namespace {
     TEST_CHECK(!service.snapshot().info->acl->supported);
     applyAcl(pump, service, {.access = rules, .defaults = {}});
     TEST_CHECK(service.snapshot().failed() && !service.snapshot().applied && aclText(file) == replacement);
+    // A cancelled token deterministically exercises cancellation before the first write.
+    const auto target = luciole::preparePermissionTarget(entry(file), false);
+    target->loadAcl(true);
+    luciole::CancelToken cancelled;
+    cancelled.cancel();
+    const auto reply = luciole::applyAclEdit(target, {.access = rules, .defaults = {}}, cancelled);
+    TEST_CHECK(!reply.applied && !reply.error && aclText(file) == replacement);
+    TEST_CHECK(reply.message == "Cancelled before applying ACL changes.");
     pump.prepare(service, file);
     TEST_CHECK(service.applyAcl({.access = rules, .defaults = {}}));
     service.cancel();
     pump.settle(service);
-    TEST_CHECK(!service.snapshot().applied && aclText(file) == replacement);
+    // The worker may finish before cancel reaches it. Verify the reported outcome either way.
+    const auto& snapshot = service.snapshot();
+    TEST_CHECK(snapshot.phase == P::Cancelled && !snapshot.failed() && snapshot.info && snapshot.info->acl);
+    if (snapshot.applied) {
+      TEST_CHECK(snapshot.info->acl->access == rules && mode(file) == 0640);
+      TEST_CHECK(aclText(file).contains("user:" + std::to_string(::geteuid() + 20000) + ":rw-\n"));
+    } else {
+      TEST_CHECK(aclText(file) == replacement);
+    }
   }
   void setAcl(const fs::path& path, const std::string& text, bool defaults = false) {
     acl_t acl = ::acl_from_text(text.c_str());

@@ -62,7 +62,7 @@ namespace luciole {
     bool ownsProof() const;
     void validate(const CancelToken& token, const std::map<std::string, int>& parents = {}) const;
     void vacant() const;
-    std::shared_ptr<const CopyEffect> afterMove(bool hidden) const;
+    std::shared_ptr<const CopyEffect> afterMove(bool hidden, const std::map<std::string, int>& parents = {}) const;
     Location m_destination;
     std::shared_ptr<CopyStorage> m_storage;
     std::shared_ptr<const transfer::Tree> m_tree;
@@ -76,6 +76,10 @@ namespace luciole {
     static std::shared_ptr<const CopyReceipt> capture(
         const std::vector<std::shared_ptr<const CopyEffect>>& effects, TransferAction action, const CancelToken& token
     );
+    static std::vector<std::shared_ptr<const CopyEffect>> checkpoint(
+        const std::vector<std::shared_ptr<const CopyEffect>>& effects, const Location& destination,
+        TransferAction action, const CancelToken& token
+    );
     CopyReplayResult reverse(const CancelToken& token, std::atomic<std::size_t>& completed) const;
     std::vector<TransferResult> unconfirmed(const FileError& error) const;
     std::size_t size() const { return m_effects.size(); }
@@ -84,6 +88,14 @@ namespace luciole {
     static std::vector<FileError> takeCleanupErrors();
 
   private:
+    static std::shared_ptr<const CopyEffect> restoreParent(
+        const std::shared_ptr<const CopyEffect>& effect, const std::vector<std::shared_ptr<const CopyEffect>>& children,
+        const CancelToken& token
+    );
+    CopyReplayResult reverseImpl(
+        const CancelToken& token, std::atomic<std::size_t>& completed, const std::map<std::string, int>& parents,
+        int retentionParent, bool captureInverse
+    ) const;
     void retainIncomplete(std::vector<TransferResult>& results) const;
     std::vector<std::shared_ptr<const CopyEffect>> m_effects;
     TransferAction m_action = TransferAction::Copy;

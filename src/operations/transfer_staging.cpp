@@ -217,6 +217,9 @@ namespace luciole::transfer {
             fail("Could not move item");
           }
         }
+        if (action != TransferAction::Move && work.checkpointCopy) {
+          work.checkpointCopy(binding.location.child(target), replace.has_value());
+        }
         Stage stage(destination, work);
         work.metadataIncomplete = false;
         bool published = false;
