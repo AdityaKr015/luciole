@@ -45,7 +45,7 @@ jobs:
             wayland wayland-protocols \
             libglvnd freetype2 fontconfig noto-fonts \
             cairo pango harfbuzz \
-            libxkbcommon glib2 glib-networking dbus shared-mime-info \
+            libxkbcommon glib2 glib-networking gvfs dbus shared-mime-info \
             gdk-pixbuf2 glycin libheif libwebp librsvg libpng \
             tomlplusplus acl libarchive xz \
             nlohmann-json stb \

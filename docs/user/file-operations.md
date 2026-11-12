@@ -68,7 +68,7 @@ An undone created document's original data can continue using disk space while i
 
 ## Trash
 
-Delete moves native selections to Trash. A failed trash operation does not silently become permanent deletion. Trash requires the system's GIO/GVfs provider.
+Delete moves native selections to Trash. A failed trash operation does not silently become permanent deletion. The full Trash interface requires the system's GIO/GVfs provider and a session D-Bus connection, including browsing, restoration and Empty Trash. See the [required Trash runtime](../../PACKAGING.md#required-trash-runtime) for packaging requirements.
 
 In Trash, Restore returns selected items to their recorded original locations and asks about conflicts. Delete Permanently removes selected trashed items after confirmation. Empty Trash is available from the Trash sidebar row's context menu; its confirmation includes the measured contents and size. Permanent deletion is irreversible.
 

@@ -89,7 +89,7 @@ Use mutually compatible GdkPixbuf, Glycin and loader packages. Meson's minimum c
 
 ### Runtime integration and helpers
 
-The linked libraries need their ordinary runtime packages. The following data, providers and executables supply additional features:
+The linked libraries need their ordinary runtime packages. GVfs and a session D-Bus connection are required runtime dependencies for the shipped Trash interface. The remaining data, providers and executables supply the features listed below:
 
 | Runtime component                             | Role                                                                               |
 | --------------------------------------------- | ---------------------------------------------------------------------------------- |
@@ -99,7 +99,7 @@ The linked libraries need their ordinary runtime packages. The following data, p
 | Icon theme                                    | File, folder and application artwork; the Nix wrapper supplies Adwaita             |
 | Desktop settings schemas and GSettings backend | `org.gnome.desktop.interface` icon-theme selection and live changes; normally gsettings-desktop-schemas and dconf |
 | Glycin loaders                                | Raster images in thumbnails, previews and metadata                                 |
-| Session D-Bus and GVfs                        | Trash and supported mounted remote locations                                       |
+| Session D-Bus and GVfs                        | Required for Trash browsing, restore and emptying; additional backends enable remote locations |
 | `glib-networking`                             | GIO TLS implementation for secure WebDAV                                           |
 | `ffmpeg`, `ffprobe`                           | Video/audio artwork and media metadata                                             |
 | `pdftoppm`, `pdfinfo`                         | PDF thumbnails and metadata, normally supplied by Poppler utilities                |
@@ -110,6 +110,22 @@ The linked libraries need their ordinary runtime packages. The following data, p
 Missing optional helpers make their associated feature unavailable where no alternative provider exists; they do not prevent ordinary native directory browsing. Terminal actions can also use a configured command, inherited TERMINAL or a supported directly discovered terminal. Recommend or depend on them according to the features the package advertises. The Nix wrapper exposes FFmpeg, Poppler utilities, 7-Zip and xdg-terminal-exec on `PATH`.
 
 Archive support uses the system libarchive and its enabled formats/filters. Unencrypted RAR input depends on that build's capabilities; encrypted RAR is outside the implemented scope. Encrypted 7z input uses the system CLI through the bounded worker transport. There is no py7zr requirement, 7-Zip SDK build dependency, `7z.so` path or private C++ ABI contract. `LUCIOLE_7Z` can select an absolute executable path for an unusual installation. File Roller, Ark, unrar and a Samba server are not required by Luciole.
+
+### Required Trash runtime
+
+Declare GVfs as a runtime dependency for packages shipping Luciole's Trash interface, rather than only recommending it for network access. Include the GIO module, `gvfsd`, `gvfsd-trash`, mount data and session D-Bus activation files. GLib can move native files into the local trash without GVfs, but that does not provide the `trash:///` view used for browsing, restoration, size reporting and Empty Trash. No GVfs C++ development dependency is needed.
+
+The following package splits were checked in official catalogs on 2026-11-12:
+
+| Distribution | Required Trash runtime |
+| --- | --- |
+| Arch | [`gvfs`](https://archlinux.org/packages/extra/x86_64/gvfs/files/), including the GIO module, daemon and Trash backend; install with `sudo pacman -S gvfs` |
+| Fedora | [`gvfs`](https://packages.fedoraproject.org/pkgs/gvfs/gvfs/fedora-45.html), which depends on `gvfs-client` and includes `gvfsd-trash` |
+| Debian 13 | [`gvfs`](https://packages.debian.org/trixie/gvfs) for the GIO module and [`gvfs-daemons`](https://packages.debian.org/trixie/amd64/gvfs-daemons/filelist) for the daemon, activation and Trash backend; retain the dependency closure |
+
+A usable session bus and daemon activation are required in addition to the installed module. A GNOME desktop session is not required. Do not force `GIO_USE_VFS=local` in the packaged application or session: the headless tests use that override deliberately and do not establish working Trash integration. Verify installed-session access with `gio list trash:///`, then test Trash/Restore/Empty Trash with disposable files in an isolated session. Merely moving a file to Trash is insufficient verification of the full interface.
+
+The Nix package wrapper and dev shell already expose the GVfs GIO module. On NixOS, enable `services.gvfs.enable = true;` to register the daemon and its session activation through the [system GVfs module](https://raw.githubusercontent.com/NixOS/nixpkgs/master/nixos/modules/services/desktops/gvfs.nix). Luciole's NixOS module installs the application; Home Manager/hjem configuration and the application wrapper do not independently enable that system service. Additional protocol providers below remain separate from this baseline requirement. `gvfs-fuse` is not needed for Luciole's direct GIO Trash access.
 
 ### GVfs providers across distributions
 
