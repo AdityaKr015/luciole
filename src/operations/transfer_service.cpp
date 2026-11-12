@@ -428,14 +428,62 @@ namespace {
     bool collecting;
     CancelToken token;
     std::shared_ptr<HistoryRevisions> revisions;
+    Location destination;
+    std::shared_ptr<const MoveHistoryRoot> root;
     std::vector<std::shared_ptr<const MoveEffect>> moves;
     std::vector<PreparedMove> preparedMoves;
     std::vector<RetainedFolder> retainedFolders;
-    MoveCapture(std::size_t limit, CancelToken cancel, std::shared_ptr<HistoryRevisions> history)
-        : budget(limit), collecting(limit != 0), token(std::move(cancel)), revisions(std::move(history)) {}
+    MoveCapture(std::size_t limit, CancelToken cancel, std::shared_ptr<HistoryRevisions> history, Location target)
+        : budget(limit), collecting(limit != 0), token(std::move(cancel)), revisions(std::move(history)),
+          destination(std::move(target)) {}
+    std::shared_ptr<const MoveHistoryRoot> retention(const Location& folder, int parent) {
+      if (!root) {
+        const auto path = destination.nativePath();
+        if (!path) {
+          throwFileError(FileErrorKind::Unsupported, "Move history requires a native destination.");
+        }
+        root = std::make_shared<MoveHistoryRoot>(
+            destination, checkedFd(::open(path->c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC))
+        );
+      }
+      if (statFd(root->parent.get()).st_dev == statFd(parent).st_dev) {
+        return root;
+      }
+      for (const auto& effect : moves) {
+        if (effect->encloses(folder)
+            && effect->retentionRoot()
+            && statFd(effect->retentionRoot()->parent.get()).st_dev == statFd(parent).st_dev) {
+          return effect->retentionRoot();
+        }
+      }
+      // A mounted branch needs retention on its own filesystem, outside its first moved ancestor.
+      return std::make_shared<MoveHistoryRoot>(folder, checkedFd(::fcntl(parent, F_DUPFD_CLOEXEC, 0)));
+    }
+    std::shared_ptr<const MoveEffect> contents(std::shared_ptr<const MoveEffect> effect) {
+      if (std::ranges::any_of(moves, [&](const auto& parent) {
+            return parent->hasContents() && parent->encloses(effect->destination());
+          })) {
+        return effect->captureContents(remaining, token);
+      }
+      return effect;
+    }
     bool room() const { return moves.size() + preparedMoves.size() + retainedFolders.size() < budget; }
     void attach(Work& work) {
       if (collecting) {
+        work.prepareMerge = [&](const Location& folder) {
+          if (!collecting) {
+            return;
+          }
+          try {
+            for (auto& effect : moves) {
+              if (effect->encloses(folder) && !effect->hasContents()) {
+                effect = effect->captureContents(remaining, token);
+              }
+            }
+          } catch (const FileErrorException&) {
+            collecting = false;
+          }
+        };
         work.recordMove = [&](const Source& source, const Location& destination, int target, int item) {
           try {
             if (!collecting || !room() || item < 0 || !sameIdentity(source.metadata, statFd(item))) {
@@ -443,9 +491,12 @@ namespace {
               return false;
             }
             revisions->renamed(source.metadata, statFd(item));
-            moves.push_back(
-                MoveEffect::capture(source.location, destination, source.parent.get(), target, item, revisions)
-            );
+            moves.push_back(contents(
+                MoveEffect::capture(
+                    source.location, destination, source.parent.get(), target, item, revisions,
+                    retention(*destination.parent(), target)
+                )
+            ));
             return true;
           } catch (const FileErrorException&) {
             collecting = false;
@@ -457,7 +508,8 @@ namespace {
           if (collecting && room()) {
             try {
               auto proof = MoveEffect::prepareReplacement(
-                  source.location, destination, source.parent.get(), target, remaining, token, revisions
+                  source.location, destination, source.parent.get(), target, remaining, token, revisions,
+                  retention(*destination.parent(), target)
               );
               if (proof) {
                 preparedMoves.push_back({proof, source.index});
@@ -471,7 +523,7 @@ namespace {
         };
         work.recordPreparedMove = [&](const std::shared_ptr<const MoveEffect>& proof) {
           try {
-            moves.push_back(proof->publishedReplacement());
+            moves.push_back(contents(proof->publishedReplacement()));
           } catch (const FileErrorException&) {
             collecting = false;
             throw;
@@ -480,7 +532,9 @@ namespace {
         work.recordMerge = [&](const Source& source, const Location& folder, int target) {
           if (collecting && room() && remaining) {
             try {
-              auto proof = MoveFolder::retain(source.location, source.parent.get(), folder, target, token, revisions);
+              auto proof = MoveFolder::retain(
+                  source.location, source.parent.get(), folder, target, token, revisions, retention(folder, target)
+              );
               if (proof) {
                 --remaining;
                 retainedFolders.push_back({std::move(proof), source.index});
@@ -542,10 +596,13 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
         };
         // Keep displaced data alive until every source has finished, even if optional history is disqualified.
         std::vector<PreparedCopy> preparedCopies;
-        const auto budget = !retry ? transferHistoryBudget(job->request.action == TransferAction::Move ? 9 : 6) : 0;
+        const auto budget = !retry ? transferHistoryBudget(job->request.action == TransferAction::Move ? 10 : 7) : 0;
         std::size_t remaining = 16384;
-        MoveCapture moveHistory(job->request.action == TransferAction::Move ? budget : 0, token, revisions);
+        MoveCapture moveHistory(
+            job->request.action == TransferAction::Move ? budget : 0, token, revisions, job->request.destination
+        );
         moveHistory.attach(work);
+        Fd copyRetentionParent;
         bool collectingCopies = budget && job->request.action != TransferAction::Move;
         if (collectingCopies) {
           work.prepareCopy = [&](const Source& source, const Location& destination, int parent, int stage,
@@ -553,6 +610,13 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
             if (collectingCopies) {
               try {
                 if (preparedCopies.size() < budget) {
+                  if (!copyRetentionParent.valid()) {
+                    const auto root = job->request.destination.nativePath();
+                    if (!root) {
+                      throwFileError(FileErrorKind::Unsupported, "Copy history requires a native destination.");
+                    }
+                    copyRetentionParent = checkedFd(::open(root->c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+                  }
                   auto proof = CopyEffect::prepare(destination, parent, stage, replacing, remaining, token, revisions);
                   preparedCopies.push_back({proof, source.index});
                   return proof;
@@ -567,7 +631,7 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
           };
           work.recordCopy = [&](const std::shared_ptr<const CopyEffect>& prepared, int stage) {
             try {
-              copies.push_back(prepared->published(stage));
+              copies.push_back(prepared->published(stage, copyRetentionParent.get()));
             } catch (const FileErrorException&) {
               collectingCopies = false;
               copies.clear();

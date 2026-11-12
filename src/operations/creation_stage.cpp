@@ -14,16 +14,16 @@
 #include <utility>
 
 luciole::CreationStage::CreationStage(int parent, bool discardOnClose)
-    : m_parent(parent), m_discardOnClose(discardOnClose) {
+    : m_parent(checkedFd(::fcntl(parent, F_DUPFD_CLOEXEC, 0))), m_discardOnClose(discardOnClose) {
   const GString uuid(g_uuid_string_random());
   m_name = ".luciole-create-" + std::string(uuid.get());
-  if (::mkdirat(m_parent, m_name.c_str(), 0700) != 0) {
+  if (::mkdirat(m_parent.get(), m_name.c_str(), 0700) != 0) {
     throwErrno(errno);
   }
-  const Fd created(::openat(m_parent, m_name.c_str(), O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+  const Fd created(::openat(m_parent.get(), m_name.c_str(), O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
   if (!created.valid()) {
     const int code = errno;
-    (void)::unlinkat(m_parent, m_name.c_str(), AT_REMOVEDIR);
+    (void)::unlinkat(m_parent.get(), m_name.c_str(), AT_REMOVEDIR);
     throwErrno(code);
   }
   // Private staging must remain usable even when the process umask denies owner access.
@@ -41,7 +41,8 @@ void luciole::CreationStage::adopt(Fd item) { m_item = std::move(item); }
 
 void luciole::CreationStage::requireCurrent() const {
   struct stat current{};
-  if (::fstatat(m_parent, m_name.c_str(), &current, AT_SYMLINK_NOFOLLOW) != 0 || !sameIdentity(current, statFd(fd()))) {
+  if (::fstatat(m_parent.get(), m_name.c_str(), &current, AT_SYMLINK_NOFOLLOW) != 0
+      || !sameIdentity(current, statFd(fd()))) {
     throwFileError(FileErrorKind::Changed, "The private creation folder changed.");
   }
 }
@@ -58,7 +59,7 @@ void luciole::CreationStage::requireItem() const {
 
 void luciole::CreationStage::publish(const std::string& name) {
   requireItem();
-  if (::syscall(SYS_renameat2, fd(), "item", m_parent, name.c_str(), RENAME_NOREPLACE) != 0) {
+  if (::syscall(SYS_renameat2, fd(), "item", m_parent.get(), name.c_str(), RENAME_NOREPLACE) != 0) {
     throwErrno(errno);
   }
 }
@@ -72,9 +73,6 @@ void luciole::CreationStage::removeItem() {
 
 void luciole::CreationStage::exchange(const std::string& name, int parent, int visibleItem) {
   requireItem();
-  if (!sameIdentity(statFd(m_parent), statFd(parent))) {
-    throwFileError(FileErrorKind::Changed, "The exchange's containing folder changed.");
-  }
   struct stat current{};
   if (::fstatat(parent, name.c_str(), &current, AT_SYMLINK_NOFOLLOW) != 0
       || !sameIdentity(current, statFd(visibleItem))) {
@@ -83,7 +81,6 @@ void luciole::CreationStage::exchange(const std::string& name, int parent, int v
   if (::syscall(SYS_renameat2, fd(), "item", parent, name.c_str(), RENAME_EXCHANGE) != 0) {
     throwErrno(errno);
   }
-  m_parent = parent;
 }
 
 bool luciole::CreationStage::clear() {
@@ -97,7 +94,7 @@ bool luciole::CreationStage::clear() {
         return false;
       }
     }
-    return ::unlinkat(m_parent, m_name.c_str(), AT_REMOVEDIR) == 0;
+    return ::unlinkat(m_parent.get(), m_name.c_str(), AT_REMOVEDIR) == 0;
   } catch (const FileErrorException&) {
     return false;
   }

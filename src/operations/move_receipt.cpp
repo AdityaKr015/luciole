@@ -3,6 +3,7 @@
 #include "fs/background_job.h"
 #include "fs/file_error.h"
 #include "fs/posix_fd.h"
+#include "operations/copy_history_tree.h"
 #include "operations/copy_receipt.h"
 #include "operations/history_revisions.h"
 #include "operations/transfer_copy.h"
@@ -12,6 +13,7 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <linux/fs.h>
+#include <optional>
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <thread>
@@ -21,14 +23,23 @@
 struct luciole::MoveIdentity {
   Fd from, to, item;
   std::shared_ptr<HistoryRevisions> revisions;
+  std::shared_ptr<const MoveHistoryRoot> root;
+};
+
+struct luciole::MoveTrees {
+  std::shared_ptr<const transfer::Tree> before, after;
+  CopyHistoryTree::ChangedFolders changed;
+  bool complete = false;
 };
 
 namespace {
   std::shared_ptr<const luciole::MoveIdentity> ownIdentity(
-      luciole::Fd from, luciole::Fd to, luciole::Fd item, std::shared_ptr<luciole::HistoryRevisions> revisions
+      luciole::Fd from, luciole::Fd to, luciole::Fd item, std::shared_ptr<luciole::HistoryRevisions> revisions,
+      std::shared_ptr<const luciole::MoveHistoryRoot> root
   ) {
-    auto identity =
-        std::make_unique<luciole::MoveIdentity>(std::move(from), std::move(to), std::move(item), std::move(revisions));
+    auto identity = std::make_unique<luciole::MoveIdentity>(
+        std::move(from), std::move(to), std::move(item), std::move(revisions), std::move(root)
+    );
     return std::shared_ptr<const luciole::MoveIdentity>(
         identity.release(), [worker = std::this_thread::get_id()](const luciole::MoveIdentity* retired) {
           auto owned = std::unique_ptr<const luciole::MoveIdentity>(retired);
@@ -76,6 +87,23 @@ namespace {
         || error.kind == luciole::FileErrorKind::Missing
         || error.kind == luciole::FileErrorKind::NotDirectory;
   }
+  std::optional<std::vector<std::string>> relativePath(const luciole::Location& ancestor, luciole::Location location) {
+    std::vector<std::string> path;
+    while (path.size() <= 64) {
+      if (location == ancestor) {
+        std::ranges::reverse(path);
+        return path;
+      }
+      const auto parent = location.parent();
+      const auto name = location.basename();
+      if (!parent || !name) {
+        break;
+      }
+      path.push_back(*name);
+      location = *parent;
+    }
+    return std::nullopt;
+  }
   void checkCancelled(const luciole::CancelToken& token) {
     if (token.cancelled()) {
       luciole::throwFileError(luciole::FileErrorKind::Cancelled, "Move reversal cancelled.");
@@ -85,30 +113,50 @@ namespace {
 
 luciole::MoveEffect::MoveEffect(
     Location source, Location destination, std::shared_ptr<const MoveIdentity> identity, struct stat revision,
-    bool reversed, std::shared_ptr<const CopyEffect> previous, std::shared_ptr<const CopyEffect> retained
+    bool reversed, std::shared_ptr<const CopyEffect> previous, std::shared_ptr<const CopyEffect> retained,
+    std::shared_ptr<const MoveTrees> trees
 )
     : m_source(std::move(source)), m_destination(std::move(destination)), m_identity(std::move(identity)),
-      m_revision(revision), m_reversed(reversed), m_previous(std::move(previous)), m_retained(std::move(retained)) {}
+      m_revision(revision), m_reversed(reversed), m_previous(std::move(previous)), m_retained(std::move(retained)),
+      m_trees(std::move(trees)) {}
 
+const std::shared_ptr<const luciole::MoveHistoryRoot>& luciole::MoveEffect::retentionRoot() const {
+  return m_identity->root;
+}
+int luciole::MoveEffect::retentionParent() const { return m_identity->root ? m_identity->root->parent.get() : -1; }
 int luciole::MoveEffect::sourceParent() const { return m_reversed ? m_identity->to.get() : m_identity->from.get(); }
 int luciole::MoveEffect::destinationParent() const {
   return m_reversed ? m_identity->from.get() : m_identity->to.get();
 }
 
-void luciole::MoveEffect::validate(const struct stat& revision, const MoveParents& parents) const {
+void luciole::MoveEffect::validate(
+    const struct stat& revision, const MoveParents& parents, bool moving, const CancelToken& token
+) const {
+  checkCancelled(token);
   (void)currentParent(m_source, sourceParent(), parents);
   const auto destination = currentParent(m_destination, destinationParent(), parents);
   if (m_previous) {
-    m_previous->validate({});
+    m_previous->validate(token, parents);
   }
-  m_identity->revisions->validate(revision, statFd(m_identity->item.get()));
+  if (!m_trees) {
+    m_identity->revisions->validate(revision, statFd(m_identity->item.get()));
+  }
   if (m_retained) {
-    m_retained->validate({});
+    m_retained->validate(token, parents);
     if (!sameIdentity(statFd(m_identity->item.get()), statFd(m_retained->item()))) {
       throwFileError(FileErrorKind::Changed, "The retained incoming move changed.");
     }
   } else {
-    m_identity->revisions->validate(revision, namedStamp(destination.get(), m_destination));
+    if (m_trees) {
+      const auto& tree = moving || m_reversed ? m_trees->before : m_trees->after;
+      CopyHistoryTree proof(*tree, m_trees->changed);
+      (void)proof.finish(destination.get(), *m_destination.basename(), *m_identity->revisions, token);
+      if (!sameFileRevision(statFd(m_identity->item.get()), namedStamp(destination.get(), m_destination))) {
+        throwFileError(FileErrorKind::Changed, "The moved folder changed during validation.");
+      }
+    } else {
+      m_identity->revisions->validate(revision, namedStamp(destination.get(), m_destination));
+    }
   }
 }
 
@@ -127,7 +175,7 @@ void luciole::MoveEffect::requireVacant(const MoveParents& parents) const {
 
 std::shared_ptr<const luciole::MoveEffect> luciole::MoveEffect::capture(
     const Location& source, const Location& destination, int from, int to, int item,
-    std::shared_ptr<HistoryRevisions> revisions
+    std::shared_ptr<HistoryRevisions> revisions, std::shared_ptr<const MoveHistoryRoot> root
 ) {
   if (source == destination || source.isTrash() || destination.isTrash()) {
     throwFileError(FileErrorKind::InvalidArgument, "Invalid native move history.");
@@ -138,7 +186,7 @@ std::shared_ptr<const luciole::MoveEffect> luciole::MoveEffect::capture(
   const auto guard = revisions->lock();
   auto proof = ownIdentity(
       checkedFd(::fcntl(from, F_DUPFD_CLOEXEC, 0)), checkedFd(::fcntl(to, F_DUPFD_CLOEXEC, 0)),
-      checkedFd(::fcntl(item, F_DUPFD_CLOEXEC, 0)), revisions
+      checkedFd(::fcntl(item, F_DUPFD_CLOEXEC, 0)), revisions, std::move(root)
   );
   auto effect = std::shared_ptr<MoveEffect>(new MoveEffect(source, destination, std::move(proof), statFd(item), false));
   effect->validate(effect->m_revision);
@@ -147,7 +195,7 @@ std::shared_ptr<const luciole::MoveEffect> luciole::MoveEffect::capture(
 
 std::shared_ptr<const luciole::MoveEffect> luciole::MoveEffect::prepareReplacement(
     const Location& source, const Location& destination, int from, int to, std::size_t& remaining,
-    const CancelToken& token, std::shared_ptr<HistoryRevisions> revisions
+    const CancelToken& token, std::shared_ptr<HistoryRevisions> revisions, std::shared_ptr<const MoveHistoryRoot> root
 ) {
   if (!revisions) {
     revisions = std::make_shared<HistoryRevisions>();
@@ -160,7 +208,7 @@ std::shared_ptr<const luciole::MoveEffect> luciole::MoveEffect::prepareReplaceme
   auto previous = CopyEffect::prepareAt(destination, to, to, *destination.basename(), remaining, token, revisions);
   auto identity = ownIdentity(
       checkedFd(::fcntl(from, F_DUPFD_CLOEXEC, 0)), checkedFd(::fcntl(to, F_DUPFD_CLOEXEC, 0)), std::move(item),
-      revisions
+      revisions, std::move(root)
   );
   const auto revision = statFd(identity->item.get());
   return std::shared_ptr<const MoveEffect>(
@@ -175,10 +223,76 @@ std::shared_ptr<const luciole::MoveEffect> luciole::MoveEffect::publishedReplace
       || !sameFileRevision(expected, namedStamp(destinationParent(), m_destination))) {
     throwFileError(FileErrorKind::Changed, "The incoming move changed during replacement. Inspect both locations.");
   }
-  auto previous = m_previous->retainedFrom(sourceParent(), *m_source.basename());
+  auto previous = m_previous->retainedFrom(
+      sourceParent(), *m_source.basename(), m_identity->root ? m_identity->root->parent.get() : -1
+  );
   return std::shared_ptr<const MoveEffect>(
       new MoveEffect(m_source, m_destination, m_identity, expected, false, std::move(previous))
   );
+}
+
+bool luciole::MoveEffect::encloses(const Location& location) const {
+  return S_ISDIR(m_revision.st_mode) && relativePath(m_destination, location).has_value();
+}
+
+std::shared_ptr<const luciole::MoveEffect>
+luciole::MoveEffect::captureContents(std::size_t& remaining, const CancelToken& token) const {
+  auto result = std::shared_ptr<MoveEffect>(new MoveEffect(*this));
+  if (!m_trees && S_ISDIR(m_revision.st_mode)) {
+    validate(m_revision, {}, false, token);
+    auto proof = CopyEffect::prepareAt(
+        m_destination, destinationParent(), destinationParent(), *m_destination.basename(), remaining, token,
+        m_identity->revisions
+    );
+    auto trees = std::make_shared<MoveTrees>();
+    trees->before = trees->after = proof->m_tree;
+    result->m_trees = std::move(trees);
+  }
+  return result;
+}
+
+std::vector<std::shared_ptr<const luciole::MoveEffect>>
+luciole::MoveReceipt::compose(const std::vector<std::shared_ptr<const MoveEffect>>& effects) {
+  auto result = effects;
+  std::size_t remaining = 16384;
+  for (std::size_t i = 0; i < effects.size(); ++i) {
+    const auto& effect = effects[i];
+    if (!effect->m_trees || effect->m_trees->complete) {
+      continue;
+    }
+    CopyHistoryTree draft(*effect->m_trees->before);
+    for (std::size_t j = i + 1; j < effects.size(); ++j) {
+      const auto& child = effects[j];
+      const auto path = relativePath(effect->m_destination, child->m_destination);
+      if (!path) {
+        continue;
+      }
+      if (path->empty() || child->m_retained || child->m_reversed) {
+        throwFileError(FileErrorKind::Unsupported, "This ancestor replacement cannot supply Move history.");
+      }
+      const transfer::Tree leaf{.name = "item", .metadata = child->m_revision, .children = {}};
+      if (S_ISDIR(child->m_revision.st_mode) && !child->m_trees) {
+        throwFileError(FileErrorKind::Changed, "An overlapping moved folder has no content proof.");
+      }
+      if (child->m_previous) {
+        child->m_previous->validate({});
+      }
+      draft.replace(
+          *path, child->m_trees ? *child->m_trees->before : leaf,
+          child->m_previous ? child->m_previous->m_tree.get() : nullptr, *effect->m_identity->revisions, {}
+      );
+    }
+    auto trees = std::make_shared<MoveTrees>(*effect->m_trees);
+    trees->changed = draft.changedFolders();
+    trees->after = std::make_shared<const transfer::Tree>(draft.finish(
+        effect->destinationParent(), *effect->m_destination.basename(), *effect->m_identity->revisions, {}, &remaining
+    ));
+    trees->complete = true;
+    auto next = std::shared_ptr<MoveEffect>(new MoveEffect(*effect));
+    next->m_trees = std::move(trees);
+    result[i] = std::move(next);
+  }
+  return result;
 }
 
 std::vector<luciole::Location> luciole::MoveEffect::retainForRecovery() const {
@@ -193,31 +307,80 @@ std::vector<luciole::Location> luciole::MoveFolder::retainForRecovery() const { 
 
 std::shared_ptr<const luciole::MoveFolder> luciole::MoveFolder::retain(
     const Location& source, int from, const Location& folder, int target, const CancelToken& token,
-    std::shared_ptr<HistoryRevisions> revisions
+    std::shared_ptr<HistoryRevisions> revisions, const std::shared_ptr<const MoveHistoryRoot>& root
 ) {
   if (!revisions) {
     revisions = std::make_shared<HistoryRevisions>();
   }
   const auto guard = revisions->lock();
   const auto name = *source.basename();
+  const auto retainingFolder = root ? root->location : folder;
+  if (root) {
+    target = root->parent.get();
+  }
   if (transfer::info(from, name).st_dev != statFd(target).st_dev) {
     return {};
   }
   std::size_t remaining = 1;
-  auto proof = CopyEffect::prepareAt(folder.child(name), target, from, name, remaining, token, revisions);
-  auto result = std::shared_ptr<MoveFolder>(new MoveFolder(source, folder));
+  auto proof = CopyEffect::prepareAt(retainingFolder.child(name), target, from, name, remaining, token, revisions);
+  auto result = std::shared_ptr<MoveFolder>(new MoveFolder(source, retainingFolder));
   result->m_from = std::make_shared<const Fd>(checkedFd(::fcntl(from, F_DUPFD_CLOEXEC, 0)));
   result->m_target = std::make_shared<const Fd>(checkedFd(::fcntl(target, F_DUPFD_CLOEXEC, 0)));
   result->m_item = proof->retainedFrom(from, name);
   return result;
 }
 
-luciole::MoveParents luciole::MoveReceipt::parents() const {
+luciole::MoveParents luciole::MoveReceipt::parents(const CancelToken& token) const {
   MoveParents result;
   for (const auto& folder : m_folders) {
     if (folder->m_item->m_hidden) {
       result.emplace(folder->m_source.uri(), folder->m_item->item());
     }
+  }
+  if (!m_undone) {
+    return result;
+  }
+  std::map<std::string, const MoveEffect*> ancestors;
+  for (const auto& effect : m_effects) {
+    if (effect->m_trees && effect->m_reversed && !effect->m_trees->changed.empty()) {
+      ancestors.emplace(effect->m_source.uri(), effect.get());
+    }
+  }
+  const auto bind = [&](const Location& location, int held) {
+    checkCancelled(token);
+    auto parent = std::optional(location);
+    for (unsigned depth = 0; parent && depth <= 64; ++depth, parent = parent->parent()) {
+      const auto owner = ancestors.find(parent->uri());
+      if (owner == ancestors.end()) {
+        continue;
+      }
+      const auto* ancestor = owner->second;
+      const auto path = *relativePath(ancestor->m_source, location);
+      auto actual = checkedFd(::fcntl(ancestor->m_identity->item.get(), F_DUPFD_CLOEXEC, 0));
+      for (const auto& name : path) {
+        checkCancelled(token);
+        actual = transfer::directory(actual.get(), name);
+      }
+      if (!sameIdentity(statFd(actual.get()), statFd(held))) {
+        throwFileError(FileErrorKind::Changed, "A future Move parent changed.");
+      }
+      result[location.uri()] = held;
+      return;
+    }
+  };
+  for (const auto& effect : m_effects) {
+    bind(*effect->m_source.parent(), effect->sourceParent());
+    bind(*effect->m_destination.parent(), effect->destinationParent());
+    for (const auto& previous : {effect->m_previous, effect->m_retained}) {
+      if (previous) {
+        bind(*previous->m_destination.parent(), previous->parent());
+      }
+    }
+  }
+  // Every projected parent derives from a pinned root whose exact tree validates before replay.
+  for (const auto& [location, ancestor] : ancestors) {
+    (void)location;
+    ancestor->validate(ancestor->m_revision, result, false, token);
   }
   return result;
 }
@@ -240,12 +403,14 @@ luciole::MoveReceipt::coalesce(const std::vector<std::shared_ptr<const MoveEffec
       displaced->validate({});
       prior->m_identity->revisions->validate(prior->m_revision, statFd(displaced->item()));
       result[found->second] = std::shared_ptr<const MoveEffect>(new MoveEffect(
-          prior->m_source, prior->m_destination, prior->m_identity, prior->m_revision, false, {}, displaced
+          prior->m_source, prior->m_destination, prior->m_identity, prior->m_revision, false, {}, displaced,
+          prior->m_trees
       ));
       found->second = result.size();
       result.push_back(
           std::shared_ptr<const MoveEffect>(new MoveEffect(
-              effect->m_source, effect->m_destination, effect->m_identity, effect->m_revision, false, prior->m_previous
+              effect->m_source, effect->m_destination, effect->m_identity, effect->m_revision, false, prior->m_previous,
+              {}, effect->m_trees
           ))
       );
     } else {
@@ -269,6 +434,12 @@ std::shared_ptr<const luciole::MoveReceipt> luciole::MoveReceipt::capture(
   const auto guard = receipt->m_revisions->lock();
   receipt->m_folders = folders;
   receipt->m_undone = undone;
+  receipt->m_effects = coalesce(compose(effects));
+  std::stable_sort(receipt->m_effects.begin(), receipt->m_effects.end(), [undone](const auto& a, const auto& b) {
+    const auto left = std::ranges::count((undone ? a->m_source : a->m_destination).uri(), '/');
+    const auto right = std::ranges::count((undone ? b->m_source : b->m_destination).uri(), '/');
+    return undone ? left < right : left > right;
+  });
   const auto bindings = receipt->parents();
   for (const auto& folder : folders) {
     if (folder->m_item->revisions() != receipt->m_revisions) {
@@ -278,18 +449,17 @@ std::shared_ptr<const luciole::MoveReceipt> luciole::MoveReceipt::capture(
     (void)currentParent(folder->m_retainingFolder.child("item"), folder->m_target->get());
     (void)currentParent(folder->m_source, folder->m_from->get(), bindings);
   }
-  for (const auto& effect : coalesce(effects)) {
+  for (auto& effect : receipt->m_effects) {
     if (effect->m_identity->revisions != receipt->m_revisions) {
       throwFileError(FileErrorKind::Changed, "Move history belongs to different jobs.");
     }
-    const auto expected = receipt->m_revisions->expected(effect->m_revision);
+    const auto expected =
+        effect->m_trees ? statFd(effect->m_identity->item.get()) : receipt->m_revisions->expected(effect->m_revision);
     effect->validate(expected, bindings);
-    receipt->m_effects.push_back(
-        std::shared_ptr<const MoveEffect>(new MoveEffect(
-            effect->m_source, effect->m_destination, effect->m_identity, expected, effect->m_reversed,
-            effect->m_previous, effect->m_retained
-        ))
-    );
+    effect = std::shared_ptr<const MoveEffect>(new MoveEffect(
+        effect->m_source, effect->m_destination, effect->m_identity, expected, effect->m_reversed, effect->m_previous,
+        effect->m_retained, effect->m_trees
+    ));
   }
   receipt->m_generation = receipt->m_revisions->generation();
   return receipt;
@@ -359,11 +529,11 @@ luciole::MoveReceipt::reverse(const CancelToken& token, std::atomic<std::size_t>
     if (!ownsProof) {
       throwFileError(FileErrorKind::Changed, "The move history entry is stale.");
     }
-    const auto bindings = parents();
+    const auto bindings = parents(token);
     validateFolders(bindings, token);
     for (const auto& effect : m_effects) {
       checkCancelled(token);
-      effect->validate(effect->m_revision, bindings);
+      effect->validate(effect->m_revision, bindings, false, token);
       if (!effect->m_reversed || (!effect->m_previous && !effect->m_retained)) {
         effect->requireVacant(bindings);
       }
@@ -423,19 +593,21 @@ luciole::MoveReceipt::reverse(const CancelToken& token, std::atomic<std::size_t>
         expected = found->second;
       }
       // Merge containers are now restored; native bindings must resolve normally.
-      effect->validate(expected);
+      effect->validate(expected, {}, true, token);
+      expected = statFd(effect->m_identity->item.get());
       if (effect->m_retained) {
         const auto& retained = effect->m_retained;
         result.source = retained->currentLocation();
-        auto next = effect->m_reversed ? retained->storeTo(*effect->m_source.parent(), effect->sourceParent(), changed)
-                                       : retained->restoreTo(effect->m_source, effect->sourceParent(), changed);
+        auto next = effect->m_reversed
+            ? retained->storeTo(*effect->m_source.parent(), effect->sourceParent(), changed, effect->retentionParent())
+            : retained->restoreTo(effect->m_source, effect->sourceParent(), changed);
         applied |= changed;
         result.outcome = TransferOutcome::Moved;
         result.destination = next->currentLocation();
         inverse.push_back(
             std::shared_ptr<const MoveEffect>(new MoveEffect(
                 effect->m_destination, effect->m_source, effect->m_identity, statFd(effect->m_identity->item.get()),
-                !effect->m_reversed, {}, std::move(next)
+                !effect->m_reversed, {}, std::move(next), effect->m_trees
             ))
         );
         completed.fetch_add(1);
@@ -444,7 +616,9 @@ luciole::MoveReceipt::reverse(const CancelToken& token, std::atomic<std::size_t>
       auto previous = effect->m_previous;
       if (effect->m_reversed && previous) {
         const auto original = previous->currentLocation();
-        previous = previous->storeTo(*previous->m_destination.parent(), previous->parent(), changed);
+        previous = previous->storeTo(
+            *previous->m_destination.parent(), previous->parent(), changed, effect->retentionParent()
+        );
         applied |= changed;
         result.children.emplace_back(original, TransferOutcome::Moved).destination = previous->currentLocation();
       }
@@ -481,7 +655,7 @@ luciole::MoveReceipt::reverse(const CancelToken& token, std::atomic<std::size_t>
       inverse.push_back(
           std::shared_ptr<const MoveEffect>(new MoveEffect(
               effect->m_destination, effect->m_source, effect->m_identity, current, !effect->m_reversed,
-              std::move(previous)
+              std::move(previous), {}, effect->m_trees
           ))
       );
     } catch (const std::exception&) {

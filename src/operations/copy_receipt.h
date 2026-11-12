@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -30,7 +31,7 @@ namespace luciole {
         const Location& destination, int parent, int stage, bool replacing, std::size_t& remaining,
         const CancelToken& token, std::shared_ptr<HistoryRevisions> revisions = {}
     );
-    std::shared_ptr<const CopyEffect> published(int from) const;
+    std::shared_ptr<const CopyEffect> published(int from, int retentionParent = -1) const;
     bool replacing() const { return m_previous != nullptr; }
     std::vector<Location> retainForRecovery() const;
 
@@ -45,9 +46,10 @@ namespace luciole {
     Location currentLocation() const;
     int parent() const;
     std::mutex& mutex() const;
-    std::shared_ptr<const CopyEffect> retainedFrom(int from, const std::string& name) const;
+    std::shared_ptr<const CopyEffect> retainedFrom(int from, const std::string& name, int retentionParent = -1) const;
     std::shared_ptr<const CopyEffect> restoreTo(const Location& destination, int target, bool& changed) const;
-    std::shared_ptr<const CopyEffect> storeTo(const Location& folder, int target, bool& changed) const;
+    std::shared_ptr<const CopyEffect>
+    storeTo(const Location& folder, int target, bool& changed, int retentionParent = -1) const;
     std::shared_ptr<const CopyEffect> refreshFolder(bool empty, std::size_t& remaining, const CancelToken& token) const;
     CopyEffect(
         Location destination, std::shared_ptr<CopyStorage> storage, std::shared_ptr<const transfer::Tree> tree,
@@ -58,7 +60,7 @@ namespace luciole {
         const CancelToken& token, std::shared_ptr<HistoryRevisions> revisions
     );
     bool ownsProof() const;
-    void validate(const CancelToken& token) const;
+    void validate(const CancelToken& token, const std::map<std::string, int>& parents = {}) const;
     void vacant() const;
     std::shared_ptr<const CopyEffect> afterMove(bool hidden) const;
     Location m_destination;

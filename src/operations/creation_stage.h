@@ -19,7 +19,7 @@ namespace luciole {
     void validateItem() const { requireItem(); }
     void adopt(Fd item);
     void publish(const std::string& name);
-    // The stage borrows the new owner's parent after a successful exchange.
+    // Exchange with a pinned visible item, possibly in a different same-filesystem folder.
     void exchange(const std::string& name, int parent, int visibleItem);
     void removeItem();
     bool clear();
@@ -28,7 +28,7 @@ namespace luciole {
   private:
     void requireCurrent() const;
     void requireItem() const;
-    int m_parent;
+    Fd m_parent;
     bool m_discardOnClose;
     std::string m_name;
     Fd m_directory, m_item;

@@ -3,6 +3,7 @@
 #include "fs/background_job.h"
 #include "fs/filename.h"
 #include "fs/posix_fd.h"
+#include "operations/copy_history_tree.h"
 #include "operations/creation_stage.h"
 #include "operations/history_revisions.h"
 #include "operations/transfer_copy.h"
@@ -32,10 +33,17 @@ namespace {
         || error.kind == luciole::FileErrorKind::Missing
         || error.kind == luciole::FileErrorKind::NotDirectory;
   }
-  luciole::Fd currentParent(const luciole::Location& destination, int held) {
+  luciole::Fd
+  currentParent(const luciole::Location& destination, int held, const std::map<std::string, int>& parents = {}) {
     const auto parent = destination.parent();
     if (!parent || !parent->nativePath()) {
       luciole::throwFileError(luciole::FileErrorKind::InvalidArgument, "Copy history requires native folders.");
+    }
+    if (const auto planned = parents.find(parent->uri()); planned != parents.end()) {
+      if (!luciole::sameIdentity(luciole::statFd(planned->second), luciole::statFd(held))) {
+        luciole::throwFileError(luciole::FileErrorKind::Changed, "The planned containing folder changed.");
+      }
+      return luciole::checkedFd(::fcntl(held, F_DUPFD_CLOEXEC, 0));
     }
     auto current = luciole::checkedFd(::open(parent->nativePath()->c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
     if (!luciole::sameIdentity(luciole::statFd(current.get()), luciole::statFd(held))) {
@@ -205,8 +213,8 @@ std::shared_ptr<const luciole::CopyEffect> luciole::CopyEffect::prepareAt(
   return std::shared_ptr<const CopyEffect>(new CopyEffect(destination, std::move(storage), std::move(tree), false));
 }
 
-void luciole::CopyEffect::validate(const CancelToken& token) const {
-  (void)currentParent(m_destination, m_storage->parent.get());
+void luciole::CopyEffect::validate(const CancelToken& token, const std::map<std::string, int>& parents) const {
+  (void)currentParent(m_destination, m_storage->parent.get(), parents);
   if (m_hidden != static_cast<bool>(m_storage->stage) || m_generation != m_storage->generation) {
     throwFileError(FileErrorKind::Changed, "The copy history entry is stale.");
   }
@@ -218,7 +226,7 @@ void luciole::CopyEffect::validate(const CancelToken& token) const {
     verify(m_storage->parent.get(), *m_destination.basename(), *m_tree, token, *revisions());
   }
   if (m_previous) {
-    m_previous->validate(token);
+    m_previous->validate(token, parents);
   }
 }
 
@@ -253,14 +261,14 @@ std::shared_ptr<const luciole::CopyEffect> luciole::CopyEffect::afterMove(bool h
   }
   return result;
 }
-std::shared_ptr<const luciole::CopyEffect> luciole::CopyEffect::published(int from) const {
+std::shared_ptr<const luciole::CopyEffect> luciole::CopyEffect::published(int from, int retentionParent) const {
   auto incoming = afterMove(false);
   if (!m_previous) {
     return incoming;
   }
-  return std::shared_ptr<const CopyEffect>(
-      new CopyEffect(m_destination, m_storage, incoming->m_tree, false, m_previous->retainedFrom(from, "item"))
-  );
+  return std::shared_ptr<const CopyEffect>(new CopyEffect(
+      m_destination, m_storage, incoming->m_tree, false, m_previous->retainedFrom(from, "item", retentionParent)
+  ));
 }
 
 std::shared_ptr<luciole::HistoryRevisions> luciole::CopyEffect::revisions() const { return m_storage->revisions; }
@@ -281,14 +289,15 @@ luciole::Location luciole::CopyEffect::currentLocation() const {
 int luciole::CopyEffect::parent() const { return m_storage->parent.get(); }
 std::mutex& luciole::CopyEffect::mutex() const { return m_storage->replayMutex; }
 
-std::shared_ptr<const luciole::CopyEffect> luciole::CopyEffect::retainedFrom(int from, const std::string& name) const {
+std::shared_ptr<const luciole::CopyEffect>
+luciole::CopyEffect::retainedFrom(int from, const std::string& name, int retentionParent) const {
   auto& storage = *m_storage;
   try {
     auto expected = *m_tree;
     revisions()->renamed(expected.metadata, statFd(item()));
     expected.metadata = revisions()->expected(expected.metadata);
     verify(from, name, expected, {}, *revisions());
-    auto stage = std::make_unique<CreationStage>(parent(), false);
+    auto stage = std::make_unique<CreationStage>(retentionParent >= 0 ? retentionParent : parent(), false);
     stage->adopt(checkedFd(::fcntl(item(), F_DUPFD_CLOEXEC, 0)));
     (void)currentParent(m_destination, parent());
     verify(from, name, expected, {}, *revisions());
@@ -336,7 +345,7 @@ luciole::CopyEffect::restoreTo(const Location& destination, int target, bool& ch
 }
 
 std::shared_ptr<const luciole::CopyEffect>
-luciole::CopyEffect::storeTo(const Location& folder, int target, bool& changed) const {
+luciole::CopyEffect::storeTo(const Location& folder, int target, bool& changed, int retentionParent) const {
   validate({});
   if (m_hidden || m_previous) {
     throwFileError(FileErrorKind::Changed, "Invalid retained-item storage.");
@@ -344,7 +353,7 @@ luciole::CopyEffect::storeTo(const Location& folder, int target, bool& changed) 
   const auto destination = folder.child(*m_destination.basename());
   (void)currentParent(destination, target);
   auto nextParent = checkedFd(::fcntl(target, F_DUPFD_CLOEXEC, 0));
-  auto stage = std::make_unique<CreationStage>(nextParent.get(), false);
+  auto stage = std::make_unique<CreationStage>(retentionParent >= 0 ? retentionParent : nextParent.get(), false);
   stage->adopt(checkedFd(::fcntl(item(), F_DUPFD_CLOEXEC, 0)));
   validate({});
   if (::syscall(SYS_renameat2, parent(), m_destination.basename()->c_str(), stage->fd(), "item", RENAME_NOREPLACE)
@@ -389,25 +398,77 @@ std::shared_ptr<const luciole::CopyReceipt> luciole::CopyReceipt::capture(
   result->m_revisions = effects.front()->revisions();
   const auto guard = result->m_revisions->lock();
   std::map<std::string, std::size_t> latest;
+  std::vector<std::unique_ptr<CopyHistoryTree>> trees;
   for (const auto& effect : effects) {
+    check(token);
     if (effect->revisions() != result->m_revisions) {
       throwFileError(FileErrorKind::Changed, "Copy history belongs to different jobs.");
     }
     if (const auto found = latest.find(effect->m_destination.uri()); found != latest.end()) {
-      const auto& prior = result->m_effects[found->second];
+      const auto index = found->second;
+      const auto& prior = result->m_effects[index];
       if (!effect->m_previous || effect->m_hidden || prior->m_hidden) {
         throwFileError(FileErrorKind::Changed, "Invalid repeated copy destination.");
       }
-      prior->verifyAt(*effect->m_previous, token);
-      result->m_effects[found->second] = std::shared_ptr<const CopyEffect>(
+      if (trees[index]) {
+        effect->m_previous->validate(token);
+        trees[index]->matches(*effect->m_previous->m_tree, *result->m_revisions, token);
+        trees[index].reset();
+      } else {
+        prior->verifyAt(*effect->m_previous, token);
+      }
+      result->m_effects[index] = std::shared_ptr<const CopyEffect>(
           new CopyEffect(effect->m_destination, effect->m_storage, effect->m_tree, false, prior->m_previous)
       );
-    } else {
+      continue;
+    }
+    std::vector<std::string> path{*effect->m_destination.basename()};
+    auto parent = effect->m_destination.parent();
+    bool absorbed = false;
+    while (parent && path.size() <= 64) {
+      if (const auto found = latest.find(parent->uri()); found != latest.end()) {
+        const auto index = found->second;
+        const auto& ancestor = result->m_effects[index];
+        if (action != TransferAction::Copy || effect->m_hidden || ancestor->m_hidden || !ancestor->ownsProof()) {
+          throwFileError(FileErrorKind::Changed, "Invalid overlapping copy destination.");
+        }
+        if (effect->m_previous) {
+          effect->m_previous->validate(token);
+        }
+        if (!trees[index]) {
+          trees[index] = std::make_unique<CopyHistoryTree>(*ancestor->m_tree);
+        }
+        std::ranges::reverse(path);
+        trees[index]->replace(
+            path, *effect->m_tree, effect->m_previous ? effect->m_previous->m_tree.get() : nullptr,
+            *result->m_revisions, token
+        );
+        absorbed = true;
+        break;
+      }
+      const auto name = parent->basename();
+      if (!name) {
+        break;
+      }
+      path.push_back(*name);
+      parent = parent->parent();
+    }
+    if (!absorbed) {
       latest.emplace(effect->m_destination.uri(), result->m_effects.size());
       result->m_effects.push_back(effect);
+      trees.push_back({});
     }
   }
-  for (const auto& effect : result->m_effects) {
+  for (std::size_t index = 0; index < result->m_effects.size(); ++index) {
+    auto& effect = result->m_effects[index];
+    if (trees[index]) {
+      auto tree = std::make_shared<transfer::Tree>(
+          trees[index]->finish(effect->parent(), *effect->m_destination.basename(), *result->m_revisions, token)
+      );
+      effect = std::shared_ptr<const CopyEffect>(new CopyEffect(
+          effect->m_destination, effect->m_storage, std::move(tree), effect->m_hidden, effect->m_previous
+      ));
+    }
     effect->validate(token);
   }
   result->m_generation = result->m_revisions->generation();

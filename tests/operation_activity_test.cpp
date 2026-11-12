@@ -568,6 +568,61 @@ namespace {
       TEST_CHECK(contents == "destination/item");
     }
   }
+  void overlappingTransferHistory(Pump& pump) {
+    for (const auto action : {luciole::TransferAction::Copy, luciole::TransferAction::Move}) {
+      Fixture fixture;
+      fs::create_directories(fixture.root / "one/tree/sub");
+      fs::create_directories(fixture.root / "two/tree/sub");
+      fixture.write("one/tree/sub/item");
+      fixture.write("one/tree/keep");
+      fixture.write("two/tree/sub/item");
+      fixture.write("two/tree/new");
+      Workspace workspace;
+      auto job = workspace.hub.create<luciole::TransferService>(workspace.page);
+      auto& service = job->service<luciole::TransferService>();
+      TEST_CHECK(service.start({{fixture.at("one/tree"), fixture.at("two/tree")}, fixture.at("destination"), action}));
+      std::uint64_t answeredConflict = 0;
+      pump.until([&] {
+        if (const auto conflict = service.conflict(); conflict && conflict->id != answeredConflict) {
+          answeredConflict = conflict->id;
+          TEST_CHECK(service.resolve(
+              conflict->id,
+              conflict->canMerge ? luciole::TransferConflictChoice::Merge : luciole::TransferConflictChoice::Replace
+          ));
+        }
+        return !workspace.hub.busy();
+      });
+      TEST_CHECK(
+          workspace.hub.canUndo()
+          && workspace.hub.historyLabel(false) == (action == luciole::TransferAction::Copy ? "Undo Copy" : "Undo Move")
+      );
+      const auto otherWindow = workspace.model.addWindow(), other = workspace.model.addTab(otherWindow);
+      Owner otherOwner;
+      workspace.hub.attach(other, otherOwner);
+      job.reset();
+      TEST_CHECK(workspace.model.close(workspace.page));
+      workspace.hub.detach(workspace.page);
+      workspace.hub.update(otherWindow);
+      TEST_CHECK(workspace.hub.replayHistory(other, false));
+      pump.until([&] { return !workspace.hub.busy(); });
+      TEST_CHECK(workspace.hub.canRedo() && !fs::exists(fixture.root / "destination/tree"));
+      TEST_CHECK(workspace.hub.activities().front().state == ActivityState::Succeeded);
+      TEST_CHECK(workspace.hub.replayHistory(other, true));
+      pump.until([&] { return !workspace.hub.busy(); });
+      TEST_CHECK(workspace.hub.canUndo() && fs::exists(fixture.root / "destination/tree/keep"));
+      TEST_CHECK(fs::exists(fixture.root / "destination/tree/new"));
+      TEST_CHECK(fs::exists(fixture.root / "one/tree/sub/item") == (action == luciole::TransferAction::Copy));
+      TEST_CHECK(fs::exists(fixture.root / "two/tree/sub/item") == (action == luciole::TransferAction::Copy));
+      TEST_CHECK(workspace.hub.activities().front().state == ActivityState::Succeeded);
+      workspace.hub.shutdown();
+      pump.until([&] { return !workspace.hub.busy(); });
+      workspace.hub.detach(other);
+      for (const auto& entry : fs::recursive_directory_iterator(fixture.root)) {
+        TEST_CHECK(!entry.path().filename().native().starts_with(".luciole-create-"));
+      }
+    }
+  }
+
   void copyCleanupReport(Pump& pump) {
     Fixture fixture;
     fixture.write("a");
@@ -751,6 +806,7 @@ int main() {
   replacementMergeHistory(pump);
   moveReplacementMergeHistory(pump);
   repeatedTransferHistory(pump);
+  overlappingTransferHistory(pump);
   copyCleanupReport(pump);
   pump.until([] { return !luciole::CopyReceipt::cleanupPending(); });
 }

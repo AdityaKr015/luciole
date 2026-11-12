@@ -27,10 +27,14 @@ namespace luciole {
       }
       m_known[{value.st_dev, value.st_ino}] = value;
     }
-    struct stat expected(const struct stat& original) const {
+    struct stat expected(const struct stat& original, bool changedFolder = false) const {
       const auto guard = lock();
       auto result = original;
       if (const auto found = m_known.find({original.st_dev, original.st_ino}); found != m_known.end()) {
+        if (changedFolder && S_ISDIR(result.st_mode)) {
+          result.st_size = found->second.st_size;
+          result.st_mtim = found->second.st_mtim;
+        }
         result.st_ctim = found->second.st_ctim;
         result.st_nlink = found->second.st_nlink;
         require(result, found->second);
@@ -50,7 +54,7 @@ namespace luciole {
     }
     void directoryChanged(const struct stat& original, const struct stat& actual) {
       const auto guard = lock();
-      auto result = expected(original);
+      auto result = expected(original, true);
       if (!S_ISDIR(result.st_mode)) {
         throwFileError(FileErrorKind::Changed, "Invalid merged-folder history.");
       }

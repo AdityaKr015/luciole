@@ -378,6 +378,9 @@ namespace luciole::transfer {
           throwFileError(FileErrorKind::WouldRecurse, "Related or identical folders cannot be merged.");
         }
         if (!node.merging) {
+          if (work.prepareMerge) {
+            work.prepareMerge(*result.destination);
+          }
           requireUnchanged(source.metadata, statFd(input.get()));
           requireUnchanged(existing, info(destination, source.name));
           auto names = children(input.get(), 16384 - work.mergedItems);

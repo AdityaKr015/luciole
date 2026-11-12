@@ -16,6 +16,11 @@
 
 namespace luciole {
   struct MoveIdentity;
+  struct MoveTrees;
+  struct MoveHistoryRoot {
+    Location location;
+    Fd parent;
+  };
   class CopyEffect;
   class HistoryRevisions;
   using MoveParents = std::map<std::string, int>;
@@ -30,7 +35,7 @@ namespace luciole {
   public:
     static std::shared_ptr<const MoveFolder> retain(
         const Location& source, int from, const Location& folder, int target, const CancelToken& token,
-        std::shared_ptr<HistoryRevisions> revisions = {}
+        std::shared_ptr<HistoryRevisions> revisions = {}, const std::shared_ptr<const MoveHistoryRoot>& root = {}
     );
     std::vector<Location> retainForRecovery() const;
 
@@ -47,30 +52,41 @@ namespace luciole {
   public:
     static std::shared_ptr<const MoveEffect> capture(
         const Location& source, const Location& destination, int from, int to, int item,
-        std::shared_ptr<HistoryRevisions> revisions = {}
+        std::shared_ptr<HistoryRevisions> revisions = {}, std::shared_ptr<const MoveHistoryRoot> root = {}
     );
     static std::shared_ptr<const MoveEffect> prepareReplacement(
         const Location& source, const Location& destination, int from, int to, std::size_t& remaining,
-        const CancelToken& token, std::shared_ptr<HistoryRevisions> revisions = {}
+        const CancelToken& token, std::shared_ptr<HistoryRevisions> revisions = {},
+        std::shared_ptr<const MoveHistoryRoot> root = {}
     );
     std::shared_ptr<const MoveEffect> publishedReplacement() const;
+    std::shared_ptr<const MoveEffect> captureContents(std::size_t& remaining, const CancelToken& token) const;
+    bool encloses(const Location& location) const;
+    bool hasContents() const { return m_trees != nullptr; }
+    const Location& destination() const { return m_destination; }
+    const std::shared_ptr<const MoveHistoryRoot>& retentionRoot() const;
     std::vector<Location> retainForRecovery() const;
 
   private:
     friend class MoveReceipt;
     MoveEffect(
         Location source, Location destination, std::shared_ptr<const MoveIdentity> identity, struct stat revision,
-        bool reversed, std::shared_ptr<const CopyEffect> previous = {}, std::shared_ptr<const CopyEffect> retained = {}
+        bool reversed, std::shared_ptr<const CopyEffect> previous = {}, std::shared_ptr<const CopyEffect> retained = {},
+        std::shared_ptr<const MoveTrees> trees = {}
     );
+    int retentionParent() const;
     int sourceParent() const;
     int destinationParent() const;
-    void validate(const struct stat& revision, const MoveParents& parents = {}) const;
+    void validate(
+        const struct stat& revision, const MoveParents& parents = {}, bool moving = false, const CancelToken& token = {}
+    ) const;
     void requireVacant(const MoveParents& parents = {}) const;
     Location m_source, m_destination;
     std::shared_ptr<const MoveIdentity> m_identity;
     struct stat m_revision;
     bool m_reversed;
     std::shared_ptr<const CopyEffect> m_previous, m_retained;
+    std::shared_ptr<const MoveTrees> m_trees;
   };
   // One bounded application-wide native move record, including retained replacement/merge data.
   class MoveReceipt {
@@ -87,7 +103,9 @@ namespace luciole {
   private:
     static std::vector<std::shared_ptr<const MoveEffect>>
     coalesce(const std::vector<std::shared_ptr<const MoveEffect>>& effects);
-    MoveParents parents() const;
+    static std::vector<std::shared_ptr<const MoveEffect>>
+    compose(const std::vector<std::shared_ptr<const MoveEffect>>& effects);
+    MoveParents parents(const CancelToken& token = {}) const;
     void validateFolders(const MoveParents& bindings, const CancelToken& token) const;
     void retainIncomplete(std::vector<TransferResult>& results) const;
     std::vector<std::shared_ptr<const MoveEffect>> m_effects;
