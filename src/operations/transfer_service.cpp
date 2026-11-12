@@ -853,7 +853,7 @@ bool luciole::TransferService::replay(const std::shared_ptr<const MoveReceipt>& 
   ++m_state->jobId;
   runJob<MoveReplayResult>(
       [owner = m_state, receipt, token = m_state->token] { return receipt->reverse(token, owner->completed); },
-      [owner = m_state, receipt](JobResult<MoveReplayResult> result) {
+      [owner = m_state, receipt](JobResult<MoveReplayResult>&& result) {
         if (result) {
           owner->results = std::move(result->results);
           owner->receipt = std::move(result->receipt);
@@ -897,7 +897,7 @@ bool luciole::TransferService::replayCopy(const std::shared_ptr<const CopyReceip
   ++m_state->jobId;
   runJob<CopyReplayResult>(
       [owner = m_state, receipt, token = m_state->token] { return receipt->reverse(token, owner->completed); },
-      [owner = m_state, receipt](JobResult<CopyReplayResult> result) {
+      [owner = m_state, receipt](JobResult<CopyReplayResult>&& result) {
         if (result) {
           owner->results = std::move(result->results);
           owner->copyReceipt = std::move(result->receipt);
