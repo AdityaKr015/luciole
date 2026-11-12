@@ -60,7 +60,8 @@ namespace luciole {
         std::shared_ptr<const MoveHistoryRoot> root = {}
     );
     std::shared_ptr<const MoveEffect> publishedReplacement() const;
-    std::shared_ptr<const MoveEffect> captureContents(std::size_t& remaining, const CancelToken& token) const;
+    std::shared_ptr<const MoveEffect>
+    captureContents(std::size_t& remaining, const CancelToken& token, const MoveParents& parents = {}) const;
     bool encloses(const Location& location) const;
     bool hasContents() const { return m_trees != nullptr; }
     const Location& destination() const { return m_destination; }
@@ -72,7 +73,7 @@ namespace luciole {
     MoveEffect(
         Location source, Location destination, std::shared_ptr<const MoveIdentity> identity, struct stat revision,
         bool reversed, std::shared_ptr<const CopyEffect> previous = {}, std::shared_ptr<const CopyEffect> retained = {},
-        std::shared_ptr<const MoveTrees> trees = {}
+        std::shared_ptr<const MoveTrees> trees = {}, std::shared_ptr<const MoveTrees> previousTrees = {}
     );
     int retentionParent() const;
     int sourceParent() const;
@@ -86,7 +87,7 @@ namespace luciole {
     struct stat m_revision;
     bool m_reversed;
     std::shared_ptr<const CopyEffect> m_previous, m_retained;
-    std::shared_ptr<const MoveTrees> m_trees;
+    std::shared_ptr<const MoveTrees> m_trees, m_previousTrees;
   };
   // One bounded application-wide native move record, including retained replacement/merge data.
   class MoveReceipt {
@@ -94,7 +95,12 @@ namespace luciole {
     using Revisions = std::map<std::pair<dev_t, ino_t>, struct stat>;
     static std::shared_ptr<const MoveReceipt> capture(
         const std::vector<std::shared_ptr<const MoveEffect>>& effects,
-        const std::vector<std::shared_ptr<const MoveFolder>>& folders = {}, bool undone = false
+        const std::vector<std::shared_ptr<const MoveFolder>>& folders = {}, bool undone = false, bool sequence = false,
+        const CancelToken& token = {}
+    );
+    static std::vector<std::shared_ptr<const MoveEffect>> checkpoint(
+        const std::vector<std::shared_ptr<const MoveEffect>>& effects, const Location& destination,
+        std::size_t& remaining, const CancelToken& token, const std::vector<std::shared_ptr<const MoveFolder>>& folders
     );
     MoveReplayResult reverse(const CancelToken& token, std::atomic<std::size_t>& completed) const;
     std::vector<TransferResult> unconfirmed(const FileError& error) const;
@@ -103,14 +109,27 @@ namespace luciole {
   private:
     static std::vector<std::shared_ptr<const MoveEffect>>
     coalesce(const std::vector<std::shared_ptr<const MoveEffect>>& effects);
+    static std::vector<std::shared_ptr<const MoveEffect>> compose(
+        const std::vector<std::shared_ptr<const MoveEffect>>& effects, bool refresh = false,
+        const CancelToken& token = {}
+    );
+    static bool needsSequence(const std::vector<std::shared_ptr<const MoveEffect>>& effects, const CancelToken& token);
     static std::vector<std::shared_ptr<const MoveEffect>>
-    compose(const std::vector<std::shared_ptr<const MoveEffect>>& effects);
+    prepareSequence(const std::vector<std::shared_ptr<const MoveEffect>>& effects, const CancelToken& token);
+    MoveParents sequenceParents(const MoveEffect& effect, const CancelToken& token) const;
+    void validateSequence(const CancelToken& token) const;
+    std::shared_ptr<const MoveEffect>
+    replayEffect(const std::shared_ptr<const MoveEffect>& effect, const CancelToken& token) const;
+    std::shared_ptr<const CopyEffect> sequencePrevious(
+        const MoveEffect& effect, bool before, const CancelToken& token, const MoveParents& bindings
+    ) const;
     MoveParents parents(const CancelToken& token = {}) const;
     void validateFolders(const MoveParents& bindings, const CancelToken& token) const;
+    bool ownsProof() const;
     void retainIncomplete(std::vector<TransferResult>& results) const;
     std::vector<std::shared_ptr<const MoveEffect>> m_effects;
     std::vector<std::shared_ptr<const MoveFolder>> m_folders;
-    bool m_undone = false;
+    bool m_undone = false, m_sequence = false;
     std::shared_ptr<HistoryRevisions> m_revisions;
     std::uint64_t m_generation = 0;
     std::shared_ptr<std::mutex> m_mutex = std::make_shared<std::mutex>();

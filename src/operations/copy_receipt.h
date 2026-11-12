@@ -57,8 +57,12 @@ namespace luciole {
     );
     static std::shared_ptr<const CopyEffect> prepareAt(
         const Location& destination, int parent, int from, const std::string& name, std::size_t& remaining,
-        const CancelToken& token, std::shared_ptr<HistoryRevisions> revisions
+        const CancelToken& token, std::shared_ptr<HistoryRevisions> revisions,
+        const std::map<std::string, int>& parents = {}
     );
+    std::shared_ptr<const CopyEffect> withTree(
+        std::shared_ptr<const transfer::Tree> tree, const CancelToken& token, const std::map<std::string, int>& parents
+    ) const;
     bool ownsProof() const;
     void validate(const CancelToken& token, const std::map<std::string, int>& parents = {}) const;
     void vacant() const;

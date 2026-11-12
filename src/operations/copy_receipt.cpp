@@ -201,10 +201,10 @@ std::shared_ptr<const luciole::CopyEffect> luciole::CopyEffect::prepare(
 
 std::shared_ptr<const luciole::CopyEffect> luciole::CopyEffect::prepareAt(
     const Location& destination, int parent, int from, const std::string& name, std::size_t& remaining,
-    const CancelToken& token, std::shared_ptr<HistoryRevisions> revisions
+    const CancelToken& token, std::shared_ptr<HistoryRevisions> revisions, const std::map<std::string, int>& parents
 ) {
   const auto guard = revisions->lock();
-  (void)currentParent(destination, parent);
+  (void)currentParent(destination, parent, parents);
   auto item = checkedFd(::openat(from, name.c_str(), O_PATH | O_NOFOLLOW | O_CLOEXEC));
   auto tree = std::make_shared<transfer::Tree>(captureTree(from, name, remaining, token, statFd(item.get()).st_dev, 0));
   tree->name = "item";
@@ -404,6 +404,19 @@ luciole::CopyEffect::refreshFolder(bool empty, std::size_t& remaining, const Can
   }
   tree->name = "item";
   return std::shared_ptr<const CopyEffect>(new CopyEffect(m_destination, m_storage, std::move(tree), false));
+}
+
+std::shared_ptr<const luciole::CopyEffect> luciole::CopyEffect::withTree(
+    std::shared_ptr<const transfer::Tree> tree, const CancelToken& token, const std::map<std::string, int>& parents
+) const {
+  auto result = std::shared_ptr<const CopyEffect>(
+      new CopyEffect(m_destination, m_storage, std::move(tree), m_hidden, m_previous)
+  );
+  result->validate(token, parents);
+  if (m_hidden) {
+    m_storage->cleanupTree = result->m_tree;
+  }
+  return result;
 }
 
 std::vector<std::shared_ptr<const luciole::CopyEffect>> luciole::CopyReceipt::checkpoint(

@@ -2055,6 +2055,248 @@ namespace {
     TEST_CHECK(luciole::CopyReceipt::takeCleanupErrors().empty() == !refused);
   }
 
+  void testMoveAncestorGenerations(Pump& pump) {
+    for (const bool nested : {false, true}) {
+      Fixture f;
+      luciole::TransferService service;
+      std::vector<luciole::Location> sources;
+      if (nested) {
+        fs::create_directories(f.destination("outer/tree/sub"));
+        write(f.destination("outer/tree/sub/item"), "original");
+        fs::create_directories(f.source("one/outer/tree/sub"));
+        write(f.source("one/outer/tree/sub/item"), "one");
+        fs::create_directories(f.source("two/outer"));
+        write(f.source("two/outer/tree"), "two");
+        fs::create_directories(f.source("three/outer"));
+        write(f.source("three/outer/final"), "three");
+        for (const char* name : {"one", "two", "three"}) {
+          sources.push_back(location(f.source(std::string(name) + "/outer")));
+        }
+      } else {
+        fs::create_directories(f.destination("tree/sub"));
+        write(f.destination("tree/sub/item"), "original");
+        for (const char* name : {"one", "two", "three", "four"}) {
+          fs::create_directories(f.source(std::string(name) + "/tree/sub"));
+          write(f.source(std::string(name) + "/tree/sub/item"), name);
+          sources.push_back(location(f.source(std::string(name) + "/tree")));
+        }
+      }
+      const auto originalFile = f.destination(nested ? "outer/tree/sub/item" : "tree/sub/item");
+      fs::create_hard_link(originalFile, f.root / "alias");
+      std::map<fs::path, struct stat> initial;
+      for (const auto& entry : fs::recursive_directory_iterator(f.source(""))) {
+        initial.emplace(entry.path(), luciole::transfer::info(AT_FDCWD, entry.path().native()));
+      }
+      pump.run(service, sources, f.destination(""), TransferAction::Move, [&](const auto& c) {
+        return !c.canMerge || (nested ? c.source == sources.back() : c.source == sources[1] || c.source == sources[3])
+            ? TransferConflictChoice::Replace
+            : TransferConflictChoice::Merge;
+      });
+      if (!service.receipt()) {
+        std::println(stderr, "Move generations nested={}: {}", nested, service.report());
+      }
+      TEST_CHECK(service.receipt());
+      for (int cycle = 0; cycle < 3; ++cycle) {
+        TEST_CHECK(read(f.destination(nested ? "outer/final" : "tree/sub/item")) == (nested ? "three" : "four"));
+        reverseTransfer(pump, service, TransferAction::Move);
+        if (!service.receipt()) {
+          std::println(stderr, "Move generations Undo nested={}: {}", nested, service.report());
+        }
+        TEST_CHECK(service.receipt() && fs::equivalent(originalFile, f.root / "alias"));
+        for (const auto& [path, stamp] : initial) {
+          TEST_CHECK(luciole::sameIdentity(stamp, luciole::transfer::info(AT_FDCWD, path.native())));
+        }
+        reverseTransfer(pump, service, TransferAction::Move);
+        if (!service.receipt()) {
+          std::println(stderr, "Move generations Redo nested={}: {}", nested, service.report());
+        }
+        TEST_CHECK(service.receipt());
+      }
+      reverseTransfer(pump, service, TransferAction::Move);
+      TEST_CHECK(service.receipt());
+      dropTransferHistory(pump, service);
+      TEST_CHECK(luciole::CopyReceipt::takeCleanupErrors().empty());
+    }
+  }
+  void testMoveAncestorGuards(Pump& pump) {
+    for (int change = 0; change < 5; ++change) {
+      Fixture f;
+      {
+        luciole::TransferService service;
+        const auto sources = overlappingCopies(f);
+        fs::create_directories(f.destination("tree/sub"));
+        write(f.destination("tree/sub/item"), "original");
+        fs::create_hard_link(f.destination("tree/sub/item"), f.root / "alias");
+        pump.run(service, sources, f.destination(""), TransferAction::Move, [&](const auto& c) {
+          return c.source == sources.back() || !c.canMerge ? TransferConflictChoice::Replace
+                                                           : TransferConflictChoice::Merge;
+        });
+        TEST_CHECK(service.receipt());
+        if (change == 0) {
+          write(f.destination("tree/sub/item"), "edited final");
+        } else if (change == 1) {
+          fs::create_directory(f.source("two/tree"));
+        } else if (change == 2) {
+          write(f.root / "alias", "edited retained original");
+        } else {
+          reverseTransfer(pump, service, TransferAction::Move);
+          TEST_CHECK(service.receipt());
+          write(change == 3 ? f.destination("tree/later") : f.source("three/tree/sub/item"), "later edit");
+        }
+        const auto receipt = service.receipt();
+        reverseTransfer(pump, service, TransferAction::Move);
+        if (change == 1) {
+          TEST_CHECK(!service.receipt() && !service.historyRetired());
+          TEST_CHECK(!fs::exists(f.source("one/tree")) && !fs::exists(f.source("three/tree")));
+          fs::remove(f.source("two/tree"));
+          pump.replay(service, receipt);
+          TEST_CHECK(service.receipt() && fs::equivalent(f.destination("tree/sub/item"), f.root / "alias"));
+        } else {
+          TEST_CHECK(!service.receipt() && service.historyRetired());
+          if (change < 3) {
+            TEST_CHECK(!fs::exists(f.source("one/tree")) && !fs::exists(f.source("two/tree")));
+          } else {
+            TEST_CHECK(read(f.source("one/tree/sub/item")) == "first");
+          }
+        }
+      }
+      drainHistoryCleanup();
+      (void)luciole::CopyReceipt::takeCleanupErrors();
+    }
+  }
+  void testMoveAncestorCancellation(Pump& pump) {
+    Fixture f;
+    luciole::TransferService service;
+    const auto sources = overlappingCopies(f);
+    fs::create_directories(f.destination("tree/sub"));
+    write(f.destination("tree/sub/item"), "original");
+    pump.run(service, sources, f.destination(""), TransferAction::Move, [&](const auto& c) {
+      return c.source == sources.back() || !c.canMerge ? TransferConflictChoice::Replace
+                                                       : TransferConflictChoice::Merge;
+    });
+    auto receipt = service.receipt();
+    TEST_CHECK(receipt);
+    luciole::CancelToken preflight;
+    preflight.cancel();
+    std::atomic<std::size_t> completed{0};
+    auto cancelled = receipt->reverse(preflight, completed);
+    TEST_CHECK(!cancelled.receipt && !cancelled.retireHistory && read(f.destination("tree/sub/item")) == "third");
+    completed.store(0);
+    luciole::CancelToken token;
+    std::jthread interrupt([&](const std::stop_token& stop) {
+      while (!stop.stop_requested() && completed.load() == 0) {
+        std::this_thread::yield();
+      }
+      token.cancel();
+    });
+    auto result = receipt->reverse(token, completed);
+    interrupt.request_stop();
+    interrupt.join();
+    for (const std::string value : {"original", "first", "second", "third"}) {
+      unsigned count = 0;
+      for (const auto& entry : fs::recursive_directory_iterator(f.root)) {
+        if (!entry.is_symlink() && entry.is_regular_file() && read(entry.path()) == value) {
+          ++count;
+        }
+      }
+      TEST_CHECK(count == 1);
+    }
+    const bool retired = result.retireHistory;
+    result.receipt.reset();
+    receipt.reset();
+    dropTransferHistory(pump, service);
+    TEST_CHECK(luciole::CopyReceipt::takeCleanupErrors().empty() == !retired);
+  }
+
+  void testMoveAncestorReplacement(Pump& pump) {
+    for (int original = 0; original < 4; ++original) {
+      for (const bool finishUndone : {false, true}) {
+        Fixture f;
+        luciole::TransferService service;
+        const auto sources = overlappingCopies(f);
+        if (original == 1) {
+          write(f.destination("tree"), "original");
+        } else if (original >= 2) {
+          fs::create_directories(f.destination("tree/sub"));
+          write(f.destination("tree/sub/item"), "original");
+          write(f.destination("tree/untouched"), "kept");
+        }
+        if (original) {
+          fs::create_hard_link(
+              original == 1 ? f.destination("tree") : f.destination("tree/sub/item"), f.root / "alias"
+          );
+        }
+        std::map<fs::path, struct stat> initial;
+        for (const auto& entry : fs::recursive_directory_iterator(f.source(""))) {
+          initial.emplace(entry.path(), luciole::transfer::info(AT_FDCWD, entry.path().native()));
+        }
+        std::optional<struct stat> previous;
+        if (original) {
+          previous = luciole::transfer::info(AT_FDCWD, f.destination("tree").native());
+        }
+        pump.run(service, sources, f.destination(""), TransferAction::Move, [&](const auto& conflict) {
+          return conflict.source == sources.back()
+                  || !conflict.canMerge
+                  || (original != 3 && conflict.source == sources.front())
+              ? TransferConflictChoice::Replace
+              : TransferConflictChoice::Merge;
+        });
+        if (!service.receipt()) {
+          std::println(stderr, "Move ancestor case {}: {}", original, service.report());
+        }
+        TEST_CHECK(service.receipt());
+        const auto final = luciole::transfer::info(AT_FDCWD, f.destination("tree").native());
+        for (int cycle = 0; cycle < 3; ++cycle) {
+          TEST_CHECK(read(f.destination("tree/sub/item")) == "third");
+          for (const auto& source : sources) {
+            TEST_CHECK(!fs::exists(*source.nativePath()));
+          }
+          reverseTransfer(pump, service, TransferAction::Move);
+          if (!service.receipt()) {
+            std::println(stderr, "Move ancestor Undo {}: {}", original, service.report());
+          }
+          TEST_CHECK(service.receipt());
+          for (const auto& [path, stamp] : initial) {
+            TEST_CHECK(luciole::sameIdentity(stamp, luciole::transfer::info(AT_FDCWD, path.native())));
+          }
+          TEST_CHECK(read(f.source("one/tree/sub/item")) == "first");
+          TEST_CHECK(read(f.source("two/tree/sub/item")) == "second");
+          TEST_CHECK(read(f.source("three/tree/sub/item")) == "third");
+          if (previous) {
+            TEST_CHECK(
+                luciole::sameIdentity(*previous, luciole::transfer::info(AT_FDCWD, f.destination("tree").native()))
+            );
+            TEST_CHECK(
+                fs::equivalent(original == 1 ? f.destination("tree") : f.destination("tree/sub/item"), f.root / "alias")
+            );
+            if (original >= 2) {
+              TEST_CHECK(read(f.destination("tree/untouched")) == "kept");
+            }
+          } else {
+            TEST_CHECK(!fs::exists(f.destination("tree")));
+          }
+          reverseTransfer(pump, service, TransferAction::Move);
+          if (!service.receipt()) {
+            std::println(stderr, "Move ancestor Redo {}: {}", original, service.report());
+          }
+          TEST_CHECK(
+              service.receipt()
+              && luciole::sameIdentity(final, luciole::transfer::info(AT_FDCWD, f.destination("tree").native()))
+          );
+        }
+        if (finishUndone) {
+          reverseTransfer(pump, service, TransferAction::Move);
+          TEST_CHECK(service.receipt());
+        }
+        dropTransferHistory(pump, service);
+        TEST_CHECK(luciole::CopyReceipt::takeCleanupErrors().empty());
+        for (const auto& entry : fs::recursive_directory_iterator(f.root)) {
+          TEST_CHECK(!entry.path().filename().native().starts_with(".luciole-create-"));
+        }
+      }
+    }
+  }
+
   void testOverlappingMoves(Pump& pump) {
     for (int original = 0; original < 3; ++original) {
       for (const bool finishUndone : {false, true}) {
@@ -3161,6 +3403,10 @@ int main() {
     testNestedCopyAncestor(pump);
     testCopyAncestorGuards(pump);
     testPrivateParentReconstructionCancellation();
+    testMoveAncestorReplacement(pump);
+    testMoveAncestorGenerations(pump);
+    testMoveAncestorGuards(pump);
+    testMoveAncestorCancellation(pump);
     testOverlappingMoves(pump);
     testOverlappingMoveGuards(pump);
     testOverlappingMoveCancellation(pump);

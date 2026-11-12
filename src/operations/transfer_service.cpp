@@ -468,7 +468,8 @@ namespace {
     }
     std::shared_ptr<const MoveEffect> contents(std::shared_ptr<const MoveEffect> effect) {
       if (std::ranges::any_of(moves, [&](const auto& parent) {
-            return parent->hasContents() && parent->encloses(effect->destination());
+            return (parent->hasContents() && parent->encloses(effect->destination()))
+                || effect->encloses(parent->destination());
           })) {
         return effect->captureContents(remaining, token);
       }
@@ -514,6 +515,12 @@ namespace {
                                int target) -> std::shared_ptr<const MoveEffect> {
           if (collecting && room()) {
             try {
+              std::vector<std::shared_ptr<const MoveFolder>> folders;
+              folders.reserve(retainedFolders.size());
+              for (const auto& folder : retainedFolders) {
+                folders.push_back(folder.effect);
+              }
+              moves = MoveReceipt::checkpoint(moves, destination, remaining, token, folders);
               auto proof = MoveEffect::prepareReplacement(
                   source.location, destination, source.parent.get(), target, remaining, token, revisions,
                   retention(*destination.parent(), target)
@@ -716,7 +723,7 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
             for (const auto& retained : moveHistory.retainedFolders) {
               folders.push_back(retained.effect);
             }
-            receipt = MoveReceipt::capture(moveHistory.moves, folders);
+            receipt = MoveReceipt::capture(moveHistory.moves, folders, false, false, token);
           } catch (const FileErrorException&) {
             moveCaptureChanged = true;
           }

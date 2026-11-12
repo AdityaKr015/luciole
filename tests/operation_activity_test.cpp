@@ -623,7 +623,7 @@ namespace {
     }
   }
 
-  void copyAncestorHistory(Pump& pump) {
+  void ancestorTransferHistory(Pump& pump, luciole::TransferAction action) {
     Fixture fixture;
     for (const auto* name : {"one/tree", "two/tree", "destination/tree"}) {
       fs::create_directories(fixture.root / name);
@@ -636,9 +636,7 @@ namespace {
     Workspace workspace;
     auto job = workspace.hub.create<luciole::TransferService>(workspace.page);
     auto& service = job->service<luciole::TransferService>();
-    TEST_CHECK(service.start(
-        {{fixture.at("one/tree"), fixture.at("two/tree")}, fixture.at("destination"), luciole::TransferAction::Copy}
-    ));
+    TEST_CHECK(service.start({{fixture.at("one/tree"), fixture.at("two/tree")}, fixture.at("destination"), action}));
     std::uint64_t answered = 0;
     unsigned conflicts = 0;
     pump.until([&] {
@@ -651,7 +649,11 @@ namespace {
       }
       return !workspace.hub.busy();
     });
-    TEST_CHECK(conflicts == 3 && workspace.hub.canUndo() && workspace.hub.historyLabel(false) == "Undo Copy");
+    TEST_CHECK(
+        conflicts == 3
+        && workspace.hub.canUndo()
+        && workspace.hub.historyLabel(false) == (action == luciole::TransferAction::Copy ? "Undo Copy" : "Undo Move")
+    );
     const auto window = workspace.model.addWindow(), page = workspace.model.addTab(window);
     Owner owner;
     workspace.hub.attach(page, owner);
@@ -669,7 +671,8 @@ namespace {
     pump.until([&] { return !workspace.hub.busy(); });
     TEST_CHECK(workspace.hub.canUndo() && fs::exists(fixture.root / "destination/tree/final"));
     TEST_CHECK(!fs::exists(fixture.root / "destination/tree/item"));
-    TEST_CHECK(fs::exists(fixture.root / "one/tree/item") && fs::exists(fixture.root / "two/tree/final"));
+    TEST_CHECK(fs::exists(fixture.root / "one/tree/item") == (action == luciole::TransferAction::Copy));
+    TEST_CHECK(fs::exists(fixture.root / "two/tree/final") == (action == luciole::TransferAction::Copy));
     TEST_CHECK(workspace.hub.activities().front().state == ActivityState::Succeeded);
     workspace.hub.shutdown();
     pump.until([&] { return !workspace.hub.busy(); });
@@ -867,7 +870,8 @@ int main() {
   moveReplacementMergeHistory(pump);
   repeatedTransferHistory(pump);
   overlappingTransferHistory(pump);
-  copyAncestorHistory(pump);
+  ancestorTransferHistory(pump, luciole::TransferAction::Copy);
+  ancestorTransferHistory(pump, luciole::TransferAction::Move);
   copyCleanupReport(pump);
   pump.until([] { return !luciole::CopyReceipt::cleanupPending(); });
 }

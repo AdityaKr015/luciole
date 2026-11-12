@@ -9,12 +9,13 @@
 #include <utility>
 
 namespace luciole {
-  // Compose only recorded child publications into an earlier copied tree.
+  // Compose and reverse recorded child publications in bounded tree proofs.
   class CopyHistoryTree {
   public:
     using ChangedFolders = std::set<HistoryRevisions::Key>;
     explicit CopyHistoryTree(transfer::Tree tree, ChangedFolders changed = {})
         : m_tree(std::move(tree)), m_changedFolders(std::move(changed)) {}
+    const transfer::Tree& tree() const { return m_tree; }
     const ChangedFolders& changedFolders() const { return m_changedFolders; }
     void replace(
         std::span<const std::string> path, const transfer::Tree& incoming, const transfer::Tree* previous,
