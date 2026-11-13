@@ -15,10 +15,13 @@ The field next to the location bar shows Search files… for recursive search, o
 | Back / Forward | Alt+Left / Alt+Right |
 | Parent folder / Home | Alt+Up / Alt+Home |
 | Edit location / Focus search | Ctrl+L / Ctrl+F |
+| Open terminal in current folder | F4 |
 | Refresh | F5 |
 | Undo / Redo | Ctrl+Z / Ctrl+Shift+Z |
 | Show hidden files | Ctrl+H |
 | Show sidebar / Show preview | F9 / F8 |
+
+Open Terminal Here is near the top of the folder background menu. A single folder's context menu offers Open in Terminal directly, targeting that folder. F4 always uses the active pane's current folder, regardless of selection; it also works while editing the location/search field, without submitting or clearing its text. Dialogs block the shortcut. Terminal actions require an accessible native folder and use Settings → General → Terminal, then the existing environment/discovery fallback.
 
 ## Views and selection
 

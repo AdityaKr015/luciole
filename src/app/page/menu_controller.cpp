@@ -102,6 +102,8 @@ std::vector<ContextMenuControlEntry> MenuController::folderMenuEntries(const luc
   if (m_page.hasOtherPane()) {
     entries.push_back({.id = ClosePane, .label = "Close Pane", .shortcut = "Ctrl+Alt+W"});
   }
+  add(Action::Terminal);
+  addSeparator(entries);
   add(Action::CreateFolder);
   add(Action::NewDocument);
   entries.back().hasSubmenu = true;
@@ -121,7 +123,6 @@ std::vector<ContextMenuControlEntry> MenuController::folderMenuEntries(const luc
   add(Action::ReloadPins);
   addSeparator(entries);
   entries.push_back({.id = CopyLocation, .label = "Copy Location", .hasSubmenu = true});
-  add(Action::Terminal);
   add(Action::Scripts);
   entries.back().hasSubmenu = true;
   return entries;
@@ -157,6 +158,9 @@ std::vector<ContextMenuControlEntry> MenuController::itemMenuEntries(const lucio
   }
   if (singleFolder) {
     entries.push_back({.id = OpenIn, .label = "Open In", .hasSubmenu = true});
+    if (!trash) {
+      add(Action::TargetTerminal);
+    }
   }
   addSeparator(entries);
   add(Action::CutFiles);
@@ -287,10 +291,6 @@ void MenuController::showOpenInMenu(const luciole::ActionRequest& request) {
       {.id = OtherPane, .label = m_page.hasOtherPane() ? "Other Pane" : "New Pane"},
       {.id = NewWindow, .label = "New Window"}
   };
-  if (!request.targets.front().location.isTrash()) {
-    entries.push_back(actionEntry(Action::TargetTerminal, request));
-    entries.back().label = "Terminal";
-  }
   m_submenus.show(
       std::move(entries),
       [this, request](int id) {

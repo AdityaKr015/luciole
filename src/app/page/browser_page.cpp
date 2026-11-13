@@ -1025,6 +1025,9 @@ bool BrowserPage::dispatchShortcut(const KeyboardEvent& event, std::initializer_
 }
 
 bool BrowserPage::shortcutKey(const KeyboardEvent& event) {
+  if (!event.repeat && dispatchShortcut(event, {Action::Terminal})) {
+    return true;
+  }
   const bool editing = m_locationBar.textFocused();
   if (!editing
       && !event.repeat

@@ -254,7 +254,7 @@ namespace {
   }
   State terminal(const C& c, const R& r) {
     if (!c.terminalAvailable) {
-      return unavailable("Install xdg-terminal-exec to open a terminal.");
+      return unavailable("No terminal is available. Check Settings > General > Terminal.");
     }
     if (!native(r) || r.folder->isTrash()) {
       return unavailable("Terminals require a native folder.");
@@ -263,7 +263,7 @@ namespace {
   }
   State targetTerminal(const C& c, const R& r) {
     if (!c.terminalAvailable) {
-      return unavailable("Install xdg-terminal-exec to open a terminal.");
+      return unavailable("No terminal is available. Check Settings > General > Terminal.");
     }
     return require(
         single(r)
@@ -527,7 +527,7 @@ namespace {
        .scope = S::Location,
        .rule = folderClipboard},
       {.action = A::CopyUri, .label = "Copy folder URI", .shortcut = "", .scope = S::Location, .rule = folderClipboard},
-      {.action = A::Terminal, .label = "Open Terminal Here", .shortcut = "", .scope = S::Location, .rule = terminal},
+      {.action = A::Terminal, .label = "Open Terminal Here", .shortcut = "F4", .scope = S::Location, .rule = terminal},
       {.action = A::CopyTargetPath, .label = "Copy path", .shortcut = "", .scope = S::Targets, .rule = clipboard},
       {.action = A::CopyTargetUri, .label = "Copy URI", .shortcut = "", .scope = S::Targets, .rule = clipboard},
       {.action = A::RunProgram, .label = "Run as a Program", .shortcut = "", .scope = S::Targets, .rule = runProgram},
