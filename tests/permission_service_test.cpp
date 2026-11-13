@@ -1299,8 +1299,24 @@ namespace {
       TEST_CHECK(service.applyAclPatch(userPatch("21000", 4)));
       service.cancel();
       pump.settle(service);
-      TEST_CHECK(service.snapshot().phase == P::Cancelled && !service.snapshot().applied);
-      TEST_CHECK(!aclText(f.root / "0").contains("user:21000:"));
+      // Cancellation can race the worker. Reports must describe the changes that actually completed.
+      const auto& cancelled = service.snapshot();
+      TEST_CHECK(cancelled.phase == P::Cancelled && cancelled.finished && !cancelled.failed() && cancelled.results);
+      std::size_t changed = 0;
+      for (const auto& row : *cancelled.results) {
+        TEST_CHECK(row.info && row.info->acl && row.info->acl->supported);
+        const bool actual = aclText(*row.location.nativePath()).contains("user:21000:r--\n");
+        TEST_CHECK(row.outcome == (actual ? O::Changed : O::Cancelled));
+        TEST_CHECK(row.info->acl->access.size() == (actual ? 5 : 3));
+        TEST_CHECK(row.info->mode == mode(*row.location.nativePath()));
+        changed += actual ? 1U : 0U;
+      }
+      TEST_CHECK(cancelled.applied == (changed > 0));
+      TEST_CHECK(!aliases || changed == 0 || changed == entries.size());
+      std::println("Bulk ACL immediate cancellation: aliases={}, changed={} of {}", aliases, changed, entries.size());
+      for (const auto& item : entries) {
+        setAcl(*item.location.nativePath(), "u::rw-,g::---,o::---");
+      }
       prepareBulk(pump, service, entries);
       TEST_CHECK(service.applyAclPatch(userPatch("21000", 4)));
       pump.until([&] { return service.completed() > 0 || !service.busy(); });

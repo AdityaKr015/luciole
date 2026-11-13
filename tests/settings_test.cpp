@@ -12,6 +12,7 @@
 #include <print>
 #include <stdexcept>
 #include <sys/stat.h>
+#include <toml++/toml.hpp>
 #include <unistd.h>
 
 namespace {
@@ -246,6 +247,52 @@ namespace {
     std::filesystem::remove(fixture.paths().overrides);
     const auto typed = luciole::loadSettings(fixture.paths());
     TEST_CHECK(typed && typed->browser.sort.field == luciole::SortField::Type);
+  }
+
+  void testUnknownSettings() {
+    Fixture fixture;
+    const std::string base = "schema_version = 1\nfuture_root = ['keep', 'these']\n[browser]\n"
+                             "sort_by = 'size'\nshow_hidden = true\nfuture_setting = { value = 17 }\n";
+    const std::string overrides =
+        "schema_version = 1\n[future_section]\nenabled = true\n[browser]\n"
+        "show_hidden = false\nshow_tab_bar_with_single_tab = true\nfuture_array = [1, 2, 3]\n";
+    fixture.write("config.toml", base);
+    fixture.write("settings.toml", overrides);
+    luciole::ConfigService config(fixture.paths());
+    TEST_CHECK(config.reload() && config.issues().empty());
+    TEST_CHECK(
+        !config.settings().browser.showHidden && config.settings().browser.sort.field == luciole::SortField::Size
+    );
+    TEST_CHECK(read(fixture.paths().base) == base && read(fixture.paths().overrides) == overrides);
+    const auto inherited = luciole::loadInheritedSettings(fixture.paths());
+    TEST_CHECK(inherited && inherited->browser.showHidden);
+    const auto diagnostics = luciole::validateConfigFile(fixture.paths().overrides);
+    TEST_CHECK(diagnostics.size() == 3);
+    TEST_CHECK(std::ranges::any_of(diagnostics, [](const auto& issue) {
+      return issue.key == "browser.show_tab_bar_with_single_tab" && issue.line > 0 && issue.column > 0;
+    }));
+    const std::array edit{luciole::OverrideEdit{luciole::BrowserPreference::GridIconSize, 96}};
+    TEST_CHECK(config.saveOverrides(edit) == luciole::AtomicWriteState::Durable);
+    const auto saved = toml::parse(read(fixture.paths().overrides));
+    TEST_CHECK(saved["browser"]["show_tab_bar_with_single_tab"].value<bool>() == true);
+    TEST_CHECK(saved["future_section"]["enabled"].value<bool>() == true);
+    TEST_CHECK(saved["browser"]["future_array"].as_array()->size() == 3);
+    TEST_CHECK(saved["browser"]["future_array"][2].value<int>() == 3);
+    const auto bytes = read(fixture.paths().overrides);
+    TEST_CHECK(config.saveOverrides(edit) == luciole::AtomicWriteState::Unchanged);
+    TEST_CHECK(read(fixture.paths().overrides) == bytes && read(fixture.paths().base) == base);
+    TEST_CHECK(config.saveOverrides(luciole::inheritAllPreferences()) == luciole::AtomicWriteState::Durable);
+    const auto reset = toml::parse(read(fixture.paths().overrides));
+    TEST_CHECK(!reset["browser"]["grid_icon_size"] && !reset["browser"]["show_hidden"]);
+    TEST_CHECK(reset["browser"]["show_tab_bar_with_single_tab"].value<bool>() == true);
+    TEST_CHECK(reset["future_section"]["enabled"].value<bool>() == true);
+    TEST_CHECK(config.reload() && config.settings().browser.showHidden);
+    const auto lastGood = config.settings();
+    fixture.write("settings.toml", "[browser]\nshow_tab_bar_with_single_tab = true\nshow_hidden = 42\n");
+    TEST_CHECK(!config.reload() && config.settings() == lastGood);
+    TEST_CHECK(config.issues().size() == 1 && config.issues().front().key == "browser.show_hidden");
+    fixture.write("settings.toml", "[browser]\nshow_tab_bar_with_single_tab = true\nshow_hidden = false\n");
+    TEST_CHECK(config.reload() && !config.settings().browser.showHidden && config.issues().empty());
   }
 
   void testLayersAndReload() {
@@ -904,7 +951,7 @@ namespace {
     TEST_CHECK(read(baseTarget) == baseContent && std::filesystem::is_symlink(fixture.paths().base));
 
     const auto lastGood = second.settings();
-    fixture.write("settings.toml", "[browser]\nunknown = true\n");
+    fixture.write("settings.toml", "[browser]\nshow_hidden = 42\n");
     const auto invalid = read(fixture.paths().overrides);
     TEST_CHECK(
         second.saveOverrides(show) == State::NotCommitted
@@ -978,6 +1025,7 @@ int main() {
     testNewTabPreference();
     testMillerSettings();
     testMillerParents();
+    testUnknownSettings();
     testLayersAndReload();
     testFilesAndLimits();
     testEnvironmentPaths();

@@ -16,7 +16,7 @@ Settings load in this order:
 
 When `XDG_CONFIG_HOME` is unset, use `~/.config`. Luciole never writes through your base configuration. This lets Nix or another declarative tool own `config.toml` while GUI changes remain writable in `settings.toml`. A base edit hidden by a GUI override becomes effective after resetting that preference.
 
-Valid external changes apply automatically. Invalid reloads keep the last working settings and report the error. Unknown keys, incorrect types and unsupported values are errors. Luciole does not search `/etc/xdg` or a packaged default configuration.
+Valid external changes apply automatically. Unknown keys in either settings file produce a warning and are ignored, so obsolete settings do not prevent startup or reload. Recognized preferences still apply. GUI saves and Reset preserve unknown keys and their values; they never rewrite your base file. Unknown options do not enable unsupported features. Incorrect types, unsupported values, incompatible schema versions and invalid TOML remain errors; invalid reloads keep the last working settings. `luciole config validate <file>` remains strict and reports unknown keys too. Luciole does not search `/etc/xdg` or a packaged default configuration.
 
 This is a valid starting configuration, not a required file:
 

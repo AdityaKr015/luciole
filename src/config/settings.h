@@ -210,6 +210,7 @@ namespace luciole {
   // Bounded, read-only local file loading. Call outside Render and traversal jobs.
   // Validation reads exactly one required file, without adjacent override files.
   ConfigIssues validateConfigFile(const std::filesystem::path& file);
+  // Runtime loads warn about unknown keys and retain recognized settings; known-value errors still fail.
   SettingsResult loadSettings(const ConfigPaths& paths);
   SettingsResult loadInheritedSettings(const ConfigPaths& paths);
 
