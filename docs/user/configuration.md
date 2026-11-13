@@ -2,7 +2,7 @@
 
 Open Settings with Ctrl+, or the main menu. It is a page inside the existing window. Changes save automatically; no manual reload is needed. Reset removes a GUI override so the base configuration or built-in default applies again. Reset all settings removes the browser override set.
 
-Settings follows the available window size while open. Enlarging the window restores its normal dialog size; narrowing it switches to compact category navigation without resetting your selected category or edits.
+Settings stays open when another window gains focus, preserving your selected category and unfinished edits. Close it with Escape or its close button. Settings follows the available window size while open. Enlarging the window restores its normal dialog size; narrowing it switches to compact category navigation without resetting your selected category or edits.
 
 Luciole uses `luciole/` for its application-owned directories. Existing data under the previous application name is not imported automatically. To retain settings or Places, move the corresponding files into the paths documented below while the application is closed.
 

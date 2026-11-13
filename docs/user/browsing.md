@@ -60,7 +60,7 @@ Show parent folders is enabled by default in Settings → Views. Disable it to s
 
 The side preview is on by default. Resize its divider to change the saved width; small windows temporarily collapse it when there is insufficient room. F8 toggles it, and Space opens a quick preview for one selected item. Images, video stills, the first PDF page and embedded audio artwork depend on installed providers. Video previews are still images, not playback.
 
-The preview shows essential content facts such as file size, dimensions, format and duration when available. Properties (Alt+Return) includes additional technical and permission information. See [file operations](file-operations.md#properties-and-permissions).
+The preview shows essential content facts such as file size, dimensions, format and duration when available. Properties (Alt+Return) includes additional technical and permission information. Properties and file-operation dialogs stay open when you switch windows; use their buttons or Escape to close them. See [file operations](file-operations.md#properties-and-permissions).
 
 File types use the system MIME database and GIO content detection when the name alone is insufficient. For example, a text `.bash_history` can show as Plain text document with MIME `text/plain`; an unrecognized binary stays a generic file. The detected type is shared by the list, preview and Properties. Readable local UTF-8 text formats, including YAML and desktop-entry contents, support text previews. Desktop entries also show their localized application or link name and description in preview and Properties.
 

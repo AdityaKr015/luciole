@@ -425,6 +425,19 @@ void BrowserPage::reviewOperation(luciole::JobId id, bool retry) {
   requestSync();
 }
 
+void BrowserPage::windowFocusChanged(bool entered) {
+  if (!m_menuSurface) {
+    return;
+  }
+  if (!entered) {
+    m_settingsController.closeSelectDropdown();
+    m_menuDispatcher.pointerLeave();
+    // A grabbed menu also takes focus from the parent; its compositor dismissal owns that lifetime.
+    return;
+  }
+  m_menuDispatcher.setTextInputContext(m_menuSurface->wlSurface(), &m_textInput, true, m_surface->wlSurface());
+}
+
 void BrowserPage::configurationChanged() {
   m_operations.parentConfigured();
   m_dragDrop.clearExternalDrop();
@@ -671,7 +684,10 @@ void BrowserPage::pointer(const PointerEvent& event) {
             && event.sy < m_menuSurface->height());
     if (!inPopup) {
       dispatcher().cancelPointerCapture();
-      dismissMenu();
+      m_menuDispatcher.cancelPointerCapture();
+      if (m_popupMode == PopupMode::Transient) {
+        dismissMenu();
+      }
       return;
     }
   }
@@ -1476,7 +1492,7 @@ void BrowserPage::openPatternSelection(const luciole::ActionRequest& request) {
   const float height = editor->measure(m_surface->renderTarget().renderer(), constraints).height;
   showPopup(
       std::move(editor), nullptr, {(m_surface->width() - width) * 0.5F, (m_surface->height() - height) * 0.5F, 1, 1},
-      width, height
+      width, height, false, PopupMode::Dialog
   );
   if (m_menuSurface) {
     m_activeDialog.bind(ActiveDialog::Kind::PatternSelection, [this] { m_patternEditor = nullptr; });
@@ -1647,7 +1663,7 @@ void BrowserPage::showCenteredDialog(std::unique_ptr<Flex> root, float preferred
   const float height = std::min(preferredHeight, static_cast<float>(m_surface->height()) - 64.0F);
   showPopup(
       std::move(root), nullptr, {(m_surface->width() - width) * 0.5F, (m_surface->height() - height) * 0.5F, 1, 1},
-      width, height
+      width, height, false, PopupMode::Dialog
   );
   if (!m_menuSurface) {
     return;
@@ -2394,6 +2410,7 @@ void BrowserPage::closeMenu() {
   m_activeDialog.release();
   m_menuController.menuClosed();
   m_menuSurface.reset();
+  m_popupMode = PopupMode::Transient;
   dispatcher().setTextInputContext(m_surface->wlSurface(), &m_textInput);
   m_surface->requestLayout();
 }
@@ -2469,12 +2486,15 @@ void BrowserPage::requestWorkspace(
 LayoutRect BrowserPage::menuAnchor() const { return sceneRect(*m_menuButton); }
 
 void BrowserPage::showPopup(
-    std::unique_ptr<Flex> root, ContextMenuControl* menu, LayoutRect anchor, float width, float height, bool alignLeft
+    std::unique_ptr<Flex> root, ContextMenuControl* menu, LayoutRect anchor, float width, float height, bool alignLeft,
+    PopupMode mode
 ) {
   m_fileKeys.clearTypeahead();
   m_locationBar.clearCompletions();
   closeMenu();
+  dispatcher().setTextInputContext(nullptr, nullptr);
   m_menuController.setMenu(menu);
+  m_popupMode = mode;
   m_activeDialog.open(std::move(root));
   m_menuSurface = std::make_unique<PopupSurface>(m_connection);
   m_menuSurface->setRenderContext(&m_renderer);
@@ -2558,6 +2578,7 @@ void BrowserPage::showPopup(
       .constraintAdjustment =
           XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X | XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y,
       .serial = m_popupSerial != 0 ? m_popupSerial : m_connection.lastInputSerial(),
+      .grab = mode == PopupMode::Transient,
   };
   if (!m_menuSurface->initializeAsChild(
           m_surface->xdgSurface(), m_connection.outputForSurface(m_surface->wlSurface()), config

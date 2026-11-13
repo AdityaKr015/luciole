@@ -239,15 +239,24 @@ bool WorkspaceApplication::hasWindows() const {
 
 void WorkspaceApplication::focus(wl_surface* surface, bool entered) {
   for (const auto& [id, host] : m_hosts) {
-    if (host->surface.wlSurface() == surface) {
-      if (!entered) {
-        if (host->tooltip) {
-          host->tooltip->dismiss();
-        }
-        host->surface.requestUpdate();
-        return;
+    if (host->surface.wlSurface() != surface) {
+      continue;
+    }
+    const auto window = m_model.windows().find(id);
+    auto* page =
+        window != m_model.windows().end() && window->second.active ? m_pages.at(window->second.active).get() : nullptr;
+    if (page) {
+      page->windowFocusChanged(entered);
+    }
+    if (!entered) {
+      if (host->tooltip) {
+        host->tooltip->dismiss();
       }
-      m_focused = id;
+      host->surface.requestUpdate();
+      return;
+    }
+    m_focused = id;
+    if (!page || !page->popup()) {
       host->dispatcher.setTextInputContext(host->surface.wlSurface(), &m_input);
     }
   }

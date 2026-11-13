@@ -139,7 +139,7 @@ void TrashController::openEmptyTrash(std::optional<std::vector<luciole::Director
   const float height = root->measure(surface.renderTarget().renderer(), constraints).height;
   m_page.showPopup(
       std::move(root), nullptr, {(surface.width() - width) * 0.5F, (surface.height() - height) * 0.5F, 1, 1}, width,
-      height, false
+      height, false, PopupMode::Dialog
   );
   if (m_page.menuSurface() != nullptr) {
     m_page.activeDialog().bind(ActiveDialog::Kind::EmptyTrash, [this] {

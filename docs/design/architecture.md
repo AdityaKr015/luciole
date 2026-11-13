@@ -1,5 +1,9 @@
 # Architecture and ownership
 
+## Dialog lifetime
+
+[PageContext](../../src/app/page/page_context.h) distinguishes transient popups from persistent dialogs through `PopupMode`. Menus keep normal Wayland grabs and outside-click dismissal. Forms retain their scene, focus and drafts across application-window focus changes, using the existing popup transport without an explicit grab. [BrowserPage](../../src/app/page/browser_page.cpp) consumes dialog-background clicks, restores its text-input context on focus return, and keeps all explicit teardown in ActiveDialog. Settings dropdowns remain transient children; losing window focus closes the dropdown while retaining Settings. Compositor popup dismissal is always honored. This is application policy, not a change to the mirrored rendering library.
+
 ## Module boundaries
 
 [meson.build](../../meson.build) assembles the local Noctalia library and Luciole-owned static modules. [CONTRIBUTING.md](../../CONTRIBUTING.md#module-layering) defines the allowed dependencies. Public domain APIs use `Location`, typed metadata and `CancelToken`; UI callers do not operate directly on GIO file objects.
