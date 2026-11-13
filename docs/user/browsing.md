@@ -40,6 +40,10 @@ Settings → Sidebar & preview controls sidebar visibility, width, drive rows an
 
 Each tab can contain one or two browsing panes. A split belongs to its tab; it does not create another tab. Navigation, search, selection and scroll belong to each pane. Actions target the focused pane.
 
+Middle-click a folder, breadcrumb or Places row, or use a folder's Open In → New Tab menu, to open it in another tab. Settings → General → Switch to new folder tabs is on by default. Turn it off to load those folders in background tabs while keeping your current tab, focused pane, search, selection and scroll. Shift+middle-click reverses the preference for that one opening. Click the tab or use Ctrl+Tab to visit it when ready.
+
+Ctrl+T, the plus button and explicit New Tab menu actions always switch to the new tab. Duplicating or reopening a tab also selects it, and New Window retains its normal focus behavior. The folder-tab preference does not change those actions.
+
 | Action | Shortcut |
 | --- | --- |
 | New tab / New window | Ctrl+T / Ctrl+N |

@@ -703,8 +703,8 @@ void WorkspaceApplication::pointer(const PointerEvent& event) {
     host->resizeStart = window.fraction;
     return;
   }
-  // A press in an inactive pane makes it the active one first, so the press lands on its full chrome.
-  if (!active.overlay() && event.type == PointerEvent::Type::Button && event.pressed) {
+  // Ordinary presses focus the pane first. Middle-click folder opening chooses tab activation separately.
+  if (!active.overlay() && event.type == PointerEvent::Type::Button && event.pressed && event.button != BTN_MIDDLE) {
     for (auto tab : host->mounted) {
       if (tab != window.active && m_pages.at(tab)->contains(x, y)) {
         m_model.focus(host->id, tab);
@@ -803,13 +803,13 @@ luciole::WindowId WorkspaceApplication::newWindow() {
 }
 
 luciole::TabId WorkspaceApplication::newTab(
-    luciole::WindowId window, std::optional<luciole::Location> location, luciole::TabId duplicate
+    luciole::WindowId window, std::optional<luciole::Location> location, luciole::TabId duplicate, bool activate
 ) {
   if (m_pages.size() >= 64) {
     return 0;
   }
   const auto previous = m_model.windows().at(window).active;
-  const auto id = m_model.addTab(window);
+  const auto id = m_model.addTab(window, activate);
   if (!id) {
     return 0;
   }
@@ -960,10 +960,15 @@ void WorkspaceApplication::execute(
     m_model.closePane(window, source);
     break;
   case WorkspaceCommand::NewTab:
-    if (!newTab(window, destination ? destination : page.location())) {
+  case WorkspaceCommand::OpenTab:
+  case WorkspaceCommand::NewBackgroundTab: {
+    const bool activate =
+        command == WorkspaceCommand::NewTab || (command == WorkspaceCommand::OpenTab && page.options().switchToNewTab);
+    if (!newTab(window, destination ? destination : page.location(), 0, activate)) {
       page.workspaceError("Close a tab before opening another.");
     }
     break;
+  }
   case WorkspaceCommand::Duplicate: {
     const auto record = m_model.windows().at(window);
     const auto cloned = newTab(window, m_pages.at(record.primary)->location(), record.primary);

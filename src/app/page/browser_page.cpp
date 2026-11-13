@@ -827,24 +827,27 @@ std::optional<luciole::FileTooltipTarget> BrowserPage::fileTooltipAt(float x, fl
 }
 
 bool BrowserPage::openInNewTab(float x, float y) {
+  const auto command = (m_connection.keyboardModifiers() & KeyMod::Shift) != 0
+      ? (m_savedSettings.switchToNewTab ? WorkspaceCommand::NewBackgroundTab : WorkspaceCommand::NewTab)
+      : WorkspaceCommand::OpenTab;
   if (m_list && m_list->containsScenePoint(x, y)) {
     if (auto index = m_list->itemAtScene(x, y); index && *index < browser().model().rows().size()) {
       const auto* entry = browser().model().entry(browser().model().rows()[*index]);
       if (entry && entry->type == luciole::FileType::Directory) {
-        m_workspaceRequest(WorkspaceCommand::NewTab, entry->location);
+        m_workspaceRequest(command, entry->location);
       }
       return true;
     }
   }
   for (const auto& [location, button] : m_locationBar.breadcrumbs()) {
     if (button->containsScenePoint(x, y)) {
-      m_workspaceRequest(WorkspaceCommand::NewTab, location);
+      m_workspaceRequest(command, location);
       return true;
     }
   }
   if (m_sidebar.hasPlaces()) {
     if (auto folder = m_sidebar.places().folderAt(x, y)) {
-      m_workspaceRequest(WorkspaceCommand::NewTab, folder->location);
+      m_workspaceRequest(command, folder->location);
       return true;
     }
   }

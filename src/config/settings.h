@@ -19,6 +19,7 @@ namespace luciole {
     SortOptions sort;
     ActivationMode activationMode = ActivationMode::DoubleClick;
     TypingMode typingMode = TypingMode::Search;
+    bool switchToNewTab = true;
     ViewMode viewMode = ViewMode::List;
     bool showHidden = false;
     bool showBackups = true;
@@ -57,6 +58,7 @@ namespace luciole {
   enum class BrowserPreferenceId : std::uint8_t {
     ActivationMode,
     TypingMode,
+    SwitchToNewTab,
     ShowHidden,
     ShowBackups,
     SortBy,
@@ -127,6 +129,7 @@ namespace luciole {
     static constexpr PreferenceKey<std::string> TerminalCommand{Id::TerminalCommand};
     static constexpr PreferenceKey<luciole::ActivationMode> ActivationMode{Id::ActivationMode};
     static constexpr PreferenceKey<luciole::TypingMode> TypingMode{Id::TypingMode};
+    static constexpr PreferenceKey<bool> SwitchToNewTab{Id::SwitchToNewTab};
     static constexpr PreferenceKey<bool> ShowHidden{Id::ShowHidden};
     static constexpr PreferenceKey<bool> ShowBackups{Id::ShowBackups};
     static constexpr PreferenceKey<luciole::SortField> SortBy{Id::SortBy};

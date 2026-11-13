@@ -302,7 +302,7 @@ void MenuController::showOpenInMenu(const luciole::ActionRequest& request) {
           return;
         }
         m_page.requestWorkspace(
-            id == NewTab          ? WorkspaceCommand::NewTab
+            id == NewTab          ? WorkspaceCommand::OpenTab
                 : id == NewWindow ? WorkspaceCommand::NewWindow
                                   : WorkspaceCommand::OpenOther,
             request.targets.front().location, std::nullopt
