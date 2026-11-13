@@ -315,9 +315,7 @@ PropertiesController::buildGeneral(const std::vector<luciole::DirectoryEntry>& t
                      .configure = literal}
                 ),
                 ui::label(
-                    {.text = entry.symlink                            ? "Symbolic link"
-                         : entry.type == luciole::FileType::Directory ? "Folder"
-                                                                      : "File",
+                    {.text = luciole::fileTypeDescription(entry.type, entry.symlink, entry.contentType),
                      .fontSize = Style::fontSizeCaption,
                      .color = colorSpecFromRole(ColorRole::OnSurfaceVariant)}
                 )

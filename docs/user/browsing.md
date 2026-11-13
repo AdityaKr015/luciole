@@ -62,7 +62,7 @@ The side preview is on by default. Resize its divider to change the saved width;
 
 The preview shows essential content facts such as file size, dimensions, format and duration when available. Properties (Alt+Return) includes additional technical and permission information. See [file operations](file-operations.md#properties-and-permissions).
 
-File types use the system MIME database and GIO content detection when the name alone is insufficient. For example, a text `.bash_history` can show as Plain text document with MIME `text/plain`; an unrecognized binary stays a generic file. The detected type is shared by the list, preview and Properties.
+File types use the system MIME database and GIO content detection when the name alone is insufficient. For example, a text `.bash_history` can show as Plain text document with MIME `text/plain`; an unrecognized binary stays a generic file. The detected type is shared by the list, preview and Properties. Readable local UTF-8 text formats, including YAML and desktop-entry contents, support text previews. Desktop entries also show their localized application or link name and description in preview and Properties.
 
 ## Background operations
 
