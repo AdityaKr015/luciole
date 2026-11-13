@@ -116,6 +116,8 @@ Archive support uses the system libarchive and its enabled formats/filters. Unen
 
 Ordinary URI-list archive drags use existing transfer support. KDE deferred-extraction drags additionally use the existing GIO session D-Bus connection to reach the running source's advertised unique name and object path. The source must expose `org.kde.ark.DndExtract.extractSelectedFilesTo`; it owns extraction and its password/conflict/progress UI. The method acknowledgement is not extraction completion. This path requires a native destination directory and does not support provider-only URIs.
 
+Producers that extract to temporary files are responsible for their own helper programs. In the isolated LXQt Archiver 1.4.0 check, supplying its selected `7z` helper allows multi-entry preparation and Copy-only URI export. That does not make this specific helper mandatory for Luciole's incoming URI handling or require installing every external archiver. Preparation and export capabilities depend on the producer's build and runtime packages. Ordinary URI drops allow up to 120 seconds for source data; the shorter text/metadata read limits remain separate.
+
 No Ark, Qt, KIO, X11 library or separate helper package becomes a Luciole dependency. Do not add an archiver selector or install Ark merely to enable normal archive handling. A producer must export a supported drag contract. X11 Direct Save-only offers remain unsupported; an Xwayland source is not automatically compatible solely because its window appears in the compositor. The `extraction-launcher` check uses the existing test-only `dbus-daemon` requirement with a private bus and no desktop services.
 
 ### Shared video thumbnail appearance

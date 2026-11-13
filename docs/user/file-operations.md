@@ -8,6 +8,10 @@ Drop files on a folder or the destination pane. Ctrl requests Copy, Shift reques
 
 Archive entries can also be dragged from compatible applications. An ordinary file-list offer uses the normal Copy workflow after the source prepares its files. A KDE deferred-extraction offer requests extraction directly into a local folder, including mounted folders with a native path. The source application handles passwords, progress and existing-name decisions. Luciole reports that extraction was requested; that message does not mean extraction has finished. Review or cancel that extraction in the source application. These source-owned extractions do not enter Luciole's File Operations or Undo history. Keep the source application open until it finishes.
 
+A source may need time to prepare the files after a drop. Luciole waits asynchronously for a file list for up to two minutes and reports a read error if it cannot obtain a complete valid list. Normal file-list transfers then use Luciole's progress and conflict handling. The source must provide usable files and keep them available through transfer completion.
+
+There is no per-archiver drag preference: compatible producers are detected automatically. An external archive program may need its own extraction helpers. Luciole's built-in Compress/Extract actions do not use a preferred external archiver; Open With can still open an archive in an installed application.
+
 Deferred extraction cannot target a provider URI or pin an archive entry in Places. X11 Direct Save-only and arbitrary raw-data offers are not supported. Supporting one export protocol does not imply support for every archive application's drag behavior.
 
 When names collide, the conflict dialog offers Replace, Skip and a numbered new name. Folder copies can merge into existing folders. Apply-to-all choices are scoped to the current job. Failed-item retries are explicit. Cancellation stops remaining work; it does not undo already completed changes. Supported native copies, links and moves have [Undo/Redo](#undo-and-redo); interrupted-job recovery remains pending.
