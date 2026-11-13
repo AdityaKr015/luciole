@@ -344,8 +344,9 @@ namespace {
         pump();
       }
     }
-    void beginDrop(std::uint32_t actions, bool askIntent = false) {
-      m_external = {{std::string(kUriListMime), "file:///tmp/drop-source\r\n"}};
+    void beginDrop(std::uint32_t actions, bool askIntent = false, MimeData data = {}) {
+      m_external =
+          data.empty() ? MimeData{{std::string(kUriListMime), "file:///tmp/drop-source\r\n"}} : std::move(data);
       if (askIntent) {
         m_external.emplace(kAskDropMime, "1");
       }
@@ -479,6 +480,117 @@ namespace {
     TEST_CHECK(peer.writes() == 0);
     TEST_CHECK(peer.capture().payload.locations == original.locations);
   }
+  void testDeferredExtractionDrops() {
+    constexpr auto copy = WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY, move = WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE;
+    const MimeData extraction{
+        {std::string(kExtractionServiceMime), ":1.25"}, {std::string(kExtractionPathMime), "/source"}
+    };
+    for (const std::uint32_t actions :
+         {static_cast<std::uint32_t>(copy), static_cast<std::uint32_t>(copy | move),
+          static_cast<std::uint32_t>(move)}) {
+      ClipboardPeer peer;
+      std::optional<ExtractionOffer> received;
+      DropCompletion finish;
+      peer.clipboard().setDropCallbacks(
+          [&](wl_surface*, float, float) {
+            return FileDropTarget{
+                .extract =
+                    [&](ExtractionOffer offer, DropCompletion done) {
+                      received = std::move(offer);
+                      finish = std::move(done);
+                    },
+                .preferred = DragAction::Move
+            };
+          },
+          [] {}
+      );
+      peer.beginDrop(actions, false, extraction);
+      peer.until([&] { return actions == move ? peer.mask() == 0 : peer.preferred() == copy; });
+      peer.drop();
+      if (actions == move) {
+        peer.until([&] { return peer.destroyed() == 1; });
+        TEST_CHECK(!received && peer.finished() == 0);
+      } else {
+        peer.until([&] { return received.has_value(); });
+        TEST_CHECK(received->service == ":1.25" && received->path == "/source" && peer.finished() == 0);
+        finish(true);
+        finish(true);
+        peer.until([&] { return peer.destroyed() == 1; });
+        TEST_CHECK(peer.finished() == 1 && peer.dropAction() == copy);
+      }
+    }
+    // A folder pin accepts real file lists only, and incomplete protocol offers must not look droppable.
+    for (const bool pin : {false, true}) {
+      ClipboardPeer peer;
+      bool called = false;
+      peer.clipboard().setDropCallbacks(
+          [&](wl_surface*, float, float) {
+            return FileDropTarget{
+                .receive = [&](const FilePayload&, const DropOptions&, const DropCompletion&) { called = true; },
+                .extract = [&](const ExtractionOffer&, const DropCompletion&) { called = true; },
+                .copyOnly = pin
+            };
+          },
+          [] {}
+      );
+      auto data = extraction;
+      if (!pin) {
+        data.erase(std::string(kExtractionPathMime));
+      }
+      peer.beginDrop(copy, false, std::move(data));
+      peer.drop();
+      peer.until([&] { return peer.destroyed() == 1; });
+      TEST_CHECK(!called && peer.finished() == 0);
+    }
+    // Ordinary URLs take precedence when both contracts are offered.
+    {
+      ClipboardPeer peer;
+      bool received = false, extracted = false;
+      peer.clipboard().setDropCallbacks(
+          [&](wl_surface*, float, float) {
+            return FileDropTarget{
+                .receive =
+                    [&](const FilePayload& files, const DropOptions& options, const DropCompletion& done) {
+                      TEST_CHECK(files.locations == std::vector{Location::fromPath("/tmp/drop-source")});
+                      TEST_CHECK(options.select(TransferAction::Copy));
+                      received = true;
+                      done(true);
+                    },
+                .extract = [&](const ExtractionOffer&, const DropCompletion&) { extracted = true; },
+                .preferred = DragAction::Copy
+            };
+          },
+          [] {}
+      );
+      auto data = extraction;
+      data.emplace(kUriListMime, "file:///tmp/drop-source\r\n");
+      peer.beginDrop(copy, false, std::move(data));
+      peer.until([&] { return peer.preferred() == copy; });
+      peer.drop();
+      peer.until([&] { return peer.finished() == 1; });
+      TEST_CHECK(received && !extracted);
+    }
+    for (const auto& invalid : {std::string{}, std::string(4097, 'a')}) {
+      ClipboardPeer peer;
+      bool received = false, failed = false;
+      peer.clipboard().setDropCallbacks(
+          [&](wl_surface*, float, float) {
+            return FileDropTarget{
+                .extract = [&](const ExtractionOffer&, const DropCompletion&) { received = true; },
+                .failed = [&](const std::string& message) { failed = !message.empty(); }
+            };
+          },
+          [] {}
+      );
+      auto data = extraction;
+      data[std::string(kExtractionPathMime)] = invalid;
+      peer.beginDrop(copy, false, std::move(data));
+      peer.until([&] { return peer.preferred() == copy; });
+      peer.drop();
+      peer.until([&] { return peer.destroyed() == 1; });
+      TEST_CHECK(failed && !received && peer.finished() == 0);
+    }
+  }
   void testAskDropNegotiation() {
     constexpr auto copy = WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY, move = WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE,
                    ask = WL_DATA_DEVICE_MANAGER_DND_ACTION_ASK;
@@ -566,6 +678,7 @@ namespace {
 } // namespace
 int main() {
   try {
+    testDeferredExtractionDrops();
     testAskDropNegotiation();
     testDeferredCompletion(false);
     testDeferredCompletion(true);

@@ -295,6 +295,7 @@ clipboard_dep = declare_dependency(link_with: clipboard_lib, include_directories
 platform_lib = static_library('luciole-platform',
   files(
     'src/platform/desktop_integration.cpp',
+    'src/platform/extraction_launcher.cpp',
     'src/platform/file_launcher.cpp',
     'src/platform/launch_activation.cpp',
     'src/platform/launch_context.cpp',

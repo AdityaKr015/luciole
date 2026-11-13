@@ -6,6 +6,10 @@ Use Ctrl+C or Ctrl+X for the selection and Ctrl+V in the destination folder. Pas
 
 Drop files on a folder or the destination pane. Ctrl requests Copy, Shift requests Move and Alt offers an action chooser. Symbolic-link drops are supported for native locations. Dragging a folder into Places pins it instead of transferring its contents.
 
+Archive entries can also be dragged from compatible applications. An ordinary file-list offer uses the normal Copy workflow after the source prepares its files. A KDE deferred-extraction offer requests extraction directly into a local folder, including mounted folders with a native path. The source application handles passwords, progress and existing-name decisions. Luciole reports that extraction was requested; that message does not mean extraction has finished. Review or cancel that extraction in the source application. These source-owned extractions do not enter Luciole's File Operations or Undo history. Keep the source application open until it finishes.
+
+Deferred extraction cannot target a provider URI or pin an archive entry in Places. X11 Direct Save-only and arbitrary raw-data offers are not supported. Supporting one export protocol does not imply support for every archive application's drag behavior.
+
 When names collide, the conflict dialog offers Replace, Skip and a numbered new name. Folder copies can merge into existing folders. Apply-to-all choices are scoped to the current job. Failed-item retries are explicit. Cancellation stops remaining work; it does not undo already completed changes. Supported native copies, links and moves have [Undo/Redo](#undo-and-redo); interrupted-job recovery remains pending.
 
 The background menu provides New Folder (Ctrl+Shift+N) and New Document. New Document offers an empty file and files from the configured XDG Templates folder. Create Link on a single native item creates a symbolic or hard link where supported.

@@ -121,6 +121,29 @@ void TransferController::finishMove(OperationJob& job, luciole::ClipboardFiles s
   });
 }
 
+void TransferController::extractDrop(
+    luciole::ExtractionOffer offer, const luciole::Location& destination, luciole::DropCompletion finish
+) {
+  if (m_page.operationsBusy() || !m_page.visible() || m_page.menuSurface()) {
+    finish(false);
+    return;
+  }
+  const std::weak_ptr<int> lifetime = m_lifetime;
+  const auto context = m_page.browser().contextSerial();
+  const auto completed = [this, lifetime, context, finish = std::move(finish)](const std::string& error) {
+    finish(error.empty());
+    if (!lifetime.expired() && context == m_page.browser().contextSerial()) {
+      m_page.actionError(
+          error.empty() ? "Extraction requested in the source application." : "Could not request extraction: " + error
+      );
+    }
+  };
+  if (!m_extraction.request(std::move(offer), destination, completed)) {
+    completed("Another extraction request is still finishing.");
+  }
+  m_page.requestSync();
+}
+
 void TransferController::receiveDrop(
     luciole::FilePayload payload, const luciole::Location& destination, luciole::DropOptions options,
     luciole::DropCompletion finish
@@ -540,4 +563,7 @@ void TransferController::updateOperationProgress() {
   }
 }
 
-void TransferController::stopProgress() { m_operationProgress.stop(); }
+void TransferController::stopProgress() {
+  m_operationProgress.stop();
+  m_extraction.cancel();
+}

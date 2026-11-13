@@ -239,13 +239,15 @@ bool BrowserPage::busy() const {
       || m_pins.busy()
       || m_launcher.busy()
       || m_execution.busy()
-      || m_transferController.pastePending();
+      || m_transferController.pastePending()
+      || m_transferController.extractionPending();
 }
 
 void BrowserPage::shutdown() {
   m_execution.cancel();
   m_preview.clear();
   m_transferController.cancelPaste();
+  m_transferController.cancelExtraction();
   m_launcher.cancelApplications();
 }
 
@@ -1140,7 +1142,8 @@ luciole::ActionContext BrowserPage::actionContext() const {
       .canBack = browser().canBack(),
       .canForward = browser().canForward(),
       .canUp = browser().canUp(),
-      .operationsBusy = m_jobs.busy() || m_transferController.pastePending(),
+      .operationsBusy =
+          m_jobs.busy() || m_transferController.pastePending() || m_transferController.extractionPending(),
       .pinsEditable = m_pins.editable(),
       .pinsBusy = m_pins.busy(),
       .canEmptyTrash = !m_jobs.busy(),
