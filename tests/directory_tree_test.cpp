@@ -1,6 +1,7 @@
 #include "browser/browser_controller.h"
 #include "browser/directory_tree.h"
 #include "config/settings.h"
+#include "directory_fixture.h"
 #include "fs/gio_interop.h"
 #include "test_check.h"
 
@@ -49,8 +50,11 @@ namespace {
     browser.open(luciole::Location::fromPath(root.native()));
     ready(browser);
     TEST_CHECK(!browser.expandableFolders() && browser.model().rows().size() == 2);
+    const auto rootSnapshot = browser.model().snapshot();
+    const auto* rootEntry = &rootSnapshot.entries.front();
     browser.setExpandableFolders(true);
     auto& model = browser.model();
+    TEST_CHECK(&model.snapshot().entries.front() == rootEntry);
     const auto a = find(model, root / "a");
     TEST_CHECK(browser.toggleFolder(a));
     wait([&] { return !browser.treeRow(a).loading; });
@@ -63,6 +67,9 @@ namespace {
     wait([&] { return !browser.treeRow(nested).loading; });
     const auto leaf = find(model, root / "a" / "nested" / "café-<literal>-文.txt");
     TEST_CHECK(leaf && model.treeDepth(leaf) == 2);
+    const auto expandedSnapshot = model.snapshot();
+    const auto* leafEntry = model.entry(leaf);
+    TEST_CHECK(&model.snapshot().entries.front() == rootEntry);
     TEST_CHECK(model.select(leaf));
     std::optional<luciole::Location> opened;
     browser.setFileActivatedCallback([&](const auto& location) { opened = location; });
@@ -83,6 +90,9 @@ namespace {
     TEST_CHECK(find(model, root / "a" / ".hidden"));
     TEST_CHECK(browser.toggleFolder(a));
     TEST_CHECK(!model.entry(leaf) && !model.selection().selected.contains(leaf));
+    const auto held = std::ranges::find(expandedSnapshot.entries, leaf, &luciole::DirectoryEntry::id);
+    TEST_CHECK(held != expandedSnapshot.entries.end() && &*held == leafEntry);
+    TEST_CHECK(held->location == luciole::Location::fromPath((root / "a/nested/café-<literal>-文.txt").native()));
     TEST_CHECK(browser.toggleFolder(a));
     wait([&] { return !browser.treeRow(a).loading; });
     TEST_CHECK(!browser.treeRow(find(model, root / "a" / "nested")).expanded);
@@ -129,11 +139,11 @@ namespace {
     wait([&] { return !tree.row(child).loading; });
     TEST_CHECK(tree.row(child).expanded && !tree.row(30).expanded); // Same URI, independent tree occurrences.
     TEST_CHECK(tree.collapse(20) && tree.branches() == 0);
-    snapshot.entries.clear();
+    snapshot.entries = {};
     for (std::size_t i = 0; i < luciole::DirectoryTree::maxBranches + 1; ++i) {
       const auto path = root / ("branch-" + std::to_string(i));
       fs::create_directory(path);
-      snapshot.entries.push_back(rootEntry(path, i + 1));
+      test::editEntries(snapshot, [&](auto& entries) { entries.push_back(rootEntry(path, i + 1)); });
     }
     tree.setRoot(snapshot);
     for (std::size_t i = 0; i < luciole::DirectoryTree::maxBranches; ++i) {
@@ -164,7 +174,9 @@ namespace {
     wait([&] { return !tree.row(1).loading; });
     const auto repeated = find(model, root / "a" / "nested");
     TEST_CHECK(repeated && !tree.expand(repeated) && tree.row(repeated).status == "Folder cycle blocked");
-    snapshot.entries.front().identity = luciole::FileIdentity{"changed", "changed"};
+    test::editEntries(snapshot, [&](auto& entries) {
+      entries.front().identity = luciole::FileIdentity{"changed", "changed"};
+    });
     tree.setRoot(snapshot);
     TEST_CHECK(tree.branches() == 0 && model.rows().size() == 1);
     const auto deep = root / "deep";

@@ -585,11 +585,14 @@ namespace {
     TEST_CHECK(config.reload() && config.settings().browser.alwaysShowTabBar);
     fixture.write("config.toml", "[browser]\nalways_show_tab_bar = false\nshow_hidden = true\n");
     TEST_CHECK(config.reload() && !config.settings().browser.alwaysShowTabBar && config.settings().browser.showHidden);
-    TEST_CHECK(config.saveOverrides(std::array{luciole::OverrideEdit{P::AlwaysShowTabBar, true}}) == State::Durable);
+    TEST_CHECK(
+        config.saveOverrides(std::array{luciole::OverrideEdit{Preference::AlwaysShowTabBar, true}}) == State::Durable
+    );
     const auto loaded = luciole::loadSettings(fixture.paths());
     TEST_CHECK(loaded && loaded->browser.alwaysShowTabBar && loaded->browser.showHidden);
     TEST_CHECK(
-        config.saveOverrides(std::array{luciole::OverrideEdit{P::AlwaysShowTabBar, std::nullopt}}) == State::Durable
+        config.saveOverrides(std::array{luciole::OverrideEdit{Preference::AlwaysShowTabBar, std::nullopt}})
+            == State::Durable
         && !config.settings().browser.alwaysShowTabBar
         && !read(fixture.paths().overrides).contains("always_show_tab_bar")
     );

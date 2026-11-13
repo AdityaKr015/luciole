@@ -197,6 +197,7 @@ luciole::SidebarTreeView::~SidebarTreeView() {
 void luciole::SidebarTreeView::setRoots(const PinService& pins, const std::vector<Drive>& drives) {
   DirectorySnapshot snapshot;
   snapshot.status = DirectoryStatus::Ready;
+  std::vector<DirectoryEntry> entries;
   std::map<std::string, EntryId> roots;
   m_pinIndices.clear();
   m_glyphs.clear();
@@ -211,7 +212,7 @@ void luciole::SidebarTreeView::setRoots(const PinService& pins, const std::vecto
       return place.bookmark.location == pin.location;
     });
     m_glyphs.emplace(id, known == pins.userPlaces().end() ? "folder" : known->glyphName);
-    snapshot.entries.push_back(
+    entries.push_back(
         {.id = id,
          .location = pin.location,
          .name = {},
@@ -232,7 +233,7 @@ void luciole::SidebarTreeView::setRoots(const PinService& pins, const std::vecto
     const auto id = prior == m_rootIds.end() ? m_nextRoot++ : prior->second;
     roots.emplace(uri, id);
     m_glyphs.emplace(id, drive.glyph);
-    snapshot.entries.push_back(
+    entries.push_back(
         {.id = id,
          .location = *drive.root,
          .name = {},
@@ -244,6 +245,7 @@ void luciole::SidebarTreeView::setRoots(const PinService& pins, const std::vecto
          .parentDisplayName = {}}
     );
   }
+  snapshot.entries = std::move(entries);
   m_rootIds = std::move(roots);
   m_tree.setRoot(std::move(snapshot));
 }

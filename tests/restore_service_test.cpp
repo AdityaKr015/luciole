@@ -43,7 +43,7 @@ namespace {
         m_source.dispatch(fds, first);
       }
     }
-    std::vector<luciole::DirectoryEntry> listing(const luciole::Location& location) {
+    luciole::DirectoryEntries listing(const luciole::Location& location) {
       luciole::DirectorySession session;
       session.open(location);
       until([&] { return session.snapshot().status != luciole::DirectoryStatus::Loading; });

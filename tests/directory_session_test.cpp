@@ -235,6 +235,41 @@ namespace {
     TEST_CHECK(entry(session, "renamed").id != id);
   }
 
+  void testSearchSnapshotOwnership(Pump& pump) {
+    Fixture fixture;
+    for (int i = 0; i < 150; ++i) {
+      fixture.write("match-" + std::to_string(i));
+    }
+    const std::string raw = "match-raw-%\n\xff";
+    fixture.write(raw);
+    luciole::RecursiveSearch search;
+    std::vector<luciole::DirectorySnapshot> published;
+    search.setChangedCallback([&] {
+      if (!search.snapshot().entries.empty()) {
+        published.push_back(search.snapshot());
+      }
+    });
+    search.start(fixture.location(), "match", true);
+    pump.until([&] { return search.snapshot().status != DirectoryStatus::Loading; });
+    TEST_CHECK(search.snapshot().status == DirectoryStatus::Ready && search.snapshot().entries.size() == 151);
+    TEST_CHECK(published.size() > 1 && published.front().entries.size() < 151);
+    const auto retained = published.front();
+    const auto* first = &retained.entries.front();
+    const auto found = std::ranges::find(search.snapshot().entries, first->id, &luciole::DirectoryEntry::id);
+    TEST_CHECK(found != search.snapshot().entries.end() && &*found == first);
+    const auto unusual = std::ranges::find(search.snapshot().entries, raw, &luciole::DirectoryEntry::name);
+    TEST_CHECK(
+        unusual != search.snapshot().entries.end() && unusual->location.nativePath() == (fixture.path / raw).native()
+    );
+    const auto complete = search.snapshot();
+    search.setChangedCallback({});
+    search.start(fixture.location(), "no matches", true);
+    search.cancel();
+    TEST_CHECK(retained.entries.size() < 151 && &retained.entries.front() == first);
+    TEST_CHECK(complete.entries.size() == 151 && complete.entries.front().id == first->id);
+    TEST_CHECK(first->location.nativePath().has_value());
+  }
+
   void testGenerationAndLifetime(Pump& pump) {
     Fixture first;
     Fixture second;
@@ -247,6 +282,7 @@ namespace {
     ready(pump, session);
     TEST_CHECK(session.snapshot().generation > generation);
     TEST_CHECK(!hasEntry(session, "first") && hasEntry(session, "second"));
+    const auto retained = session.snapshot();
     session.open(first.location());
     session.cancel();
     bool drained = false;
@@ -259,6 +295,7 @@ namespace {
     );
     pump.until([&drained] { return drained; });
     TEST_CHECK(session.snapshot().status == DirectoryStatus::Cancelled);
+    TEST_CHECK(retained.status == DirectoryStatus::Ready && retained.entries.front().name == "second");
     session.refresh();
     ready(pump, session);
     first.write("after-resume");
@@ -409,6 +446,9 @@ namespace {
         && entry(session, "plain").access.execute == false
     );
     const auto id = entry(session, "plain").id;
+    const auto published = session.snapshot();
+    const auto* retainedEntry = &published.entries.front();
+    TEST_CHECK(retainedEntry == &session.snapshot().entries.front());
     const auto generation = session.snapshot().generation;
     bool invalidated = false;
     session.setChangedCallback([&] {
@@ -427,6 +467,8 @@ namespace {
           && !session.snapshot().metadataLoading;
     });
     TEST_CHECK(invalidated && entry(session, "plain").id == id);
+    TEST_CHECK(published.status == DirectoryStatus::Ready && retainedEntry->access.execute == false);
+    TEST_CHECK(&published.entries.front() == retainedEntry && retainedEntry->access.write == true);
     TEST_CHECK(entry(session, "plain").access.execute == (::access(file.c_str(), X_OK) == 0));
     session.setChangedCallback({});
     fs::permissions(file, fs::perms::owner_read);
@@ -471,6 +513,7 @@ int main() {
     Pump pump;
     testContentTypes(pump);
     testEnumerationAndMonitoring(pump);
+    testSearchSnapshotOwnership(pump);
     testGenerationAndLifetime(pump);
     testChangesDuringLoading(pump);
     testErrorsAndEmpty(pump);

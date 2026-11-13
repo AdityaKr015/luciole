@@ -67,8 +67,10 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
   GioPtr<GFileMonitor> monitor;
   std::unordered_map<std::string, std::uint64_t> identities;
   std::uint64_t nextId = 1;
+  IdResolver resolveId;
   guint timer = 0;
   bool dirty = false;
+  bool entriesAccessInvalidated = false;
 
   ~State() { stop(); }
 
@@ -104,8 +106,13 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
     snapshot.metadataLoading = loading;
     snapshot.accessError.reset();
     snapshot.filesystemError.reset();
-    for (auto& entry : snapshot.entries) {
-      entry.access = {};
+    if (!entriesAccessInvalidated && !snapshot.entries.empty()) {
+      std::vector<DirectoryEntry> entries(snapshot.entries.begin(), snapshot.entries.end());
+      for (auto& entry : entries) {
+        entry.access = {};
+      }
+      snapshot.entries = std::move(entries);
+      entriesAccessInvalidated = true;
     }
   }
 
@@ -275,12 +282,16 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
     const auto parent = gioFile(*snapshot.location);
     const GioPtr<GFile> child(g_file_get_child(parent.get(), name));
     const GString uri(g_file_get_uri(child.get()));
-    auto [identity, inserted] = identities.try_emplace(uri.get(), nextId);
-    if (inserted) {
-      ++nextId;
+    std::uint64_t id = 0;
+    if (!resolveId) {
+      auto [identity, inserted] = identities.try_emplace(uri.get(), nextId);
+      if (inserted) {
+        ++nextId;
+      }
+      id = identity->second;
     }
     DirectoryEntry entry{
-        .id = identity->second,
+        .id = id,
         .location = Location::fromUri(uri.get()),
         .name = name,
         .displayName = g_file_info_get_display_name(info),
@@ -320,6 +331,9 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
     }
     if (const char* etag = g_file_info_get_etag(info); etag != nullptr) {
       entry.etag = etag;
+    }
+    if (resolveId) {
+      entry.id = resolveId(entry);
     }
     scan->entries.push_back(std::move(entry));
   }
@@ -370,15 +384,18 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
       return;
     }
     snapshot.entries = std::move(scan->entries);
+    entriesAccessInvalidated = false;
     scan->enumerating = false;
     closeEnumerator(scan->enumerator.get());
     scan->enumerator.reset();
-    std::unordered_map<std::string, std::uint64_t> retained;
-    retained.reserve(snapshot.entries.size());
-    for (const auto& entry : snapshot.entries) {
-      retained.emplace(entry.location.uri(), entry.id);
+    if (!resolveId) {
+      std::unordered_map<std::string, std::uint64_t> retained;
+      retained.reserve(snapshot.entries.size());
+      for (const auto& entry : snapshot.entries) {
+        retained.emplace(entry.location.uri(), entry.id);
+      }
+      identities = std::move(retained);
     }
-    identities = std::move(retained);
     snapshot.error = std::move(error);
     if (snapshot.location->isTrash() && snapshot.error && snapshot.error->kind == FileErrorKind::Unsupported) {
       snapshot.error->message = "Trash browsing is unavailable. The desktop trash service is not accessible.";
@@ -394,8 +411,10 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
   }
 };
 
-luciole::DirectorySession::DirectorySession(std::size_t entryLimit) : m_state(std::make_shared<State>()) {
+luciole::DirectorySession::DirectorySession(std::size_t entryLimit, IdResolver resolveId)
+    : m_state(std::make_shared<State>()) {
   m_state->entryLimit = entryLimit;
+  m_state->resolveId = std::move(resolveId);
 }
 
 luciole::DirectorySession::~DirectorySession() {
@@ -408,7 +427,8 @@ void luciole::DirectorySession::open(const Location& location) {
   state->stop();
   state->identities.clear();
   state->snapshot.location = location;
-  state->snapshot.entries.clear();
+  state->snapshot.entries = {};
+  state->entriesAccessInvalidated = false;
   state->snapshot.monitorError.reset();
   state->watch();
   state->begin();

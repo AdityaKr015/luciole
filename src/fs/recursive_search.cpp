@@ -44,6 +44,7 @@ struct luciole::RecursiveSearch::State : std::enable_shared_from_this<State> {
     std::optional<Location> root;
     std::unordered_set<std::string> visited;
     std::string query;
+    std::vector<DirectoryEntry> entries;
     bool showHidden = false;
     bool showBackups = true;
     ~Scan() { closeEnumerator(enumerator.get()); }
@@ -149,6 +150,12 @@ struct luciole::RecursiveSearch::State : std::enable_shared_from_this<State> {
               for (GList* item = infos; item != nullptr; item = item->next) {
                 owner.consume(request->scan, G_FILE_INFO(item->data));
               }
+              if (!request->scan->entries.empty()) {
+                owner.snapshot.entries = DirectoryEntries::concatenate(
+                    {owner.snapshot.entries, DirectoryEntries(std::move(request->scan->entries))}
+                );
+                request->scan->entries.clear();
+              }
               owner.notify();
               owner.batch(request->scan);
             }
@@ -198,7 +205,7 @@ struct luciole::RecursiveSearch::State : std::enable_shared_from_this<State> {
     }
     const GString relative(g_file_get_relative_path(gioFile(*scan->root).get(), parent.get()));
     const GString parentName(g_filename_display_name(relative && *relative.get() != '\0' ? relative.get() : "."));
-    snapshot.entries.push_back(
+    scan->entries.push_back(
         {.id = nextId++,
          .location = location,
          .name = name,

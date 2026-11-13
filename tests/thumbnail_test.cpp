@@ -1,4 +1,5 @@
 #include "core/log.h"
+#include "directory_fixture.h"
 #include "event_loop/glib_poll_source.h"
 #include "fs/gio_interop.h"
 #include "imaging/pixbuf_image_decoder.h"
@@ -372,7 +373,7 @@ namespace {
     session.open(luciole::Location::fromPath(fs::absolute(directory).native()));
     pump.until([&] { return session.snapshot().status != luciole::DirectoryStatus::Loading; });
     TEST_CHECK(session.snapshot().status == luciole::DirectoryStatus::Ready);
-    auto entries = session.snapshot().entries;
+    std::vector<luciole::DirectoryEntry> entries(session.snapshot().entries.begin(), session.snapshot().entries.end());
     std::erase_if(entries, [videos](const auto& entry) {
       return entry.type != luciole::FileType::Regular
           || !entry.contentType
@@ -1162,7 +1163,7 @@ namespace {
     snapshot.generation = 100;
     snapshot.location = luciole::Location::fromPath(fixture.root.native());
     snapshot.status = luciole::DirectoryStatus::Ready;
-    snapshot.entries.push_back(entry);
+    test::editEntries(snapshot, [&](auto& entries) { entries.push_back(entry); });
     service.synchronizeSources(snapshot);
     ++snapshot.generation;
     service.synchronizeSources(snapshot);
