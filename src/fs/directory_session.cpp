@@ -15,15 +15,17 @@ namespace {
   constexpr const char* kAttributes = G_FILE_ATTRIBUTE_STANDARD_NAME
       "," G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME "," G_FILE_ATTRIBUTE_STANDARD_TYPE
       "," G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN "," G_FILE_ATTRIBUTE_STANDARD_IS_SYMLINK
-      "," G_FILE_ATTRIBUTE_STANDARD_ICON "," G_FILE_ATTRIBUTE_STANDARD_SIZE "," G_FILE_ATTRIBUTE_TIME_MODIFIED
-      "," G_FILE_ATTRIBUTE_TIME_ACCESS "," G_FILE_ATTRIBUTE_TIME_CREATED "," G_FILE_ATTRIBUTE_OWNER_USER
-      "," G_FILE_ATTRIBUTE_OWNER_GROUP "," G_FILE_ATTRIBUTE_UNIX_MODE "," G_FILE_ATTRIBUTE_TIME_CHANGED
+      "," G_FILE_ATTRIBUTE_STANDARD_SIZE "," G_FILE_ATTRIBUTE_TIME_MODIFIED "," G_FILE_ATTRIBUTE_TIME_ACCESS
+      "," G_FILE_ATTRIBUTE_TIME_CREATED "," G_FILE_ATTRIBUTE_OWNER_USER "," G_FILE_ATTRIBUTE_OWNER_GROUP
+      "," G_FILE_ATTRIBUTE_UNIX_MODE "," G_FILE_ATTRIBUTE_TIME_CHANGED
       ",time::changed-nsec," G_FILE_ATTRIBUTE_TIME_CHANGED_USEC "," G_FILE_ATTRIBUTE_ETAG_VALUE
       "," G_FILE_ATTRIBUTE_ACCESS_CAN_READ "," G_FILE_ATTRIBUTE_ACCESS_CAN_WRITE "," G_FILE_ATTRIBUTE_ACCESS_CAN_EXECUTE
       "," G_FILE_ATTRIBUTE_ACCESS_CAN_RENAME "," G_FILE_ATTRIBUTE_ACCESS_CAN_TRASH
-      "," G_FILE_ATTRIBUTE_ACCESS_CAN_DELETE "," G_FILE_ATTRIBUTE_TRASH_ORIG_PATH
-      "," G_FILE_ATTRIBUTE_TRASH_DELETION_DATE "," G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE
+      "," G_FILE_ATTRIBUTE_ACCESS_CAN_DELETE "," G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE
       "," G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE "," G_FILE_ATTRIBUTE_ID_FILE "," G_FILE_ATTRIBUTE_ID_FILESYSTEM;
+  // Local folders derive icons from the content type instead; see FileIconPool::getLocal.
+  constexpr const char* kIconAttribute = G_FILE_ATTRIBUTE_STANDARD_ICON;
+  constexpr const char* kTrashAttributes = G_FILE_ATTRIBUTE_TRASH_ORIG_PATH "," G_FILE_ATTRIBUTE_TRASH_DELETION_DATE;
   constexpr int kBatchSize = 64;
   constexpr unsigned int kMonitorDelayMs = 80;
 
@@ -43,10 +45,16 @@ namespace {
 
 struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
   std::size_t entryLimit = 0;
+  FileIconPool icons;
   struct Scan {
     GioPtr<GCancellable> cancellable{g_cancellable_new()};
     GioPtr<GFileEnumerator> enumerator;
     std::vector<DirectoryEntry> entries;
+    GioPtr<GFile> parent;
+    // Identities of this scan's entries by name; replaces State::identities when the scan publishes.
+    std::unordered_map<std::string, std::uint64_t> identities;
+    bool local = false;
+    bool trash = false;
     DirectoryMetadata metadata;
     std::optional<FileError> accessError;
     std::optional<FileError> filesystemError;
@@ -191,23 +199,31 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
   }
 
   void monitorChanged(GFile* file, GFile* other, GFileMonitorEvent event) {
-    const GString uri(g_file_get_uri(file));
+    // Identities are keyed by child name; events about the folder itself or other locations name no child.
+    const auto folder = gioFile(*snapshot.location);
+    const auto childName = [&](GFile* child) {
+      return GString(g_file_has_parent(child, folder.get()) != FALSE ? g_file_get_basename(child) : nullptr);
+    };
+    const auto name = childName(file);
     // Only an explicit same-directory rename proves continuity. Replacements
-    // and delete/create sequences get a new identity even at the same URI.
+    // and delete/create sequences get a new identity even at the same name.
     if (event == G_FILE_MONITOR_EVENT_RENAMED && other != nullptr) {
-      const GString otherUri(g_file_get_uri(other));
-      identities.erase(otherUri.get());
-      if (auto node = identities.extract(uri.get()); !node.empty()) {
-        node.key() = otherUri.get();
-        identities.insert(std::move(node));
+      auto node = name ? identities.extract(name.get()) : decltype(identities)::node_type{};
+      if (const auto otherName = childName(other)) {
+        identities.erase(otherName.get());
+        if (!node.empty()) {
+          node.key() = otherName.get();
+          identities.insert(std::move(node));
+        }
       }
     } else if (
-        event == G_FILE_MONITOR_EVENT_DELETED
-        || event == G_FILE_MONITOR_EVENT_MOVED_OUT
-        || event == G_FILE_MONITOR_EVENT_CREATED
-        || event == G_FILE_MONITOR_EVENT_MOVED_IN
+        name
+        && (event == G_FILE_MONITOR_EVENT_DELETED
+            || event == G_FILE_MONITOR_EVENT_MOVED_OUT
+            || event == G_FILE_MONITOR_EVENT_CREATED
+            || event == G_FILE_MONITOR_EVENT_MOVED_IN)
     ) {
-      identities.erase(uri.get());
+      identities.erase(name.get());
     }
     const bool wasDirty = dirty;
     dirty = true;
@@ -255,9 +271,24 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
     snapshot.error.reset();
     invalidateMetadata(true);
     scan = std::make_shared<Scan>();
+    scan->identities.reserve(identities.size());
+    scan->parent = gioFile(*snapshot.location);
+    scan->local =
+        g_file_is_native(scan->parent.get()) != FALSE && g_file_has_uri_scheme(scan->parent.get(), "file") != FALSE;
+    scan->trash = snapshot.location->isTrash();
+    const GString localPath(scan->local ? g_file_get_path(scan->parent.get()) : nullptr);
+    scan->local = scan->local && localPath;
+    icons.setLocalFolder(localPath.get());
     queryMetadata();
+    std::string attributes = kAttributes;
+    if (!scan->local) {
+      attributes.append(",").append(kIconAttribute);
+    }
+    if (scan->trash) {
+      attributes.append(",").append(kTrashAttributes);
+    }
     g_file_enumerate_children_async(
-        gioFile(*snapshot.location).get(), kAttributes, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, G_PRIORITY_DEFAULT,
+        scan->parent.get(), attributes.c_str(), G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, G_PRIORITY_DEFAULT,
         scan->cancellable.get(),
         [](GObject* source, GAsyncResult* result, gpointer data) {
           const std::unique_ptr<Request> request(static_cast<Request*>(data));
@@ -279,56 +310,51 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
 
   void append(GFileInfo* info) {
     const char* name = g_file_info_get_name(info);
-    const auto parent = gioFile(*snapshot.location);
-    const GioPtr<GFile> child(g_file_get_child(parent.get(), name));
+    const GioPtr<GFile> child(g_file_get_child(scan->parent.get(), name));
     const GString uri(g_file_get_uri(child.get()));
     std::uint64_t id = 0;
     if (!resolveId) {
-      auto [identity, inserted] = identities.try_emplace(uri.get(), nextId);
+      const auto [identity, inserted] = scan->identities.try_emplace(name, 0);
       if (inserted) {
-        ++nextId;
+        const auto previous = identities.find(identity->first);
+        identity->second = previous != identities.end() ? previous->second : nextId++;
       }
       id = identity->second;
     }
     DirectoryEntry entry{
         .id = id,
-        .location = Location::fromUri(uri.get()),
+        // A child of a local folder has GIO's canonical form already.
+        .location = scan->local ? Location::fromCanonicalNativeUri(uri.get()) : Location::fromUri(uri.get()),
         .name = name,
         .displayName = g_file_info_get_display_name(info),
         .type = fileType(g_file_info_get_file_type(info)),
-        .hidden =
-            g_file_info_get_attribute_boolean(info, G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN) != FALSE || name[0] == '.',
+        .hidden = infoBoolean(info, G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN).value_or(false) || name[0] == '.',
         .symlink = readIsSymlink(info) != FALSE,
         .size = std::nullopt,
         .modifiedSeconds = std::nullopt,
         .etag = std::nullopt,
         .access = readFileAccess(info),
         .parentDisplayName = {},
-        .icon = readFileIcon(info, Location::fromUri(uri.get())),
     };
-    if (entry.location.isTrash()) {
+    entry.icon = scan->local ? icons.getLocal(info, entry.location) : icons.get(info, entry.location);
+    if (scan->trash) {
       entry.trash = readTrashInfo(info);
       entry.parentDisplayName = trashOriginalParentText(entry.trash);
     }
     entry.details = readEntryMetadata(info);
     entry.identity = readFileIdentity(info);
     entry.contentType = readContentType(info);
-    if (g_file_info_has_attribute(info, G_FILE_ATTRIBUTE_STANDARD_SIZE)) {
-      const auto size = g_file_info_get_size(info);
-      if (size >= 0) {
-        entry.size = static_cast<std::uint64_t>(size);
+    if (const auto size = infoUint64(info, G_FILE_ATTRIBUTE_STANDARD_SIZE); size && *size <= G_MAXINT64) {
+      entry.size = size;
+    }
+    if (const auto seconds = infoUint64(info, G_FILE_ATTRIBUTE_TIME_CHANGED)) {
+      auto nanos = infoUint32(info, "time::changed-nsec");
+      if (!nanos) {
+        nanos = infoUint32(info, G_FILE_ATTRIBUTE_TIME_CHANGED_USEC).value_or(0) * 1000U;
       }
+      entry.contentRevision = std::to_string(*seconds) + ':' + std::to_string(*nanos);
     }
-    if (g_file_info_has_attribute(info, G_FILE_ATTRIBUTE_TIME_CHANGED)) {
-      const auto seconds = g_file_info_get_attribute_uint64(info, G_FILE_ATTRIBUTE_TIME_CHANGED);
-      const auto nanos = g_file_info_has_attribute(info, "time::changed-nsec")
-          ? g_file_info_get_attribute_uint32(info, "time::changed-nsec")
-          : g_file_info_get_attribute_uint32(info, G_FILE_ATTRIBUTE_TIME_CHANGED_USEC) * 1000U;
-      entry.contentRevision = std::to_string(seconds) + ':' + std::to_string(nanos);
-    }
-    if (g_file_info_has_attribute(info, G_FILE_ATTRIBUTE_TIME_MODIFIED)) {
-      entry.modifiedSeconds = g_file_info_get_attribute_uint64(info, G_FILE_ATTRIBUTE_TIME_MODIFIED);
-    }
+    entry.modifiedSeconds = infoUint64(info, G_FILE_ATTRIBUTE_TIME_MODIFIED);
     if (const char* etag = g_file_info_get_etag(info); etag != nullptr) {
       entry.etag = etag;
     }
@@ -351,6 +377,13 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
             } else if (infos == nullptr) {
               state->complete(std::nullopt);
             } else {
+              // Request the next batch before converting this one, so GIO's worker overlaps this thread's work.
+              // A batch that can reach the entry limit decides first whether another request is needed.
+              const bool prefetch =
+                  state->entryLimit == 0 || state->scan->entries.size() + g_list_length(infos) < state->entryLimit;
+              if (prefetch) {
+                state->nextBatch();
+              }
               bool limited = false;
               for (const GList* item = infos; item != nullptr; item = item->next) {
                 if (state->entryLimit && state->scan->entries.size() >= state->entryLimit) {
@@ -365,7 +398,7 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
                         FileErrorKind::Unsupported, "Tree entry limit reached. Open this folder to see all items."
                     }
                 );
-              } else {
+              } else if (!prefetch) {
                 state->nextBatch();
               }
             }
@@ -389,12 +422,7 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
     closeEnumerator(scan->enumerator.get());
     scan->enumerator.reset();
     if (!resolveId) {
-      std::unordered_map<std::string, std::uint64_t> retained;
-      retained.reserve(snapshot.entries.size());
-      for (const auto& entry : snapshot.entries) {
-        retained.emplace(entry.location.uri(), entry.id);
-      }
-      identities = std::move(retained);
+      identities = std::move(scan->identities);
     }
     snapshot.error = std::move(error);
     if (snapshot.location->isTrash() && snapshot.error && snapshot.error->kind == FileErrorKind::Unsupported) {

@@ -464,7 +464,7 @@ void DragDropController::startFileDrag(const std::vector<luciole::EntryId>& ids)
     m_dragArtwork = m_thumbnails.prepared(*entry);
     if (!m_dragArtwork || !m_dragArtwork->pixels) {
       m_dragArtwork = m_icons.request(
-          entry->icon,
+          luciole::iconSource(entry->icon),
           static_cast<int>(std::ceil(
               (m_page.viewMode() == luciole::ViewMode::Grid ? m_page.gridIconSize() : 24)
               * m_page.surface().effectiveBufferScale()
@@ -672,7 +672,7 @@ void DragDropController::layout(Renderer& renderer) {
   }
   if (!m_drag->entries.empty()) {
     if (const auto* entry = m_page.browser().model().entry(m_drag->entries.front().id)) {
-      icon = entry->icon;
+      icon = luciole::iconSource(entry->icon);
     }
   }
   m_dragIcon->bind(icon, colorSpecFromRole(ColorRole::OnSurface));

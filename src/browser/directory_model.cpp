@@ -49,7 +49,14 @@ bool luciole::DirectoryModel::applySnapshot(
   m_preparedSortField.reset();
   const bool sameLocation = snapshot.location == m_snapshot.location;
   m_presentations.reserve(snapshot.entries.size());
-  std::unordered_map<std::string, std::string> typeLabels;
+  struct TypeLabel {
+    const std::string* label = nullptr;
+    bool known = false;
+  };
+  std::unordered_map<std::string_view, TypeLabel> typeLabels;
+  // Every surviving presentation is repointed below, so the previous pool can be replaced afterwards.
+  std::unordered_set<std::string> labels;
+  const auto pooled = [&labels](std::string label) { return &*labels.insert(std::move(label)).first; };
   for (std::size_t i = 0; i < snapshot.entries.size(); ++i) {
     const auto& entry = snapshot.entries[i];
     auto [found, inserted] = m_presentations.try_emplace(entry.id);
@@ -65,22 +72,25 @@ bool luciole::DirectoryModel::applySnapshot(
     if (regular && entry.contentType) {
       auto [label, inserted] = typeLabels.try_emplace(*entry.contentType);
       if (inserted) {
-        label->second = fileTypeDescription(entry.type, entry.symlink, entry.contentType);
+        label->second = {
+            .label = pooled(fileTypeDescription(entry.type, entry.symlink, entry.contentType)),
+            .known = !g_content_type_is_unknown(entry.contentType->c_str()),
+        };
       }
-      presentation.typeLabel = label->second;
+      presentation.typeLabel = label->second.label;
+      presentation.knownType = label->second.known;
     } else {
-      presentation.typeLabel = fileTypeDescription(entry.type, entry.symlink, entry.contentType);
+      presentation.typeLabel = pooled(fileTypeDescription(entry.type, entry.symlink, entry.contentType));
+      presentation.knownType =
+          entry.symlink || entry.type == FileType::Symlink || (!regular && entry.type != FileType::Unknown);
     }
-    presentation.knownType = entry.symlink
-        || entry.type == FileType::Symlink
-        || (regular ? entry.contentType && !g_content_type_is_unknown(entry.contentType->c_str())
-                    : entry.type != FileType::Unknown);
   }
   // Surviving IDs now point into the incoming snapshot; remove rows that disappeared.
   std::erase_if(m_presentations, [&](const auto& item) {
     const auto index = item.second.sourceIndex;
     return index >= snapshot.entries.size() || snapshot.entries[index].id != item.first;
   });
+  m_typeLabels = std::move(labels);
   m_snapshot = std::move(snapshot);
   rebuildProjection();
   notify();
@@ -115,14 +125,16 @@ const luciole::DirectoryEntry* luciole::DirectoryModel::entry(EntryId id) const 
 
 std::string_view luciole::DirectoryModel::typeLabel(EntryId id) const {
   const auto it = m_presentations.find(id);
-  return it == m_presentations.end() ? std::string_view{} : it->second.typeLabel;
+  return it == m_presentations.end() ? std::string_view{} : std::string_view(*it->second.typeLabel);
 }
 
-bool luciole::DirectoryModel::less(EntryId left, EntryId right) const {
-  const auto& leftPresentation = m_presentations.at(left);
-  const auto& rightPresentation = m_presentations.at(right);
-  const auto& a = m_snapshot.entries[leftPresentation.sourceIndex];
-  const auto& b = m_snapshot.entries[rightPresentation.sourceIndex];
+bool luciole::DirectoryModel::less(const SortItem& leftItem, const SortItem& rightItem) const {
+  const auto left = leftItem.id;
+  const auto right = rightItem.id;
+  const auto& leftPresentation = *leftItem.presentation;
+  const auto& rightPresentation = *rightItem.presentation;
+  const auto& a = *leftItem.entry;
+  const auto& b = *rightItem.entry;
   if (m_sort.directoriesFirst && (a.type == luciole::FileType::Directory) != (b.type == luciole::FileType::Directory)) {
     return a.type == luciole::FileType::Directory;
   }
@@ -177,7 +189,7 @@ void luciole::DirectoryModel::prepareSortKeys() {
     }
     const std::string* value = nullptr;
     if (m_sort.field == SortField::Type && presentation.knownType) {
-      value = &presentation.typeLabel;
+      value = presentation.typeLabel;
     } else if (m_sort.field == SortField::Owner && entry.details.owner) {
       value = &*entry.details.owner;
     } else if (m_sort.field == SortField::Group && entry.details.group) {
@@ -197,15 +209,22 @@ void luciole::DirectoryModel::prepareSortKeys() {
 void luciole::DirectoryModel::rebuildProjection() {
   prepareSortKeys();
   m_rows.clear();
-  m_rows.reserve(m_snapshot.entries.size());
+  // Sorting reads presentation and entry through direct pointers rather than hashing IDs per comparison.
+  std::vector<SortItem> items;
+  items.reserve(m_snapshot.entries.size());
   for (const auto& entry : m_snapshot.entries) {
+    const auto& presentation = m_presentations.at(entry.id);
     if ((!entry.hidden || m_filter.showHidden)
         && (m_filter.showBackups || !isEditorBackup(entry.name, entry.type))
-        && m_presentations.at(entry.id).filterKey.contains(m_filterKey)) {
-      m_rows.push_back(entry.id);
+        && presentation.filterKey.contains(m_filterKey)) {
+      items.push_back({entry.id, &presentation, &entry});
     }
   }
-  std::ranges::sort(m_rows, [this](EntryId left, EntryId right) { return less(left, right); });
+  std::ranges::sort(items, [this](const SortItem& left, const SortItem& right) { return less(left, right); });
+  m_rows.reserve(items.size());
+  for (const auto& item : items) {
+    m_rows.push_back(item.id);
+  }
   if (!m_treeParents.empty() || m_preserveRootOrder) {
     std::unordered_map<EntryId, std::vector<EntryId>> children;
     std::vector<EntryId> roots;

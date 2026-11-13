@@ -29,7 +29,7 @@ namespace luciole {
     std::optional<std::string> etag;
     FileAccess access{};
     std::string parentDisplayName; // Search result context; never an operation address.
-    FileIconSource icon{};
+    SharedFileIcon icon = nullptr; // Shared between entries with equal artwork; null means none.
     TrashInfo trash{};
     std::optional<FileIdentity> identity = std::nullopt;
     std::optional<std::string> contentType =

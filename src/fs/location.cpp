@@ -56,6 +56,11 @@ luciole::Location luciole::Location::fromPath(const std::string& absolutePath) {
   return Location(uri.get());
 }
 
+luciole::Location luciole::Location::fromCanonicalNativeUri(std::string uri) {
+  rejectNul(uri);
+  return Location(std::move(uri));
+}
+
 std::optional<std::string> luciole::Location::nativePath() const {
   if (isTrash()) {
     return std::nullopt;

@@ -301,7 +301,7 @@ PropertiesController::buildGeneral(const std::vector<luciole::DirectoryEntry>& t
   if (targets.size() == 1) {
     const auto& entry = targets.front();
     auto icon = std::make_unique<luciole::FileIcon>(m_icons, 48.0F);
-    icon->bind(entry.icon, colorSpecFromRole(ColorRole::OnSurface));
+    icon->bind(luciole::iconSource(entry.icon), colorSpecFromRole(ColorRole::OnSurface));
     general->addChild(
         ui::row(
             {.align = FlexAlign::Center, .gap = Style::spaceMd}, std::move(icon),

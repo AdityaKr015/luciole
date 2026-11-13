@@ -134,7 +134,7 @@ void FilePreviewView::sync(
         fileFacts.push_back({"Modified", formatted.get()});
       }
     }
-    m_image->bind(entry->icon, colorSpecFromRole(ColorRole::OnSurface));
+    m_image->bind(luciole::iconSource(entry->icon), colorSpecFromRole(ColorRole::OnSurface));
   }
   const auto* pixels = snapshot.image && snapshot.image->pixels ? &*snapshot.image->pixels : nullptr;
   const auto image =

@@ -15,7 +15,7 @@ namespace {
     return a.id == b.id
         && a.location == b.location
         && a.displayName == b.displayName
-        && a.icon == b.icon
+        && luciole::sameIcon(a.icon, b.icon)
         && a.access.read == b.access.read
         && a.identity == b.identity
         && a.etag == b.etag

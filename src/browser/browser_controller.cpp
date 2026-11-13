@@ -453,17 +453,36 @@ void luciole::BrowserController::publish(DirectorySnapshot snapshot) {
   const auto status = m_model.snapshot().status;
   if (m_restoring && (status == DirectoryStatus::Ready || status == DirectoryStatus::Error)) {
     const auto& visit = m_history[m_historyIndex];
-    std::unordered_map<std::string, EntryId> visible;
-    visible.reserve(m_model.rows().size());
+    // Only the visit's own references need resolving; a first visit has none.
+    std::unordered_map<std::string_view, std::optional<EntryId>> visible;
+    const auto want = [&](const Reference* reference) {
+      if (reference != nullptr) {
+        visible.try_emplace(reference->uri);
+      }
+    };
+    for (const auto& item : visit.selected) {
+      want(&item);
+    }
+    want(visit.focus ? &*visit.focus : nullptr);
+    want(visit.anchor ? &*visit.anchor : nullptr);
+    want(visit.first ? &*visit.first : nullptr);
+    std::size_t unresolved = visible.size();
     for (const auto id : m_model.rows()) {
-      visible.emplace(m_model.entry(id)->location.uri(), id);
+      if (unresolved == 0) {
+        break;
+      }
+      const auto found = visible.find(m_model.entry(id)->location.uri());
+      if (found != visible.end() && !found->second) {
+        found->second = id;
+        --unresolved;
+      }
     }
     const auto resolve = [&](const std::optional<Reference>& reference) -> std::optional<EntryId> {
       if (!reference) {
         return std::nullopt;
       }
       const auto found = visible.find(reference->uri);
-      if (found == visible.end() || m_model.entry(found->second)->identity != reference->identity) {
+      if (found == visible.end() || !found->second || m_model.entry(*found->second)->identity != reference->identity) {
         return std::nullopt;
       }
       return found->second;

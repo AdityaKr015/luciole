@@ -111,6 +111,57 @@ namespace {
     }
   }
 
+  // Local listings derive icons and child locations themselves; both must equal what GIO reports.
+  void testLocalIconsAndLocations(Pump& pump, const fs::path& profile) {
+    const auto home = profile / "home";
+    TEST_CHECK(home.native() == g_get_home_dir());
+    for (const auto* folder : {"Desktop", "Docs", "ordinary", "Pictures"}) {
+      fs::create_directories(home / folder);
+    }
+    const auto write = [&](const std::string& name, const std::string& contents) {
+      std::ofstream file(home / name, std::ios::binary);
+      file << contents;
+      TEST_CHECK(file.good());
+    };
+    write("notes.txt", "text");
+    write("more.txt", "more text");
+    write("empty", "");
+    write("picture", std::string("\x89PNG\r\n\x1a\n", 8) + std::string(64, '\0'));
+    write("launcher.desktop", "[Desktop Entry]\nType=Application\nName=Test\nExec=true\n");
+    write("a space#%\n" + std::string(1, static_cast<char>(0xFF)), "raw");
+    write("ünï côdé.txt", "unicode");
+    fs::create_symlink("notes.txt", home / "link");
+    fs::create_symlink("missing", home / "broken");
+    fs::create_directory_symlink(home / "Docs", profile / "docs-link");
+
+    DirectorySession session;
+    std::size_t special = 0;
+    for (const auto& folder : {profile, home}) {
+      session.open(Location::fromPath(folder.native()));
+      ready(pump, session);
+      for (const auto& entry : session.snapshot().entries) {
+        const auto file = luciole::gioFile(entry.location);
+        const luciole::GioPtr<GFileInfo> info(g_file_query_info(
+            file.get(),
+            G_FILE_ATTRIBUTE_STANDARD_NAME "," G_FILE_ATTRIBUTE_STANDARD_TYPE "," G_FILE_ATTRIBUTE_STANDARD_ICON
+                                           "," G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE,
+            G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, nullptr
+        ));
+        TEST_CHECK(info);
+        const auto expected = luciole::readFileIcon(info.get(), entry.location);
+        TEST_CHECK(entry.icon && *entry.icon == expected);
+        special += expected.names.front().starts_with("user-") || expected.names.front().starts_with("folder-");
+        TEST_CHECK(Location::fromUri(entry.location.uri()) == entry.location);
+        TEST_CHECK(Location::fromPath((folder / entry.name).native()) == entry.location);
+      }
+    }
+    // Home, Desktop, Docs and Pictures; equal artwork is stored once.
+    TEST_CHECK(special == 4);
+    TEST_CHECK(entry(session, "notes.txt").icon == entry(session, "more.txt").icon);
+    TEST_CHECK(entry(session, "notes.txt").icon != entry(session, "ordinary").icon);
+    TEST_CHECK(entry(session, "launcher.desktop").icon->desktopFile == (home / "launcher.desktop").native());
+  }
+
   void testContentTypes(Pump& pump) {
     Fixture fixture;
     fixture.write(".bash_history", "cd Documents\nprintf hello\n");
@@ -509,8 +560,23 @@ namespace {
 
 int main() {
   try {
+    // A private home with configured user folders, selected before GLib first reads either.
+    const Fixture profile;
+    fs::create_directories(profile.path / "home");
+    fs::create_directories(profile.path / "config");
+    {
+      std::ofstream dirs(profile.path / "config/user-dirs.dirs");
+      dirs
+          << "XDG_DESKTOP_DIR=\"$HOME/Desktop\"\nXDG_DOCUMENTS_DIR=\"$HOME/Docs\"\nXDG_MUSIC_DIR=\"$HOME/\"\n"
+          << "XDG_PICTURES_DIR=\""
+          << (profile.path / "home/Pictures").native()
+          << "\"\n";
+    }
+    g_setenv("HOME", (profile.path / "home").c_str(), TRUE);
+    g_setenv("XDG_CONFIG_HOME", (profile.path / "config").c_str(), TRUE);
     testLocations();
     Pump pump;
+    testLocalIconsAndLocations(pump, profile.path);
     testContentTypes(pump);
     testEnumerationAndMonitoring(pump);
     testSearchSnapshotOwnership(pump);

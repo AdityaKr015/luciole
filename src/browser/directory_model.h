@@ -79,7 +79,8 @@ namespace luciole {
       std::size_t sourceIndex = 0;
       std::string sortKey;
       std::string filterKey;
-      std::string typeLabel;
+      // Points into m_typeLabels; equal labels share one string.
+      const std::string* typeLabel = nullptr;
       // Points into m_alternateSortKeys; nodes keep their addresses across rehash.
       const std::string* alternateSortKey = nullptr;
       bool knownType = false;
@@ -90,12 +91,18 @@ namespace luciole {
     void reconcileSelection();
     void notify() const;
     bool canSelect() const;
-    bool less(EntryId left, EntryId right) const;
+    struct SortItem {
+      EntryId id;
+      const Presentation* presentation;
+      const DirectoryEntry* entry;
+    };
+    bool less(const SortItem& left, const SortItem& right) const;
 
     DirectorySnapshot m_snapshot;
     SortOptions m_sort;
     FilterOptions m_filter;
     std::string m_filterKey;
+    std::unordered_set<std::string> m_typeLabels;
     std::unordered_map<EntryId, Presentation> m_presentations;
     // One selected text-sort field, shared by repeated values/containing folders.
     std::unordered_map<std::string, std::string> m_alternateSortKeys;
