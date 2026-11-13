@@ -75,6 +75,7 @@ SettingsDialog::SettingsDialog(
   addBool(P::SwitchToNewTab, "Switch to new folder tabs");
   addBool(P::ShowHidden, "Show hidden files");
   addBool(P::ShowBackups, "Show backup files (*~)");
+  addBool(P::AlwaysShowTabBar, "Always show tab bar");
   group("Terminal");
   addTerminal();
   group("Sorting");
