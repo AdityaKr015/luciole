@@ -967,6 +967,9 @@ void BrowserPage::keyboard(const KeyboardEvent& event) {
     return;
   }
   if (m_menuSurface != nullptr) {
+    if (m_trashController.key(event)) {
+      return;
+    }
     if (m_propertiesController.resultsKey(event)) {
       return;
     }

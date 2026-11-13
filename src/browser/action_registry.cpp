@@ -115,6 +115,23 @@ namespace {
     }
     return {};
   }
+  State emptyTrash(const C& c, const R&) {
+    if (!c.canEmptyTrash || c.operationsBusy) {
+      return unavailable("Trash is unavailable or another operation is still finishing.");
+    }
+    const auto& snapshot = c.model.snapshot();
+    // Search results and other folders cannot establish whether the whole Trash is empty.
+    if (snapshot.location == luciole::Location::trash() && c.query.empty()) {
+      if (snapshot.status == luciole::DirectoryStatus::Loading) {
+        return unavailable("Wait until Trash has finished loading.");
+      }
+      if (snapshot.status != luciole::DirectoryStatus::Ready) {
+        return unavailable("Trash is unavailable.");
+      }
+      return require(!snapshot.entries.empty(), "Trash is already empty.");
+    }
+    return {};
+  }
   State trashItems(const C& c, const R& r, bool restore) {
     if (const auto state = writable(c); !state.enabled) {
       return state;
@@ -486,13 +503,7 @@ namespace {
        .label = "Reload pins",
        .shortcut = "",
        .rule = [](const C& c, const R&) { return require(!c.pinsBusy, "Pins are being saved."); }},
-      {.action = A::EmptyTrash,
-       .label = "Empty Trash…",
-       .shortcut = "",
-       .destructive = true,
-       .rule = [](
-                   const C& c, const R&
-               ) { return require(c.canEmptyTrash, "Trash is unavailable or another operation is still finishing."); }},
+      {.action = A::EmptyTrash, .label = "Empty Trash…", .shortcut = "", .destructive = true, .rule = emptyTrash},
       {.action = A::SelectAll, .label = "Select all", .shortcut = "Ctrl+A", .scope = S::Selection, .rule = visibleRows},
       {.action = A::InvertSelection,
        .label = "Invert selection",
