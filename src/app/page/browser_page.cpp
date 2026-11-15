@@ -2569,8 +2569,9 @@ void BrowserPage::showPopup(
        .height = static_cast<std::uint32_t>(height),
        .anchor = XDG_POSITIONER_ANCHOR_BOTTOM_RIGHT,
        .gravity = alignLeft ? XDG_POSITIONER_GRAVITY_BOTTOM_LEFT : XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT,
-       .constraintAdjustment =
-           XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X | XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y},
+       .constraintAdjustment = XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X
+           | XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y
+           | XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_FLIP_Y},
       PopupMode::Transient
   );
 }
