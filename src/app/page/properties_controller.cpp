@@ -183,11 +183,6 @@ void PropertiesController::layoutDialog(float width) {
     m_metadataWidth = metadataWidth;
     syncMetadata();
   }
-  if (m_permissionEditor || m_metadataView) {
-    m_page.activeDialog().root()->setSize(
-        width, std::min(600.0F, static_cast<float>(m_page.surface().height()) - 64.0F)
-    );
-  }
 }
 
 void PropertiesController::showAdvanced(bool advanced, bool focus) {
@@ -562,8 +557,7 @@ void PropertiesController::show(const std::vector<luciole::DirectoryEntry>& targ
     return location.nativePath() && !location.isTrash();
   });
   const bool withResults = multiple || folders;
-  auto& surface = m_page.surface();
-  const float width = std::min(editable ? 600.0F : 440.0F, static_cast<float>(surface.width()) - 32.0F);
+  const float width = m_page.dialogWidth(DialogWidth::Medium);
   auto body = buildBody(targets, width, editable, multiple, folders, withResults);
   auto* scroll = body.scroll;
   auto* generalGroup = body.general;
@@ -681,24 +675,13 @@ void PropertiesController::show(const std::vector<luciole::DirectoryEntry>& targ
         )
     );
   }
-  UiPhaseScope phase(UiPhase::Layout);
-  LayoutConstraints constraints;
-  constraints.setExactWidth(width);
-  const float height = (editable || multiple)
-      ? std::min(600.0F, static_cast<float>(surface.height()) - 64.0F)
-      : std::min(
-            root->measure(surface.renderTarget().renderer(), constraints).height,
-            static_cast<float>(surface.height()) - 64.0F
-        );
-  if (editable || multiple) {
-    root->setSize(width, height);
-  }
-  m_page.showPopup(
-      std::move(root), nullptr, {(surface.width() - width) * 0.5F, (surface.height() - height) * 0.5F, 1, 1}, width,
-      height, false, PopupMode::Dialog
-  );
+  m_page.showDialog(std::move(root), DialogWidth::Medium);
   if (m_page.menuSurface()) {
     m_page.activeDialog().bind(ActiveDialog::Kind::Properties, [this] { close(); });
+    // Start on the tabs rather than the header's close button.
+    if (editable) {
+      m_page.menuDispatcher().setFocus(m_page.menuDispatcher().firstTabFocusUnder(tabs));
+    }
     m_metadataView = body.metadata;
     m_folderTotals = body.folderTotals;
     m_basicFields = std::move(body.fields);
@@ -712,7 +695,6 @@ void PropertiesController::show(const std::vector<luciole::DirectoryEntry>& targ
       }
       m_metadataDirty = true;
     }
-    m_page.setDialogSize(width, height);
     if (!editable) {
       return;
     }

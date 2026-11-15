@@ -44,7 +44,7 @@ public:
   void updateApply();
   // Keyboard hook in BrowserPage::keyboard() while a popup is shown: keyboard navigation in the results list.
   bool resultsKey(const KeyboardEvent& event);
-  // Menu popup hook: keeps the editable dialog at its fixed height.
+  // Dialog layout hook with the dialog's width: re-wraps the Details table.
   void layoutDialog(float width);
 
 private:
