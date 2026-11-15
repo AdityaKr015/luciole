@@ -16,7 +16,28 @@ std::string luciole::metadataTime(std::optional<std::uint64_t> seconds) {
   return value ? value.get() : "Unknown";
 }
 
+std::uint8_t luciole::entryColumnDetails(DetailsColumn column) {
+  switch (column) {
+  case DetailsColumn::Accessed:
+    return EntryDetails::Accessed;
+  case DetailsColumn::Created:
+    return EntryDetails::Created;
+  case DetailsColumn::Owner:
+    return EntryDetails::Owner;
+  case DetailsColumn::Group:
+    return EntryDetails::Group;
+  case DetailsColumn::Permissions:
+    return EntryDetails::Permissions;
+  default:
+    return 0;
+  }
+}
+
 std::string luciole::entryColumnText(const DirectoryEntry& entry, DetailsColumn column, std::string_view typeLabel) {
+  const auto details = entryColumnDetails(column);
+  if (column != DetailsColumn::Location && (entry.metadataPending || (entry.queriedDetails & details) != details)) {
+    return "Reading…";
+  }
   switch (column) {
   case DetailsColumn::Type:
     return std::string(typeLabel);

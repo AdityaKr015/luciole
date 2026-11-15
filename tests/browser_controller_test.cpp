@@ -439,6 +439,123 @@ namespace {
     TEST_CHECK(!browser.model().rows().empty());
   }
 
+  void testDemandMetadataAndBulkFallback() {
+    Fixture fixture;
+    for (int i = 0; i < 1200; ++i) {
+      std::ofstream(fixture.path / ("item" + std::to_string(i) + ".txt"));
+    }
+    Pump pump;
+    BrowserController browser({}, false);
+    const auto root = Location::fromPath(fixture.path.native());
+    const auto child = Location::fromPath((fixture.path / "child").native());
+    browser.open(root);
+    pump.ready(browser);
+    TEST_CHECK(browser.model().snapshot().entries.isCatalogue());
+    const auto find = [&](const std::string& name) {
+      const auto& entries = browser.model().snapshot().entries;
+      for (std::size_t i = 0; i < entries.size(); ++i) {
+        if (entries.brief(i).name == name) {
+          return entries.brief(i).id;
+        }
+      }
+      throw std::runtime_error("missing catalogue browser fixture entry");
+    };
+    const auto first = find("item1100.txt");
+    TEST_CHECK(browser.model().select(first));
+    TEST_CHECK(browser.model().selectionSummary().pendingSizes == 1);
+    bool resolved = false;
+    TEST_CHECK(browser.whenMetadataReady(
+        {first},
+        [&] {
+          const auto* value = browser.model().entry(first);
+          TEST_CHECK(value && !value->metadataPending && value->identity() && value->details.mode);
+          TEST_CHECK(value->queriedDetails == luciole::EntryDetails::All);
+          resolved = true;
+        },
+        luciole::EntryDetails::All
+    ));
+    pump.until([&] { return resolved; });
+    TEST_CHECK(browser.model().selectionSummary().pendingSizes == 0);
+    const auto second = find("item1150.txt");
+    browser.model().select(second);
+    browser.open(child);
+    pump.until([&] {
+      return browser.model().snapshot().location == child
+          && browser.model().snapshot().status == DirectoryStatus::Ready;
+    });
+    TEST_CHECK(browser.back());
+    pump.until([&] {
+      return browser.model().snapshot().location == root && browser.model().selectedIds().size() == 1;
+    });
+    TEST_CHECK(browser.model().entry(browser.model().selectedIds().front())->name == "item1150.txt");
+    TEST_CHECK(browser.model().entry(browser.model().selectedIds().front())->identity());
+    const auto third = find("item1190.txt");
+    browser.model().select(third);
+    BrowserController duplicate({}, false);
+    duplicate.duplicateFrom(browser);
+    pump.until([&] {
+      return duplicate.model().snapshot().location == root && duplicate.model().selectedIds().size() == 1;
+    });
+    TEST_CHECK(duplicate.model().entry(duplicate.model().selectedIds().front())->name == "item1190.txt");
+    // Cloning owns its captured references; changing view can immediately destroy the source controller.
+    auto transient = std::make_unique<BrowserController>(luciole::SortOptions{}, false);
+    transient->open(root);
+    pump.ready(*transient);
+    EntryId captured = 0;
+    for (std::size_t i = 0; i < transient->model().snapshot().entries.size(); ++i) {
+      const auto brief = transient->model().snapshot().entries.brief(i);
+      if (brief.name == "item1180.txt") {
+        captured = brief.id;
+        break;
+      }
+    }
+    TEST_CHECK(captured && transient->model().select(captured));
+    duplicate.duplicateFrom(*transient);
+    transient.reset();
+    pump.until([&] {
+      const auto ids = duplicate.model().selectedIds();
+      return ids.size() == 1 && duplicate.model().entry(ids.front())->name == "item1180.txt";
+    });
+    // Independent consumers waiting on the same row must both complete.
+    int replies = 0;
+    const auto fourth = find("item1170.txt");
+    TEST_CHECK(browser.whenMetadataReady({fourth}, [&] { ++replies; }));
+    TEST_CHECK(browser.whenMetadataReady({fourth}, [&] { ++replies; }, luciole::EntryDetails::All));
+    pump.until([&] { return replies == 2; });
+    browser.model().setSort({.field = luciole::SortField::Size});
+    pump.until([&] {
+      return browser.model().snapshot().status == DirectoryStatus::Ready
+          && !browser.model().snapshot().entries.isCatalogue();
+    });
+    for (const auto& value : browser.model().snapshot().entries) {
+      TEST_CHECK(!value.metadataPending && value.size);
+    }
+    browser.model().setSort({});
+    pump.until([&] {
+      return browser.model().snapshot().status == DirectoryStatus::Ready
+          && browser.model().snapshot().entries.isCatalogue();
+    });
+    browser.model().selectAll();
+    pump.until([&] {
+      return browser.model().snapshot().status == DirectoryStatus::Ready
+          && !browser.model().snapshot().entries.isCatalogue();
+    });
+    TEST_CHECK(browser.model().selectedIds().size() == browser.model().rows().size());
+    TEST_CHECK(
+        browser.model().selectionSummary().pendingSizes == 0 && browser.model().selectionSummary().unknownSizes == 0
+    );
+    browser.model().clearSelection();
+    pump.until([&] {
+      return browser.model().snapshot().status == DirectoryStatus::Ready
+          && browser.model().snapshot().entries.isCatalogue();
+    });
+    bool cancelledReply = false;
+    TEST_CHECK(browser.whenMetadataReady({find("item1111.txt")}, [&] { cancelledReply = true; }));
+    browser.stop();
+    pump.drainFor(100ms);
+    TEST_CHECK(!cancelledReply && browser.model().selection().selected.empty());
+  }
+
   void testHistoryState() {
     Fixture fixture;
     Pump pump;
@@ -791,6 +908,7 @@ int main() {
     testSearchLifetimeAndPartialFailure();
     testLocationPresentation();
     testHistoryState();
+    testDemandMetadataAndBulkFallback();
     testCurrentFolderFilter();
     testDebouncedSearch();
     testSearchCompositionAndTimeoutLifetime();

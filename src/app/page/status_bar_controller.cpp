@@ -119,11 +119,12 @@ void StatusBarController::sync(bool miller) {
       status = "Loading stopped.";
     } else {
       needed = alwaysShow;
-      const auto hidden = model.filter().showHidden
-          ? 0U
-          : static_cast<std::size_t>(std::ranges::count_if(snapshot.entries, [](const auto& entry) {
-              return entry.hidden;
-            }));
+      std::size_t hidden = 0;
+      if (!model.filter().showHidden) {
+        for (std::size_t i = 0; i < snapshot.entries.size(); ++i) {
+          hidden += snapshot.entries.brief(i).hidden;
+        }
+      }
       status = std::format("{} items", model.rows().size());
       if (hidden > 0) {
         status += std::format(" · {} hidden", hidden);
@@ -137,7 +138,9 @@ void StatusBarController::sync(bool miller) {
     needed = true;
     status += std::format(" · {} selected", model.selection().selected.size());
     const auto summary = model.selectionSummary();
-    if (summary.overflow) {
+    if (summary.pendingSizes != 0) {
+      status += " · reading file sizes…";
+    } else if (summary.overflow) {
       status += " · file size exceeds limit";
     } else if (summary.files != 0 && summary.unknownSizes == summary.files) {
       status += " · file size unknown";

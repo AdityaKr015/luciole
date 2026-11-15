@@ -1,6 +1,7 @@
 #pragma once
 
 #include "browser/directory_model.h"
+#include "fs/cancel_token.h"
 #include "fs/recursive_search.h"
 
 #include <glib.h>
@@ -67,6 +68,8 @@ namespace luciole {
     void setSearchComposing(bool composing);
     bool searchPending() const { return m_searchPending; }
     void activate(EntryId id);
+    // Returns true when the callback was deferred. Retired browsing contexts discard it.
+    bool whenMetadataReady(std::vector<EntryId> ids, std::function<void()> callback, std::uint8_t details = 0);
     void setExpandableFolders(bool enabled);
     bool expandableFolders() const { return m_tree != nullptr; }
     bool toggleFolder(EntryId id);
@@ -95,6 +98,20 @@ namespace luciole {
     void startSearch();
     void publishPendingSearch();
     void applyQueryFilter();
+    void updateMetadataPolicy();
+    bool waitForVisitMetadata(std::function<void()> callback);
+    bool m_updatingMetadata = false;
+    bool m_restoreBulkMetadata = false;
+    CancelToken m_duplicateToken;
+    bool m_duplicateFactsPending = false;
+    struct PendingMetadata {
+      std::uint64_t context;
+      std::vector<EntryId> ids;
+      std::uint8_t details;
+      std::function<void()> callback;
+    };
+    std::vector<PendingMetadata> m_pendingMetadata;
+    std::shared_ptr<int> m_lifetime = std::make_shared<int>(0);
     DirectoryModel m_model;
     std::unique_ptr<DirectoryTree> m_tree;
     DirectorySession m_session;

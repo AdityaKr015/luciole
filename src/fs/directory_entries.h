@@ -12,10 +12,20 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
 namespace luciole {
+  namespace EntryDetails {
+    inline constexpr std::uint8_t Accessed = 1;
+    inline constexpr std::uint8_t Created = 2;
+    inline constexpr std::uint8_t Owner = 4;
+    inline constexpr std::uint8_t Group = 8;
+    inline constexpr std::uint8_t Permissions = 16;
+    inline constexpr std::uint8_t All = 31;
+  } // namespace EntryDetails
   // Where an entry lives. A listing shares one folder between its entries, and each entry's location is that
   // folder's child named by the entry; other entries hold their whole location.
   class EntryPlace {
@@ -61,6 +71,11 @@ namespace luciole {
     bool symlink = false;
     // Local listings leave access read/write/execute unknown; entryAccess() asks the filesystem when they matter.
     bool accessDeferred = false;
+    // A browse catalogue knows the name/kind before its worker has queried detailed facts.
+    bool metadataPending = false;
+    bool metadataFailed = false;
+    // Queried optional columns. A missing bit means pending, not a completed unknown value.
+    std::uint8_t queriedDetails = EntryDetails::All;
     std::optional<std::uint64_t> size;
     std::optional<std::uint64_t> modifiedSeconds;
     FileAccess access{};
@@ -95,12 +110,42 @@ namespace luciole {
     EntryExtra& editExtra();
   };
 
+  struct EntryBrief {
+    std::uint64_t id;
+    std::string_view name;
+    std::string_view displayName;
+    FileType type;
+    bool hidden;
+    bool symlink;
+  };
+
+  // Native browse names and dirent kinds. Detailed GIO facts are prepared separately on demand.
+  struct BrowseCatalogue {
+    struct Item {
+      std::uint64_t id = 0;
+      std::uint64_t inodeHint = 0; // dirent continuity token, never a provider identity.
+      std::uint32_t offset = 0;
+      std::uint16_t length = 0;
+      FileType type = FileType::Unknown;
+      bool hidden : 1 = false;
+      bool symlink : 1 = false;
+    };
+    std::shared_ptr<const Location> folder;
+    std::uint64_t device = 0;
+    std::uint64_t inode = 0;
+    std::string names;
+    std::vector<Item> items;
+    std::unordered_map<std::size_t, std::string> displayNames;
+    EntryBrief brief(std::size_t index) const;
+  };
+
   // Published entries are immutable. Copies retain payloads; producers publish a new collection.
   class DirectoryEntries {
   public:
     DirectoryEntries() = default;
     DirectoryEntries(std::vector<DirectoryEntry> entries);
     DirectoryEntries(std::initializer_list<DirectoryEntry> entries);
+    explicit DirectoryEntries(BrowseCatalogue catalogue);
 
     struct Index {
       std::size_t source;
@@ -112,6 +157,21 @@ namespace luciole {
 
     std::size_t size() const;
     bool empty() const { return size() == 0; }
+    EntryBrief brief(std::size_t index) const;
+    Location location(std::size_t index) const;
+    // Null means pending, rather than a query that completed with unknown attributes.
+    const DirectoryEntry* known(std::size_t index) const;
+    bool isCatalogue() const;
+    bool sameCatalogue(const DirectoryEntries& other) const;
+    const BrowseCatalogue* catalogue() const;
+    struct CatalogueRow {
+      const BrowseCatalogue* catalogue;
+      std::size_t index;
+    };
+    // Resolves a projected row to its retained original catalogue, without materializing it.
+    std::optional<CatalogueRow> catalogueRow(std::size_t index) const;
+    DirectoryEntries withFacts(std::vector<std::pair<std::size_t, DirectoryEntry>> facts) const;
+    DirectoryEntries withoutFacts() const;
     const DirectoryEntry& operator[](std::size_t index) const;
     const DirectoryEntry& at(std::size_t index) const;
     const DirectoryEntry& front() const { return (*this)[0]; }

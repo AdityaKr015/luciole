@@ -45,6 +45,10 @@ namespace luciole {
     void open(const Location& location);
     void refresh();
     void cancel();
+    // Ordinary native browsing can retain names/kinds and query a bounded row working set.
+    // Changes restart an open listing, retaining the ordinary monitored ID contract.
+    void setCatalogueEnabled(bool enabled);
+    void requestMetadata(std::size_t index, std::uint64_t id, std::uint8_t details = 0);
     void setChangedCallback(std::function<void()> callback);
     const DirectorySnapshot& snapshot() const;
 

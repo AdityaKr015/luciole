@@ -31,6 +31,8 @@ Use the toolbar or main menu to choose Grid (Ctrl+1), List (Ctrl+2) or Columns (
 
 List headers sort by their column. Drag their dividers to resize columns; Settings → List columns controls visibility and order. Additional columns include accessed/created time, owner, group, permissions and location. Missing provider metadata stays unavailable rather than becoming a made-up value. Grid view uses the toolbar's Sort menu.
 
+In large folders, names can appear while detail values are still loading. “Reading…” means a value is pending; “Unknown” means it was unavailable after querying. Hidden extra columns are not queried by ordinary large-folder browsing. Enabling one loads its visible rows. Sorting by metadata or selecting many items can require facts from the rest of the folder; file actions wait for the facts they need.
+
 The floating status pill reports actions, search and selection. Settings → General → Always show status bar keeps it visible when idle with the item count and, when available, free space.
 
 Click an entry to select it, Ctrl+click to toggle it and Shift+click to select a range. Clicking empty space clears selection. Drag an area over entries to select several. Ctrl+A selects all visible results, Ctrl+Shift+I inverts selection and Ctrl+S selects by pattern. Escape clears the selection when browsing. Opening uses double-click by default; Settings → General offers single-click opening.

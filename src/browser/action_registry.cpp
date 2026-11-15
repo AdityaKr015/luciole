@@ -585,8 +585,8 @@ std::optional<luciole::BrowserAction> luciole::ActionRegistry::fromMenuId(int id
 luciole::ActionRequest luciole::ActionRegistry::capture(const ActionContext& context) {
   ActionRequest request{context.context, context.model.snapshot().location, std::string(context.query), {}};
   for (const auto id : context.model.selectedIds()) {
-    if (const auto* entry = context.model.entry(id)) {
-      request.targets.push_back({id, entry->location()});
+    if (auto location = context.model.location(id)) {
+      request.targets.push_back({id, std::move(*location)});
     }
   }
   return request;
@@ -601,10 +601,7 @@ bool luciole::ActionRegistry::current(const ActionContext& context, const Action
     return false;
   }
   return scope != ActionScope::Targets || std::ranges::all_of(request.targets, [&](const auto& target) {
-           const auto* entry = context.model.entry(target.id);
-           return entry != nullptr
-               && entry->location() == target.location
-               && std::ranges::contains(context.model.rows(), target.id);
+           return context.model.location(target.id) == target.location && context.model.visible(target.id);
          });
 }
 luciole::ActionState
@@ -615,6 +612,14 @@ luciole::ActionRegistry::state(BrowserAction action, const ActionContext& c, con
   }
   if (row.scope == ActionScope::Targets && r.targets.empty()) {
     return unavailable("Select an item first.");
+  }
+  if (row.scope == ActionScope::Targets) {
+    if (!all(c, r, [](const DirectoryEntry& entry) { return !entry.metadataPending; })) {
+      return unavailable("Reading item metadata…");
+    }
+    if (!all(c, r, [](const DirectoryEntry& entry) { return !entry.metadataFailed; })) {
+      return unavailable("Item metadata is unavailable. Refresh and try again.");
+    }
   }
   if ((row.scope == ActionScope::Targets || row.scope == ActionScope::Selection) && !c.model.selectionAvailable()) {
     return unavailable("The listing is not available for selection.");

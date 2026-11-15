@@ -40,6 +40,10 @@ void PreviewController::sync() {
   auto& model = m_page.browser().model();
   const auto selected = model.selectedIds();
   const auto* entry = selected.size() == 1 && model.selectionAvailable() ? model.entry(selected.front()) : nullptr;
+  if (entry && (entry->metadataPending || entry->metadataFailed)) {
+    m_preview.clear();
+    return;
+  }
   const auto prepared = entry ? m_thumbnails.prepared(*entry) : nullptr;
   const auto& current = m_preview.snapshot();
   const auto image = entry

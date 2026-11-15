@@ -385,6 +385,15 @@ void luciole::FileViewAdapter::bindTile(Node& tile, std::size_t index, bool, boo
     return;
   }
   const auto id = model.rows()[index];
+  if (m_mode == ViewMode::List) {
+    std::uint8_t details = 0;
+    for (const auto column : kDefaultDetailsColumnOrder) {
+      if (m_columns.visible(column)) {
+        details |= entryColumnDetails(column);
+      }
+    }
+    model.requestDetails(id, details);
+  }
   const auto* entry = model.entry(id);
   if (entry != nullptr) {
     const bool readOnly = luciole::entryAccess(*entry).write == false || m_readOnly == true;

@@ -163,9 +163,14 @@ void luciole::MillerColumns::synchronize() {
         if (parent.seedRevision != model.snapshot().generation) {
           parent.seedRevision = model.snapshot().generation;
           parent.pathEntry.reset();
-          for (const auto& entry : model.snapshot().entries) {
-            if (entry.location() != child.location) {
+          const auto& entries = model.snapshot().entries;
+          for (std::size_t source = 0; source < entries.size(); ++source) {
+            if (entries.location(source) != child.location) {
               continue;
+            }
+            const auto& entry = *model.entry(entries.brief(source).id);
+            if (entry.metadataPending) {
+              break;
             }
             auto identity = entry.identity();
             if (child.identity && child.identity != identity) {
@@ -190,6 +195,9 @@ void luciole::MillerColumns::synchronize() {
     }
     const auto& selected = model.selection().selected;
     const auto* entry = selected.size() == 1 ? model.entry(*selected.begin()) : nullptr;
+    if (entry && entry->metadataPending) {
+      continue;
+    }
     const bool folder =
         entry && entry->type == luciole::FileType::Directory && !entry->symlink && browser.searchQuery().empty();
     if (i + 1 < m_columns.size()) {

@@ -448,6 +448,8 @@ void DragDropController::startFileDrag(const std::vector<luciole::EntryId>& ids)
   for (const auto id : ids) {
     const auto* entry = m_page.browser().model().entry(id);
     if (entry == nullptr
+        || entry->metadataPending
+        || entry->metadataFailed
         || (entry->type != luciole::FileType::Directory
             && entry->type != luciole::FileType::Regular
             && !entry->symlink)) {

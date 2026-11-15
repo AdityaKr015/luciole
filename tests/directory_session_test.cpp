@@ -8,6 +8,7 @@
 #include "test_check.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <format>
@@ -692,6 +693,151 @@ namespace {
     session.setChangedCallback({});
   }
 
+  void testBrowseCatalogue(Pump& pump) {
+    Fixture fixture;
+    for (int i = 0; i < 1400; ++i) {
+      fixture.write(std::format("file{}.txt", i), "");
+    }
+    const std::string raw = "raw-" + std::string(1, static_cast<char>(0xFF));
+    fixture.write(raw, "raw bytes");
+    fixture.write("Straße.txt", "Unicode");
+    fixture.write("picture", std::string("\x89PNG\r\n\x1a\n", 8) + std::string(64, '\0'));
+    fixture.write(".hidden", "file10.txt\n");
+    fs::create_directory(fixture.path / "folder");
+    fs::create_symlink("missing", fixture.path / "broken");
+    DirectorySession session;
+    session.setCatalogueEnabled(true);
+    session.open(fixture.location());
+    ready(pump, session);
+    const auto initial = session.snapshot().entries;
+    TEST_CHECK(initial.isCatalogue() && initial.size() == 1406);
+    const auto find = [&](const std::string& name) {
+      for (std::size_t i = 0; i < initial.size(); ++i) {
+        if (initial.brief(i).name == name) {
+          return i;
+        }
+      }
+      throw std::runtime_error("missing catalogue item");
+    };
+    const auto rawIndex = find(raw);
+    const auto hiddenIndex = find("file10.txt");
+    const auto pictureIndex = find("picture");
+    const auto brokenIndex = find("broken");
+    TEST_CHECK(initial.brief(rawIndex).displayName != raw);
+    TEST_CHECK(initial.brief(hiddenIndex).hidden && initial.brief(brokenIndex).symlink);
+    TEST_CHECK(initial.location(rawIndex).nativePath() == (fixture.path / raw).native());
+    for (std::size_t i = 0; i < initial.size(); ++i) {
+      TEST_CHECK(!initial.known(i));
+    }
+    const auto& pending = initial[pictureIndex];
+    TEST_CHECK(pending.metadataPending && !pending.size && !pending.identity());
+    for (const auto index : {rawIndex, hiddenIndex, pictureIndex, brokenIndex}) {
+      session.requestMetadata(index, initial.brief(index).id, luciole::EntryDetails::All);
+    }
+    pump.until([&] { return session.snapshot().entries.known(pictureIndex) != nullptr; });
+    const auto rich = session.snapshot().entries;
+    TEST_CHECK(rich.sameCatalogue(initial) && pending.metadataPending && !initial.known(pictureIndex));
+    const auto& picture = *rich.known(pictureIndex);
+    TEST_CHECK(!picture.metadataPending && !picture.metadataFailed && picture.contentType == "image/png");
+    TEST_CHECK(picture.identity() && picture.contentRevision && picture.size == 72);
+    TEST_CHECK(
+        rich.known(hiddenIndex)->hidden && rich.known(rawIndex)->displayName() == initial.brief(rawIndex).displayName
+    );
+    const auto icon = picture.icon;
+    TEST_CHECK(icon != nullptr);
+    // Real GIO is authoritative for visible facts, including content sniffing and true identities.
+    const auto file = luciole::gioFile(picture.location());
+    const luciole::GioPtr<GFileInfo> info(
+        g_file_query_info(file.get(), "*", G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, nullptr)
+    );
+    TEST_CHECK(info && picture.identity() == luciole::readFileIdentity(info.get()));
+    const auto access = luciole::readFileAccess(info.get());
+    TEST_CHECK(
+        picture.access.read == access.read
+        && picture.access.write == access.write
+        && picture.access.execute == access.execute
+        && picture.access.rename == access.rename
+        && picture.access.trash == access.trash
+        && picture.access.remove == access.remove
+    );
+    TEST_CHECK(picture.details == luciole::readEntryMetadata(info.get()));
+    // Walking beyond the working-set limit evicts facts, not catalogue names or retained snapshots.
+    for (std::size_t begin = 0; begin < initial.size(); begin += 128) {
+      const auto end = std::min(begin + 128, initial.size());
+      for (auto i = begin; i < end; ++i) {
+        session.requestMetadata(i, initial.brief(i).id);
+      }
+      pump.until([&] {
+        for (auto i = begin; i < end; ++i) {
+          if (!session.snapshot().entries.known(i)) {
+            return false;
+          }
+        }
+        return true;
+      });
+    }
+    std::size_t retained = 0;
+    for (std::size_t i = 0; i < initial.size(); ++i) {
+      retained += session.snapshot().entries.known(i) != nullptr;
+    }
+    TEST_CHECK(retained == 1024 && rich.known(pictureIndex)->icon == icon);
+    const auto projected = luciole::DirectoryEntries::project({rich}, {{0, pictureIndex}, {0, rawIndex}});
+    TEST_CHECK(projected.front().identity() == picture.identity() && projected.back().name == raw);
+    const auto columnIndex = initial.size() - 1;
+    const auto beforeColumns = session.snapshot().entries;
+    TEST_CHECK(beforeColumns.known(columnIndex) && beforeColumns.known(columnIndex)->queriedDetails == 0);
+    TEST_CHECK(!beforeColumns.known(columnIndex)->details.owner && !beforeColumns.known(columnIndex)->details.mode);
+    session.requestMetadata(columnIndex, initial.brief(columnIndex).id, luciole::EntryDetails::Permissions);
+    pump.until([&] {
+      const auto* value = session.snapshot().entries.known(columnIndex);
+      return value && (value->queriedDetails & luciole::EntryDetails::Permissions) != 0;
+    });
+    const auto* permissions = session.snapshot().entries.known(columnIndex);
+    TEST_CHECK(permissions->details.mode && !permissions->details.owner && !permissions->details.group);
+    TEST_CHECK(!beforeColumns.known(columnIndex)->details.mode);
+    session.requestMetadata(columnIndex, initial.brief(columnIndex).id, luciole::EntryDetails::All);
+    pump.until([&] {
+      return session.snapshot().entries.known(columnIndex)->queriedDetails == luciole::EntryDetails::All;
+    });
+    TEST_CHECK(session.snapshot().entries.known(columnIndex)->details.owner);
+    session.refresh();
+    ready(pump, session);
+    TEST_CHECK(session.snapshot().entries.brief(pictureIndex).id == initial.brief(pictureIndex).id);
+    TEST_CHECK(!session.snapshot().entries.known(pictureIndex) && rich.known(pictureIndex)->size == 72);
+    // A retired ID cannot populate a new snapshot, and cancellation suppresses queued work.
+    session.requestMetadata(pictureIndex, UINT64_MAX);
+    session.requestMetadata(pictureIndex, session.snapshot().entries.brief(pictureIndex).id);
+    session.cancel();
+    pump.once();
+    TEST_CHECK(session.snapshot().status == DirectoryStatus::Cancelled && pending.metadataPending);
+  }
+
+  void testCatalogueContinuity() {
+    Fixture fixture;
+    for (int i = 0; i < 600; ++i) {
+      fixture.write(std::format("file{}", i));
+    }
+    auto listing = luciole::listNativeFolder(fixture.path.native(), 0, nullptr, true);
+    TEST_CHECK(listing.catalogue && !listing.unsupported);
+    const auto& catalogue = *listing.catalogue;
+    std::size_t index = 0;
+    while (catalogue.brief(index).name != "file0") {
+      ++index;
+    }
+    const std::array rows{index};
+    auto check = luciole::validateCatalogueRows(catalogue, rows, nullptr);
+    TEST_CHECK(!check.parentChanged && !check.unavailable && check.changed.empty());
+    fs::rename(fixture.path / "file0", fixture.path / "held-old-file");
+    fixture.write("file0", "replacement");
+    check = luciole::validateCatalogueRows(catalogue, rows, nullptr);
+    TEST_CHECK(!check.parentChanged && !check.unavailable && check.changed == std::vector{index});
+    Fixture parent;
+    fs::rename(fixture.path, parent.path / "held-old-folder");
+    fs::create_directory(fixture.path);
+    check = luciole::validateCatalogueRows(catalogue, rows, nullptr);
+    TEST_CHECK(check.parentChanged && !check.unavailable);
+  }
+
   // Children that cannot be inspected leave the listing to GIO, which reports what it can.
   void testNativeUnsupportedFallsBack(Pump& pump) {
     if (::geteuid() == 0) {
@@ -743,6 +889,8 @@ int main() {
     testNativeMatchesGio(pump);
     testNativeUnsupportedFallsBack(pump);
     testDeferredSniffing(pump);
+    testBrowseCatalogue(pump);
+    testCatalogueContinuity();
     std::println("directory session checks passed");
     return 0;
   } catch (const std::exception& error) {

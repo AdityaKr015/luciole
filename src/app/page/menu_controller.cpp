@@ -234,6 +234,19 @@ void MenuController::openFileMenu(std::optional<luciole::EntryId> id, float x, f
   if (id && request.targets.empty()) {
     return;
   }
+  if (id) {
+    const auto ids = m_page.browser().model().selectedIds();
+    const std::weak_ptr<int> lifetime = m_lifetime;
+    if (m_page.browser().whenMetadataReady(ids, [this, lifetime, request, ids, id, x, y] {
+          if (!lifetime.expired()
+              && m_page.requestCurrent(request, luciole::ActionScope::Targets)
+              && m_page.browser().model().selectedIds() == ids) {
+            openFileMenu(id, x, y);
+          }
+        })) {
+      return;
+    }
+  }
   auto entries = id ? itemMenuEntries(request) : folderMenuEntries(request);
   std::vector<std::pair<std::size_t, int>> submenus;
   for (std::size_t row = 0; row < entries.size(); ++row) {

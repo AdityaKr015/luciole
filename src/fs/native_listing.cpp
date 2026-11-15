@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <format>
 #include <grp.h>
+#include <limits>
 #include <linux/magic.h>
 #include <optional>
 #include <pwd.h>
@@ -221,7 +222,7 @@ namespace {
 } // namespace
 
 luciole::NativeListing
-luciole::listNativeFolder(const std::string& path, std::size_t entryLimit, GCancellable* cancellable) {
+luciole::listNativeFolder(const std::string& path, std::size_t entryLimit, GCancellable* cancellable, bool catalogue) {
   NativeListing result;
   const int fd = ::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
   if (fd < 0) {
@@ -256,8 +257,18 @@ luciole::listNativeFolder(const std::string& path, std::size_t entryLimit, GCanc
   const auto hidden = hiddenNames(fd);
   Names names;
   FileIconPool icons;
-  icons.setLocalFolder(path.c_str());
+  if (!catalogue) {
+    icons.setLocalFolder(path.c_str());
+  }
   const auto folderLocation = std::make_shared<const Location>(Location::fromPath(path));
+  BrowseCatalogue browse{
+      .folder = folderLocation,
+      .device = static_cast<std::uint64_t>(folderInfo.st_dev),
+      .inode = folderInfo.st_ino,
+      .names = {},
+      .items = {},
+      .displayNames = {}
+  };
   constexpr unsigned kRequired = STATX_TYPE
       | STATX_MODE
       | STATX_NLINK
@@ -285,17 +296,53 @@ luciole::listNativeFolder(const std::string& path, std::size_t entryLimit, GCanc
     if (std::strcmp(name, ".") == 0 || std::strcmp(name, "..") == 0) {
       continue;
     }
-    if (entryLimit != 0 && result.entries.size() >= entryLimit) {
+    if (entryLimit != 0 && (catalogue ? browse.items.size() : result.entries.size()) >= entryLimit) {
       result.limited = true;
       break;
     }
     struct statx info{};
-    if (::statx(fd, name, AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT, STATX_BASIC_STATS | STATX_BTIME, &info) != 0) {
-      if (errno == ENOENT) {
-        continue; // Removed since readdir; the folder monitor reports it.
+    if (catalogue && item->d_type != DT_UNKNOWN && (!folder.mountRoot || std::strcmp(name, "lost+found") != 0)) {
+      // Linux dirent types use the same kind bits as st_mode, without permissions or access claims.
+      info.stx_mode = static_cast<std::uint16_t>(DTTOIF(item->d_type));
+    } else {
+      if (::statx(fd, name, AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT, STATX_BASIC_STATS | STATX_BTIME, &info) != 0) {
+        if (errno == ENOENT) {
+          continue; // Removed since readdir; the folder monitor reports it.
+        }
+        result.unsupported = true;
+        break;
       }
-      result.unsupported = true;
-      break;
+    }
+    if (catalogue) {
+      const auto length = std::strlen(name);
+      if (length > UINT16_MAX || browse.names.size() > UINT32_MAX - length - 1) {
+        result.unsupported = true;
+        break;
+      }
+      if (!folder.utf8Names || g_utf8_validate(name, -1, nullptr) == FALSE) {
+        const auto display = displayName(folder, name, childPath(path, name));
+        if (display != name) {
+          browse.displayNames.emplace(browse.items.size(), display);
+        }
+      }
+      browse.items.push_back({
+          .id = 0,
+          .inodeHint = item->d_ino,
+          .offset = static_cast<std::uint32_t>(browse.names.size()),
+          .length = static_cast<std::uint16_t>(length),
+          .type = fileType(gioFileType(info.stx_mode)),
+          .hidden = name[0] == '.'
+              || hidden.contains(name)
+              || (folder.mountRoot
+                  && std::strcmp(name, "lost+found") == 0
+                  && S_ISDIR(info.stx_mode)
+                  && info.stx_uid == 0
+                  && info.stx_gid == 0),
+          .symlink = S_ISLNK(info.stx_mode),
+      });
+      browse.names.append(name, length);
+      browse.names.push_back('\0');
+      continue;
     }
     if ((info.stx_mask & kRequired) != kRequired) {
       result.unsupported = true;
@@ -365,6 +412,77 @@ luciole::listNativeFolder(const std::string& path, std::size_t entryLimit, GCanc
       result.uncertain.push_back(static_cast<std::uint32_t>(result.entries.size()));
     }
     result.entries.push_back(std::move(entry));
+  }
+  if (catalogue && !result.unsupported) {
+    // Small folders retain immediate complete facts. A second short pass costs less than repeated row-worker
+    // publications and preserves immediate selection/history behavior there.
+    if (browse.items.size() <= 512 || result.limited) {
+      return listNativeFolder(path, entryLimit, cancellable, false);
+    }
+    browse.items.shrink_to_fit();
+    browse.names.shrink_to_fit();
+    result.catalogue = std::move(browse);
+  }
+  return result;
+}
+
+luciole::CatalogueValidation luciole::validateCatalogueRows(
+    const BrowseCatalogue& catalogue, std::span<const std::size_t> rows, GCancellable* cancellable
+) {
+  CatalogueValidation result;
+  const auto path = catalogue.folder->nativePath();
+  const std::unique_ptr<DIR, DirCloser> directory(path ? ::opendir(path->c_str()) : nullptr);
+  if (!directory) {
+    result.parentChanged = errno == ENOENT || errno == ENOTDIR;
+    result.unavailable = !result.parentChanged;
+    return result;
+  }
+  const auto sameParent = [&](const struct stat& info) {
+    return static_cast<std::uint64_t>(info.st_dev) == catalogue.device && info.st_ino == catalogue.inode;
+  };
+  struct stat info{};
+  if (::fstat(::dirfd(directory.get()), &info) != 0) {
+    result.unavailable = true;
+    return result;
+  }
+  if (!sameParent(info)) {
+    result.parentChanged = true;
+    return result;
+  }
+  std::unordered_map<std::string_view, std::size_t> pending;
+  for (const auto index : rows) {
+    pending.emplace(catalogue.brief(index).name, index);
+  }
+  std::size_t count = 0;
+  while (!pending.empty()) {
+    if (++count % 256 == 0 && g_cancellable_is_cancelled(cancellable) != FALSE) {
+      result.unavailable = true;
+      return result;
+    }
+    errno = 0;
+    const auto* item = ::readdir(directory.get());
+    if (!item) {
+      if (errno != 0) {
+        result.unavailable = true;
+        return result;
+      }
+      break;
+    }
+    if (const auto found = pending.find(item->d_name); found != pending.end()) {
+      if (item->d_ino != catalogue.items[found->second].inodeHint) {
+        result.changed.push_back(found->second);
+      }
+      pending.erase(found);
+    }
+  }
+  for (const auto& [name, index] : pending) {
+    result.changed.push_back(index);
+  }
+  if (::stat(path->c_str(), &info) != 0) {
+    result.parentChanged = errno == ENOENT || errno == ENOTDIR;
+    result.unavailable = !result.parentChanged;
+  } else {
+    result.parentChanged = !sameParent(info);
   }
   return result;
 }

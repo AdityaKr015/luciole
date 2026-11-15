@@ -1,4 +1,5 @@
 #include "browser/directory_model.h"
+#include "browser/entry_details.h"
 #include "directory_fixture.h"
 #include "event_loop/glib_poll_source.h"
 #include "fs/gio_interop.h"
@@ -126,6 +127,105 @@ namespace {
       }
       TEST_CHECK(rejected);
     }
+  }
+
+  void testCatalogueProjectionAndPendingFacts() {
+    luciole::BrowseCatalogue catalogue;
+    catalogue.folder = std::make_shared<const Location>(Location::fromPath("/tmp/luciole-model-fixture"));
+    const std::vector<std::string> names{"item20", "item2", "Straße.txt", "a~", ".hidden", "folder~", "item1"};
+    std::vector<DirectoryEntry> eager;
+    for (std::size_t i = 0; i < names.size(); ++i) {
+      const auto type = i == 5 ? luciole::FileType::Directory : luciole::FileType::Regular;
+      catalogue.items.push_back(
+          {.id = i + 1,
+           .offset = static_cast<std::uint32_t>(catalogue.names.size()),
+           .length = static_cast<std::uint16_t>(names[i].size()),
+           .type = type,
+           .hidden = i == 4,
+           .symlink = false}
+      );
+      catalogue.names.append(names[i]);
+      catalogue.names.push_back('\0');
+      auto value = entry(i + 1, names[i], type);
+      value.hidden = i == 4;
+      eager.push_back(std::move(value));
+    }
+    auto data = snapshot({});
+    data.entries = luciole::DirectoryEntries(std::move(catalogue));
+    const auto retained = data.entries;
+    DirectoryModel lazy, reference;
+    std::vector<EntryId> requests;
+    lazy.setMetadataRequestedCallback([&](std::size_t index, EntryId id, std::uint8_t) {
+      TEST_CHECK(lazy.snapshot().entries.brief(index).id == id);
+      requests.push_back(id);
+    });
+    TEST_CHECK(lazy.applySnapshot(data));
+    reference.applySnapshot(snapshot(eager));
+    TEST_CHECK(lazy.rows() == reference.rows() && requests.empty());
+    for (const auto& filter :
+         {luciole::FilterOptions{.showHidden = true, .text = {}, .showBackups = false},
+          luciole::FilterOptions{.showHidden = false, .text = "STRASSE"}}) {
+      lazy.setFilter(filter);
+      reference.setFilter(filter);
+      TEST_CHECK(lazy.rows() == reference.rows());
+    }
+    lazy.setFilter({});
+    reference.setFilter({});
+    TEST_CHECK(!lazy.selectPattern("item?"));
+    TEST_CHECK(lazy.selectedIds().size() == 2);
+    TEST_CHECK(lazy.selectionSummary().pendingSizes == 2 && lazy.selectionSummary().unknownSizes == 0);
+    TEST_CHECK(lazy.entry(2)->metadataPending);
+    auto known = eager[1];
+    known.size = 0;
+    known.contentType = "application/x-zerosize";
+    data.generation = 2;
+    data.entries = retained.withFacts({{1, known}});
+    TEST_CHECK(lazy.applySnapshot(data));
+    TEST_CHECK(lazy.entry(2)->size == 0 && !lazy.entry(2)->metadataPending);
+    TEST_CHECK(lazy.selectionSummary().pendingSizes == 1 && lazy.selectionSummary().bytes == 0);
+    TEST_CHECK(lazy.rows() == reference.rows() && retained[1].metadataPending);
+    known.queriedDetails = 0;
+    known.details = {};
+    data.generation = 3;
+    data.entries = retained.withFacts({{1, known}});
+    lazy.applySnapshot(data);
+    TEST_CHECK(luciole::entryColumnText(*lazy.entry(2), luciole::DetailsColumn::Owner) == "Reading…");
+    known.queriedDetails = luciole::EntryDetails::Owner;
+    data.generation = 4;
+    data.entries = retained.withFacts({{1, known}});
+    lazy.applySnapshot(data);
+    TEST_CHECK(luciole::entryColumnText(*lazy.entry(2), luciole::DetailsColumn::Owner) == "Unknown");
+    const auto old = *lazy.entry(2);
+    known.size = 9;
+    data.generation = 5;
+    data.entries = retained.withFacts({{1, known}});
+    lazy.applySnapshot(data);
+    TEST_CHECK(old.size == 0 && lazy.entry(2)->size == 9);
+    auto projection = luciole::DirectoryEntries::project({data.entries}, {{0, 1}, {0, 6}});
+    data.generation = 6;
+    data.entries = projection;
+    lazy.applySnapshot(data);
+    TEST_CHECK(lazy.entry(2)->size == 9 && lazy.entry(7)->metadataPending);
+    // Pending projected rows must have a safe label, including when a tree mixes eager and catalogue blocks.
+    TEST_CHECK(!lazy.typeLabel(7).empty());
+    auto eagerProjection =
+        luciole::DirectoryEntries::project({luciole::DirectoryEntries{entry(88, "eager")}}, {{0, 0}});
+    const auto* eagerPointer = &eagerProjection.front();
+    const auto mixed = luciole::DirectoryEntries::project({eagerProjection, projection}, {{0, 0}, {1, 0}, {1, 1}});
+    TEST_CHECK(&mixed[0] == eagerPointer && mixed.known(1)->size == 9 && !mixed.known(2));
+    TEST_CHECK(!mixed.catalogueRow(0) && mixed.catalogueRow(2)->catalogue->brief(mixed.catalogueRow(2)->index).id == 7);
+    TEST_CHECK(mixed.brief(0).id == 88 && mixed.location(0) == eagerPointer->location());
+    const auto joined = luciole::DirectoryEntries::concatenate({eagerProjection, mixed});
+    TEST_CHECK(joined.size() == 4 && &joined[1] == eagerPointer && joined.brief(3).id == 7);
+    data.generation = 7;
+    data.entries = retained.withFacts({{1, known}});
+    lazy.applySnapshot(data);
+    TEST_CHECK(lazy.select(2));
+    data.generation = 8;
+    data.status = DirectoryStatus::Cancelled;
+    data.entries = data.entries.withoutFacts();
+    lazy.applySnapshot(data);
+    TEST_CHECK(lazy.selection().selected.empty() && !lazy.selection().focused);
   }
 
   void testSortAndMetadata() {
@@ -701,6 +801,7 @@ int main() {
     g_setenv("LANGUAGE", "C", true);
     std::setlocale(LC_ALL, "C");
     testPublishedEntryOwnership();
+    testCatalogueProjectionAndPendingFacts();
     testSortAndMetadata();
     testExtendedMetadataSort();
     testTextSortRefresh();

@@ -8,6 +8,7 @@
 #include <bit>
 #include <chrono>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <optional>
 #include <string>
@@ -35,6 +36,29 @@ namespace {
       "," G_FILE_ATTRIBUTE_ACCESS_CAN_RENAME "," G_FILE_ATTRIBUTE_ACCESS_CAN_TRASH
       "," G_FILE_ATTRIBUTE_ACCESS_CAN_DELETE "," G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE
       "," G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE "," G_FILE_ATTRIBUTE_ID_FILE "," G_FILE_ATTRIBUTE_ID_FILESYSTEM;
+  std::string browseAttributes(std::uint8_t details) {
+    std::string attributes = G_FILE_ATTRIBUTE_STANDARD_NAME
+        "," G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME "," G_FILE_ATTRIBUTE_STANDARD_TYPE
+        "," G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN "," G_FILE_ATTRIBUTE_STANDARD_IS_SYMLINK
+        "," G_FILE_ATTRIBUTE_STANDARD_SIZE "," G_FILE_ATTRIBUTE_TIME_MODIFIED "," G_FILE_ATTRIBUTE_TIME_CHANGED
+        ",time::changed-nsec," G_FILE_ATTRIBUTE_TIME_CHANGED_USEC "," G_FILE_ATTRIBUTE_ETAG_VALUE
+        "," G_FILE_ATTRIBUTE_ACCESS_CAN_READ "," G_FILE_ATTRIBUTE_ACCESS_CAN_WRITE
+        "," G_FILE_ATTRIBUTE_ACCESS_CAN_EXECUTE "," G_FILE_ATTRIBUTE_ACCESS_CAN_RENAME
+        "," G_FILE_ATTRIBUTE_ACCESS_CAN_TRASH "," G_FILE_ATTRIBUTE_ACCESS_CAN_DELETE
+        "," G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE "," G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE
+        "," G_FILE_ATTRIBUTE_ID_FILE "," G_FILE_ATTRIBUTE_ID_FILESYSTEM;
+    for (const auto& [flag, attribute] :
+         {std::pair{luciole::EntryDetails::Accessed, G_FILE_ATTRIBUTE_TIME_ACCESS},
+          std::pair{luciole::EntryDetails::Created, G_FILE_ATTRIBUTE_TIME_CREATED},
+          std::pair{luciole::EntryDetails::Owner, G_FILE_ATTRIBUTE_OWNER_USER},
+          std::pair{luciole::EntryDetails::Group, G_FILE_ATTRIBUTE_OWNER_GROUP},
+          std::pair{luciole::EntryDetails::Permissions, G_FILE_ATTRIBUTE_UNIX_MODE}}) {
+      if ((details & flag) != 0) {
+        attributes.append(",").append(attribute);
+      }
+    }
+    return attributes;
+  }
   // Local folders derive icons from the content type instead; see FileIconPool::getLocal.
   constexpr const char* kIconAttribute = G_FILE_ATTRIBUTE_STANDARD_ICON;
   constexpr const char* kTrashAttributes = G_FILE_ATTRIBUTE_TRASH_ORIG_PATH "," G_FILE_ATTRIBUTE_TRASH_DELETION_DATE;
@@ -86,7 +110,7 @@ namespace {
       m_changes.clear();
       m_slots.assign(entries.empty() ? 0 : std::bit_ceil(entries.size() * 2), kEmpty);
       for (std::uint32_t i = 0; i < entries.size(); ++i) {
-        const auto slot = probe(entries[i].name);
+        const auto slot = probe(entries.brief(i).name);
         if (m_slots[slot] == kEmpty) {
           m_slots[slot] = i;
         }
@@ -101,7 +125,7 @@ namespace {
         return std::nullopt;
       }
       const auto slot = m_slots[probe(name)];
-      return slot == kEmpty ? std::nullopt : std::optional(m_entries[slot].id);
+      return slot == kEmpty ? std::nullopt : std::optional(m_entries.brief(slot).id);
     }
 
     // The indexed entries were replaced by copies in the same order with the same names and IDs.
@@ -123,8 +147,8 @@ namespace {
     // Every name with an ID.
     void forEach(const std::function<void(std::string_view, std::uint64_t)>& visit) const {
       for (const auto slot : m_slots) {
-        if (slot != kEmpty && !m_changes.contains(std::string_view(m_entries[slot].name))) {
-          visit(m_entries[slot].name, m_entries[slot].id);
+        if (slot != kEmpty && !m_changes.contains(std::string_view(m_entries.brief(slot).name))) {
+          visit(m_entries.brief(slot).name, m_entries.brief(slot).id);
         }
       }
       for (const auto& [name, id] : m_changes) {
@@ -141,7 +165,7 @@ namespace {
     std::size_t probe(std::string_view name) const {
       const auto mask = m_slots.size() - 1;
       for (auto slot = NameHash{}(name)&mask;; slot = (slot + 1) & mask) {
-        if (m_slots[slot] == kEmpty || m_entries[m_slots[slot]].name == name) {
+        if (m_slots[slot] == kEmpty || m_entries.brief(m_slots[slot]).name == name) {
           return slot;
         }
       }
@@ -153,13 +177,64 @@ namespace {
   };
 } // namespace
 
+namespace luciole {
+  luciole::DirectoryEntry readEntry(
+      GFileInfo* info, const std::shared_ptr<const luciole::Location>& folder, luciole::FileIconPool& icons, bool local,
+      bool trashFolder
+  ) {
+    const char* name = g_file_info_get_name(info);
+    DirectoryEntry entry{
+        .id = 0,
+        .place = EntryPlace::inFolder(folder),
+        .name = name,
+        .type = fileType(g_file_info_get_file_type(info)),
+        .hidden = infoBoolean(info, G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN).value_or(false) || name[0] == '.',
+        .symlink = readIsSymlink(info) != FALSE,
+        .size = std::nullopt,
+        .modifiedSeconds = std::nullopt,
+        .access = readFileAccess(info),
+    };
+    entry.setDisplayName(g_file_info_get_display_name(info));
+    entry.icon = local
+        ? icons.getLocal(
+              name, g_file_info_get_file_type(info), infoString(info, G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE), *folder
+          )
+        : icons.get(info, *folder);
+    if (trashFolder) {
+      auto trash = readTrashInfo(info);
+      entry.setParentDisplayName(trashOriginalParentText(trash));
+      entry.setTrash(std::move(trash));
+    }
+    entry.details = readEntryMetadata(info);
+    entry.setIdentity(readFileIdentity(info));
+    entry.contentType = readContentType(info);
+    if (const auto size = infoUint64(info, G_FILE_ATTRIBUTE_STANDARD_SIZE); size && *size <= G_MAXINT64) {
+      entry.size = size;
+    }
+    entry.contentRevision = readChangeRevision(info);
+    entry.modifiedSeconds = infoUint64(info, G_FILE_ATTRIBUTE_TIME_MODIFIED);
+    // Unlike g_file_info_get_etag, absent on children GIO could not stat is not a programming error here.
+    if (const char* etag = infoString(info, G_FILE_ATTRIBUTE_ETAG_VALUE); etag != nullptr) {
+      entry.setEtag(etag);
+    }
+    return entry;
+  }
+} // namespace luciole
+
 struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
   std::size_t entryLimit = 0;
+  bool catalogueEnabled = false;
+  guint factsIdle = 0;
+  std::unordered_map<std::size_t, std::uint8_t> factsRequested;
+  std::deque<std::size_t> factsOrder;
   FileIconPool icons;
   struct Scan {
     GioPtr<GCancellable> cancellable{g_cancellable_new()};
     GioPtr<GFileEnumerator> enumerator;
     std::vector<DirectoryEntry> entries;
+    std::optional<BrowseCatalogue> catalogue;
+    bool factsRunning = false;
+    std::unordered_map<std::size_t, std::uint8_t> factsInFlight;
     GioPtr<GFile> parent;
     // Shared by every entry of the scan; each entry's location is this folder's child.
     std::shared_ptr<const Location> folder;
@@ -213,7 +288,182 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
     }
   }
 
+  void requestFacts(std::size_t index, std::uint64_t id, std::uint8_t details) {
+    if (!scan
+        || scan->enumerating
+        || dirty
+        || snapshot.status != DirectoryStatus::Ready
+        || !snapshot.entries.isCatalogue()
+        || index >= snapshot.entries.size()
+        || snapshot.entries.brief(index).id != id
+        || factsRequested.size() >= 1024) {
+      return;
+    }
+    const auto* known = snapshot.entries.known(index);
+    if (known && (known->metadataFailed || (known->queriedDetails & details) == details)) {
+      return;
+    }
+    const auto inFlight = scan->factsInFlight.find(index);
+    if (inFlight != scan->factsInFlight.end() && (inFlight->second & details) == details) {
+      return;
+    }
+    factsRequested[index] |= details;
+    if (factsIdle != 0 || scan->factsRunning) {
+      return;
+    }
+    factsIdle = g_idle_add_full(
+        G_PRIORITY_DEFAULT_IDLE,
+        [](gpointer data) -> gboolean {
+          if (const auto state = static_cast<std::weak_ptr<State>*>(data)->lock()) {
+            state->factsIdle = 0;
+            state->prepareFacts();
+          }
+          return G_SOURCE_REMOVE;
+        },
+        new std::weak_ptr<State>(weak_from_this()),
+        [](gpointer data) { delete static_cast<std::weak_ptr<State>*>(data); }
+    );
+  }
+
+  void prepareFacts() {
+    if (!scan || scan->enumerating || scan->factsRunning || factsRequested.empty() || !snapshot.entries.isCatalogue()) {
+      return;
+    }
+    struct Job {
+      DirectoryEntries entries;
+      std::shared_ptr<const Location> folder;
+      std::vector<std::pair<std::size_t, std::uint8_t>> requests;
+      std::vector<std::pair<std::size_t, DirectoryEntry>> facts;
+      CatalogueValidation validation;
+    };
+    auto job = std::make_unique<Job>();
+    job->entries = snapshot.entries;
+    job->folder = scan->folder;
+    while (!factsRequested.empty() && job->requests.size() < 128) {
+      const auto found = factsRequested.begin();
+      auto [index, details] = *found;
+      factsRequested.erase(found);
+      if (const auto* known = snapshot.entries.known(index)) {
+        if (known->metadataFailed || (known->queriedDetails & details) == details) {
+          continue;
+        }
+        details |= known->queriedDetails;
+      }
+      job->requests.emplace_back(index, details);
+      scan->factsInFlight[index] = details;
+    }
+    if (job->requests.empty()) {
+      return;
+    }
+    scan->factsRunning = true;
+    auto* task = g_task_new(
+        nullptr, scan->cancellable.get(),
+        [](GObject*, GAsyncResult* result, gpointer data) {
+          const std::unique_ptr<Request> request(static_cast<Request*>(data));
+          auto& job = *static_cast<Job*>(g_task_get_task_data(G_TASK(result)));
+          if (const auto state = request->state.lock(); state && state->scan == request->scan) {
+            request->scan->factsRunning = false;
+            request->scan->factsInFlight.clear();
+            if (!state->dirty && state->snapshot.entries.sameCatalogue(job.entries)) {
+              if (job.validation.parentChanged || !job.validation.changed.empty()) {
+                if (job.validation.parentChanged) {
+                  state->identities.clear();
+                } else {
+                  for (const auto index : job.validation.changed) {
+                    state->identities.set(job.entries.brief(index).name, std::nullopt);
+                  }
+                }
+                state->begin();
+                return;
+              }
+              for (const auto& [index, entry] : job.facts) {
+                std::erase(state->factsOrder, index);
+                state->factsOrder.push_back(index);
+              }
+              while (state->factsOrder.size() > 1024) {
+                state->factsOrder.pop_front();
+              }
+              std::unordered_map<std::size_t, DirectoryEntry> fresh;
+              for (auto& [index, entry] : job.facts) {
+                fresh.emplace(index, std::move(entry));
+              }
+              std::vector<std::pair<std::size_t, DirectoryEntry>> retained;
+              retained.reserve(state->factsOrder.size());
+              for (const auto index : state->factsOrder) {
+                if (auto found = fresh.find(index); found != fresh.end()) {
+                  retained.emplace_back(index, std::move(found->second));
+                } else if (const auto* entry = state->snapshot.entries.known(index)) {
+                  retained.emplace_back(index, *entry);
+                }
+              }
+              state->snapshot.entries = state->snapshot.entries.withFacts(std::move(retained));
+              state->identities.rebase(state->snapshot.entries);
+              state->notify();
+            }
+            // The observer can navigate, replace the scan or destroy its session.
+            if (state->scan == request->scan) {
+              state->prepareFacts();
+            }
+          }
+        },
+        new Request{.state = weak_from_this(), .scan = scan}
+    );
+    g_task_set_task_data(task, job.release(), [](gpointer data) { delete static_cast<Job*>(data); });
+    g_task_run_in_thread(task, [](GTask* task, gpointer, gpointer data, GCancellable* cancellable) {
+      auto& job = *static_cast<Job*>(data);
+      FileIconPool icons;
+      const auto path = job.folder->nativePath();
+      icons.setLocalFolder(path ? path->c_str() : nullptr);
+      for (const auto& [index, details] : job.requests) {
+        if (g_cancellable_is_cancelled(cancellable) != FALSE) {
+          break;
+        }
+        const auto brief = job.entries.brief(index);
+        const auto file = gioFile(job.folder->child(std::string(brief.name)));
+        const auto attributes = browseAttributes(details);
+        const GioPtr<GFileInfo> info(
+            g_file_query_info(file.get(), attributes.c_str(), G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, cancellable, nullptr)
+        );
+        DirectoryEntry entry;
+        if (info) {
+          entry = readEntry(info.get(), job.folder, icons, true, false);
+        } else {
+          entry.place = EntryPlace::inFolder(job.folder);
+          entry.name = brief.name;
+          entry.setDisplayName(std::string(brief.displayName));
+          entry.type = brief.type;
+          entry.symlink = brief.symlink;
+          entry.hidden = brief.hidden;
+        }
+        entry.id = brief.id;
+        entry.metadataPending = false;
+        entry.metadataFailed = !info;
+        entry.queriedDetails = info ? details : EntryDetails::All;
+        job.facts.emplace_back(index, std::move(entry));
+      }
+      std::vector<std::size_t> rows;
+      rows.reserve(job.requests.size());
+      for (const auto& [index, details] : job.requests) {
+        rows.push_back(index);
+      }
+      job.validation = validateCatalogueRows(*job.entries.catalogue(), rows, cancellable);
+      if (job.validation.unavailable) {
+        for (auto& [index, entry] : job.facts) {
+          entry.metadataFailed = true;
+          entry.queriedDetails = EntryDetails::All;
+        }
+      }
+      g_task_return_boolean(task, TRUE);
+    });
+    g_object_unref(task);
+  }
+
   void stopScan() {
+    if (factsIdle != 0) {
+      g_source_remove(std::exchange(factsIdle, 0));
+    }
+    factsRequested.clear();
+    factsOrder.clear();
     if (timer != 0) {
       g_source_remove(std::exchange(timer, 0));
     }
@@ -238,11 +488,15 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
     snapshot.accessError.reset();
     snapshot.filesystemError.reset();
     if (!entriesAccessInvalidated && !snapshot.entries.empty()) {
-      std::vector<DirectoryEntry> entries(snapshot.entries.begin(), snapshot.entries.end());
-      for (auto& entry : entries) {
-        entry.access = {};
+      if (snapshot.entries.isCatalogue()) {
+        snapshot.entries = snapshot.entries.withoutFacts();
+      } else {
+        std::vector<DirectoryEntry> entries(snapshot.entries.begin(), snapshot.entries.end());
+        for (auto& entry : entries) {
+          entry.access = {};
+        }
+        snapshot.entries = std::move(entries);
       }
-      snapshot.entries = std::move(entries);
       identities.rebase(snapshot.entries);
       entriesAccessInvalidated = true;
     }
@@ -423,6 +677,7 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
       std::string path;
       std::size_t limit = 0;
       NativeListing listing;
+      bool catalogue = false;
     };
     auto* task = g_task_new(
         nullptr, scan->cancellable.get(),
@@ -435,12 +690,16 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
         },
         new Request{.state = weak_from_this(), .scan = scan}
     );
-    g_task_set_task_data(task, new Job{.path = std::move(path), .limit = entryLimit, .listing = {}}, [](gpointer data) {
-      delete static_cast<Job*>(data);
-    });
+    g_task_set_task_data(
+        task,
+        new Job{
+            .path = std::move(path), .limit = entryLimit, .listing = {}, .catalogue = catalogueEnabled && !resolveId
+        },
+        [](gpointer data) { delete static_cast<Job*>(data); }
+    );
     g_task_run_in_thread(task, [](GTask* task, gpointer, gpointer data, GCancellable* cancellable) {
       auto& job = *static_cast<Job*>(data);
-      job.listing = listNativeFolder(job.path, job.limit, cancellable);
+      job.listing = listNativeFolder(job.path, job.limit, cancellable, job.catalogue);
       g_task_return_boolean(task, TRUE);
     });
     g_object_unref(task);
@@ -450,6 +709,14 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
     if (listing.unsupported) {
       enumerate();
       return;
+    }
+    if (listing.catalogue) {
+      auto& catalogue = *listing.catalogue;
+      for (std::size_t i = 0; i < catalogue.items.size(); ++i) {
+        const auto previous = identities.find(catalogue.brief(i).name);
+        catalogue.items[i].id = previous ? *previous : nextId++;
+      }
+      scan->catalogue = std::move(listing.catalogue);
     }
     // A folder lists each name once, so IDs come straight from the published table without a scan table.
     for (auto& entry : listing.entries) {
@@ -480,9 +747,13 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
   // Uncertain entries reuse the published type of an unchanged file; the others wait for sniffContents().
   void keepSniffedTypes(NativeListing& listing) {
     std::unordered_map<std::string_view, const DirectoryEntry*> previous;
-    previous.reserve(snapshot.entries.size());
-    for (const auto& entry : snapshot.entries) {
-      previous.emplace(entry.name, &entry);
+    previous.reserve(
+        snapshot.entries.isCatalogue() ? std::min<std::size_t>(snapshot.entries.size(), 1024) : snapshot.entries.size()
+    );
+    for (std::size_t i = 0; i < snapshot.entries.size(); ++i) {
+      if (const auto* entry = snapshot.entries.known(i)) {
+        previous.emplace(entry->name, entry);
+      }
     }
     auto names = std::make_shared<std::vector<std::string>>();
     for (const auto index : listing.uncertain) {
@@ -630,41 +901,7 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
   }
 
   void append(GFileInfo* info) {
-    const char* name = g_file_info_get_name(info);
-    DirectoryEntry entry{
-        .id = 0,
-        .place = EntryPlace::inFolder(scan->folder),
-        .name = name,
-        .type = fileType(g_file_info_get_file_type(info)),
-        .hidden = infoBoolean(info, G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN).value_or(false) || name[0] == '.',
-        .symlink = readIsSymlink(info) != FALSE,
-        .size = std::nullopt,
-        .modifiedSeconds = std::nullopt,
-        .access = readFileAccess(info),
-    };
-    entry.setDisplayName(g_file_info_get_display_name(info));
-    entry.icon = scan->local ? icons.getLocal(
-                                   name, g_file_info_get_file_type(info),
-                                   infoString(info, G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE), *scan->folder
-                               )
-                             : icons.get(info, *scan->folder);
-    if (scan->trash) {
-      auto trash = readTrashInfo(info);
-      entry.setParentDisplayName(trashOriginalParentText(trash));
-      entry.setTrash(std::move(trash));
-    }
-    entry.details = readEntryMetadata(info);
-    entry.setIdentity(readFileIdentity(info));
-    entry.contentType = readContentType(info);
-    if (const auto size = infoUint64(info, G_FILE_ATTRIBUTE_STANDARD_SIZE); size && *size <= G_MAXINT64) {
-      entry.size = size;
-    }
-    entry.contentRevision = readChangeRevision(info);
-    entry.modifiedSeconds = infoUint64(info, G_FILE_ATTRIBUTE_TIME_MODIFIED);
-    // Unlike g_file_info_get_etag, absent on children GIO could not stat is not a programming error here.
-    if (const char* etag = infoString(info, G_FILE_ATTRIBUTE_ETAG_VALUE); etag != nullptr) {
-      entry.setEtag(etag);
-    }
+    auto entry = readEntry(info, scan->folder, icons, scan->local, scan->trash);
     entry.id = identify(entry);
     scan->entries.push_back(std::move(entry));
   }
@@ -715,16 +952,33 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
   // live identities of names the scan missed for the follow-up rescan.
   void reconcileChurnedIdentities() {
     std::unordered_set<std::uint64_t> used;
-    used.reserve(scan->entries.size());
-    for (auto& entry : scan->entries) {
-      if (const auto live = identities.find(entry.name)) {
-        entry.id = *live;
+    if (scan->catalogue) {
+      auto& catalogue = *scan->catalogue;
+      used.reserve(catalogue.items.size());
+      for (std::size_t i = 0; i < catalogue.items.size(); ++i) {
+        auto& item = catalogue.items[i];
+        const auto name = catalogue.brief(i).name;
+        if (const auto live = identities.find(name)) {
+          item.id = *live;
+        }
+        if (!used.insert(item.id).second) {
+          item.id = nextId++;
+          used.insert(item.id);
+        }
+        scan->identities.insert_or_assign(std::string(name), item.id);
       }
-      if (!used.insert(entry.id).second) {
-        entry.id = nextId++;
-        used.insert(entry.id);
+    } else {
+      used.reserve(scan->entries.size());
+      for (auto& entry : scan->entries) {
+        if (const auto live = identities.find(entry.name)) {
+          entry.id = *live;
+        }
+        if (!used.insert(entry.id).second) {
+          entry.id = nextId++;
+          used.insert(entry.id);
+        }
+        scan->identities.insert_or_assign(entry.name, entry.id);
       }
-      scan->identities.insert_or_assign(entry.name, entry.id);
     }
     identities.forEach([&](std::string_view name, std::uint64_t id) {
       if (!used.contains(id)) {
@@ -748,7 +1002,8 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
     }
     lastPublished = now;
     const auto replaced = snapshot.entries.size();
-    snapshot.entries = std::move(scan->entries);
+    snapshot.entries =
+        scan->catalogue ? DirectoryEntries(std::move(*scan->catalogue)) : DirectoryEntries(std::move(scan->entries));
     unsniffed.clear();
     snapshot.contentTypesPending = !error && !scan->sniff->empty();
     const bool trim = std::max(replaced, snapshot.entries.size()) >= kHeapTrimEntries;
@@ -842,3 +1097,23 @@ void luciole::DirectorySession::setChangedCallback(std::function<void()> callbac
 }
 
 const luciole::DirectorySnapshot& luciole::DirectorySession::snapshot() const { return m_state->snapshot; }
+
+void luciole::DirectorySession::setCatalogueEnabled(bool enabled) {
+  const auto state = m_state;
+  if (state->catalogueEnabled == enabled) {
+    return;
+  }
+  state->catalogueEnabled = enabled;
+  if (state->snapshot.status == DirectoryStatus::Ready
+      && !state->snapshot.entries.isCatalogue()
+      && state->snapshot.entries.size() <= 512) {
+    return;
+  }
+  if (state->snapshot.location) {
+    state->begin();
+  }
+}
+
+void luciole::DirectorySession::requestMetadata(std::size_t index, std::uint64_t id, std::uint8_t details) {
+  m_state->requestFacts(index, id, details);
+}

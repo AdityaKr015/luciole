@@ -53,7 +53,11 @@ luciole::BrowserController::BrowserController(SortOptions sort, bool showHidden,
     if (!m_publishing) {
       m_restoring = false;
       m_restoredViewport.reset();
-      notify();
+      const std::weak_ptr<int> lifetime = m_lifetime;
+      updateMetadataPolicy();
+      if (!lifetime.expired()) {
+        notify();
+      }
     }
   });
   m_session.setChangedCallback([this] {
@@ -66,19 +70,32 @@ luciole::BrowserController::BrowserController(SortOptions sort, bool showHidden,
       publish(m_search.snapshot());
     }
   });
+  m_model.setMetadataRequestedCallback([this](std::size_t index, EntryId id, std::uint8_t details) {
+    if (!m_searchActive && !m_tree) {
+      m_session.requestMetadata(index, id, details);
+    }
+  });
+  updateMetadataPolicy();
 }
 
 luciole::BrowserController::~BrowserController() {
+  m_lifetime.reset();
+  m_duplicateToken.cancel();
   cancelSearchTimeout();
   m_activation->resolved = {};
   m_activation->token.cancel();
   m_session.setChangedCallback({});
   m_search.setChangedCallback({});
   m_model.setChangedCallback({});
+  m_model.setMetadataRequestedCallback({});
   m_tree.reset();
 }
 
 void luciole::BrowserController::advanceContext() {
+  m_pendingMetadata.clear();
+  m_duplicateToken.cancel();
+  m_duplicateFactsPending = false;
+  m_restoreBulkMetadata = false;
   cancelSearchTimeout();
   m_contextSerial = ++nextContext;
   m_activation->token.cancel();
@@ -156,6 +173,9 @@ void luciole::BrowserController::loadVisit() {
 }
 void luciole::BrowserController::open(const Location& location) {
   const auto destination = location; // NOLINT(performance-unnecessary-copy-initialization)
+  if (waitForVisitMetadata([this, destination] { open(destination); })) {
+    return;
+  }
   if (!m_history.empty() && m_history[m_historyIndex].location == destination) {
     m_restoring = false;
     m_restoredViewport.reset();
@@ -208,6 +228,9 @@ bool luciole::BrowserController::back() {
   if (!canBack()) {
     return false;
   }
+  if (waitForVisitMetadata([this] { (void)back(); })) {
+    return true;
+  }
   saveVisit();
   --m_historyIndex;
   loadVisit();
@@ -216,6 +239,9 @@ bool luciole::BrowserController::back() {
 bool luciole::BrowserController::forward() {
   if (!canForward()) {
     return false;
+  }
+  if (waitForVisitMetadata([this] { (void)forward(); })) {
+    return true;
   }
   saveVisit();
   ++m_historyIndex;
@@ -439,6 +465,57 @@ void luciole::BrowserController::setSearchQuery(std::string text) {
   }
 }
 
+void luciole::BrowserController::updateMetadataPolicy() {
+  if (m_updatingMetadata) {
+    return;
+  }
+  m_updatingMetadata = true;
+  const std::weak_ptr<int> lifetime = m_lifetime;
+  const bool bulk = m_restoreBulkMetadata || std::ranges::any_of(m_pendingMetadata, [](const PendingMetadata& request) {
+                      return request.ids.size() > 512;
+                    });
+  m_session.setCatalogueEnabled(
+      !m_tree && m_model.sort().field == SortField::Name && m_model.selection().selected.size() <= 512 && !bulk
+  );
+  if (lifetime.expired()) {
+    return;
+  }
+  if (m_model.selection().selected.size() <= 512) {
+    for (const auto id : m_model.selection().selected) {
+      (void)m_model.entry(id);
+    }
+  }
+  m_updatingMetadata = false;
+}
+
+bool luciole::BrowserController::whenMetadataReady(
+    std::vector<EntryId> ids, std::function<void()> callback, std::uint8_t details
+) {
+  if (!m_model.metadataPending(ids, details)) {
+    return false;
+  }
+  std::ranges::sort(ids);
+  ids.erase(std::ranges::unique(ids).begin(), ids.end());
+  m_pendingMetadata.push_back(PendingMetadata{m_contextSerial, std::move(ids), details, std::move(callback)});
+  updateMetadataPolicy();
+  return true;
+}
+
+bool luciole::BrowserController::waitForVisitMetadata(std::function<void()> callback) {
+  auto ids = m_model.selectedIds();
+  const auto add = [&ids](std::optional<EntryId> id) {
+    if (id) {
+      ids.push_back(*id);
+    }
+  };
+  add(m_model.selection().focused);
+  add(m_model.selection().anchor);
+  if (m_captureViewport) {
+    add(m_captureViewport().first);
+  }
+  return whenMetadataReady(std::move(ids), std::move(callback));
+}
+
 void luciole::BrowserController::publish(DirectorySnapshot snapshot) {
   snapshot.generation = m_revision = std::max(m_revision, m_model.snapshot().generation) + 1;
   m_publishing = true;
@@ -452,7 +529,9 @@ void luciole::BrowserController::publish(DirectorySnapshot snapshot) {
     m_model.applySnapshot(std::move(snapshot));
   }
   const auto status = m_model.snapshot().status;
-  if (m_restoring && (status == DirectoryStatus::Ready || status == DirectoryStatus::Error)) {
+  if (m_restoring
+      && !m_duplicateFactsPending
+      && (status == DirectoryStatus::Ready || status == DirectoryStatus::Error)) {
     const auto& visit = m_history[m_historyIndex];
     // Only the visit's own references need resolving; a first visit has none.
     std::unordered_map<std::string_view, std::optional<EntryId>> visible;
@@ -468,15 +547,30 @@ void luciole::BrowserController::publish(DirectorySnapshot snapshot) {
     want(visit.anchor ? &*visit.anchor : nullptr);
     want(visit.first ? &*visit.first : nullptr);
     std::size_t unresolved = visible.size();
-    for (const auto id : m_model.rows()) {
-      if (unresolved == 0) {
-        break;
-      }
-      const auto found = visible.find(m_model.entry(id)->location().uri());
-      if (found != visible.end() && !found->second) {
+    const auto& entries = m_model.snapshot().entries;
+    for (std::size_t source = 0; source < entries.size() && unresolved != 0; ++source) {
+      const auto id = entries.brief(source).id;
+      const auto found = visible.find(entries.location(source).uri());
+      if (found != visible.end() && !found->second && std::ranges::contains(m_model.rows(), id)) {
         found->second = id;
         --unresolved;
       }
+    }
+    std::vector<EntryId> needed;
+    for (const auto& [uri, id] : visible) {
+      if (id) {
+        needed.push_back(*id);
+      }
+    }
+    if (m_model.metadataPending(needed)) {
+      m_restoreBulkMetadata = needed.size() > 512;
+      m_publishing = false;
+      const std::weak_ptr<int> lifetime = m_lifetime;
+      updateMetadataPolicy();
+      if (!lifetime.expired()) {
+        notify();
+      }
+      return;
     }
     const auto resolve = [&](const std::optional<Reference>& reference) -> std::optional<EntryId> {
       if (!reference) {
@@ -504,9 +598,34 @@ void luciole::BrowserController::publish(DirectorySnapshot snapshot) {
     m_model.restoreInteraction(std::move(selection), viewport.first);
     m_restoredViewport = viewport;
     m_restoring = false;
+    m_restoreBulkMetadata = false;
   }
   m_publishing = false;
+  const std::weak_ptr<int> lifetime = m_lifetime;
+  updateMetadataPolicy();
+  if (lifetime.expired()) {
+    return;
+  }
+  std::vector<PendingMetadata> ready;
+  std::erase_if(m_pendingMetadata, [&](PendingMetadata& request) {
+    if (request.context != m_contextSerial) {
+      return true;
+    }
+    if (m_model.metadataPending(request.ids, request.details)) {
+      return false;
+    }
+    ready.push_back(std::move(request));
+    return true;
+  });
   notify();
+  for (auto& request : ready) {
+    if (lifetime.expired()) {
+      return;
+    }
+    if (request.context == m_contextSerial) {
+      request.callback();
+    }
+  }
 }
 
 void luciole::BrowserController::setExpandableFolders(bool enabled) {
@@ -517,6 +636,7 @@ void luciole::BrowserController::setExpandableFolders(bool enabled) {
   if (enabled) {
     m_tree = std::make_unique<DirectoryTree>(m_model);
   }
+  updateMetadataPolicy();
   if (m_query.empty()) {
     publish(m_session.snapshot());
   }
@@ -597,14 +717,77 @@ void luciole::BrowserController::duplicateFrom(BrowserController& source) {
   if (&source == this) {
     return;
   }
+  const std::weak_ptr<int> lifetime = m_lifetime;
   source.saveVisit();
+  const auto entries = source.m_model.snapshot().entries;
+  const auto selected = source.m_model.selectedIds();
+  const auto focus = source.m_model.selection().focused;
+  const auto anchor = source.m_model.selection().anchor;
+  const auto viewport = source.m_captureViewport ? source.m_captureViewport() : source.m_viewport;
+  auto wanted = selected;
+  for (const auto id : {focus, anchor, viewport.first}) {
+    if (id) {
+      wanted.push_back(*id);
+    }
+  }
+  const bool pending = source.m_model.metadataPending(wanted);
+  std::unordered_map<EntryId, std::string> uris;
+  if (pending) {
+    for (const auto id : wanted) {
+      if (const auto location = source.m_model.location(id)) {
+        uris.emplace(id, location->uri());
+      }
+    }
+  }
   m_defaults = source.m_defaults;
   m_searchRecursive = source.m_searchRecursive;
   m_history = source.m_history;
   m_historyIndex = source.m_historyIndex;
+  m_publishing = true;
   m_model.setSort(source.m_model.sort());
   m_model.setFilter({source.m_model.filter().showHidden, {}, source.m_model.filter().showBackups});
+  m_publishing = false;
   if (!m_history.empty()) {
     loadVisit();
   }
+  if (lifetime.expired() || !pending) {
+    return;
+  }
+  m_duplicateFactsPending = true;
+  m_duplicateToken = CancelToken{};
+  const auto token = m_duplicateToken;
+  const auto context = m_contextSerial;
+  queryEntryIdentities(
+      entries, std::move(wanted), token,
+      [this, lifetime, token, context, selected, focus, anchor, first = viewport.first,
+       uris = std::move(uris)](std::expected<EntryIdentities, FileError> identities) {
+        if (lifetime.expired() || token.cancelled() || context != m_contextSerial) {
+          return;
+        }
+        const auto reference = [&](std::optional<EntryId> id) -> std::optional<Reference> {
+          if (!id || !identities) {
+            return std::nullopt;
+          }
+          const auto found = identities->find(*id);
+          const auto uri = uris.find(*id);
+          if (found == identities->end() || uri == uris.end()) {
+            return std::nullopt;
+          }
+          return Reference{uri->second, found->second};
+        };
+        auto& visit = m_history[m_historyIndex];
+        visit.selected.clear();
+        for (const auto id : selected) {
+          if (auto ref = reference(id)) {
+            visit.selected.push_back(std::move(*ref));
+          }
+        }
+        visit.focus = reference(focus);
+        visit.anchor = reference(anchor);
+        visit.first = reference(first);
+        m_duplicateFactsPending = false;
+        m_restoring = true;
+        publish(m_session.snapshot());
+      }
+  );
 }

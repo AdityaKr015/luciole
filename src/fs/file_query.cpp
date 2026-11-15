@@ -2,10 +2,83 @@
 
 #include "fs/background_job.h"
 #include "fs/gio_interop.h"
+#include "fs/native_listing.h"
 
 #include <format>
 #include <memory>
+#include <unordered_set>
 #include <utility>
+
+void luciole::queryEntryIdentities(
+    DirectoryEntries entries, std::vector<std::uint64_t> ids, const CancelToken& token,
+    std::move_only_function<void(std::expected<EntryIdentities, FileError>)> done
+) {
+  runJob<EntryIdentities>(
+      token,
+      [entries = std::move(entries), ids = std::move(ids), token] {
+        EntryIdentities result;
+        std::unordered_set<std::uint64_t> wanted(ids.begin(), ids.end());
+        std::unordered_map<const BrowseCatalogue*, std::vector<std::size_t>> queried;
+        std::unordered_map<std::string_view, const DirectoryEntry*> bulk;
+        NativeListing listing;
+        if (wanted.size() > 512 && entries.catalogue()) {
+          listing = listNativeFolder(*entries.catalogue()->folder->nativePath(), 0, gioCancellable(token));
+          if (!listing.unsupported) {
+            for (const auto& entry : listing.entries) {
+              bulk.emplace(entry.name, &entry);
+            }
+          }
+        }
+        for (std::size_t i = 0; i < entries.size() && !token.cancelled() && !wanted.empty(); ++i) {
+          const auto brief = entries.brief(i);
+          if (!wanted.erase(brief.id)) {
+            continue;
+          }
+          if (const auto* known = entries.known(i)) {
+            if (auto identity = known->identity()) {
+              result.emplace(brief.id, std::move(*identity));
+            }
+            continue;
+          }
+          const auto row = entries.catalogueRow(i);
+          if (!row) {
+            continue;
+          }
+          queried[row->catalogue].push_back(row->index);
+          if (const auto found = bulk.find(brief.name); found != bulk.end()) {
+            if (auto identity = found->second->identity()) {
+              result.emplace(brief.id, std::move(*identity));
+            }
+            continue;
+          }
+          const auto file = gioFile(entries.location(i));
+          const GioPtr<GFileInfo> info(g_file_query_info(
+              file.get(), G_FILE_ATTRIBUTE_ID_FILE "," G_FILE_ATTRIBUTE_ID_FILESYSTEM,
+              G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, gioCancellable(token), nullptr
+          ));
+          if (info) {
+            if (auto identity = readFileIdentity(info.get())) {
+              result.emplace(brief.id, std::move(*identity));
+            }
+          }
+        }
+        for (const auto& [catalogue, rows] : queried) {
+          const auto validation = validateCatalogueRows(*catalogue, rows, gioCancellable(token));
+          if (validation.parentChanged || validation.unavailable) {
+            for (const auto index : rows) {
+              result.erase(catalogue->brief(index).id);
+            }
+          } else {
+            for (const auto index : validation.changed) {
+              result.erase(catalogue->brief(index).id);
+            }
+          }
+        }
+        return result;
+      },
+      std::move(done)
+  );
+}
 
 luciole::FileDetails luciole::readFileDetails(const Location& location, const CancelToken& token) {
   GError* rawError = nullptr;

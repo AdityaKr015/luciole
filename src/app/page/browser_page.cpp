@@ -1192,6 +1192,23 @@ void BrowserPage::dispatchAction(Action action) {
 }
 
 void BrowserPage::dispatchAction(Action action, const luciole::ActionRequest& request) {
+  if (luciole::ActionRegistry::definition(action).scope == luciole::ActionScope::Targets
+      && requestCurrent(request, luciole::ActionScope::Targets)) {
+    std::vector<luciole::EntryId> ids;
+    ids.reserve(request.targets.size());
+    for (const auto& target : request.targets) {
+      ids.push_back(target.id);
+    }
+    const std::weak_ptr<int> lifetime = m_lifetime;
+    if (browser().whenMetadataReady(std::move(ids), [this, lifetime, action, request] {
+          if (!lifetime.expired()) {
+            dispatchAction(action, request);
+          }
+        })) {
+      m_statusBar.setMessage("Reading item metadata…");
+      return;
+    }
+  }
   if (action == Action::Open) {
     Logger("file-launch").debug("Open action dispatch ({} targets)", request.targets.size());
   }

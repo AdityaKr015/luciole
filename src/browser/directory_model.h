@@ -25,6 +25,7 @@ namespace luciole {
     std::size_t others = 0;
     std::uint64_t bytes = 0;
     std::size_t unknownSizes = 0;
+    std::size_t pendingSizes = 0;
     bool overflow = false;
     bool operator==(const SelectionSummary&) const = default;
   };
@@ -46,12 +47,17 @@ namespace luciole {
     std::optional<EntryId> treeParent(EntryId id) const;
     std::size_t treeDepth(EntryId id) const;
     void setChangedCallback(std::function<void()> callback);
+    void setMetadataRequestedCallback(std::function<void(std::size_t, EntryId, std::uint8_t)> callback);
+    bool metadataPending(std::span<const EntryId> ids, std::uint8_t details = 0) const;
+    void requestDetails(EntryId id, std::uint8_t details) const;
     void setSort(SortOptions options);
     void setFilter(FilterOptions options);
 
     const DirectorySnapshot& snapshot() const { return m_snapshot; }
     const std::vector<EntryId>& rows() const { return m_rows; }
     const DirectoryEntry* entry(EntryId id) const;
+    std::optional<Location> location(EntryId id) const;
+    bool visible(EntryId id) const { return rowOf(id).has_value(); }
     std::string_view typeLabel(EntryId id) const;
     const SortOptions& sort() const { return m_sort; }
     const FilterOptions& filter() const { return m_filter; }
@@ -103,6 +109,7 @@ namespace luciole {
     struct SortItem {
       EntryId id;
       std::uint32_t source;
+      FileType type;
       const Presentation* presentation;
       const DirectoryEntry* entry;
     };
@@ -112,7 +119,7 @@ namespace luciole {
     SortOptions m_sort;
     FilterOptions m_filter;
     std::string m_filterKey;
-    std::unordered_set<std::string> m_typeLabels;
+    mutable std::unordered_set<std::string> m_typeLabels;
     // Indexed like m_snapshot.entries.
     std::vector<Presentation> m_presentations;
     std::string m_keyText;
@@ -132,5 +139,6 @@ namespace luciole {
     bool m_selectionAvailable = false;
     bool m_preserveRootOrder = false;
     std::function<void()> m_changed;
+    std::function<void(std::size_t, EntryId, std::uint8_t)> m_requestMetadata;
   };
 } // namespace luciole

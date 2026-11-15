@@ -154,15 +154,93 @@ void luciole::DirectoryEntry::setTrash(std::optional<TrashInfo> trash) {
     editExtra().trash = std::move(trash);
   }
 }
+luciole::EntryBrief luciole::BrowseCatalogue::brief(std::size_t index) const {
+  const auto& item = items[index];
+  const auto name = std::string_view(names).substr(item.offset, item.length);
+  const auto display = displayNames.find(index);
+  return {item.id, name, display == displayNames.end() ? name : display->second, item.type, item.hidden, item.symlink};
+}
+
 struct luciole::DirectoryEntries::Storage {
+  struct Payload {
+    std::vector<DirectoryEntry> entries;
+    std::shared_ptr<const BrowseCatalogue> catalogue;
+    std::unordered_map<std::size_t, DirectoryEntry> facts;
+    // Materializing a pending value never changes it. References live as long as this payload.
+    mutable std::unordered_map<std::size_t, DirectoryEntry> pending;
+    std::size_t size() const { return catalogue ? catalogue->items.size() : entries.size(); }
+    const DirectoryEntry* known(std::size_t index) const {
+      if (!catalogue) {
+        return &entries[index];
+      }
+      const auto found = facts.find(index);
+      return found == facts.end() ? nullptr : &found->second;
+    }
+    EntryBrief brief(std::size_t index) const {
+      if (catalogue) {
+        return catalogue->brief(index);
+      }
+      const auto& entry = entries[index];
+      return {entry.id, entry.name, entry.displayName(), entry.type, entry.hidden, entry.symlink};
+    }
+    const DirectoryEntry& entry(std::size_t index) const {
+      if (const auto* entry = known(index)) {
+        return *entry;
+      }
+      auto [found, inserted] = pending.try_emplace(index);
+      if (inserted) {
+        const auto item = brief(index);
+        auto& entry = found->second;
+        entry.id = item.id;
+        entry.place = EntryPlace::inFolder(catalogue->folder);
+        entry.name = item.name;
+        entry.setDisplayName(std::string(item.displayName));
+        entry.type = item.type;
+        entry.hidden = item.hidden;
+        entry.symlink = item.symlink;
+        entry.metadataPending = true;
+        entry.queriedDetails = 0;
+      }
+      return found->second;
+    }
+  };
   struct Block {
-    std::shared_ptr<const std::vector<DirectoryEntry>> entries;
+    std::shared_ptr<const Payload> payload;
     std::size_t end;
   };
+  struct Row {
+    const Payload* payload;
+    union {
+      std::size_t index;
+      const DirectoryEntry* direct;
+    };
+    const DirectoryEntry* known() const { return payload ? payload->known(index) : direct; }
+    const DirectoryEntry& entry() const { return payload ? payload->entry(index) : *direct; }
+    EntryBrief brief() const {
+      return payload ? payload->brief(index) : EntryBrief{direct->id,   direct->name,   direct->displayName(),
+                                                          direct->type, direct->hidden, direct->symlink};
+    }
+    Location location() const {
+      return payload && payload->catalogue ? payload->catalogue->folder->child(std::string(payload->brief(index).name))
+                                           : entry().location();
+    }
+  };
   std::vector<Block> blocks;
-  std::vector<const DirectoryEntry*> rows;
+  std::vector<Row> rows;
+  // Eager tree/search projections retain the original single-pointer-per-row representation.
+  std::vector<const DirectoryEntry*> directRows;
   std::size_t size = 0;
   bool projected = false;
+  Row row(std::size_t index) const {
+    if (projected) {
+      if (!directRows.empty()) {
+        return {.payload = nullptr, .direct = directRows[index]};
+      }
+      return rows[index];
+    }
+    const auto block = blocks.size() == 1 ? blocks.begin() : std::ranges::upper_bound(blocks, index, {}, &Block::end);
+    return {.payload = block->payload.get(), .index = index - (block->end - block->payload->size())};
+  }
 };
 
 luciole::DirectoryEntries::DirectoryEntries(std::vector<DirectoryEntry> entries) {
@@ -171,27 +249,98 @@ luciole::DirectoryEntries::DirectoryEntries(std::vector<DirectoryEntry> entries)
   }
   auto storage = std::make_shared<Storage>();
   storage->size = entries.size();
-  storage->blocks.push_back({std::make_shared<const std::vector<DirectoryEntry>>(std::move(entries)), storage->size});
+  auto payload = std::make_shared<Storage::Payload>();
+  payload->entries = std::move(entries);
+  storage->blocks.push_back({std::move(payload), storage->size});
   m_storage = std::move(storage);
 }
 
 luciole::DirectoryEntries::DirectoryEntries(std::initializer_list<DirectoryEntry> entries)
     : DirectoryEntries(std::vector<DirectoryEntry>(entries)) {}
 
-std::size_t luciole::DirectoryEntries::size() const { return m_storage ? m_storage->size : 0; }
-
-const luciole::DirectoryEntry& luciole::DirectoryEntries::operator[](std::size_t index) const {
-  if (m_storage->projected) {
-    return *m_storage->rows[index];
-  }
-  const auto& blocks = m_storage->blocks;
-  if (blocks.size() == 1) {
-    return (*blocks.front().entries)[index];
-  }
-  const auto block = std::ranges::upper_bound(blocks, index, {}, &Storage::Block::end);
-  return (*block->entries)[index - (block->end - block->entries->size())];
+luciole::DirectoryEntries::DirectoryEntries(BrowseCatalogue catalogue) {
+  auto storage = std::make_shared<Storage>();
+  auto payload = std::make_shared<Storage::Payload>();
+  storage->size = catalogue.items.size();
+  payload->catalogue = std::make_shared<const BrowseCatalogue>(std::move(catalogue));
+  storage->blocks.push_back({std::move(payload), storage->size});
+  m_storage = std::move(storage);
 }
 
+std::size_t luciole::DirectoryEntries::size() const { return m_storage ? m_storage->size : 0; }
+luciole::EntryBrief luciole::DirectoryEntries::brief(std::size_t index) const {
+  if (!m_storage->directRows.empty()) {
+    const auto& entry = *m_storage->directRows[index];
+    return {entry.id, entry.name, entry.displayName(), entry.type, entry.hidden, entry.symlink};
+  }
+  const auto row = m_storage->row(index);
+  return row.brief();
+}
+luciole::Location luciole::DirectoryEntries::location(std::size_t index) const {
+  if (!m_storage->directRows.empty()) {
+    return m_storage->directRows[index]->location();
+  }
+  const auto row = m_storage->row(index);
+  return row.location();
+}
+const luciole::DirectoryEntry* luciole::DirectoryEntries::known(std::size_t index) const {
+  if (!m_storage->directRows.empty()) {
+    return m_storage->directRows[index];
+  }
+  const auto row = m_storage->row(index);
+  return row.known();
+}
+bool luciole::DirectoryEntries::isCatalogue() const {
+  return m_storage
+      && !m_storage->projected
+      && m_storage->blocks.size() == 1
+      && m_storage->blocks.front().payload->catalogue;
+}
+bool luciole::DirectoryEntries::sameCatalogue(const DirectoryEntries& other) const {
+  return isCatalogue()
+      && other.isCatalogue()
+      && m_storage->blocks.front().payload->catalogue == other.m_storage->blocks.front().payload->catalogue;
+}
+const luciole::BrowseCatalogue* luciole::DirectoryEntries::catalogue() const {
+  return isCatalogue() ? m_storage->blocks.front().payload->catalogue.get() : nullptr;
+}
+std::optional<luciole::DirectoryEntries::CatalogueRow>
+luciole::DirectoryEntries::catalogueRow(std::size_t index) const {
+  if (!m_storage->directRows.empty()) {
+    return std::nullopt;
+  }
+  const auto row = m_storage->row(index);
+  return row.payload && row.payload->catalogue ? std::optional(CatalogueRow{row.payload->catalogue.get(), row.index})
+                                               : std::nullopt;
+}
+luciole::DirectoryEntries
+luciole::DirectoryEntries::withFacts(std::vector<std::pair<std::size_t, DirectoryEntry>> facts) const {
+  if (!isCatalogue()) {
+    throw std::logic_error("facts require a flat catalogue");
+  }
+  auto payload = std::make_shared<Storage::Payload>();
+  payload->catalogue = m_storage->blocks.front().payload->catalogue;
+  // The session supplies the complete bounded working set, rather than retaining older revisions.
+  for (auto& [index, entry] : facts) {
+    if (index >= size() || entry.id != brief(index).id || entry.name != brief(index).name || entry.metadataPending) {
+      throw std::logic_error("mismatched catalogue facts");
+    }
+    payload->facts.emplace(index, std::move(entry));
+  }
+  auto storage = std::make_shared<Storage>();
+  storage->size = size();
+  storage->blocks.push_back({std::move(payload), size()});
+  return DirectoryEntries(std::move(storage));
+}
+luciole::DirectoryEntries luciole::DirectoryEntries::withoutFacts() const { return withFacts({}); }
+
+const luciole::DirectoryEntry& luciole::DirectoryEntries::operator[](std::size_t index) const {
+  if (!m_storage->directRows.empty()) {
+    return *m_storage->directRows[index];
+  }
+  const auto row = m_storage->row(index);
+  return row.entry();
+}
 const luciole::DirectoryEntry& luciole::DirectoryEntries::at(std::size_t index) const {
   if (index >= size()) {
     throw std::out_of_range("directory entry index");
@@ -219,8 +368,8 @@ luciole::DirectoryEntries luciole::DirectoryEntries::concatenate(std::vector<Dir
   auto storage = std::make_shared<Storage>();
   for (const auto& source : sources) {
     for (const auto& block : source.m_storage->blocks) {
-      storage->size += block.entries->size();
-      storage->blocks.push_back({block.entries, storage->size});
+      storage->size += block.payload->size();
+      storage->blocks.push_back({block.payload, storage->size});
     }
   }
   return DirectoryEntries(std::move(storage));
@@ -234,20 +383,35 @@ luciole::DirectoryEntries::project(std::vector<DirectoryEntries> sources, const 
   auto storage = std::make_shared<Storage>();
   storage->projected = true;
   storage->size = rows.size();
-  std::unordered_set<const std::vector<DirectoryEntry>*> retained;
+  std::unordered_set<const Storage::Payload*> retained;
   for (const auto& source : sources) {
     if (!source.m_storage) {
       continue;
     }
     for (const auto& block : source.m_storage->blocks) {
-      if (retained.insert(block.entries.get()).second) {
+      if (retained.insert(block.payload.get()).second) {
         storage->blocks.push_back(block);
       }
     }
   }
-  storage->rows.reserve(rows.size());
+  const bool indexed = std::ranges::any_of(storage->blocks, [](const Storage::Block& block) {
+    return block.payload->catalogue != nullptr;
+  });
+  if (indexed) {
+    storage->rows.reserve(rows.size());
+  } else {
+    storage->directRows.reserve(rows.size());
+  }
   for (const auto& row : rows) {
-    storage->rows.push_back(&sources.at(row.source).at(row.entry));
+    const auto& source = sources.at(row.source);
+    if (row.entry >= source.size()) {
+      throw std::out_of_range("directory entry index");
+    }
+    if (indexed) {
+      storage->rows.push_back(source.m_storage->row(row.entry));
+    } else {
+      storage->directRows.push_back(&source[row.entry]);
+    }
   }
   return DirectoryEntries(std::move(storage));
 }

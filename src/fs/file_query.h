@@ -1,6 +1,7 @@
 #pragma once
 
 #include "fs/cancel_token.h"
+#include "fs/directory_entries.h"
 #include "fs/file_error.h"
 #include "fs/file_metadata.h"
 #include "fs/location.h"
@@ -11,6 +12,12 @@
 #include <string>
 
 namespace luciole {
+  using EntryIdentities = std::unordered_map<std::uint64_t, FileIdentity>;
+  // Resolves only captured references and validates catalogue continuity. The source owner may be gone.
+  void queryEntryIdentities(
+      DirectoryEntries entries, std::vector<std::uint64_t> ids, const CancelToken& token,
+      std::move_only_function<void(std::expected<EntryIdentities, FileError>)> done
+  );
   struct FileDetails {
     FileType type = FileType::Unknown;
     std::optional<std::string> displayName;

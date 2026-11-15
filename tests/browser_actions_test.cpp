@@ -41,6 +41,41 @@ namespace {
         .monitorError = {}
     };
   }
+  void testPendingActionFacts() {
+    luciole::DirectoryModel model;
+    auto data = snapshot();
+    test::editEntries(data, [](auto& entries) {
+      entries[0].metadataPending = true;
+      entries[0].queriedDetails = 0;
+    });
+    model.applySnapshot(data);
+    TEST_CHECK(model.select(1));
+    luciole::ActionContext context{
+        .model = model, .context = 42, .query = {}, .pinned = {}, .clipboardAvailable = true
+    };
+    const auto request = R::capture(context);
+    TEST_CHECK(R::current(context, request, luciole::ActionScope::Targets));
+    for (const auto action : {A::Open, A::CopyFiles, A::Rename, A::Trash, A::Properties}) {
+      TEST_CHECK(!R::state(action, context, request).enabled);
+    }
+    test::editEntries(data, [](auto& entries) { entries[0].metadataPending = false; });
+    ++data.generation;
+    model.applySnapshot(data);
+    // Hidden owner/group/permissions columns are not prerequisites for file actions.
+    TEST_CHECK(R::state(A::CopyFiles, context, request).enabled && R::state(A::Rename, context, request).enabled);
+    test::editEntries(data, [](auto& entries) { entries[0].metadataFailed = true; });
+    ++data.generation;
+    model.applySnapshot(data);
+    TEST_CHECK(!R::state(A::CopyFiles, context, request).enabled);
+    test::editEntries(data, [](auto& entries) {
+      entries[0].metadataFailed = false;
+      entries[0].place = luciole::Location::fromPath("/tmp/action-fixture/replaced");
+    });
+    ++data.generation;
+    model.applySnapshot(data);
+    TEST_CHECK(!R::current(context, request, luciole::ActionScope::Targets));
+  }
+
   void testFileClipboardActions() {
     luciole::DirectoryModel model;
     auto data = snapshot();
@@ -765,6 +800,7 @@ int main() {
     testEmptyTrashAvailability();
     testLinkActions();
     testFileClipboardActions();
+    testPendingActionFacts();
     testPreviewActions();
     testCapabilitiesAndTargets();
     testRenameHistoryActions();
