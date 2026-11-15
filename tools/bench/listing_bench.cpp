@@ -117,6 +117,9 @@ int main(int argc, char** argv) {
     std::println(stderr, "usage: luciole-listing-bench FOLDER [--runs N] [--then-empty EMPTY_FOLDER]");
     return EXIT_FAILURE;
   }
+  // Mirrors the application's allocator settings so the memory figures match it.
+  mallopt(M_ARENA_MAX, 2);
+  mallopt(M_MMAP_THRESHOLD, 128 * 1024);
   // Mirrors the application's serialized first mount-table query.
   GFile* root = g_file_new_for_path("/");
   GFileInfo* rootInfo = g_file_query_filesystem_info(root, G_FILE_ATTRIBUTE_FILESYSTEM_READONLY, nullptr, nullptr);
