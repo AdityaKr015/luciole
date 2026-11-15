@@ -1496,7 +1496,7 @@ void BrowserPage::openTargets(const std::vector<luciole::DirectoryEntry>& target
     std::vector<luciole::Location> files;
     for (const auto& target : targets) {
       if (target.type == luciole::FileType::Regular) {
-        files.push_back(target.location);
+        files.push_back(target.location());
       } else {
         browser().activate(target.id);
       }
