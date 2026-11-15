@@ -34,6 +34,9 @@ namespace luciole {
   // The model owns its snapshot; borrowed rows/entries expire on mutation.
   class DirectoryModel {
   public:
+    // `known` is null while the entry's detailed facts are pending.
+    using EntryFilter = std::function<bool(const EntryBrief&, const DirectoryEntry* known)>;
+
     DirectoryModel() = default;
     DirectoryModel(const DirectoryModel&) = delete;
     DirectoryModel& operator=(const DirectoryModel&) = delete;
@@ -52,6 +55,10 @@ namespace luciole {
     void requestDetails(EntryId id, std::uint8_t details) const;
     void setSort(SortOptions options);
     void setFilter(FilterOptions options);
+    void setEntryFilter(EntryFilter filter);
+    // At most one selected entry; bulk selection is refused.
+    void setSingleSelection(bool single);
+    bool singleSelection() const { return m_singleSelection; }
 
     const DirectorySnapshot& snapshot() const { return m_snapshot; }
     const std::vector<EntryId>& rows() const { return m_rows; }
@@ -138,6 +145,8 @@ namespace luciole {
     std::optional<EntryId> m_scrollAnchor;
     bool m_selectionAvailable = false;
     bool m_preserveRootOrder = false;
+    bool m_singleSelection = false;
+    EntryFilter m_entryFilter;
     std::function<void()> m_changed;
     std::function<void(std::size_t, EntryId, std::uint8_t)> m_requestMetadata;
   };

@@ -121,7 +121,11 @@ namespace luciole {
     bool clipboardHasFiles = false;
     bool terminalAvailable = false;
     bool canUndo = false, canRedo = false;
+    bool chooser = false;
+    bool singleSelection = false;
   };
+  // Actions a file chooser window offers; everything else would act on files or leave the chooser.
+  bool chooserAction(BrowserAction action);
   struct ActionState {
     bool enabled = true;
     std::string_view reason;

@@ -5,8 +5,11 @@
 #include "wayland/wayland_connection.h"
 #include "xdg-activation-v1-client-protocol.h"
 #include "xdg-decoration-unstable-v1-client-protocol.h"
+#include "xdg-dialog-v1-client-protocol.h"
+#include "xdg-foreign-unstable-v2-client-protocol.h"
 
 #include <algorithm>
+#include <string_view>
 #include <utility>
 #include <wayland-cursor.h>
 
@@ -43,6 +46,12 @@ void luciole::DesktopIntegration::onGlobal(
         wl_registry_bind(registry, name, &zxdg_decoration_manager_v1_interface, 1)
     );
     m_decorationGlobal = name;
+  } else if (interface == "zxdg_importer_v2" && !m_importer) {
+    m_importer = static_cast<zxdg_importer_v2*>(wl_registry_bind(registry, name, &zxdg_importer_v2_interface, 1));
+    m_importerGlobal = name;
+  } else if (interface == "xdg_wm_dialog_v1" && !m_dialogs) {
+    m_dialogs = static_cast<xdg_wm_dialog_v1*>(wl_registry_bind(registry, name, &xdg_wm_dialog_v1_interface, 1));
+    m_dialogGlobal = name;
   } else if (interface == "xdg_activation_v1" && !m_activation) {
     auto* manager = static_cast<xdg_activation_v1*>(wl_registry_bind(registry, name, &xdg_activation_v1_interface, 1));
     m_activation = std::make_unique<LaunchActivation>(manager);
@@ -65,6 +74,16 @@ void luciole::DesktopIntegration::onGlobalRemove(std::uint32_t name) {
     zxdg_decoration_manager_v1_destroy(m_decorations);
     m_decorations = nullptr;
     m_decorationGlobal = 0;
+  }
+  if (name == m_importerGlobal) {
+    zxdg_importer_v2_destroy(m_importer);
+    m_importer = nullptr;
+    m_importerGlobal = 0;
+  }
+  if (name == m_dialogGlobal) {
+    xdg_wm_dialog_v1_destroy(m_dialogs);
+    m_dialogs = nullptr;
+    m_dialogGlobal = 0;
   }
   if (name == m_shapeGlobal) {
     m_shapeGlobal = 0;
@@ -89,6 +108,16 @@ void luciole::DesktopIntegration::releaseGlobals() {
     zxdg_decoration_manager_v1_destroy(m_decorations);
     m_decorations = nullptr;
   }
+  if (m_importer) {
+    zxdg_importer_v2_destroy(m_importer);
+    m_importer = nullptr;
+  }
+  m_importerGlobal = 0;
+  if (m_dialogs) {
+    xdg_wm_dialog_v1_destroy(m_dialogs);
+    m_dialogs = nullptr;
+  }
+  m_dialogGlobal = 0;
 }
 void luciole::DesktopIntegration::pointer(const PointerEvent& event) {
   if (event.type == PointerEvent::Type::Enter) {
@@ -179,12 +208,47 @@ struct luciole::WindowSurface::Decoration {
     server = false;
   }
 };
+struct luciole::WindowSurface::Parent {
+  std::string handle;
+  bool modal = false;
+  zxdg_imported_v2* imported = nullptr;
+  xdg_dialog_v1* dialog = nullptr;
+  WindowSurface* surface = nullptr;
+  void attach(DesktopIntegration& desktop, xdg_toplevel* role) {
+    constexpr std::string_view kWayland = "wayland:";
+    if (!handle.starts_with(kWayland) || !desktop.importer() || !surface) {
+      return;
+    }
+    imported = zxdg_importer_v2_import_toplevel(desktop.importer(), handle.substr(kWayland.size()).c_str());
+    static const zxdg_imported_v2_listener listener{.destroyed = [](void* data, zxdg_imported_v2* proxy) {
+      zxdg_imported_v2_destroy(proxy);
+      static_cast<Parent*>(data)->imported = nullptr;
+    }};
+    zxdg_imported_v2_add_listener(imported, &listener, this);
+    zxdg_imported_v2_set_parent_of(imported, surface->wlSurface());
+    if (modal && desktop.dialogManager()) {
+      dialog = xdg_wm_dialog_v1_get_xdg_dialog(desktop.dialogManager(), role);
+      xdg_dialog_v1_set_modal(dialog);
+    }
+  }
+  void release() {
+    if (dialog) {
+      xdg_dialog_v1_destroy(dialog);
+      dialog = nullptr;
+    }
+    if (imported) {
+      zxdg_imported_v2_destroy(imported);
+      imported = nullptr;
+    }
+  }
+};
 luciole::WindowSurface::WindowSurface(WaylandConnection& connection)
-    : ToplevelSurface(connection), m_decoration(std::make_shared<Decoration>()) {
+    : ToplevelSurface(connection), m_decoration(std::make_shared<Decoration>()), m_parent(std::make_shared<Parent>()) {
   m_decoration->surface = this;
+  m_parent->surface = this;
   auto& desktop = connection.extension<DesktopIntegration>();
   setRoleLifecycleCallbacks(
-      [state = m_decoration, &desktop](xdg_toplevel* role) {
+      [state = m_decoration, parent = m_parent, &desktop](xdg_toplevel* role) {
         if (auto* manager = desktop.decorationManager()) {
           state->role = zxdg_decoration_manager_v1_get_toplevel_decoration(manager, role);
           static const zxdg_toplevel_decoration_v1_listener listener{
@@ -199,15 +263,26 @@ luciole::WindowSurface::WindowSurface(WaylandConnection& connection)
           zxdg_toplevel_decoration_v1_add_listener(state->role, &listener, state.get());
           zxdg_toplevel_decoration_v1_set_mode(state->role, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
         }
+        parent->attach(desktop, role);
       },
-      [state = m_decoration] { state->release(); }
+      [state = m_decoration, parent = m_parent] {
+        parent->release();
+        state->release();
+      }
   );
 }
 luciole::WindowSurface::~WindowSurface() {
   m_decoration->surface = nullptr;
+  m_parent->surface = nullptr;
+  m_parent->release();
   m_decoration->release();
 }
 bool luciole::WindowSurface::serverDecorated() const { return m_decoration->server; }
+
+void luciole::WindowSurface::setParent(std::string handle, bool modal) {
+  m_parent->handle = std::move(handle);
+  m_parent->modal = modal;
+}
 
 void luciole::WindowSurface::setFrameCallbacks(std::function<void()> rendered, std::function<void()> frameDone) {
   m_rendered = std::move(rendered);

@@ -84,6 +84,9 @@ WorkspaceApplication::WorkspaceApplication(
           if (host->closed || host->surface.wlSurface() != surface) {
             continue;
           }
+          if (host->chooser) {
+            return luciole::FileDropTarget{};
+          }
           if (host->tooltip) {
             host->tooltip->dismiss();
           }
@@ -255,6 +258,31 @@ void WorkspaceApplication::show(const luciole::FileManagerRequest& request) {
   }
 }
 
+void WorkspaceApplication::choose(
+    luciole::FileChooserRequest request, const std::shared_ptr<luciole::FileChooserCall>& call
+) {
+  auto folder = request.currentFolder;
+  const auto window =
+      newWindow(std::make_unique<FileChooserSession>(std::move(request), call, m_connection, m_renderer));
+  if (!window) {
+    call->fail();
+    throw std::runtime_error("Cannot create a Luciole window.");
+  }
+  auto& host = *m_hosts.at(window);
+  const auto tab = newTab(window, std::move(folder));
+  if (!tab) {
+    call->fail();
+    host.surface.close();
+    throw std::runtime_error("Too many Luciole pages are open.");
+  }
+  auto footer = host.chooser->attach(*m_pages.at(tab), host.surface, [&host] { host.surface.close(); });
+  footer->setParticipatesInLayout(false);
+  footer->setZIndex(40);
+  host.chooserFooter = footer.get();
+  host.pendingFooter = std::move(footer);
+  select(window, tab);
+}
+
 bool WorkspaceApplication::hasWindows() const {
   return std::ranges::any_of(m_hosts, [](const auto& item) { return item.second->surface.isRunning(); });
 }
@@ -316,14 +344,21 @@ bool WorkspaceApplication::running() {
       if (host->tooltip) {
         host->tooltip->dismiss();
       }
+      // A chooser closed without an answer cancels its request.
+      if (host->chooser) {
+        host->chooser->windowClosed();
+      }
       // Leave the workspace before the pages close their dialogs, so a job that applies changes keeps running.
       if (auto found = m_model.windows().find(id); found != m_model.windows().end()) {
-        if (m_defaults.restoreLastWindow) {
-          if (auto saved = savedWindow(id)) {
-            saveWindows({std::move(*saved)});
+        // A chooser window never replaces the saved browsing session.
+        if (!host->chooser) {
+          if (m_defaults.restoreLastWindow) {
+            if (auto saved = savedWindow(id)) {
+              saveWindows({std::move(*saved)});
+            }
+          } else {
+            saveWindows({});
           }
-        } else {
-          saveWindows({});
         }
         const auto tabs = found->second.tabs;
         for (auto tab : tabs) {
@@ -415,6 +450,10 @@ void WorkspaceApplication::keyboard(const KeyboardEvent& event) {
       host->surface.requestUpdate();
     }
   }
+  if (const auto focused = m_hosts.find(m_focused);
+      focused != m_hosts.end() && focused->second->chooser && focused->second->chooser->keyboard(event)) {
+    return;
+  }
   for (auto& [id, page] : m_pages) {
     if (page->popupOwns(m_connection.lastKeyboardSurface())) {
       (void)id;
@@ -437,12 +476,14 @@ void WorkspaceApplication::keyboard(const KeyboardEvent& event) {
     return;
   }
   if (event.pressed && !event.preedit) {
-    if (event.modifiers == KeyMod::Ctrl && event.sym == XKB_KEY_q) {
+    if (!host.chooser && event.modifiers == KeyMod::Ctrl && event.sym == XKB_KEY_q) {
       g_stopRequested = 1;
       host.surface.requestUpdate();
       return;
     }
-    if (event.modifiers == (KeyMod::Ctrl | KeyMod::Shift) && (event.sym == XKB_KEY_w || event.sym == XKB_KEY_W)) {
+    if (!host.chooser
+        && event.modifiers == (KeyMod::Ctrl | KeyMod::Shift)
+        && (event.sym == XKB_KEY_w || event.sym == XKB_KEY_W)) {
       host.surface.close();
       return;
     }
@@ -524,6 +565,12 @@ void WorkspaceApplication::keyboard(const KeyboardEvent& event) {
 }
 
 void WorkspaceApplication::pointer(const PointerEvent& event) {
+  for (auto& [id, host] : m_hosts) {
+    (void)id;
+    if (host->chooser && host->chooser->pointer(event)) {
+      return;
+    }
+  }
   for (auto& [id, page] : m_pages) {
     if (page->popupOwns(event.surface)) {
       (void)id;
@@ -786,12 +833,16 @@ void WorkspaceApplication::dispatch(InputDispatcher& dispatcher, const PointerEv
   }
 }
 
-luciole::WindowId WorkspaceApplication::newWindow() {
+luciole::WindowId WorkspaceApplication::newWindow(std::unique_ptr<FileChooserSession> chooser) {
   const auto id = m_model.addWindow();
   if (!id) {
     return 0;
   }
   auto host = std::make_unique<Host>(id, m_connection);
+  if (chooser) {
+    host->surface.setParent(chooser->request().parentWindow, chooser->request().modal);
+    host->chooser = std::move(chooser);
+  }
   auto* raw = host.get();
   host->surface.setRenderContext(&m_renderer);
   host->surface.setAnimationManager(&m_animations);
@@ -826,13 +877,14 @@ luciole::WindowId WorkspaceApplication::newWindow() {
     m_connection.extension<luciole::DesktopIntegration>().setCursorShape(serial, shape);
   });
   host->dispatcher.setFocusChangeCallback([this, raw](InputArea*, InputArea* focused) { focusChanged(*raw, focused); });
+  const bool choosing = host->chooser != nullptr;
   if (!host->surface.initialize(
           nullptr,
-          {.width = 1080,
-           .height = 720,
+          {.width = choosing ? 900U : 1080U,
+           .height = choosing ? 600U : 720U,
            .minWidth = 620,
            .minHeight = 400,
-           .title = "Luciole",
+           .title = choosing ? host->chooser->windowTitle() : "Luciole",
            .appId = "dev.noctalia.luciole"}
       )) {
     throw std::runtime_error("Cannot initialize a Luciole window.");
@@ -876,9 +928,13 @@ luciole::TabId WorkspaceApplication::createPage(
     luciole::TabId previous
 ) {
   auto& host = *m_hosts.at(window);
-  const auto settings = duplicate              ? m_pages.at(duplicate)->options()
+  auto settings = duplicate                    ? m_pages.at(duplicate)->options()
       : previous && m_pages.contains(previous) ? m_pages.at(previous)->options()
                                                : m_defaults;
+  // Miller columns enter folders on selection, which a chooser needs for choosing them.
+  if (host.chooser && settings.viewMode == luciole::ViewMode::Miller) {
+    settings.viewMode = luciole::ViewMode::List;
+  }
   auto page = std::make_unique<BrowserPage>(
       m_connection, m_renderer, m_input, settings, m_clipboard, host.surface, host.dispatcher, m_animations, m_pins,
       m_drives, m_icons, m_thumbnails, m_preferences, m_hub, id
@@ -968,6 +1024,9 @@ void WorkspaceApplication::select(luciole::WindowId window, luciole::TabId tab) 
 void WorkspaceApplication::defer(
     luciole::WindowId window, luciole::TabId tab, WorkspaceCommand command, std::optional<luciole::Location> location
 ) {
+  if (m_hosts.at(window)->chooser) {
+    return;
+  }
   if ((command == WorkspaceCommand::CopyOther || command == WorkspaceCommand::MoveOther) && !location) {
     if (auto other = m_model.other(window)) {
       location = m_pages.at(*other)->location();
@@ -1290,7 +1349,7 @@ void WorkspaceApplication::rebuildStrip(Host& host, const luciole::TabWindow& wi
   }
   const bool decorated = !host.surface.serverDecorated() && !host.surface.fullscreen();
   // Client-side window controls keep the strip when tabs are hidden.
-  const bool tabsHidden = labels.size() <= 1 && !m_defaults.alwaysShowTabBar;
+  const bool tabsHidden = host.chooser || (labels.size() <= 1 && !m_defaults.alwaysShowTabBar);
   const bool stripVisible = !tabsHidden || decorated;
   if (host.strip
       && labels == host.labels
@@ -1568,6 +1627,9 @@ void WorkspaceApplication::prepare(Host& host) {
     bar->setZIndex(40);
     host.root->addChild(std::move(bar));
   }
+  if (host.pendingFooter) {
+    host.root->addChild(std::move(host.pendingFooter));
+  }
   auto& active = *m_pages.at(window.active);
   active.ensureScene();
   if (host.chromeOwner != window.active) {
@@ -1633,6 +1695,11 @@ void WorkspaceApplication::prepare(Host& host) {
   const auto width = static_cast<float>(host.surface.width()), height = static_cast<float>(host.surface.height());
   host.root->arrange(renderer, {0, 0, width, height});
   host.strip->arrange(renderer, {0, 0, width, kTabStripHeight});
+  const float footer = host.chooser ? kChooserFooterHeight : 0.0F;
+  if (host.chooserFooter) {
+    host.chooser->sync();
+    host.chooserFooter->arrange(renderer, {0, height - footer, width, footer});
+  }
   host.toolbarNode->setVisible(!active.overlay());
   active.sidebar()->setVisible(!active.overlay());
   if (active.overlay()) {
@@ -1640,7 +1707,7 @@ void WorkspaceApplication::prepare(Host& host) {
     host.activePaneBar->setVisible(false);
     host.previewDivider->setVisible(false);
     active.setPreviewBounds(std::nullopt);
-    active.prepare({0, stripHeight, width, height - stripHeight}, true, false);
+    active.prepare({0, stripHeight, width, height - stripHeight - footer}, true, false);
     syncTooltip(host);
     return;
   }
@@ -1648,7 +1715,7 @@ void WorkspaceApplication::prepare(Host& host) {
   // Chrome (tabs, toolbar, sidebar) wraps one flush content plane: panes and the docked preview touch, separated
   // only by 1px lines; the plane's top-left corner is rounded where it meets the sidebar.
   const float top = stripHeight + kNavigationToolbarHeight;
-  const float bodyHeight = std::max(1.0F, height - top);
+  const float bodyHeight = std::max(1.0F, height - top - footer);
   const float sidebar = active.sidebarWidth();
   active.sidebar()->arrange(renderer, {0, top, active.sidebarControlWidth(), bodyHeight});
   const float left = sidebar;

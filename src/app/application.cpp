@@ -17,6 +17,7 @@
 #include "event_loop/timer_poll_source.h"
 #include "fs/gio_ptr.h"
 #include "platform/desktop_integration.h"
+#include "platform/file_chooser_portal.h"
 #include "render/gl_shared_context.h"
 #include "render/render_context.h"
 #include "render/scene/input_dispatcher.h"
@@ -95,7 +96,7 @@ namespace {
 
 } // namespace
 
-int luciole::runApplication(const std::optional<std::string>& initialLocation, bool fileManagerActivation) {
+int luciole::runApplication(const std::optional<std::string>& initialLocation, StartupMode mode) {
   startupTrace("main");
 #ifdef __GLIBC__
   // Every short-lived worker thread (GIO tasks, decoders, Mesa) would otherwise get its own arena and keep its freed
@@ -113,11 +114,15 @@ int luciole::runApplication(const std::optional<std::string>& initialLocation, b
     std::println(stderr, "luciole: {}", error.what());
     return EXIT_FAILURE;
   }
-  luciole::InstanceService instance;
+  // A chooser service never claims the single-instance name: it must not receive ordinary launches.
+  std::optional<luciole::InstanceService> instance;
+  if (mode != StartupMode::FileChooserService) {
+    instance.emplace();
+  }
   startupTrace("instance-ready");
-  if (!fileManagerActivation && instance.role() == luciole::InstanceService::Role::Secondary) {
+  if (mode == StartupMode::Normal && instance->role() == luciole::InstanceService::Role::Secondary) {
     const char* token = std::getenv("XDG_ACTIVATION_TOKEN");
-    if (instance.forward(location, token != nullptr ? token : "")) {
+    if (instance->forward(location, token != nullptr ? token : "")) {
       return EXIT_SUCCESS;
     }
   }
@@ -160,14 +165,25 @@ int luciole::runApplication(const std::optional<std::string>& initialLocation, b
     startupTrace("graphics-ready");
     WorkspaceApplication application(connection, renderer, textInput, clipboard, config.settings().browser);
     application.imageTextures().initialize(&graphics);
-    if (!fileManagerActivation) {
+    if (mode == StartupMode::Normal) {
       application.start(std::move(location));
     }
     startupTrace("workspace-ready");
-    instance.setHandler([&application](const luciole::InstanceRequest& request) { application.open(request); });
-    luciole::FileManagerService fileManager(
-        [&application](const luciole::FileManagerRequest& request) { application.show(request); }, fileManagerActivation
-    );
+    std::optional<luciole::FileManagerService> fileManager;
+    if (instance) {
+      instance->setHandler([&application](const luciole::InstanceRequest& request) { application.open(request); });
+      fileManager.emplace(
+          [&application](const luciole::FileManagerRequest& request) { application.show(request); },
+          mode == StartupMode::FileManagerActivation
+      );
+    }
+    // Declared after `application` so it goes first and flushes the replies of the windows' last calls.
+    std::optional<luciole::FileChooserService> chooser;
+    if (mode == StartupMode::FileChooserService) {
+      chooser.emplace([&application](
+                          luciole::FileChooserRequest request, std::shared_ptr<luciole::FileChooserCall> call
+                      ) { application.choose(std::move(request), std::move(call)); });
+    }
     connection.setPointerEventCallback([&application, &desktop](const PointerEvent& event) {
       desktop.pointer(event);
       application.pointer(event);
@@ -192,20 +208,29 @@ int luciole::runApplication(const std::optional<std::string>& initialLocation, b
     icons.setChangeCallback([&application] { application.iconsChanged(); });
     MainLoop loop(
         connection, {&deferred, &timers, &repeat, &glib, &icons, &application.imageTextures()},
-        [&application, &fileManager, &instance] {
+        [&application, &fileManager, &instance, &chooser] {
           const bool running = application.running();
-          if (fileManager.awaitingRequest()) {
+          if ((fileManager && fileManager->awaitingRequest()) || (chooser && chooser->awaitingRequest())) {
             return g_stopRequested == 0;
           }
           if (!application.hasWindows()) {
-            fileManager.release();
-            instance.release();
+            if (fileManager) {
+              fileManager->release();
+            }
+            if (instance) {
+              instance->release();
+            }
+            if (chooser) {
+              chooser->release();
+            }
           }
           return running;
         }
     );
     loop.run();
-    instance.release();
+    if (instance) {
+      instance->release();
+    }
     connection.setOutputChangeCallback({});
     connection.setPointerEventCallback({});
     connection.setKeyboardEventCallback({});

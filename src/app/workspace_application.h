@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/file_chooser_session.h"
 #include "app/file_manager_service.h"
 #include "app/instance_service.h"
 #include "app/operation_hub.h"
@@ -54,6 +55,11 @@ class WorkspaceApplication {
     float resizeStart = 0.5F;
     std::optional<int> previewDragWidth;
     LayoutRect browsingBounds{};
+    // A FileChooser window: one tab, no workspace commands, never saved. Its footer waits in `pendingFooter` until
+    // the window's scene root exists. Last member: it goes before the scene its footer pointers point into.
+    Node* chooserFooter = nullptr;
+    std::unique_ptr<Node> pendingFooter;
+    std::unique_ptr<FileChooserSession> chooser;
     Host(luciole::WindowId value, WaylandConnection& connection) : id(value), surface(connection) {}
   };
 
@@ -70,6 +76,8 @@ public:
   void open(const luciole::InstanceRequest& request);
   // FileManager1 request: one new window, one tab per folder; items are selected in their parent.
   void show(const luciole::FileManagerRequest& request);
+  // FileChooser portal request: one chooser window that answers `call`.
+  void choose(luciole::FileChooserRequest request, const std::shared_ptr<luciole::FileChooserCall>& call);
   bool hasWindows() const;
   void focus(wl_surface* surface, bool entered);
   void outputChanged(wl_output* output);
@@ -81,7 +89,7 @@ public:
 private:
   void clearExternalDrops();
   static void dispatch(InputDispatcher& dispatcher, const PointerEvent& event);
-  luciole::WindowId newWindow();
+  luciole::WindowId newWindow(std::unique_ptr<FileChooserSession> chooser = nullptr);
   luciole::TabId newTab(
       luciole::WindowId window, std::optional<luciole::Location> location, luciole::TabId duplicate = 0,
       bool activate = true

@@ -604,8 +604,98 @@ bool luciole::ActionRegistry::current(const ActionContext& context, const Action
            return context.model.location(target.id) == target.location && context.model.visible(target.id);
          });
 }
+bool luciole::chooserAction(BrowserAction action) {
+  switch (action) {
+  case A::Back:
+  case A::Forward:
+  case A::Up:
+  case A::Home:
+  case A::Root:
+  case A::Refresh:
+  case A::Stop:
+  case A::EditLocation:
+  case A::Search:
+  case A::Grid:
+  case A::List:
+  case A::ShowHidden:
+  case A::ShowSidebar:
+  case A::ShowPreview:
+  case A::QuickPreview:
+  case A::SortName:
+  case A::SortType:
+  case A::SortSize:
+  case A::SortModified:
+  case A::SortAccessed:
+  case A::SortCreated:
+  case A::SortOwner:
+  case A::SortGroup:
+  case A::SortPermissions:
+  case A::SortLocation:
+  case A::Ascending:
+  case A::Descending:
+  case A::FoldersFirst:
+  case A::Open:
+  case A::SelectAll:
+  case A::InvertSelection:
+  case A::SelectPattern:
+  case A::ClearSelection:
+  case A::SortMenu:
+  case A::SelectionMenu:
+  case A::CopyPath:
+  case A::CopyUri:
+    return true;
+  case A::Miller:
+  case A::OpenWith:
+  case A::ContainingFolder:
+  case A::OriginalLocation:
+  case A::Pin:
+  case A::Unpin:
+  case A::CutFiles:
+  case A::CopyFiles:
+  case A::PasteFiles:
+  case A::Rename:
+  case A::CreateLink:
+  case A::Trash:
+  case A::Restore:
+  case A::DeletePermanently:
+  case A::Properties:
+  case A::Compress:
+  case A::ExtractHere:
+  case A::ExtractTo:
+  case A::BrowseArchive:
+  case A::CreateFolder:
+  case A::CreateFile:
+  case A::NewDocument:
+  case A::PinCurrent:
+  case A::UnpinCurrent:
+  case A::ReloadPins:
+  case A::EmptyTrash:
+  case A::Settings:
+  case A::About:
+  case A::MenuBack:
+  case A::Terminal:
+  case A::CopyTargetPath:
+  case A::CopyTargetUri:
+  case A::RunProgram:
+  case A::RunInTerminal:
+  case A::Scripts:
+  case A::Undo:
+  case A::Redo:
+  case A::Operations:
+  case A::TargetTerminal:
+    return false;
+  }
+  return false;
+}
+
 luciole::ActionState
 luciole::ActionRegistry::state(BrowserAction action, const ActionContext& c, const ActionRequest& r) {
+  if (c.chooser && !chooserAction(action)) {
+    return unavailable("Not available while choosing files.");
+  }
+  if (c.singleSelection && (action == A::SelectAll || action == A::InvertSelection || action == A::SelectPattern)) {
+    return unavailable("Only one item can be chosen.");
+  }
   const auto& row = definition(action);
   if (!current(c, r, row.scope)) {
     return unavailable("The folder or targets changed. Open the menu again.");

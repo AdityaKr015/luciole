@@ -330,6 +330,25 @@ void luciole::DirectoryModel::prepareSortKeys() {
   m_preparedSortField = m_sort.field;
 }
 
+void luciole::DirectoryModel::setEntryFilter(EntryFilter filter) {
+  m_entryFilter = std::move(filter);
+  rebuildProjection();
+  notify();
+}
+
+void luciole::DirectoryModel::setSingleSelection(bool single) {
+  m_singleSelection = single;
+  if (single && m_selection.selected.size() > 1) {
+    const auto ids = selectedIds();
+    m_selection.selected.clear();
+    if (!ids.empty()) {
+      m_selection.selected.insert(ids.front());
+      m_selection.anchor = ids.front();
+    }
+  }
+  notify();
+}
+
 void luciole::DirectoryModel::rebuildProjection() {
   prepareSortKeys();
   m_rows.clear();
@@ -340,7 +359,8 @@ void luciole::DirectoryModel::rebuildProjection() {
     const auto entry = m_snapshot.entries.brief(source);
     if ((!entry.hidden || m_filter.showHidden)
         && (m_filter.showBackups || !isEditorBackup(entry.name, entry.type))
-        && (m_filterKey.empty() || filterText(source).contains(m_filterKey))) {
+        && (m_filterKey.empty() || filterText(source).contains(m_filterKey))
+        && (!m_entryFilter || m_entryFilter(entry, m_snapshot.entries.known(source)))) {
       items.push_back(
           {entry.id, static_cast<std::uint32_t>(source), entry.type, &m_presentations[source],
            m_snapshot.entries.known(source)}
@@ -479,6 +499,15 @@ bool luciole::DirectoryModel::select(EntryId id, SelectionMode mode) {
   if (!canSelect() || !rowOf(id)) {
     return false;
   }
+  if (m_singleSelection) {
+    if (mode == SelectionMode::Toggle && m_selection.selected.contains(id)) {
+      m_selection.selected.clear();
+      m_selection.focused = id;
+      notify();
+      return true;
+    }
+    mode = SelectionMode::Replace;
+  }
   if (mode == SelectionMode::Replace) {
     m_selection.selected = {id};
     m_selection.anchor = id;
@@ -509,7 +538,7 @@ bool luciole::DirectoryModel::select(EntryId id, SelectionMode mode) {
 }
 
 void luciole::DirectoryModel::selectAll() {
-  if (!canSelect()) {
+  if (!canSelect() || m_singleSelection) {
     return;
   }
   m_selection.selected.clear();
@@ -518,7 +547,7 @@ void luciole::DirectoryModel::selectAll() {
 }
 
 bool luciole::DirectoryModel::invertSelection() {
-  if (!canSelect()) {
+  if (!canSelect() || m_singleSelection) {
     return false;
   }
   std::unordered_set<EntryId> selected;
@@ -537,6 +566,9 @@ std::optional<std::string> luciole::DirectoryModel::selectPattern(const std::str
   }
   if (!canSelect()) {
     return "The listing is not available for selection.";
+  }
+  if (m_singleSelection) {
+    return "Only one item can be chosen.";
   }
   const auto folded = foldedDisplayText(pattern);
   const std::unique_ptr<GPatternSpec, decltype(&g_pattern_spec_free)> spec(
@@ -582,6 +614,9 @@ void luciole::DirectoryModel::clearSelection() {
 bool luciole::DirectoryModel::replaceSelection(std::span<const EntryId> ids) {
   if (!canSelect() || std::ranges::any_of(ids, [this](EntryId id) { return !rowOf(id); })) {
     return false;
+  }
+  if (m_singleSelection && ids.size() > 1) {
+    ids = ids.first(1);
   }
   std::unordered_set<EntryId> selected(ids.begin(), ids.end());
   if (selected == m_selection.selected) {

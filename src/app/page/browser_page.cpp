@@ -1011,6 +1011,26 @@ void BrowserPage::keyboard(const KeyboardEvent& event) {
   if (m_archiveController.key(event)) {
     return;
   }
+  if (choosing() && event.pressed && !event.preedit && event.modifiers == 0 && KeySymbol::isEscape(event.sym)) {
+    if (!m_locationBar.escapeKey(event)) {
+      m_chooser.cancel();
+    }
+    return;
+  }
+  // Enter on a file list without a focused or selected item answers with the folder itself, as a chooser's
+  // default button would; with an item, the list activates it.
+  if (choosing()
+      && event.pressed
+      && !event.preedit
+      && event.modifiers == 0
+      && KeySymbol::isEnter(event.sym)
+      && m_list != nullptr
+      && dispatcher().focusedArea() == m_list->focusArea()
+      && !browser().model().selection().focused
+      && browser().model().selectedIds().empty()) {
+    m_chooser.open({});
+    return;
+  }
   if (event.pressed && !event.preedit && shortcutKey(event)) {
     return;
   }
@@ -1179,7 +1199,9 @@ luciole::ActionContext BrowserPage::actionContext() const {
       .clipboardHasFiles = m_clipboard.hasFiles(),
       .terminalAvailable = m_terminal.available(),
       .canUndo = m_hub.canUndo(),
-      .canRedo = m_hub.canRedo()
+      .canRedo = m_hub.canRedo(),
+      .chooser = choosing(),
+      .singleSelection = browser().model().singleSelection()
   };
 }
 
@@ -1483,6 +1505,14 @@ void BrowserPage::sortAction(Action action) {
 }
 
 void BrowserPage::openTargets(const std::vector<luciole::DirectoryEntry>& targets) {
+  if (choosing()) {
+    if (targets.size() == 1 && targets.front().type == luciole::FileType::Directory) {
+      browser().activate(targets.front().id);
+    } else {
+      m_chooser.open(targets);
+    }
+    return;
+  }
   if (m_miller.enabled()
       && targets.size() == 1
       && targets.front().type == luciole::FileType::Directory
@@ -2336,9 +2366,11 @@ std::unique_ptr<Flex> BrowserPage::buildToolbar() {
           ),
           m_operations.buildButton(),
           ui::button(
-              {.out = &m_menuButton, .glyph = "dots-vertical", .variant = ButtonVariant::Ghost, .onClick = [this] {
-                 m_menuController.openMenu();
-               }}
+              {.out = &m_menuButton,
+               .glyph = "dots-vertical",
+               .variant = ButtonVariant::Ghost,
+               .visible = !choosing(),
+               .onClick = [this] { m_menuController.openMenu(); }}
           )
       )
   );
@@ -2494,6 +2526,19 @@ bool BrowserPage::thumbnailsPaused() const { return m_thumbnails.clearing(); }
 const luciole::BrowserSettings& BrowserPage::settings() const { return m_savedSettings; }
 
 bool BrowserPage::hasOtherPane() const { return m_hasOther && m_hasOther(); }
+
+bool BrowserPage::choosing() const { return static_cast<bool>(m_chooser.open); }
+
+void BrowserPage::setChooser(ChooserHooks hooks) {
+  m_chooser = std::move(hooks);
+  // A chooser returns files; it never launches them.
+  m_browser.setFileActivatedCallback([](const luciole::Location&) {});
+  m_miller.setFileActivatedCallback([](const luciole::Location&) {});
+  for (auto* adapter : {&m_listAdapter, &m_gridAdapter}) {
+    adapter->setDragCallback([](const std::vector<luciole::EntryId>&) {}, [] {});
+  }
+  focusFileList();
+}
 
 void BrowserPage::requestWorkspace(
     WorkspaceCommand command, std::optional<luciole::Location> location, std::optional<luciole::ActionRequest> pending

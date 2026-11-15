@@ -10,7 +10,9 @@
 struct wl_cursor_theme;
 struct wl_data_device_manager;
 struct wl_surface;
+struct xdg_wm_dialog_v1;
 struct zxdg_decoration_manager_v1;
+struct zxdg_importer_v2;
 struct PointerEvent;
 class WaylandConnection;
 
@@ -32,14 +34,19 @@ namespace luciole {
     std::uint32_t pointerEnterSerial() const { return m_enterSerial; }
     wl_data_device_manager* dataDeviceManager() const { return m_dataDeviceManager; }
     zxdg_decoration_manager_v1* decorationManager() const { return m_decorations; }
+    zxdg_importer_v2* importer() const { return m_importer; }
+    xdg_wm_dialog_v1* dialogManager() const { return m_dialogs; }
 
   private:
     WaylandConnection& m_connection;
     wl_data_device_manager* m_dataDeviceManager = nullptr;
     zxdg_decoration_manager_v1* m_decorations = nullptr;
+    zxdg_importer_v2* m_importer = nullptr;
+    xdg_wm_dialog_v1* m_dialogs = nullptr;
     wl_cursor_theme* m_cursorTheme = nullptr;
     wl_surface* m_cursorSurface = nullptr;
     std::uint32_t m_dataGlobal = 0, m_decorationGlobal = 0, m_shapeGlobal = 0;
+    std::uint32_t m_importerGlobal = 0, m_dialogGlobal = 0;
     std::uint32_t m_enterSerial = 0, m_activationGlobal = 0;
     std::unique_ptr<LaunchActivation> m_activation;
   };
@@ -49,6 +56,9 @@ namespace luciole {
     explicit WindowSurface(WaylandConnection& connection);
     ~WindowSurface() override;
     bool serverDecorated() const;
+    // Parents the window to a portal `parent_window` handle; call before initialize(). Only "wayland:"
+    // handles take effect; `modal` asks the compositor to treat the window as a modal dialog of it.
+    void setParent(std::string handle, bool modal);
     // rendered runs after each drawn frame; frameDone after each completed frame callback and may destroy the surface.
     void setFrameCallbacks(std::function<void()> rendered, std::function<void()> frameDone);
 
@@ -58,7 +68,9 @@ namespace luciole {
 
   private:
     struct Decoration;
+    struct Parent;
     std::shared_ptr<Decoration> m_decoration;
+    std::shared_ptr<Parent> m_parent;
     std::function<void()> m_rendered;
     std::function<void()> m_frameDone;
   };

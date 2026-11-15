@@ -688,6 +688,25 @@ namespace {
     TEST_CHECK(luciole::shortcutMatches(A::Undo, XKB_KEY_z, KeyMod::Ctrl));
     TEST_CHECK(luciole::shortcutMatches(A::Redo, XKB_KEY_Z, KeyMod::Ctrl | KeyMod::Shift));
   }
+  void testChooserGate() {
+    luciole::DirectoryModel model;
+    model.applySnapshot(snapshot());
+    TEST_CHECK(model.select(1));
+    luciole::ActionContext context{.model = model, .context = 7, .query = {}, .pinned = {}, .chooser = true};
+    const auto request = R::capture(context);
+    const auto trash = R::state(A::Trash, context, request);
+    TEST_CHECK(!trash.enabled && trash.reason == "Not available while choosing files.");
+    TEST_CHECK(R::state(A::Open, context, request).enabled);
+    TEST_CHECK(R::state(A::SelectAll, context, request).enabled);
+    TEST_CHECK(luciole::chooserAction(A::CopyUri) && !luciole::chooserAction(A::Miller));
+    context.singleSelection = true;
+    const auto all = R::state(A::SelectAll, context, request);
+    TEST_CHECK(!all.enabled && all.reason == "Only one item can be chosen.");
+    TEST_CHECK(!R::state(A::InvertSelection, context, request).enabled);
+    TEST_CHECK(!R::state(A::SelectPattern, context, request).enabled);
+    TEST_CHECK(R::state(A::ClearSelection, context, request).enabled);
+  }
+
   void testBulkSelection() {
     luciole::DirectoryModel model;
     model.applySnapshot(snapshot());
@@ -805,6 +824,7 @@ int main() {
     testCapabilitiesAndTargets();
     testRenameHistoryActions();
     testBulkSelection();
+    testChooserGate();
     testTypeahead();
     std::println("browser action checks passed");
   } catch (const std::exception& error) {

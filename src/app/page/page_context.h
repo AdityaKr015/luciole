@@ -117,6 +117,8 @@ public:
   virtual void dispatchAction(luciole::BrowserAction action, const luciole::ActionRequest& request) = 0;
   // True while the window shows another pane next to this one.
   virtual bool hasOtherPane() const = 0;
+  // True while the page chooses files for a FileChooser portal request: no launching, menus, drags or jobs.
+  virtual bool choosing() const = 0;
   // Sends `command` to the workspace, if it listens; `pending` becomes the request a pane transfer uses.
   virtual void requestWorkspace(
       WorkspaceCommand command, std::optional<luciole::Location> location, std::optional<luciole::ActionRequest> pending

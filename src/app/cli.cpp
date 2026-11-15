@@ -50,7 +50,10 @@ int luciole::runCli(std::span<const std::string_view> args) {
     return runThumbnailWorker(args.subspan(1));
   }
   if (args.size() == 1 && args.front() == "--file-manager-service") {
-    return runApplication(std::nullopt, true);
+    return runApplication(std::nullopt, StartupMode::FileManagerActivation);
+  }
+  if (args.size() == 1 && args.front() == "--file-chooser-service") {
+    return runApplication(std::nullopt, StartupMode::FileChooserService);
   }
   if (args.size() == 1 && args.front() == "--help") {
     std::print("{}", kHelp);

@@ -673,6 +673,41 @@ namespace {
     TEST_CHECK(!model.replaceSelection(reduced));
   }
 
+  void testSingleSelectionAndEntryFilter() {
+    DirectoryModel model;
+    model.applySnapshot(snapshot({entry(1, "a.txt"), entry(2, "b.png"), entry(3, "c.txt")}));
+    TEST_CHECK(model.select(1) && model.select(3, SelectionMode::Toggle));
+    selected(model, {1, 3});
+    model.setSingleSelection(true);
+    TEST_CHECK(model.singleSelection());
+    selected(model, {1});
+    TEST_CHECK(model.select(3, SelectionMode::Toggle));
+    selected(model, {3});
+    TEST_CHECK(model.select(3, SelectionMode::Toggle) && model.selection().focused == 3);
+    selected(model, {});
+    TEST_CHECK(model.select(1, SelectionMode::Range));
+    selected(model, {1});
+    model.selectAll();
+    selected(model, {1});
+    TEST_CHECK(!model.invertSelection());
+    TEST_CHECK(model.selectPattern("*") == "Only one item can be chosen.");
+    const std::array many{luciole::EntryId{3}, luciole::EntryId{1}};
+    TEST_CHECK(model.replaceSelection(many));
+    selected(model, {3});
+
+    int publications = 0;
+    model.setChangedCallback([&] { ++publications; });
+    model.setEntryFilter([](const luciole::EntryBrief& brief, const DirectoryEntry*) {
+      return !brief.name.ends_with(".png");
+    });
+    rows(model, {1, 3});
+    TEST_CHECK(publications == 1);
+    model.applySnapshot(snapshot({entry(1, "a.txt"), entry(2, "b.png"), entry(4, "d.png")}, 2));
+    rows(model, {1});
+    model.setEntryFilter({});
+    rows(model, {1, 2, 4});
+  }
+
   void testSnapshotReconciliation() {
     DirectoryModel model;
     auto data = snapshot({entry(1, "a"), entry(2, "b")}, 10);
@@ -816,6 +851,7 @@ int main() {
     testBackupVisibility();
     testSelectionAndAnchors();
     testBulkSelection();
+    testSingleSelectionAndEntryFilter();
     testSnapshotReconciliation();
     testDirectoryServiceIntegration();
     std::println("directory model checks passed");

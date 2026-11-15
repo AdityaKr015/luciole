@@ -440,7 +440,7 @@ std::optional<std::size_t> DragDropController::pinDropSlot() const {
 }
 
 void DragDropController::startFileDrag(const std::vector<luciole::EntryId>& ids) {
-  if (ids.empty() || m_page.jobs().busy()) {
+  if (ids.empty() || m_page.jobs().busy() || m_page.choosing()) {
     return;
   }
   Drag drag;
@@ -519,7 +519,7 @@ void DragDropController::startFileDrag(const std::vector<luciole::EntryId>& ids)
 }
 
 void DragDropController::startPlaceDrag(const luciole::Bookmark& bookmark) {
-  if (!m_pins.editable()) {
+  if (!m_pins.editable() || m_page.choosing()) {
     return;
   }
   m_drag = Drag{.entries = {}, .bookmarks = {bookmark}, .sourcePin = bookmark.location, .foldersOnly = true};

@@ -21,7 +21,7 @@ Use the description from the Nix package metadata:
 | Homepage               | <https://github.com/noctalia-dev/luciole>                             |
 | Version                | [VERSION](VERSION), read by Meson                                     |
 | License                | MIT ([LICENSE](LICENSE)); preserve the bundled Tabler font notice too |
-| D-Bus names            | `org.freedesktop.FileManager1`; `dev.noctalia.luciole` (single instance) |
+| D-Bus names            | `org.freedesktop.FileManager1`; `dev.noctalia.luciole` (single instance); `org.freedesktop.impl.portal.desktop.luciole` (FileChooser portal backend) |
 
 Use **Luciole** as the display name and lowercase `luciole` for the command/package and application-owned paths. Nix modules expose `programs.luciole`; environment overrides use the `LUCIOLE_` prefix. There are no legacy-name aliases or automatic configuration/state migrations.
 
@@ -182,6 +182,8 @@ With the default relative `datadir=share`, Meson installs:
 <prefix>/share/luciole/assets/fonts/tabler-icons-license.txt
 <prefix>/share/luciole/templates/colors.toml
 <prefix>/share/dbus-1/services/org.freedesktop.FileManager1.service
+<prefix>/share/dbus-1/services/org.freedesktop.impl.portal.desktop.luciole.service
+<prefix>/share/xdg-desktop-portal/portals/luciole.portal
 <prefix>/share/applications/dev.noctalia.luciole.desktop
 <prefix>/share/icons/hicolor/scalable/apps/dev.noctalia.luciole.svg
 <prefix>/share/bash-completion/completions/luciole
@@ -211,6 +213,14 @@ The generated `org.freedesktop.FileManager1.service` invokes the configured abso
 This is an on-demand session service, not an always-running background daemon. Installing it does not register an `inode/directory` MIME default. The generic service name can overlap another file manager's activation provider; handle provider selection through the distribution's packaging policy rather than silently overwriting another package's file.
 
 Luciole also owns its application name, `dev.noctalia.luciole`, and exports `org.freedesktop.Application` at `/dev/noctalia/luciole`. A later `luciole` launch hands its folder and `XDG_ACTIVATION_TOKEN` to the running process and exits. No service file is installed for that name; the desktop entry still starts the binary, which performs the handoff.
+
+### FileChooser portal backend
+
+`luciole.portal` declares `org.freedesktop.impl.portal.FileChooser` on `org.freedesktop.impl.portal.desktop.luciole`. The generated service file starts `<bindir>/luciole --file-chooser-service`, a separate process that owns only that name, opens one chooser window per request and exits once its windows close. It never claims `dev.noctalia.luciole` or `org.freedesktop.FileManager1`, so it runs beside an open Luciole without taking its launches.
+
+The `.portal` file has no `UseIn` key: the backend is used only when a `portals.conf` names it, for example `org.freedesktop.impl.portal.FileChooser=luciole;gtk`. xdg-desktop-portal skips a listed backend whose `.portal` file is not installed, so that line falls back to the next one when Luciole is absent. It does not fall back when Luciole is installed but fails. The frontend reads `.portal` files when it starts; restart `xdg-desktop-portal` after installing or removing Luciole.
+
+This backend currently implements OpenFile only. SaveFile and SaveFiles return an unknown-method error, so do not route the FileChooser interface to Luciole by default yet.
 
 ### Shell completions
 

@@ -10,3 +10,5 @@ constexpr float kWorkspaceRadius = Style::radiusXl;
 constexpr float kMinimumPaneWidth = 160.0F;
 constexpr float kMinimumPreviewWidth = 208.0F;
 constexpr float kMinimumFreeSpacePaneWidth = 320.0F;
+// The footer of a FileChooser window: one row of controls between small margins.
+constexpr float kChooserFooterHeight = Style::controlHeight + 2.0F * Style::spaceSm;

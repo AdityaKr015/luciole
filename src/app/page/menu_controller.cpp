@@ -229,6 +229,9 @@ std::vector<ContextMenuControlEntry> MenuController::itemMenuEntries(const lucio
 }
 
 void MenuController::openFileMenu(std::optional<luciole::EntryId> id, float x, float y) {
+  if (m_page.choosing()) {
+    return;
+  }
   m_page.setActionMessage({});
   const auto request = m_page.actionRequest(id.has_value());
   if (id && request.targets.empty()) {
@@ -345,6 +348,9 @@ void MenuController::showCopyLocationMenu(const luciole::ActionRequest& request,
 }
 
 void MenuController::openPlaceMenu(const luciole::Bookmark& bookmark, float x, float y) {
+  if (m_page.choosing()) {
+    return;
+  }
   std::vector<ContextMenuControlEntry> entries{{.id = 1, .label = "Open"}};
   {
     const auto& pins = m_pins.bookmarks();
@@ -419,6 +425,9 @@ void MenuController::openPlaceMenu(const luciole::Bookmark& bookmark, float x, f
 }
 
 void MenuController::openBreadcrumbMenu(const luciole::Location& target, LayoutRect anchor) {
+  if (m_page.choosing()) {
+    return;
+  }
   const auto context = m_page.browser().contextSerial();
   auto targets = std::make_shared<std::vector<luciole::Location>>();
   std::vector<ContextMenuControlEntry> entries;
@@ -734,6 +743,9 @@ void MenuController::openSelectionMenu() {
 }
 
 void MenuController::openMenu() {
+  if (m_page.choosing()) {
+    return;
+  }
   if (m_page.menuSurface() != nullptr) {
     m_page.dismissMenu();
     return;

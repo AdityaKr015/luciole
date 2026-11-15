@@ -19,6 +19,8 @@ protocol_sources = []
 protocol_headers = []
 foreach protocol : [
   ['xdg-decoration-unstable-v1', 'unstable/xdg-decoration/xdg-decoration-unstable-v1.xml'],
+  ['xdg-foreign-unstable-v2', 'unstable/xdg-foreign/xdg-foreign-unstable-v2.xml'],
+  ['xdg-dialog-v1', 'staging/xdg-dialog/xdg-dialog-v1.xml'],
 ]
   header = custom_target(protocol[0] + '-header',
     input: protocol_root / protocol[1],
@@ -126,6 +128,7 @@ fs_lib = static_library('luciole-fs',
     'src/fs/entry_access.cpp',
     'src/fs/file_error.cpp',
     'src/fs/file_icon_source.cpp',
+    'src/fs/file_filter.cpp',
     'src/fs/file_metadata.cpp',
     'src/fs/file_query.cpp',
     'src/fs/filename.cpp',
@@ -168,6 +171,7 @@ browser_lib = static_library('luciole-browser',
   files(
     'src/browser/action_registry.cpp',
     'src/browser/browser_controller.cpp',
+    'src/browser/chooser_policy.cpp',
     'src/browser/directory_model.cpp',
     'src/browser/directory_tree.cpp',
     'src/browser/entry_details.cpp',
@@ -301,6 +305,7 @@ clipboard_dep = declare_dependency(link_with: clipboard_lib, include_directories
 platform_lib = static_library('luciole-platform',
   files(
     'src/platform/desktop_integration.cpp',
+    'src/platform/file_chooser_portal.cpp',
     'src/platform/extraction_launcher.cpp',
     'src/platform/file_launcher.cpp',
     'src/platform/launch_activation.cpp',
@@ -370,6 +375,7 @@ app = executable('luciole',
   files(
     'src/app/application.cpp',
     'src/app/cli.cpp',
+    'src/app/file_chooser_session.cpp',
     'src/app/file_manager_service.cpp',
     'src/app/instance_service.cpp',
     'src/app/library_setup.cpp',
@@ -417,6 +423,14 @@ configure_file(
   configuration: {'bindir': get_option('prefix') / get_option('bindir')},
   install_dir: get_option('datadir') / 'dbus-1/services',
 )
+
+configure_file(
+  input: 'assets/dbus/org.freedesktop.impl.portal.desktop.luciole.service.in',
+  output: 'org.freedesktop.impl.portal.desktop.luciole.service',
+  configuration: {'bindir': get_option('prefix') / get_option('bindir')},
+  install_dir: get_option('datadir') / 'dbus-1/services',
+)
+install_data('assets/portal/luciole.portal', install_dir: get_option('datadir') / 'xdg-desktop-portal/portals')
 
 tests_opt = get_option('tests')
 build_tests = tests_opt.enabled() or (

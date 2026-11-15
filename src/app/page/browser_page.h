@@ -89,6 +89,14 @@ public:
   luciole::BrowserController& browser() override;
   const luciole::BrowserController& browser() const;
   void focusMiller(std::size_t index, bool reveal = true);
+  // A FileChooser portal page: `open` receives every Open but a single folder, which still navigates; `cancel`
+  // receives an Escape nothing else consumed. Set before the scene is built.
+  struct ChooserHooks {
+    std::function<void(const std::vector<luciole::DirectoryEntry>&)> open;
+    std::function<void()> cancel;
+  };
+  void setChooser(ChooserHooks hooks);
+  bool choosing() const override;
 
   ~BrowserPage();
 
@@ -425,6 +433,7 @@ private:
   std::optional<luciole::ActionRequest> m_pendingWorkspaceRequest;
   std::function<void(luciole::JobId, bool)> m_operationRequest;
   std::optional<std::pair<luciole::JobId, bool>> m_pendingOperation;
+  ChooserHooks m_chooser;
 
   Flex* m_titlebar = nullptr;
   Flex* m_paneContentFrame = nullptr;
