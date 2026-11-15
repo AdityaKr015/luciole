@@ -83,6 +83,8 @@ private:
   bool m_multiple = false;
   FileMetadataView* m_metadataView = nullptr;
   FolderTotalsView* m_folderTotals = nullptr;
+  // Location, size and similar entry facts that lead the Details table.
+  luciole::MetadataFields m_basicFields;
   float m_metadataWidth = 0;
   bool m_metadataDirty = false;
   bool m_dirty = false;

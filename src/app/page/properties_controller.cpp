@@ -16,6 +16,7 @@
 #include "ui/builders.h"
 #include "ui/controls/acl_editor.h"
 #include "ui/controls/bulk_acl_editor.h"
+#include "ui/controls/card_style.h"
 #include "ui/controls/file_metadata_view.h"
 #include "ui/controls/folder_totals_view.h"
 #include "ui/controls/permission_editor.h"
@@ -34,6 +35,13 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+namespace {
+  // Text width inside a General card: dialog padding, scrollbar gutter, then the card's own padding.
+  float generalCardWidth(float dialogWidth) {
+    return std::max(1.0F, dialogWidth - Style::spaceMd * 4 - Style::scrollbarWidth - Style::scrollbarGap);
+  }
+} // namespace
 
 PropertiesController::PropertiesController(PageContext& page, luciole::FileIconCache& icons)
     : m_page(page), m_icons(icons) {
@@ -127,6 +135,8 @@ void PropertiesController::syncMetadata() {
     std::erase_if(fields, [](const auto& field) { return field.label == "Folder contents"; });
     m_folderTotals->sync(m_metadataWidth);
   }
+  // The entry's own facts lead, so both kinds read as one table with one row rhythm.
+  fields.insert(fields.begin(), m_basicFields.begin(), m_basicFields.end());
   m_metadataView->sync(fields, m_metadataWidth);
   m_page.menuSurface()->requestLayout();
 }
@@ -149,7 +159,7 @@ bool PropertiesController::resultsKey(const KeyboardEvent& event) {
 }
 
 void PropertiesController::layoutDialog(float width) {
-  const float metadataWidth = std::max(1.0F, width - Style::spaceMd * 2 - Style::scrollbarWidth - Style::scrollbarGap);
+  const float metadataWidth = generalCardWidth(width);
   if (m_metadataView && metadataWidth != m_metadataWidth) {
     m_metadataWidth = metadataWidth;
     syncMetadata();
@@ -273,6 +283,8 @@ struct PropertiesController::Body {
   AclEditor* acl = nullptr;
   BulkAclEditor* bulkAcl = nullptr;
   PermissionResultsView* results = nullptr;
+  // The entry's own facts, shown ahead of the loaded metadata in the Details card.
+  luciole::MetadataFields fields;
 };
 
 PropertiesController::Body
@@ -280,24 +292,10 @@ PropertiesController::buildGeneral(const std::vector<luciole::DirectoryEntry>& t
   auto general = ui::column({.align = FlexAlign::Stretch, .gap = Style::spaceMd});
   auto* generalGroup = general.get();
   const auto literal = [](Label& label) { label.setUseMarkup(false); };
-  const auto field = [&](const std::string& name, const std::string& value) {
-    general->addChild(
-        ui::row(
-            {.align = FlexAlign::Start, .gap = Style::spaceMd},
-            ui::label(
-                {.text = name,
-                 .fontSize = Style::fontSizeCaption,
-                 .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
-                 .minWidth = 76.0F,
-                 .maxWidth = 76.0F}
-            ),
-            ui::label(
-                {.text = value, .maxWidth = width - 132.0F, .maxLines = 3, .flexGrow = 1.0F, .configure = literal}
-            )
-        )
-    );
+  luciole::MetadataFields fields;
+  const auto field = [&](std::string name, std::string value) {
+    fields.push_back({.label = std::move(name), .value = std::move(value), .preview = false});
   };
-  FileMetadataView* metadataView = nullptr;
   if (targets.size() == 1) {
     const auto& entry = targets.front();
     const auto location = entry.location();
@@ -323,7 +321,6 @@ PropertiesController::buildGeneral(const std::vector<luciole::DirectoryEntry>& t
             )
         )
     );
-    general->addChild(ui::separator({}));
     field("Location", luciole::locationEditText(location));
     if (entry.contentType) {
       field("MIME", *entry.contentType);
@@ -352,6 +349,11 @@ PropertiesController::buildGeneral(const std::vector<luciole::DirectoryEntry>& t
       field("Permissions", "Select at most 4096 items for permission editing.");
     }
   }
+  Flex* details = nullptr;
+  general->addChild(luciole::card("Details", &details));
+  auto metadata = std::make_unique<FileMetadataView>();
+  auto* metadataView = metadata.get();
+  details->addChild(std::move(metadata));
   FolderTotalsView* totals = nullptr;
   if (std::ranges::any_of(targets, [](const auto& entry) {
         return entry.type == luciole::FileType::Directory && !entry.symlink;
@@ -361,15 +363,16 @@ PropertiesController::buildGeneral(const std::vector<luciole::DirectoryEntry>& t
       m_page.requestSync();
     });
     totals = view.get();
-    general->addChild(std::move(view));
+    // FolderTotalsView brings its own "Contents" heading beside the Stop button.
+    Flex* contents = nullptr;
+    general->addChild(luciole::card({}, &contents));
+    contents->addChild(std::move(view));
   }
-  auto metadata = std::make_unique<FileMetadataView>();
-  metadataView = metadata.get();
-  general->addChild(std::move(metadata));
   Body result;
   result.general = generalGroup;
   result.metadata = metadataView;
   result.folderTotals = totals;
+  result.fields = std::move(fields);
   result.node = std::move(general);
   return result;
 }
@@ -405,18 +408,33 @@ PropertiesController::Body PropertiesController::buildBody(
         multiple, folders
     );
     editor = permissions.get();
-    auto basic = ui::column(
-        {.out = &basicGroup, .align = FlexAlign::Stretch, .gap = Style::spaceSm},
+    Flex* advancedEntry = nullptr;
+    auto advancedCard = luciole::card({}, &advancedEntry);
+    advancedEntry->addChild(
         ui::row(
-            {.justify = FlexJustify::End},
+            {.align = FlexAlign::Center, .gap = Style::spaceSm, .paddingV = 2.0F},
+            ui::column(
+                {.align = FlexAlign::Stretch, .gap = Style::spaceXs, .flexGrow = 1.0F},
+                ui::label({.text = "Access control list", .fontWeight = FontWeight::SemiBold}),
+                ui::label(
+                    {.text = "Grant rights to more users and groups.",
+                     .fontSize = Style::fontSizeCaption,
+                     .color = colorSpecFromRole(ColorRole::OnSurfaceVariant)}
+                )
+            ),
             ui::button(
                 {.out = &advancedOpen,
                  .text = "Advanced permissions…",
-                 .variant = ButtonVariant::Ghost,
+                 .controlHeight = Style::controlHeightSm,
+                 .variant = ButtonVariant::Default,
                  .onClick = [this] { showAdvanced(true, true); }}
             )
-        ),
-        std::move(permissions)
+        )
+    );
+    // The editor's cards come first; ACLs are the less common path, so they close the page.
+    auto basic = ui::column(
+        {.out = &basicGroup, .align = FlexAlign::Stretch, .gap = Style::spaceMd}, std::move(permissions),
+        std::move(advancedCard)
     );
     const auto aclChanged = [this] {
       if (m_permissionSave) {
@@ -487,6 +505,7 @@ PropertiesController::Body PropertiesController::buildBody(
       .acl = acl,
       .bulkAcl = bulkAcl,
       .results = results,
+      .fields = std::move(general.fields),
   };
 }
 
@@ -528,36 +547,40 @@ void PropertiesController::show(const std::vector<luciole::DirectoryEntry>& targ
   if (withResults) {
     propertyTabs.push_back({.label = "Results", .glyph = {}, .tooltip = {}});
   }
+  // Equal tabs wide enough for "Permissions"; the strip is centered rather than spanning the dialog.
+  const float tabsWidth = 128.0F * static_cast<float>(propertyTabs.size());
   auto root = ui::column(
       {.align = FlexAlign::Stretch},
       luciole::dialogHeader("Properties", "list-details", [this] { m_page.dismissMenu(); }),
-      ui::segmented(
-          {.out = &tabs,
-           .options = std::move(propertyTabs),
-           .equalSegmentWidths = true,
-           .visible = editable,
-           .participatesInLayout = editable,
-           .onChange =
-               [this, generalGroup, permissionsGroup, scroll, results](std::size_t index) {
-                 generalGroup->setVisible(index == 0);
-                 generalGroup->setParticipatesInLayout(index == 0);
-                 if (permissionsGroup) {
-                   permissionsGroup->setVisible(index == 1);
-                   permissionsGroup->setParticipatesInLayout(index == 1);
-                 }
-                 showAdvanced(false);
-                 if (m_permissionSave) {
-                   m_permissionSave->setEnabled(canApply() && !m_page.operationsBusy());
-                 }
-                 if (results) {
-                   results->setVisible(index == resultTab);
-                   results->setParticipatesInLayout(index == resultTab);
-                   scroll->setVisible(index != resultTab);
-                   scroll->setParticipatesInLayout(index != resultTab);
-                 }
-                 scroll->requestScrollToOffset(0);
-                 m_page.menuSurface()->requestLayout();
-               }}
+      ui::row(
+          {.justify = FlexJustify::Center, .visible = editable, .participatesInLayout = editable},
+          ui::segmented(
+              {.out = &tabs,
+               .options = std::move(propertyTabs),
+               .equalSegmentWidths = true,
+               .width = tabsWidth,
+               .onChange =
+                   [this, generalGroup, permissionsGroup, scroll, results](std::size_t index) {
+                     generalGroup->setVisible(index == 0);
+                     generalGroup->setParticipatesInLayout(index == 0);
+                     if (permissionsGroup) {
+                       permissionsGroup->setVisible(index == 1);
+                       permissionsGroup->setParticipatesInLayout(index == 1);
+                     }
+                     showAdvanced(false);
+                     if (m_permissionSave) {
+                       m_permissionSave->setEnabled(canApply() && !m_page.operationsBusy());
+                     }
+                     if (results) {
+                       results->setVisible(index == resultTab);
+                       results->setParticipatesInLayout(index == resultTab);
+                       scroll->setVisible(index != resultTab);
+                       scroll->setParticipatesInLayout(index != resultTab);
+                     }
+                     scroll->requestScrollToOffset(0);
+                     m_page.menuSurface()->requestLayout();
+                   }}
+          )
       ),
       std::move(body.node)
   );
@@ -640,7 +663,8 @@ void PropertiesController::show(const std::vector<luciole::DirectoryEntry>& targ
     m_page.activeDialog().bind(ActiveDialog::Kind::Properties, [this] { close(); });
     m_metadataView = body.metadata;
     m_folderTotals = body.folderTotals;
-    m_metadataWidth = std::max(1.0F, width - Style::spaceMd * 2 - Style::scrollbarWidth - Style::scrollbarGap);
+    m_basicFields = std::move(body.fields);
+    m_metadataWidth = generalCardWidth(width);
     m_multiple = multiple;
     if (m_metadataView) {
       if (multiple) {
@@ -694,6 +718,7 @@ void PropertiesController::close() {
   m_multiple = false;
   m_metadataView = nullptr;
   m_folderTotals = nullptr;
+  m_basicFields.clear();
   m_metadataDirty = false;
   // Saving goes on for the page that takes the job over once this page left its window.
   if (const auto job = std::exchange(m_job, nullptr); job && (m_page.jobs().attached() || !job->running())) {

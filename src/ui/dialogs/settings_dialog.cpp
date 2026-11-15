@@ -237,30 +237,7 @@ void SettingsDialog::section(const std::string& title, const std::string& glyph)
   m_pages.push_back(page.get());
   m_body->content()->addChild(std::move(page));
 }
-void SettingsDialog::card(const std::string& title) {
-  auto body = ui::column({.out = &m_section, .align = FlexAlign::Stretch});
-  m_pages.back()->addChild(
-      ui::column(
-          {.align = FlexAlign::Stretch,
-           .gap = Style::spaceXs,
-           .configure =
-               [](Flex& container) {
-                 // Selects, inputs and steppers fill SurfaceContainer, so the card sits one tier lower to keep
-                 // them visible. setCardStyle sets its own padding; tighten it like noctalia's settings cards.
-                 container.setCardStyle();
-                 container.setFill(colorSpecFromRole(ColorRole::SurfaceContainerLow));
-                 container.setPadding(Style::spaceSm, Style::spaceMd);
-               }},
-          ui::label(
-              {.text = title,
-               .fontSize = Style::fontSizeTitle,
-               .fontWeight = FontWeight::Bold,
-               .color = colorSpecFromRole(ColorRole::OnSurface)}
-          ),
-          std::move(body)
-      )
-  );
-}
+void SettingsDialog::card(const std::string& title) { m_pages.back()->addChild(luciole::card(title, &m_section)); }
 void SettingsDialog::selectPage(std::size_t selected) {
   disarmReset();
   m_title->setText(std::format("Settings - {}", m_pageTitles[selected]));
