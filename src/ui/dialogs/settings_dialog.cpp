@@ -134,6 +134,12 @@ SettingsDialog::SettingsDialog(
       {{"Compact", luciole::ViewDensity::Compact}, {"Comfortable", luciole::ViewDensity::Comfortable}}
   );
   addBool(P::ShowEmblems, "Link and read-only emblems");
+  addChoice(
+      P::FilenameTruncation, "Long filenames",
+      {{"Shorten in the middle", luciole::FilenameTruncation::Middle},
+       {"Shorten at the end", luciole::FilenameTruncation::End}},
+      "List and column views"
+  );
   card("Grid");
   addNumber(P::GridIconSize, "Icon size", {luciole::kGridIconSizes.begin(), luciole::kGridIconSizes.end()});
   addBool(P::ShowSizeCaption, "File size caption");

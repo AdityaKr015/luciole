@@ -51,6 +51,7 @@ namespace {
     using P = luciole::BrowserPreference;
     writer.submit(
         {{P::Density, luciole::ViewDensity::Compact},
+         {P::FilenameTruncation, luciole::FilenameTruncation::Middle},
          {P::ShowSizeCaption, false},
          {P::ShowEmblems, true},
          {P::ShowBackups, true},
@@ -60,6 +61,7 @@ namespace {
     );
     writer.submit(
         {{P::Density, luciole::ViewDensity::Comfortable},
+         {P::FilenameTruncation, luciole::FilenameTruncation::End},
          {P::ShowSizeCaption, true},
          {P::ShowTypeCaption, true},
          {P::ShowModifiedCaption, true},
@@ -127,7 +129,9 @@ namespace {
         && loaded->browser.activationMode == luciole::ActivationMode::SingleClick
         && loaded->browser.typingMode == luciole::TypingMode::Typeahead
         && loaded->browser.presentation
-            == luciole::BrowsePresentation(luciole::ViewDensity::Comfortable, {true, true, true}, false)
+            == luciole::BrowsePresentation(
+                luciole::ViewDensity::Comfortable, {true, true, true}, false, luciole::FilenameTruncation::End
+            )
     );
     std::ifstream base(paths.base);
     const std::string content((std::istreambuf_iterator<char>(base)), {});

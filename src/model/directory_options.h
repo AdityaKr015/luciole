@@ -17,6 +17,7 @@ namespace luciole {
   inline constexpr int kDefaultSidebarWidth = 206;
   enum class ViewMode : std::uint8_t { List, Grid, Miller };
   enum class ViewDensity : std::uint8_t { Compact, Comfortable };
+  enum class FilenameTruncation : std::uint8_t { Middle, End };
   struct IconCaptions {
     bool size = false;
     bool type = false;
@@ -28,6 +29,7 @@ namespace luciole {
     ViewDensity density = ViewDensity::Compact;
     IconCaptions captions;
     bool showEmblems = true;
+    FilenameTruncation filenameTruncation = FilenameTruncation::Middle;
     bool operator==(const BrowsePresentation&) const = default;
   };
   enum class ActivationMode : std::uint8_t { SingleClick, DoubleClick };

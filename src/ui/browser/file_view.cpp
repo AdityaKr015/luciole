@@ -125,6 +125,10 @@ namespace {
       m_icon->setIconSize(m_iconSize);
       m_icon->setEmblems(presentation.showEmblems && entry.symlink, presentation.showEmblems && readOnly);
       m_name->setText(tree.status.empty() ? entry.displayName() : entry.displayName() + " · " + tree.status);
+      m_name->setEllipsize(
+          presentation.filenameTruncation == luciole::FilenameTruncation::Middle ? TextEllipsize::Middle
+                                                                                 : TextEllipsize::End
+      );
       m_parent->setText(entry.parentDisplayName());
       m_parent->setVisible(!entry.parentDisplayName().empty());
       m_parent->setParticipatesInLayout(!entry.parentDisplayName().empty());

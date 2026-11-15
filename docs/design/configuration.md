@@ -14,6 +14,12 @@ File monitors follow canonical files, existing path components and resolved decl
 
 [SettingsController](../../src/app/page/settings_controller.cpp) retains the preferred 880-pixel dialog width independently of the opening window size. The common popup layout in [BrowserPage](../../src/app/page/browser_page.cpp) calls `layoutDialog()` before measuring Settings on each requested layout. It reapplies the parent-constrained height up to 640 pixels and the compact navigation breakpoint. Parent configuration already requests popup layout and recenters the dialog. Resize the existing view so its category, scroll state, focus and drafts survive; dismiss an open select dropdown when its anchor geometry changes. Do not persist the temporarily constrained popup dimensions as its preferred size.
 
+## Filename presentation
+
+`browser.filename_truncation` accepts `middle` (default) and `end`. Settings → Views → Long filenames uses the existing typed preference and Select control. BrowsePresentation carries the value to every pane; FileRow applies the Label ellipsis mode on bind, including recycled List rows, expanded folders and Miller columns. Grid keeps its two-line wrapping. Parent labels, metadata columns, Places, tooltips and raw operation names retain their existing behavior. Sorting, selection and metadata loading are independent of the preference.
+
+Plain single-line Middle text uses the shared renderer's compact layout. Pango stretches its synthetic ellipsis run after removing whole grapheme clusters; the renderer subtracts that excess advance from the layout budget and asks Pango to lay out again. It uses public APIs without rewriting filenames or modifying Pango-owned glyph data. Actual spaces remain text. Start/End, markup and multiline layouts retain normal Pango behavior. The correction lives upstream in Noctalia and is mirrored into Luciole.
+
 ## Typing and query scope
 
 `browser.typing_mode` accepts `search` (default), `filter` and `typeahead`. The Settings General page uses the existing Select control for all three. Search and filter typing, including input-method commits, use the same toolbar field; current-folder mode updates its placeholder and tooltip. Explicit field entry and Ctrl+F use that same scope. Typeahead retains recursive explicit search. Preference changes update every existing pane and Miller controller.

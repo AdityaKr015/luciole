@@ -116,6 +116,36 @@ namespace {
     }
   }
 
+  void testFilenameTruncation() {
+    using Mode = luciole::FilenameTruncation;
+    using State = luciole::AtomicWriteState;
+    const auto key = luciole::BrowserPreference::FilenameTruncation;
+    Fixture fixture;
+    luciole::ConfigService settings(fixture.paths());
+    TEST_CHECK(settings.reload() && settings.settings().browser.presentation.filenameTruncation == Mode::Middle);
+    fixture.write("config.toml", "[browser]\nfilename_truncation = 'end'\n");
+    TEST_CHECK(settings.reload() && settings.settings().browser.presentation.filenameTruncation == Mode::End);
+    const std::array middle{luciole::OverrideEdit{key, Mode::Middle}};
+    TEST_CHECK(settings.saveOverrides(middle) == State::Durable);
+    luciole::ConfigService restarted(fixture.paths());
+    TEST_CHECK(restarted.reload() && restarted.settings().browser.presentation.filenameTruncation == Mode::Middle);
+    const auto saved = read(fixture.paths().overrides);
+    TEST_CHECK(saved.contains("filename_truncation = \"middle\""));
+    const std::array invalid{luciole::OverrideEdit{key, static_cast<Mode>(255)}};
+    TEST_CHECK(restarted.saveOverrides(invalid) == State::NotCommitted && read(fixture.paths().overrides) == saved);
+    const std::array reset{luciole::OverrideEdit{key, std::nullopt}};
+    TEST_CHECK(restarted.saveOverrides(reset) == State::Durable);
+    TEST_CHECK(restarted.settings().browser.presentation.filenameTruncation == Mode::End);
+    TEST_CHECK(!read(fixture.paths().overrides).contains("filename_truncation"));
+    for (const auto* value : {"'start'", "'Middle'", "true", "1", "[]"}) {
+      fixture.write("config.toml", std::format("[browser]\nfilename_truncation = {}\n", value));
+      TEST_CHECK(!luciole::validateConfigFile(fixture.paths().base).empty());
+      TEST_CHECK(!restarted.reload() && restarted.settings().browser.presentation.filenameTruncation == Mode::End);
+    }
+    fixture.write("config.toml", "[browser]\nfilename_truncation = 'middle'\n");
+    TEST_CHECK(restarted.reload() && restarted.settings().browser.presentation.filenameTruncation == Mode::Middle);
+  }
+
   void testPresentationSettings() {
     using P = luciole::BrowserPreference;
     using State = luciole::AtomicWriteState;
@@ -1079,6 +1109,7 @@ int main() {
     testTerminalCommand();
     testSchemaAndDiagnostics();
     testPresentationSettings();
+    testFilenameTruncation();
     testBackupPreference();
     testNewTabPreference();
     testRestoreLastWindowPreference();

@@ -57,6 +57,7 @@ All keys below belong in `[browser]`. Dimensions are logical pixels unless state
 | `view_mode` | `"list"` | `"list"`, `"grid"`, `"miller"` |
 | `grid_icon_size` | `48` | `32`, `48`, `64`, `80`, `96`, `128`, `160`, `192`, `256` |
 | `density` | `"compact"` | `"compact"`, `"comfortable"` |
+| `filename_truncation` | `"middle"` | `"middle"` keeps both ends of long filenames; `"end"` keeps the beginning. Applies to List and Columns. |
 | `show_size_caption` | `false` | Size caption in Grid view |
 | `show_type_caption` | `false` | Type caption in Grid view |
 | `show_modified_caption` | `false` | Modified-time caption in Grid view |

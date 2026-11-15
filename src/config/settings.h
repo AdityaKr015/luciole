@@ -73,6 +73,7 @@ namespace luciole {
     ViewMode,
     GridIconSize,
     Density,
+    FilenameTruncation,
     ShowSizeCaption,
     ShowTypeCaption,
     ShowModifiedCaption,
@@ -147,6 +148,7 @@ namespace luciole {
     static constexpr PreferenceKey<luciole::ViewMode> ViewMode{Id::ViewMode};
     static constexpr PreferenceKey<int> GridIconSize{Id::GridIconSize};
     static constexpr PreferenceKey<luciole::ViewDensity> Density{Id::Density};
+    static constexpr PreferenceKey<luciole::FilenameTruncation> FilenameTruncation{Id::FilenameTruncation};
     static constexpr PreferenceKey<bool> ShowSizeCaption{Id::ShowSizeCaption};
     static constexpr PreferenceKey<bool> ShowTypeCaption{Id::ShowTypeCaption};
     static constexpr PreferenceKey<bool> ShowModifiedCaption{Id::ShowModifiedCaption};
@@ -208,8 +210,8 @@ namespace luciole {
   private:
     BrowserPreferenceId m_preference;
     std::variant<
-        std::monostate, bool, int, SortField, ViewMode, ViewDensity, DetailsColumnOrder, ActivationMode, TypingMode,
-        ThumbnailPolicy, std::string>
+        std::monostate, bool, int, SortField, ViewMode, ViewDensity, FilenameTruncation, DetailsColumnOrder,
+        ActivationMode, TypingMode, ThumbnailPolicy, std::string>
         m_value;
   };
 

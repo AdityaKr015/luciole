@@ -55,6 +55,9 @@ namespace {
   constexpr auto kDensities = std::to_array<Named<luciole::ViewDensity>>(
       {{luciole::ViewDensity::Compact, "compact"}, {luciole::ViewDensity::Comfortable, "comfortable"}}
   );
+  constexpr auto kFilenameTruncations = std::to_array<Named<luciole::FilenameTruncation>>(
+      {{luciole::FilenameTruncation::Middle, "middle"}, {luciole::FilenameTruncation::End, "end"}}
+  );
   constexpr auto kThumbnailPolicies = std::to_array<Named<luciole::ThumbnailPolicy>>(
       {{luciole::ThumbnailPolicy::Never, "never"},
        {luciole::ThumbnailPolicy::Local, "local"},
@@ -224,6 +227,10 @@ namespace {
            "expected integer icon size 32, 48, 64, 80, 96, 128, 160, 192, or 256"}
       ),
       describe(P::Density, "density", [](S& s) -> auto& { return s.presentation.density; }, {kDensities}),
+      describe(
+          P::FilenameTruncation, "filename_truncation", [](S& s) -> auto& { return s.presentation.filenameTruncation; },
+          {kFilenameTruncations}
+      ),
       describe(P::ShowSizeCaption, "show_size_caption", [](S& s) -> auto& { return s.presentation.captions.size; }),
       describe(P::ShowTypeCaption, "show_type_caption", [](S& s) -> auto& { return s.presentation.captions.type; }),
       describe(
@@ -551,6 +558,7 @@ template luciole::TypingMode& luciole::preferenceValue(BrowserSettings&, Prefere
 template luciole::SortField& luciole::preferenceValue(BrowserSettings&, PreferenceKey<SortField>);
 template luciole::ViewMode& luciole::preferenceValue(BrowserSettings&, PreferenceKey<ViewMode>);
 template luciole::ViewDensity& luciole::preferenceValue(BrowserSettings&, PreferenceKey<ViewDensity>);
+template luciole::FilenameTruncation& luciole::preferenceValue(BrowserSettings&, PreferenceKey<FilenameTruncation>);
 template luciole::DetailsColumnOrder& luciole::preferenceValue(BrowserSettings&, PreferenceKey<DetailsColumnOrder>);
 template luciole::ThumbnailPolicy& luciole::preferenceValue(BrowserSettings&, PreferenceKey<ThumbnailPolicy>);
 template const bool& luciole::preferenceValue(const BrowserSettings&, PreferenceKey<bool>);
@@ -560,6 +568,8 @@ template const luciole::TypingMode& luciole::preferenceValue(const BrowserSettin
 template const luciole::SortField& luciole::preferenceValue(const BrowserSettings&, PreferenceKey<SortField>);
 template const luciole::ViewMode& luciole::preferenceValue(const BrowserSettings&, PreferenceKey<ViewMode>);
 template const luciole::ViewDensity& luciole::preferenceValue(const BrowserSettings&, PreferenceKey<ViewDensity>);
+template const luciole::FilenameTruncation&
+luciole::preferenceValue(const BrowserSettings&, PreferenceKey<FilenameTruncation>);
 template const luciole::DetailsColumnOrder&
 luciole::preferenceValue(const BrowserSettings&, PreferenceKey<DetailsColumnOrder>);
 template const luciole::ThumbnailPolicy&
