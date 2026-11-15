@@ -241,11 +241,11 @@ namespace {
     check(SortField::Type, {1, 4, 2, 3}, {2, 4, 1, 3});
     check(SortField::Location, {4, 2, 1, 3}, {1, 2, 4, 3});
 
-    a.details.owner.reset();
+    a.details.owner = {};
     b.details.owner = "zeta";
     unknown.details.owner = ""; // Empty is known, not missing metadata.
     b.details.group = "group1";
-    c.details.group.reset();
+    c.details.group = {};
     unknown.details.group = "";
     b.displayName = "item0";
     b.location = Location::fromPath("/tmp/0/item10");

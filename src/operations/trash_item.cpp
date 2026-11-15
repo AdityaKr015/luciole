@@ -64,8 +64,8 @@ luciole::TrashItemIdentity luciole::readTrashItemIdentity(const DirectoryEntry& 
       .type = entry.type,
       .symlink = entry.symlink,
       .etag = entry.etag,
-      .original = entry.trash.original ? entry.trash.original->nativePath() : std::nullopt,
-      .deleted = entry.trash.deletionDate
+      .original = entry.trashInfo().original ? entry.trashInfo().original->nativePath() : std::nullopt,
+      .deleted = entry.trashInfo().deletionDate
   };
 }
 

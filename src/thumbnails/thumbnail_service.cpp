@@ -21,6 +21,10 @@
 #include <utility>
 
 namespace {
+  std::string revisionText(const std::optional<luciole::ChangeRevision>& revision) {
+    return revision ? revision->text() : std::string();
+  }
+
   constexpr std::size_t kResidentBudget = 64U * 1024U * 1024U;
   constexpr std::size_t kMaxEntries = 1024;
   std::mutex diskMutex;
@@ -79,7 +83,7 @@ namespace {
         return result;
       }
     }
-    const auto mime = source.contentType.value_or("");
+    const std::string mime(source.contentType.value_or(""));
     const bool media = mime.starts_with("video/") || mime.starts_with("audio/");
     const luciole::Fd file(::open(native->c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK));
     struct stat before{};
@@ -111,17 +115,8 @@ namespace {
     if (source.identity && readFileIdentity(current.get()) != source.identity) {
       return result;
     }
-    if (source.contentRevision) {
-      if (!g_file_info_has_attribute(current.get(), G_FILE_ATTRIBUTE_TIME_CHANGED)) {
-        return result;
-      }
-      const auto seconds = g_file_info_get_attribute_uint64(current.get(), G_FILE_ATTRIBUTE_TIME_CHANGED);
-      const auto nanos = g_file_info_has_attribute(current.get(), "time::changed-nsec")
-          ? g_file_info_get_attribute_uint32(current.get(), "time::changed-nsec")
-          : g_file_info_get_attribute_uint32(current.get(), G_FILE_ATTRIBUTE_TIME_CHANGED_USEC) * 1000U;
-      if (*source.contentRevision != std::to_string(seconds) + ':' + std::to_string(nanos)) {
-        return result;
-      }
+    if (source.contentRevision && readChangeRevision(current.get()) != source.contentRevision) {
+      return result;
     }
     const auto sourceStamp = stamp(before);
     const auto relative = std::filesystem::path(*native).lexically_relative(store.root());
@@ -428,7 +423,7 @@ struct luciole::ThumbnailService::State : std::enable_shared_from_this<State> {
               loaded->loaded.image.revision =
                   nlohmann::json::array({"pixbuf-media-v1", request->source.etag.value_or(""),
                                          request->source.modifiedSeconds.value_or(0), request->source.size.value_or(0),
-                                         request->source.contentRevision.value_or(""),
+                                         revisionText(request->source.contentRevision),
                                          request->source.identity ? request->source.identity->filesystem : "",
                                          request->source.identity ? request->source.identity->file : "", request->side,
                                          request->options.maxFileMiB, request->options.maxMegapixels})
@@ -531,7 +526,7 @@ luciole::ThumbnailService::request(const DirectoryEntry& source, int pixels, boo
   const int side = pixelSizeClass(pixels, mime->starts_with("image/") ? state.purpose : ThumbnailPurpose::Thumbnail);
   const auto key = std::format(
       "{}\n{}\n{}\n{}\n{}\n{}\n{}", source.location.uri(), source.id, source.etag.value_or(""),
-      source.modifiedSeconds.value_or(0), source.size.value_or(0), source.contentRevision.value_or(""), side
+      source.modifiedSeconds.value_or(0), source.size.value_or(0), revisionText(source.contentRevision), side
   );
   auto found = state.cache.find(key);
   if (found != state.cache.end() && found->second.failed && std::chrono::steady_clock::now() >= found->second.retry) {
@@ -576,7 +571,7 @@ std::shared_ptr<const luciole::FileIconImage> luciole::ThumbnailService::prepare
   for (const int side : {1024, 512, 256, 128}) {
     const auto key = std::format(
         "{}\n{}\n{}\n{}\n{}\n{}\n{}", source.location.uri(), source.id, source.etag.value_or(""),
-        source.modifiedSeconds.value_or(0), source.size.value_or(0), source.contentRevision.value_or(""), side
+        source.modifiedSeconds.value_or(0), source.size.value_or(0), revisionText(source.contentRevision), side
     );
     const auto found = m_state->cache.find(key);
     if (found != m_state->cache.end()

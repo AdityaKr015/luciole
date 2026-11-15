@@ -2,17 +2,33 @@
 
 #include "fs/gio_interop.h"
 
-std::optional<std::string> luciole::readContentType(GFileInfo* info) {
+#include <format>
+
+luciole::InternedText luciole::readContentType(GFileInfo* info) {
   for (const auto* attribute : {G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE, G_FILE_ATTRIBUTE_STANDARD_FAST_CONTENT_TYPE}) {
     const char* value = infoString(info, attribute);
     if (value != nullptr && *value != '\0' && g_utf8_validate(value, -1, nullptr)) {
-      return value;
+      return InternedText(value);
     }
   }
-  return std::nullopt;
+  return {};
 }
 
-std::string luciole::fileTypeDescription(FileType type, bool symlink, const std::optional<std::string>& contentType) {
+std::string luciole::ChangeRevision::text() const { return std::format("{}:{}", seconds, nanoseconds); }
+
+std::optional<luciole::ChangeRevision> luciole::readChangeRevision(GFileInfo* info) {
+  const auto seconds = infoUint64(info, G_FILE_ATTRIBUTE_TIME_CHANGED);
+  if (!seconds) {
+    return std::nullopt;
+  }
+  auto nanos = infoUint32(info, "time::changed-nsec");
+  if (!nanos) {
+    nanos = infoUint32(info, G_FILE_ATTRIBUTE_TIME_CHANGED_USEC).value_or(0) * 1000U;
+  }
+  return ChangeRevision{.seconds = *seconds, .nanoseconds = *nanos};
+}
+
+std::string luciole::fileTypeDescription(FileType type, bool symlink, InternedText contentType) {
   if (symlink || type == FileType::Symlink) {
     return "Link";
   }
@@ -82,12 +98,12 @@ std::optional<luciole::FileIdentity> luciole::readFileIdentity(GFileInfo* info) 
 
 luciole::EntryMetadata luciole::readEntryMetadata(GFileInfo* info) {
   EntryMetadata result;
-  const auto text = [&](const char* key) -> std::optional<std::string> {
+  const auto text = [&](const char* key) -> InternedText {
     const char* value = infoString(info, key);
     if (!value || !*value || !g_utf8_validate(value, -1, nullptr)) {
       return {};
     }
-    return value;
+    return InternedText(value);
   };
   result.accessedSeconds = infoUint64(info, G_FILE_ATTRIBUTE_TIME_ACCESS);
   result.createdSeconds = infoUint64(info, G_FILE_ATTRIBUTE_TIME_CREATED);

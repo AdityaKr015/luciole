@@ -35,7 +35,9 @@ namespace luciole {
   FileAccess readFileAccess(GFileInfo* info);
   FilesystemInfo readFilesystemInfo(GFileInfo* info);
   // Prefer the provider's regular MIME type, falling back to its filename-only type when unavailable.
-  std::optional<std::string> readContentType(GFileInfo* info);
+  InternedText readContentType(GFileInfo* info);
+  // time::changed with time::changed-nsec, falling back to time::changed-usec; nullopt without time::changed.
+  std::optional<ChangeRevision> readChangeRevision(GFileInfo* info);
   FileIconSource readIconSource(GIcon* icon);
   FileIconSource readFileIcon(GFileInfo* info, const Location& location);
   TrashInfo readTrashInfo(GFileInfo* info);
@@ -49,7 +51,8 @@ namespace luciole {
     // the content type and the user's special folders, building two icon objects per file; this derives the
     // same icon once per distinct value. nullptr clears the folder.
     void setLocalFolder(const char* path);
-    SharedFileIcon getLocal(GFileInfo* info, const Location& location);
+    // name is the raw filename; contentType is GIO's regular content type, null when unknown.
+    SharedFileIcon getLocal(const char* name, GFileType type, const char* contentType, const Location& location);
 
   private:
     struct SpecialIcon {

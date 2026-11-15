@@ -1,6 +1,7 @@
 #include "browser/action_registry.h"
 
 #include "fs/archive_type.h"
+#include "fs/entry_access.h"
 #include "fs/transfer_types.h"
 
 #include <algorithm>
@@ -150,7 +151,7 @@ namespace {
       return unavailable("These items cannot be changed by the Trash provider.");
     }
     if (restore && !all(c, r, [](const DirectoryEntry& entry) {
-          return entry.trash.original && entry.trash.original->nativePath().has_value();
+          return entry.trashInfo().original && entry.trashInfo().original->nativePath().has_value();
         })) {
       return unavailable("The original location is unavailable for one or more selected items.");
     }
@@ -174,7 +175,7 @@ namespace {
     } else if (!single(r) || !all(c, r, [](const DirectoryEntry& entry) {
                  return entry.type == FileType::Regular
                      && !entry.symlink
-                     && luciole::isSupportedArchive(entry.location, entry.contentType);
+                     && luciole::isSupportedArchive(entry.location, entry.contentType.value_or(""));
                })) {
       return unavailable("Select one ZIP or TAR archive.");
     }
@@ -227,7 +228,7 @@ namespace {
       return unavailable("Select exactly one item.");
     }
     return require(
-        c.model.entry(r.targets.front().id)->trash.original.has_value(), "The original location is unavailable."
+        c.model.entry(r.targets.front().id)->trashInfo().original.has_value(), "The original location is unavailable."
     );
   }
   State pin(const C& c, const R& r, bool unpin) {

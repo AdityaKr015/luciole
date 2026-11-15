@@ -48,26 +48,35 @@ bool luciole::DirectoryModel::applySnapshot(
   m_alternateSortKeys.clear();
   m_preparedSortField.reset();
   const bool sameLocation = snapshot.location == m_snapshot.location;
-  m_presentations.reserve(snapshot.entries.size());
+  std::vector<Presentation> presentations(snapshot.entries.size());
+  std::unordered_map<EntryId, std::uint32_t> sources;
+  sources.reserve(snapshot.entries.size());
   struct TypeLabel {
     const std::string* label = nullptr;
     bool known = false;
   };
   std::unordered_map<std::string_view, TypeLabel> typeLabels;
-  // Every surviving presentation is repointed below, so the previous pool can be replaced afterwards.
+  // Every presentation is rebuilt below, so the previous pool can be replaced afterwards.
   std::unordered_set<std::string> labels;
   const auto pooled = [&labels](std::string label) { return &*labels.insert(std::move(label)).first; };
   for (std::size_t i = 0; i < snapshot.entries.size(); ++i) {
     const auto& entry = snapshot.entries[i];
-    auto [found, inserted] = m_presentations.try_emplace(entry.id);
-    auto& presentation = found->second;
-    if (inserted || !sameLocation || m_snapshot.entries[presentation.sourceIndex].displayName != entry.displayName) {
-      presentation.filterKey = foldedDisplayText(entry.displayName);
-      const GString key(g_utf8_collate_key_for_filename(presentation.filterKey.c_str(), -1));
+    auto& presentation = presentations[i];
+    // An ID keeps its keys while its display name is unchanged.
+    const auto previous = sameLocation ? m_sourceById.find(entry.id) : m_sourceById.end();
+    if (previous != m_sourceById.end() && m_snapshot.entries[previous->second].displayName == entry.displayName) {
+      auto& kept = m_presentations[previous->second];
+      presentation.sortKey = std::move(kept.sortKey);
+      presentation.filterKey = std::move(kept.filterKey);
+    } else {
+      auto folded = foldedDisplayText(entry.displayName);
+      const GString key(g_utf8_collate_key_for_filename(folded.c_str(), -1));
       presentation.sortKey = key.get();
+      if (folded != entry.displayName) {
+        presentation.filterKey = std::move(folded);
+      }
     }
-    presentation.sourceIndex = i;
-    presentation.alternateSortKey = nullptr;
+    sources.insert_or_assign(entry.id, static_cast<std::uint32_t>(i));
     const bool regular = entry.type == FileType::Regular && !entry.symlink;
     if (regular && entry.contentType) {
       auto [label, inserted] = typeLabels.try_emplace(*entry.contentType);
@@ -85,11 +94,8 @@ bool luciole::DirectoryModel::applySnapshot(
           entry.symlink || entry.type == FileType::Symlink || (!regular && entry.type != FileType::Unknown);
     }
   }
-  // Surviving IDs now point into the incoming snapshot; remove rows that disappeared.
-  std::erase_if(m_presentations, [&](const auto& item) {
-    const auto index = item.second.sourceIndex;
-    return index >= snapshot.entries.size() || snapshot.entries[index].id != item.first;
-  });
+  m_presentations = std::move(presentations);
+  m_sourceById = std::move(sources);
   m_typeLabels = std::move(labels);
   m_snapshot = std::move(snapshot);
   rebuildProjection();
@@ -118,14 +124,32 @@ void luciole::DirectoryModel::setFilter(FilterOptions options) {
   notify();
 }
 
+std::optional<std::size_t> luciole::DirectoryModel::sourceOf(EntryId id) const {
+  const auto found = m_sourceById.find(id);
+  return found == m_sourceById.end() ? std::nullopt : std::optional<std::size_t>(found->second);
+}
+
+std::optional<std::size_t> luciole::DirectoryModel::rowOf(EntryId id) const {
+  const auto source = sourceOf(id);
+  if (!source || *source >= m_rowBySource.size() || m_rowBySource[*source] == kNoRow) {
+    return std::nullopt;
+  }
+  return m_rowBySource[*source];
+}
+
+std::string_view luciole::DirectoryModel::filterText(std::size_t source) const {
+  const auto& key = m_presentations[source].filterKey;
+  return key.empty() ? std::string_view(m_snapshot.entries[source].displayName) : std::string_view(key);
+}
+
 const luciole::DirectoryEntry* luciole::DirectoryModel::entry(EntryId id) const {
-  const auto it = m_presentations.find(id);
-  return it == m_presentations.end() ? nullptr : &m_snapshot.entries[it->second.sourceIndex];
+  const auto source = sourceOf(id);
+  return source ? &m_snapshot.entries[*source] : nullptr;
 }
 
 std::string_view luciole::DirectoryModel::typeLabel(EntryId id) const {
-  const auto it = m_presentations.find(id);
-  return it == m_presentations.end() ? std::string_view{} : std::string_view(*it->second.typeLabel);
+  const auto source = sourceOf(id);
+  return source ? std::string_view(*m_presentations[*source].typeLabel) : std::string_view{};
 }
 
 bool luciole::DirectoryModel::less(const SortItem& leftItem, const SortItem& rightItem) const {
@@ -173,10 +197,10 @@ void luciole::DirectoryModel::prepareSortKeys() {
     return;
   }
   m_alternateSortKeys.clear();
-  for (auto& [id, presentation] : m_presentations) {
-    (void)id;
+  for (std::size_t source = 0; source < m_presentations.size(); ++source) {
+    auto& presentation = m_presentations[source];
     presentation.alternateSortKey = nullptr;
-    const auto& entry = m_snapshot.entries[presentation.sourceIndex];
+    const auto& entry = m_snapshot.entries[source];
     if (m_sort.field == SortField::Location) {
       if (const auto parent = entry.location.parent()) {
         auto [key, inserted] = m_alternateSortKeys.try_emplace(parent->uri());
@@ -212,17 +236,19 @@ void luciole::DirectoryModel::rebuildProjection() {
   // Sorting reads presentation and entry through direct pointers rather than hashing IDs per comparison.
   std::vector<SortItem> items;
   items.reserve(m_snapshot.entries.size());
-  for (const auto& entry : m_snapshot.entries) {
-    const auto& presentation = m_presentations.at(entry.id);
+  for (std::size_t source = 0; source < m_snapshot.entries.size(); ++source) {
+    const auto& entry = m_snapshot.entries[source];
     if ((!entry.hidden || m_filter.showHidden)
         && (m_filter.showBackups || !isEditorBackup(entry.name, entry.type))
-        && presentation.filterKey.contains(m_filterKey)) {
-      items.push_back({entry.id, &presentation, &entry});
+        && (m_filterKey.empty() || filterText(source).contains(m_filterKey))) {
+      items.push_back({entry.id, static_cast<std::uint32_t>(source), &m_presentations[source], &entry});
     }
   }
   std::ranges::sort(items, [this](const SortItem& left, const SortItem& right) { return less(left, right); });
   m_rows.reserve(items.size());
+  m_rowBySource.assign(m_snapshot.entries.size(), kNoRow);
   for (const auto& item : items) {
+    m_rowBySource[item.source] = static_cast<std::uint32_t>(m_rows.size());
     m_rows.push_back(item.id);
   }
   if (!m_treeParents.empty() || m_preserveRootOrder) {
@@ -236,7 +262,7 @@ void luciole::DirectoryModel::rebuildProjection() {
       }
     }
     if (m_preserveRootOrder) {
-      std::ranges::sort(roots, {}, [&](EntryId id) { return m_presentations.at(id).sourceIndex; });
+      std::ranges::sort(roots, {}, [&](EntryId id) { return m_sourceById.at(id); });
     }
     m_rows.clear();
     std::unordered_set<EntryId> visited;
@@ -254,11 +280,10 @@ void luciole::DirectoryModel::rebuildProjection() {
     for (const auto id : roots) {
       append(id, 0);
     }
-  }
-  m_positions.clear();
-  m_positions.reserve(m_rows.size());
-  for (std::size_t i = 0; i < m_rows.size(); ++i) {
-    m_positions.emplace(m_rows[i], i);
+    m_rowBySource.assign(m_snapshot.entries.size(), kNoRow);
+    for (std::size_t row = 0; row < m_rows.size(); ++row) {
+      m_rowBySource[m_sourceById.at(m_rows[row])] = static_cast<std::uint32_t>(row);
+    }
   }
   reconcileSelection();
 }
@@ -286,9 +311,9 @@ void luciole::DirectoryModel::reconcileSelection() {
     m_scrollAnchor.reset();
     return;
   }
-  std::erase_if(m_selection.selected, [this](EntryId id) { return !m_positions.contains(id); });
+  std::erase_if(m_selection.selected, [this](EntryId id) { return !rowOf(id); });
   for (auto* id : {&m_selection.focused, &m_selection.anchor, &m_scrollAnchor}) {
-    if (*id && !m_positions.contains(**id)) {
+    if (*id && !rowOf(**id)) {
       id->reset();
     }
   }
@@ -332,7 +357,7 @@ luciole::SelectionSummary luciole::DirectoryModel::selectionSummary() const {
 }
 
 bool luciole::DirectoryModel::select(EntryId id, SelectionMode mode) {
-  if (!canSelect() || !m_positions.contains(id)) {
+  if (!canSelect() || !rowOf(id)) {
     return false;
   }
   if (mode == SelectionMode::Replace) {
@@ -351,7 +376,10 @@ bool luciole::DirectoryModel::select(EntryId id, SelectionMode mode) {
     if (mode == SelectionMode::Range) {
       m_selection.selected.clear();
     }
-    const auto [first, last] = std::minmax(m_positions.at(anchor), m_positions.at(id));
+    // std::minmax returns references; keep the rows alive in named values.
+    const auto anchorRow = *rowOf(anchor);
+    const auto idRow = *rowOf(id);
+    const auto [first, last] = std::minmax(anchorRow, idRow);
     for (std::size_t i = first; i <= last; ++i) {
       m_selection.selected.insert(m_rows[i]);
     }
@@ -397,7 +425,8 @@ std::optional<std::string> luciole::DirectoryModel::selectPattern(const std::str
   );
   std::unordered_set<EntryId> selected;
   for (const auto id : m_rows) {
-    if (g_pattern_spec_match_string(spec.get(), m_presentations.at(id).filterKey.c_str())) {
+    // filterText views a whole std::string, so its data is NUL-terminated.
+    if (g_pattern_spec_match_string(spec.get(), filterText(*sourceOf(id)).data())) {
       selected.insert(id);
     }
   }
@@ -412,14 +441,13 @@ std::optional<luciole::EntryId> luciole::DirectoryModel::prefixMatch(const std::
   const auto folded = foldedDisplayText(prefix);
   std::size_t start = 0;
   if (m_selection.focused) {
-    const auto found = m_positions.find(*m_selection.focused);
-    if (found != m_positions.end()) {
-      start = (found->second + (cycle ? 1 : 0)) % m_rows.size();
+    if (const auto row = rowOf(*m_selection.focused)) {
+      start = (*row + (cycle ? 1 : 0)) % m_rows.size();
     }
   }
   for (std::size_t offset = 0; offset < m_rows.size(); ++offset) {
     const auto id = m_rows[(start + offset) % m_rows.size()];
-    if (m_presentations.at(id).filterKey.starts_with(folded)) {
+    if (filterText(*sourceOf(id)).starts_with(folded)) {
       return id;
     }
   }
@@ -433,7 +461,7 @@ void luciole::DirectoryModel::clearSelection() {
 }
 
 bool luciole::DirectoryModel::replaceSelection(std::span<const EntryId> ids) {
-  if (!canSelect() || std::ranges::any_of(ids, [this](EntryId id) { return !m_positions.contains(id); })) {
+  if (!canSelect() || std::ranges::any_of(ids, [this](EntryId id) { return !rowOf(id); })) {
     return false;
   }
   std::unordered_set<EntryId> selected(ids.begin(), ids.end());
@@ -450,7 +478,7 @@ bool luciole::DirectoryModel::replaceSelection(std::span<const EntryId> ids) {
 }
 
 bool luciole::DirectoryModel::setFocus(std::optional<EntryId> id) {
-  if (id && (!canSelect() || !m_positions.contains(*id))) {
+  if (id && (!canSelect() || !rowOf(*id))) {
     return false;
   }
   m_selection.focused = id;
@@ -459,7 +487,7 @@ bool luciole::DirectoryModel::setFocus(std::optional<EntryId> id) {
 }
 
 bool luciole::DirectoryModel::setScrollAnchor(std::optional<EntryId> id) {
-  if (id && (!canSelect() || !m_positions.contains(*id))) {
+  if (id && (!canSelect() || !rowOf(*id))) {
     return false;
   }
   m_scrollAnchor = id;
@@ -478,7 +506,7 @@ void luciole::DirectoryModel::restoreInteraction(SelectionState selection, std::
   if (!m_selectionAvailable) {
     return;
   }
-  const auto visible = [this](EntryId id) { return m_positions.contains(id); };
+  const auto visible = [this](EntryId id) { return rowOf(id).has_value(); };
   std::erase_if(selection.selected, [&](EntryId id) { return !visible(id); });
   if (selection.focused && !visible(*selection.focused)) {
     selection.focused.reset();

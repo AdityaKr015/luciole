@@ -328,8 +328,9 @@ PropertiesController::buildGeneral(const std::vector<luciole::DirectoryEntry>& t
       field("MIME", *entry.contentType);
     }
     if (entry.location.isTrash()) {
-      field("Original", entry.trash.original ? luciole::locationEditText(*entry.trash.original) : "Unknown");
-      field("Deleted", entry.trash.deletionDate.value_or("Unknown"));
+      const auto& trash = entry.trashInfo();
+      field("Original", trash.original ? luciole::locationEditText(*trash.original) : "Unknown");
+      field("Deleted", trash.deletionDate.value_or("Unknown"));
     }
     if (entry.type != luciole::FileType::Directory) {
       const luciole::GString size(entry.size ? g_format_size_full(*entry.size, G_FORMAT_SIZE_IEC_UNITS) : nullptr);

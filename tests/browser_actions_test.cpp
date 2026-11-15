@@ -207,7 +207,9 @@ namespace {
       entries.erase(entries.begin() + 1, entries.end());
       entries[0].location = luciole::Location::fromUri("trash:///alpha.txt");
       entries[0].identity = luciole::FileIdentity{"trash-volume", "item-1"};
-      entries[0].trash.original = luciole::Location::fromPath("/tmp/original/alpha.txt");
+      entries[0].trash = std::make_shared<const luciole::TrashInfo>(
+          luciole::TrashInfo{.original = luciole::Location::fromPath("/tmp/original/alpha.txt"), .deletionDate = {}}
+      );
     });
     model.applySnapshot(data);
     model.select(1);
@@ -221,7 +223,7 @@ namespace {
         !R::state(A::Restore, context, request).enabled && !R::state(A::DeletePermanently, context, request).enabled
     );
     context.operationsBusy = false;
-    test::editEntries(data, [&](auto& entries) { entries[0].trash.original.reset(); });
+    test::editEntries(data, [&](auto& entries) { entries[0].trash.reset(); });
     ++data.generation;
     model.applySnapshot(data);
     TEST_CHECK(

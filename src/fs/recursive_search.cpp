@@ -223,7 +223,7 @@ struct luciole::RecursiveSearch::State : std::enable_shared_from_this<State> {
          .access = readFileAccess(info),
          .parentDisplayName = parentName.get(),
          .icon = std::make_shared<const FileIconSource>(readFileIcon(info, location)),
-         .trash = location.isTrash() ? readTrashInfo(info) : TrashInfo{},
+         .trash = location.isTrash() ? std::make_shared<const TrashInfo>(readTrashInfo(info)) : nullptr,
          .identity = readFileIdentity(info),
          .contentType = readContentType(info),
          .details = readEntryMetadata(info)}

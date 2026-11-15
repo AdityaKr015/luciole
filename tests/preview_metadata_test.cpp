@@ -44,7 +44,7 @@ namespace {
     }
     return {};
   }
-  luciole::DirectoryEntry entry(const fs::path& path, std::string mime) {
+  luciole::DirectoryEntry entry(const fs::path& path, const std::string& mime) {
     const auto location = luciole::Location::fromPath(path.native());
     const GioPtr<GFileInfo> info(g_file_query_info(
         luciole::gioFile(location).get(),
@@ -53,9 +53,6 @@ namespace {
         G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, nullptr
     ));
     TEST_CHECK(info != nullptr);
-    const auto nanos = g_file_info_has_attribute(info.get(), "time::changed-nsec")
-        ? g_file_info_get_attribute_uint32(info.get(), "time::changed-nsec")
-        : g_file_info_get_attribute_uint32(info.get(), G_FILE_ATTRIBUTE_TIME_CHANGED_USEC) * 1000U;
     return {
         .id = 1,
         .location = location,
@@ -67,9 +64,8 @@ namespace {
         .etag = g_file_info_get_etag(info.get()),
         .parentDisplayName = {},
         .identity = luciole::readFileIdentity(info.get()),
-        .contentType = std::move(mime),
-        .contentRevision =
-            std::format("{}:{}", g_file_info_get_attribute_uint64(info.get(), G_FILE_ATTRIBUTE_TIME_CHANGED), nanos),
+        .contentType = mime,
+        .contentRevision = luciole::readChangeRevision(info.get()),
     };
   }
   luciole::MetadataFields inspect(const fs::path& path, const std::string& mime) {

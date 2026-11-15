@@ -51,7 +51,7 @@ void ApplicationChooserController::show(const std::vector<luciole::DirectoryEntr
   auto session = std::make_shared<Session>();
   session->request = m_page.requestFor(entries);
   for (const auto& entry : entries) {
-    session->types.push_back(entry.contentType.value_or("application/octet-stream"));
+    session->types.emplace_back(entry.contentType.value_or("application/octet-stream"));
     session->locations.push_back(entry.location);
   }
   std::ranges::sort(session->types);

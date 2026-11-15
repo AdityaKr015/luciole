@@ -116,10 +116,11 @@ struct luciole::RestoreService::State {
       const std::shared_ptr<State>& owner, const CancelToken& token, const DirectoryEntry& entry, RestoreResult& result
   ) {
     const auto expected = readTrashItemIdentity(entry);
-    if (!isTopLevelTrashItem(entry.location) || !entry.trash.original || !entry.trash.original->nativePath()) {
+    const auto& trash = entry.trashInfo();
+    if (!isTopLevelTrashItem(entry.location) || !trash.original || !trash.original->nativePath()) {
       throwFileError(FileErrorKind::InvalidArgument, "This item has no usable original location.");
     }
-    const auto original = *entry.trash.original;
+    const auto original = *trash.original;
     auto destination = original;
     const auto parent = parentOf(original);
     const auto parentInfo = queryTrashItem(parent, token, true);

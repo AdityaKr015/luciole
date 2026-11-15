@@ -24,18 +24,27 @@ namespace luciole {
     FileType type = FileType::Unknown;
     bool hidden = false;
     bool symlink = false;
+    // Local listings leave access read/write/execute unknown; entryAccess() asks the filesystem when they matter.
+    bool accessDeferred = false;
     std::optional<std::uint64_t> size;
     std::optional<std::uint64_t> modifiedSeconds;
     std::optional<std::string> etag;
     FileAccess access{};
     std::string parentDisplayName; // Search result context; never an operation address.
     SharedFileIcon icon = nullptr; // Shared between entries with equal artwork; null means none.
-    TrashInfo trash{};
+    // Set only for Trash items; most listings have none.
+    std::shared_ptr<const TrashInfo> trash = nullptr;
     std::optional<FileIdentity> identity = std::nullopt;
-    std::optional<std::string> contentType =
-        std::nullopt; // Provider's regular MIME type, with its fast type as a fallback.
+    // Provider's regular MIME type, with its fast type as a fallback.
+    InternedText contentType = nullptr;
     EntryMetadata details{};
-    std::optional<std::string> contentRevision = std::nullopt; // Provider change time, including subsecond precision.
+    std::optional<ChangeRevision> contentRevision = std::nullopt;
+
+    // The Trash facts, empty outside the Trash.
+    const TrashInfo& trashInfo() const {
+      static const TrashInfo none;
+      return trash ? *trash : none;
+    }
   };
 
   // Published entries are immutable. Copies retain payloads; producers publish a new collection.

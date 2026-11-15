@@ -146,11 +146,11 @@ namespace {
     TEST_CHECK(entries.size() == 5);
     TEST_CHECK(std::ranges::count(entries, "same #%.txt", &luciole::DirectoryEntry::displayName) == 2);
     const auto first = std::ranges::find_if(entries, [&](const auto& entry) {
-      return entry.trash.original == luciole::Location::fromPath((a / "same #%.txt").native());
+      return entry.trashInfo().original == luciole::Location::fromPath((a / "same #%.txt").native());
     });
     TEST_CHECK(
         first != entries.end()
-        && first->trash.deletionDate
+        && first->trashInfo().deletionDate
         && first->location.isTrash()
         && first->parentDisplayName == a.native()
     );

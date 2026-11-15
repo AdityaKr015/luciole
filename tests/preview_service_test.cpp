@@ -27,7 +27,7 @@ namespace {
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
   }
-  luciole::DirectoryEntry entry(const std::filesystem::path& path, std::string mime = "text/plain") {
+  luciole::DirectoryEntry entry(const std::filesystem::path& path, const std::string& mime = "text/plain") {
     luciole::DirectoryEntry result{
         .id = 1,
         .location = luciole::Location::fromPath(path.native()),
@@ -43,7 +43,7 @@ namespace {
     result.name = path.filename().native();
     result.displayName = result.name;
     result.type = luciole::FileType::Regular;
-    result.contentType = std::move(mime);
+    result.contentType = mime;
     struct stat stat{};
     if (::lstat(path.c_str(), &stat) == 0) {
       result.size = static_cast<std::uint64_t>(stat.st_size);
@@ -197,7 +197,7 @@ namespace {
     preview.show(source, 1024, {}, seed);
     TEST_CHECK(preview.snapshot().status == luciole::PreviewStatus::Ready && preview.snapshot().image == seed);
     auto obsolete = source;
-    obsolete.contentRevision = "changed";
+    obsolete.contentRevision = luciole::ChangeRevision{.seconds = 1, .nanoseconds = 2};
     TEST_CHECK(!grid.prepared(obsolete));
     preview.clear();
     finish();

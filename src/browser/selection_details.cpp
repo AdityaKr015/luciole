@@ -90,8 +90,11 @@ namespace {
             bytes += *details.size;
           }
         }
-        owner.add(details.metadata.owner);
-        group.add(details.metadata.group);
+        const auto text = [](luciole::InternedText value) {
+          return value ? std::optional<std::string>(*value) : std::nullopt;
+        };
+        owner.add(text(details.metadata.owner));
+        group.add(text(details.metadata.group));
         mode.add(details.metadata.mode ? std::optional(std::format("{:04o}", *details.metadata.mode)) : std::nullopt);
         const auto parent = source.location.parent();
         location.add(parent ? std::optional(luciole::locationEditText(*parent)) : std::nullopt);
