@@ -3,6 +3,7 @@
 #include "fs/file_filter.h"
 #include "fs/location.h"
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -29,13 +30,21 @@ namespace luciole {
     std::string initial;
   };
 
+  // The portal method that asked: OpenFile, SaveFile or SaveFiles.
+  enum class FileChooserMode : std::uint8_t { Open, Save, SaveFiles };
+
   struct FileChooserRequest {
+    FileChooserMode mode = FileChooserMode::Open;
     std::string handle, appId, parentWindow, title, acceptLabel;
     bool modal = true, multiple = false, directory = false;
     std::vector<FileChooserFilter> filters;
     std::optional<FileChooserFilter> currentFilter;
     std::vector<FileChooserChoice> choices;
     std::optional<Location> currentFolder;
+    // SaveFile: the suggested name, raw bytes; `current_file` sets it and the folder from one path.
+    std::string currentName;
+    // SaveFiles: the names to save, raw bytes, in request order.
+    std::vector<std::string> files;
   };
 
   struct FileChooserResult {
@@ -44,12 +53,12 @@ namespace luciole {
     std::vector<std::pair<std::string, std::string>> choices;
   };
 
-  // Parses OpenFile's (o s s s a{sv}) body; wrong-typed options are ignored, unknown pattern kinds skipped.
-  FileChooserRequest parseOpenFile(GVariant* parameters);
+  // Parses the (o s s s a{sv}) body of a `mode` call; wrong-typed options are ignored, unknown pattern kinds skipped.
+  FileChooserRequest parseFileChooserRequest(FileChooserMode mode, GVariant* parameters);
   // Floating a{sv}: "uris" always; "current_filter" and "choices" only when present/non-empty.
   GVariant* fileChooserResults(const FileChooserResult& result);
 
-  // One pending OpenFile invocation plus its exported org.freedesktop.impl.portal.Request object.
+  // One pending FileChooser invocation plus its exported org.freedesktop.impl.portal.Request object.
   // Only FileChooserService creates calls. A call holds its own connection reference, so it may
   // outlive the service.
   class FileChooserCall {
@@ -92,7 +101,7 @@ namespace luciole {
     FileChooserService(const FileChooserService&) = delete;
     FileChooserService& operator=(const FileChooserService&) = delete;
 
-    // True from start until the first OpenFile, the activation timeout, or the name is lost.
+    // True from start until the first request, the activation timeout, or the name is lost.
     bool awaitingRequest() const { return m_awaiting; }
     void release();
 

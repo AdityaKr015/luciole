@@ -2,16 +2,20 @@
 
 #include "app/page/browser_page.h"
 #include "app/workspace_layout.h"
+#include "core/input/key_symbols.h"
 #include "core/log.h"
 #include "platform/desktop_integration.h"
 #include "ui/builders.h"
 #include "ui/controls/button.h"
 #include "ui/controls/checkbox.h"
+#include "ui/controls/input.h"
 #include "ui/controls/label.h"
 #include "ui/controls/select.h"
 #include "wayland/wayland_connection.h"
 
 #include <algorithm>
+#include <filesystem>
+#include <format>
 #include <ranges>
 
 namespace {
@@ -78,6 +82,14 @@ std::string FileChooserSession::windowTitle() const {
   if (!m_request.title.empty()) {
     return m_request.title;
   }
+  switch (m_request.mode) {
+  case luciole::FileChooserMode::Save:
+    return "Save File";
+  case luciole::FileChooserMode::SaveFiles:
+    return "Save Files";
+  case luciole::FileChooserMode::Open:
+    break;
+  }
   return m_request.directory ? "Open Folder" : m_request.multiple ? "Open Files" : "Open File";
 }
 
@@ -89,33 +101,22 @@ luciole::ChooserDecision FileChooserSession::decision(const std::vector<luciole:
   return luciole::chooserDecision(mode(), m_page->location(), entries);
 }
 
-std::unique_ptr<Node>
-FileChooserSession::attach(BrowserPage& page, luciole::WindowSurface& surface, std::function<void()> close) {
+std::unique_ptr<Node> FileChooserSession::attach(
+    BrowserPage& page, luciole::WindowSurface& surface, InputDispatcher& dispatcher, std::function<void()> close
+) {
   m_page = &page;
   m_surface = &surface;
+  m_dispatcher = &dispatcher;
   m_close = std::move(close);
   m_call->setCloseCallback(m_close);
   page.setChooser(
-      {.open =
-           [this](const std::vector<luciole::DirectoryEntry>& targets) {
-             // Activating one linked folder enters it, as activating a folder does, in either mode.
-             if (targets.size() == 1) {
-               auto entered = luciole::chooserDecision({}, m_page->location(), targets);
-               if (entered.kind == luciole::ChooserDecision::Kind::Enter) {
-                 apply(entered);
-                 return;
-               }
-             }
-             // Enter or a double click on one item of a selection opens the whole selection.
-             auto selection = luciole::chooserSelection(m_page->browser().model());
-             const bool inSelection = targets.size() == 1
-                 && std::ranges::any_of(selection, [&](const auto& entry) { return entry.id == targets.front().id; });
-             apply(decision(inSelection ? selection : targets));
-           },
+      {.open = [this](const std::vector<luciole::DirectoryEntry>& targets) { open(targets); },
        .cancel = [this] { cancel(); }}
   );
-  page.browser().model().setSingleSelection(!m_request.multiple);
-  if (auto filter = entryFilter(m_request.directory, m_filter)) {
+  // Saving names one destination; SaveFiles chooses a folder, like a folder chooser.
+  const bool folders = m_request.directory || m_request.mode == luciole::FileChooserMode::SaveFiles;
+  page.browser().model().setSingleSelection(!m_request.multiple || saving());
+  if (auto filter = entryFilter(folders, m_filter)) {
     page.browser().model().setEntryFilter(std::move(filter));
   }
 
@@ -127,6 +128,18 @@ FileChooserSession::attach(BrowserPage& page, luciole::WindowSurface& surface, s
        .height = kChooserFooterHeight}
   );
   const auto plain = [](Label& label) { label.setUseMarkup(false); };
+  if (m_request.mode == luciole::FileChooserMode::Save) {
+    footer->addChild(
+        ui::input(
+            {.out = &m_name,
+             .value = m_request.currentName,
+             .placeholder = "Name",
+             .width = 280.0F,
+             .onChange = [this](const std::string&) { m_confirm.clear(); },
+             .onSubmit = [this](const std::string&) { save(); }}
+        )
+    );
+  }
   for (std::size_t index = 0; index < m_request.choices.size(); ++index) {
     const auto& choice = m_request.choices[index];
     if (choice.options.empty()) {
@@ -188,8 +201,10 @@ FileChooserSession::attach(BrowserPage& page, luciole::WindowSurface& surface, s
                                  cancel();
                                }}));
   const std::string action = !m_request.acceptLabel.empty() ? m_request.acceptLabel
+      : saving()                                            ? "Save"
       : m_request.directory                                 ? "Select"
                                                             : "Open";
+  m_acceptText = action;
   footer->addChild(
       ui::button(
           {.out = &m_accept,
@@ -197,7 +212,13 @@ FileChooserSession::attach(BrowserPage& page, luciole::WindowSurface& surface, s
            .enabled = false,
            .variant = ButtonVariant::Primary,
            .minWidth = 88.0F,
-           .onClick = [this] { apply(decision(luciole::chooserSelection(m_page->browser().model()))); }}
+           .onClick = [this] {
+             if (saving()) {
+               save();
+             } else {
+               apply(decision(luciole::chooserSelection(m_page->browser().model())));
+             }
+           }}
       )
   );
   footer->setPopupContext(&m_dropdown);
@@ -213,9 +234,125 @@ void FileChooserSession::sync() {
     m_dropdownOutput = output;
     m_dropdown.setParent(m_surface->xdgSurface(), m_surface->wlSurface(), output);
   }
+  if (saving()) {
+    syncSave();
+    return;
+  }
   const auto current = decision(luciole::chooserSelection(m_page->browser().model()));
   m_accept->setEnabled(current.kind != luciole::ChooserDecision::Kind::Unavailable);
   m_reason->setText(current.reason);
+}
+
+void FileChooserSession::syncSave() {
+  const auto folder = m_page->location();
+  if (folder != m_folder) {
+    m_folder = folder;
+    m_confirm.clear();
+  }
+  if (m_name != nullptr) {
+    // Only once the page is active: activating it focuses its file list.
+    if (const PageContext& page = *m_page; !m_nameFocused && page.active()) {
+      // Type a name at once; the stem is selected so typing keeps the extension.
+      m_nameFocused = true;
+      m_dispatcher->setFocus(m_name->inputArea());
+      const auto& value = m_name->value();
+      const auto dot = value.rfind('.');
+      m_name->selectRange(0, dot != std::string::npos && dot > 0 ? dot : value.size());
+    }
+    // Selecting a file offers to save over it.
+    const auto selection = luciole::chooserSelection(m_page->browser().model());
+    if (selection.size() == 1
+        && selection.front().type != luciole::FileType::Directory
+        && selection.front().id != m_namedFrom) {
+      m_namedFrom = selection.front().id;
+      m_name->setValue(selection.front().name);
+      m_confirm.clear();
+    }
+  }
+  std::string_view problem;
+  if (!folder || !folder->isNative()) {
+    problem = "Only local folders can be chosen.";
+  } else if (m_name != nullptr) {
+    problem = luciole::fileNameProblem(m_name->value());
+  }
+  m_accept->setEnabled(problem.empty());
+  m_accept->setText(m_confirm.empty() ? std::string_view(m_acceptText) : std::string_view("Replace"));
+  m_reason->setText(!m_confirm.empty() ? std::string_view(m_reasonText) : problem);
+}
+
+void FileChooserSession::open(const std::vector<luciole::DirectoryEntry>& targets) {
+  // Activating one linked folder enters it, as activating a folder does, in every mode.
+  if (targets.size() == 1) {
+    auto entered = luciole::chooserDecision({}, m_page->location(), targets);
+    if (entered.kind == luciole::ChooserDecision::Kind::Enter) {
+      apply(entered);
+      return;
+    }
+  }
+  if (saving()) {
+    // Enter with nothing selected saves; activating a file saves over it.
+    if (targets.size() == 1 && m_name != nullptr) {
+      m_name->setValue(targets.front().name);
+      m_namedFrom = targets.front().id;
+    }
+    if (targets.size() <= 1) {
+      save();
+    }
+    return;
+  }
+  // Enter or a double click on one item of a selection opens the whole selection.
+  auto selection = luciole::chooserSelection(m_page->browser().model());
+  const bool inSelection = targets.size() == 1
+      && std::ranges::any_of(selection, [&](const auto& entry) { return entry.id == targets.front().id; });
+  apply(decision(inSelection ? selection : targets));
+}
+
+void FileChooserSession::save() {
+  if (m_call->finished()) {
+    return;
+  }
+  const auto folder = m_page->location();
+  if (!folder || !folder->isNative()) {
+    return;
+  }
+  const std::vector<std::string> names =
+      m_name != nullptr ? std::vector<std::string>{m_name->value()} : m_request.files;
+  std::vector<luciole::Location> targets;
+  targets.reserve(names.size());
+  for (const auto& name : names) {
+    if (!luciole::fileNameProblem(name).empty()) {
+      if (m_name != nullptr) {
+        return;
+      }
+      // SaveFiles names come from the application; one that is not a plain name cannot be honoured.
+      kLog.warn("SaveFiles asked for an invalid name");
+      m_call->fail();
+      m_close();
+      return;
+    }
+    targets.push_back(folder->child(name));
+  }
+  std::size_t existing = 0;
+  for (const auto& target : targets) {
+    std::error_code error;
+    const auto status = std::filesystem::symlink_status(target.nativePath().value_or(""), error);
+    // A folder named like the file is entered, as typing a folder's name does in a location.
+    if (m_name != nullptr && std::filesystem::is_directory(std::filesystem::status(*target.nativePath(), error))) {
+      m_page->open(target);
+      m_name->setValue({});
+      m_confirm.clear();
+      return;
+    }
+    existing += std::filesystem::exists(status) ? 1 : 0;
+  }
+  if (existing > 0 && m_confirm != targets) {
+    m_confirm = std::move(targets);
+    m_reasonText = m_name != nullptr ? std::format("“{}” already exists.", m_name->value())
+        : existing == 1              ? std::string("1 file already exists.")
+                                     : std::format("{} files already exist.", existing);
+    return;
+  }
+  apply({.kind = luciole::ChooserDecision::Kind::Accept, .locations = std::move(targets), .reason = {}});
 }
 
 void FileChooserSession::selectFilter(std::size_t index) {
@@ -224,7 +361,8 @@ void FileChooserSession::selectFilter(std::size_t index) {
   }
   m_activeFilter = index;
   m_filter.emplace(m_filters[index].patterns);
-  m_page->browser().model().setEntryFilter(entryFilter(m_request.directory, m_filter));
+  const bool folders = m_request.directory || m_request.mode == luciole::FileChooserMode::SaveFiles;
+  m_page->browser().model().setEntryFilter(entryFilter(folders, m_filter));
 }
 
 void FileChooserSession::apply(const luciole::ChooserDecision& decision) {
@@ -276,10 +414,21 @@ bool FileChooserSession::pointer(const PointerEvent& event) {
 }
 
 bool FileChooserSession::keyboard(const KeyboardEvent& event) {
-  if (!m_dropdown.isSelectDropdownOpen()) {
+  if (m_dropdown.isSelectDropdownOpen()) {
+    m_dropdown.onKeyboardEvent(event);
+    return true;
+  }
+  // The page's shortcuts (Backspace, Ctrl+A, typeahead) must not act while the name is being typed; Tab still
+  // moves focus through the workspace.
+  if (m_name == nullptr || m_dispatcher->focusedArea() != m_name->inputArea() || KeySymbol::isTab(event.sym)) {
     return false;
   }
-  m_dropdown.onKeyboardEvent(event);
+  if (event.pressed && !event.preedit && event.modifiers == 0 && KeySymbol::isEscape(event.sym)) {
+    cancel();
+    return true;
+  }
+  m_dispatcher->keyEvent(event.sym, event.utf32, event.modifiers, event.pressed, event.preedit);
+  m_surface->requestUpdate();
   return true;
 }
 

@@ -23,4 +23,6 @@ namespace luciole {
   chooserDecision(ChooserMode mode, const std::optional<Location>& folder, std::span<const DirectoryEntry> entries);
   // The selected entries of `model`, in row order.
   std::vector<DirectoryEntry> chooserSelection(const DirectoryModel& model);
+  // Why `name` (raw bytes) cannot name a new item in a folder; empty when it can.
+  std::string_view fileNameProblem(std::string_view name);
 } // namespace luciole

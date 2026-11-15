@@ -123,6 +123,15 @@ namespace {
     const auto chosen = luciole::chooserSelection(model);
     TEST_CHECK(chosen.size() == 2 && chosen[0].id == 2 && chosen[1].id == 3);
   }
+
+  void testFileNames() {
+    TEST_CHECK(luciole::fileNameProblem("report.odt").empty());
+    TEST_CHECK(luciole::fileNameProblem("r\xe9port").empty());
+    TEST_CHECK(luciole::fileNameProblem("") == "Enter a file name.");
+    TEST_CHECK(luciole::fileNameProblem("..") == "Choose another name.");
+    TEST_CHECK(!luciole::fileNameProblem("../etc/passwd").empty());
+    TEST_CHECK(!luciole::fileNameProblem(std::string_view("a\0b", 3)).empty());
+  }
 } // namespace
 
 int main() {
@@ -132,6 +141,7 @@ int main() {
     testNonNative();
     testSymlinks();
     testSelection();
+    testFileNames();
     std::println("chooser policy checks passed");
     return 0;
   } catch (const std::exception& error) {

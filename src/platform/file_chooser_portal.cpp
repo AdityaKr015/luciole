@@ -11,10 +11,27 @@ namespace {
   constexpr const char* kObjectPath = "/org/freedesktop/portal/desktop";
   // Matches the default D-Bus call timeout: the activating caller has given up by then.
   constexpr guint kActivationTimeoutSeconds = 25;
-  // SaveFile and SaveFiles are absent, so GDBus answers them with UnknownMethod.
   constexpr const char* kIntrospection = R"(<node>
   <interface name="org.freedesktop.impl.portal.FileChooser">
     <method name="OpenFile">
+      <arg type="o" name="handle" direction="in"/>
+      <arg type="s" name="app_id" direction="in"/>
+      <arg type="s" name="parent_window" direction="in"/>
+      <arg type="s" name="title" direction="in"/>
+      <arg type="a{sv}" name="options" direction="in"/>
+      <arg type="u" name="response" direction="out"/>
+      <arg type="a{sv}" name="results" direction="out"/>
+    </method>
+    <method name="SaveFile">
+      <arg type="o" name="handle" direction="in"/>
+      <arg type="s" name="app_id" direction="in"/>
+      <arg type="s" name="parent_window" direction="in"/>
+      <arg type="s" name="title" direction="in"/>
+      <arg type="a{sv}" name="options" direction="in"/>
+      <arg type="u" name="response" direction="out"/>
+      <arg type="a{sv}" name="results" direction="out"/>
+    </method>
+    <method name="SaveFiles">
       <arg type="o" name="handle" direction="in"/>
       <arg type="s" name="app_id" direction="in"/>
       <arg type="s" name="parent_window" direction="in"/>
@@ -86,8 +103,9 @@ namespace {
   GVariant* emptyResults() { return g_variant_new_array(G_VARIANT_TYPE("{sv}"), nullptr, 0); }
 } // namespace
 
-luciole::FileChooserRequest luciole::parseOpenFile(GVariant* parameters) {
+luciole::FileChooserRequest luciole::parseFileChooserRequest(FileChooserMode mode, GVariant* parameters) {
   FileChooserRequest request;
+  request.mode = mode;
   const char* handle = nullptr;
   const char* appId = nullptr;
   const char* parentWindow = nullptr;
@@ -155,6 +173,33 @@ luciole::FileChooserRequest luciole::parseOpenFile(GVariant* parameters) {
     } catch (const std::exception& error) {
       kLog.debug("ignoring current_folder: {}", error.what());
     }
+  }
+  if (GVariant* name = g_variant_lookup_value(options, "current_name", G_VARIANT_TYPE_STRING)) {
+    request.currentName = g_variant_get_string(name, nullptr);
+    g_variant_unref(name);
+  }
+  // A file to save over: its folder and name replace current_folder and current_name.
+  if (GVariant* file = g_variant_lookup_value(options, "current_file", G_VARIANT_TYPE_BYTESTRING)) {
+    const std::string path = g_variant_get_bytestring(file);
+    g_variant_unref(file);
+    const auto slash = path.rfind('/');
+    if (slash != std::string::npos && slash + 1 < path.size()) {
+      try {
+        request.currentFolder = Location::fromPath(slash == 0 ? "/" : path.substr(0, slash));
+        request.currentName = path.substr(slash + 1);
+      } catch (const std::exception& error) {
+        kLog.debug("ignoring current_file: {}", error.what());
+      }
+    }
+  }
+  if (GVariant* files = g_variant_lookup_value(options, "files", G_VARIANT_TYPE_BYTESTRING_ARRAY)) {
+    GVariantIter iter;
+    g_variant_iter_init(&iter, files);
+    while (GVariant* file = g_variant_iter_next_value(&iter)) {
+      request.files.emplace_back(g_variant_get_bytestring(file));
+      g_variant_unref(file);
+    }
+    g_variant_unref(files);
   }
   g_variant_unref(options);
   return request;
@@ -351,18 +396,22 @@ void luciole::FileChooserService::nameLost(GDBusConnection* connection, const ch
 
 void luciole::FileChooserService::methodCall(
     GDBusConnection* connection, const char* sender, const char* /*path*/, const char* /*interface*/,
-    const char* /*method*/, GVariant* parameters, GDBusMethodInvocation* invocation, void* data
+    const char* method, GVariant* parameters, GDBusMethodInvocation* invocation, void* data
 ) {
   auto* self = static_cast<FileChooserService*>(data);
+  const std::string_view name(method);
+  const auto mode = name == "SaveFile" ? FileChooserMode::Save
+      : name == "SaveFiles"            ? FileChooserMode::SaveFiles
+                                       : FileChooserMode::Open;
   // Exceptions must not unwind through GLib's C frames. Once the call exists, it owns the reply.
   FileChooserRequest request;
   std::shared_ptr<FileChooserCall> call;
   try {
-    request = parseOpenFile(parameters);
+    request = parseFileChooserRequest(mode, parameters);
     call =
         std::shared_ptr<FileChooserCall>(new FileChooserCall(invocation, connection, sender != nullptr ? sender : ""));
   } catch (const std::exception& error) {
-    kLog.warn("OpenFile failed: {}", error.what());
+    kLog.warn("{} failed: {}", name, error.what());
     g_dbus_method_invocation_return_error_literal(invocation, G_DBUS_ERROR, G_DBUS_ERROR_FAILED, error.what());
     return;
   }
@@ -374,7 +423,7 @@ void luciole::FileChooserService::methodCall(
   try {
     self->m_handler(std::move(request), call);
   } catch (const std::exception& error) {
-    kLog.warn("OpenFile failed: {}", error.what());
+    kLog.warn("{} failed: {}", name, error.what());
     call->fail();
   }
 }

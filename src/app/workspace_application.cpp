@@ -275,7 +275,8 @@ void WorkspaceApplication::choose(
     host.surface.close();
     throw std::runtime_error("Too many Luciole pages are open.");
   }
-  auto footer = host.chooser->attach(*m_pages.at(tab), host.surface, [&host] { host.surface.close(); });
+  auto footer =
+      host.chooser->attach(*m_pages.at(tab), host.surface, host.dispatcher, [&host] { host.surface.close(); });
   footer->setParticipatesInLayout(false);
   footer->setZIndex(40);
   host.chooserFooter = footer.get();

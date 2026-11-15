@@ -115,7 +115,7 @@ namespace {
       g_variant_builder_init(&options, G_VARIANT_TYPE_VARDICT);
       g_variant_builder_add(&options, "{sv}", "accept_label", g_variant_new_string(text));
       GVariant* parameters = g_variant_ref_sink(openFileParameters("/r", g_variant_builder_end(&options)));
-      auto request = luciole::parseOpenFile(parameters);
+      auto request = luciole::parseFileChooserRequest(luciole::FileChooserMode::Open, parameters);
       g_variant_unref(parameters);
       return request.acceptLabel;
     };
@@ -284,15 +284,36 @@ namespace {
       TEST_CHECK(response(dropped, &results) == 2 && g_variant_n_children(results) == 0);
       g_variant_unref(results);
 
-      // SaveFile is not implemented.
+      // SaveFile: current_file supplies the folder and the name, over current_name.
+      GVariantBuilder saveOptions;
+      g_variant_builder_init(&saveOptions, G_VARIANT_TYPE_VARDICT);
+      g_variant_builder_add(&saveOptions, "{sv}", "current_name", g_variant_new_string("ignored.txt"));
+      g_variant_builder_add(&saveOptions, "{sv}", "current_file", g_variant_new_bytestring("/tmp/docs/r\xe9port.odt"));
       Reply save;
       call(
           client.get(), kObjectPath, kInterface, "SaveFile",
-          openFileParameters("/org/freedesktop/portal/desktop/request/1_1/fourth", emptyOptions()), save
+          openFileParameters("/org/freedesktop/portal/desktop/request/1_1/fourth", g_variant_builder_end(&saveOptions)),
+          save
       );
       until([&] { return save.done; });
-      TEST_CHECK(g_error_matches(save.error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_METHOD));
-      TEST_CHECK(state.requests == 3);
+      TEST_CHECK(state.requests == 4 && state.request->mode == luciole::FileChooserMode::Save);
+      TEST_CHECK(state.request->currentName == "r\xe9port.odt");
+      TEST_CHECK(state.request->currentFolder == luciole::Location::fromPath("/tmp/docs"));
+
+      // SaveFiles keeps the requested names in order, as raw bytes.
+      GVariantBuilder filesOptions;
+      g_variant_builder_init(&filesOptions, G_VARIANT_TYPE_VARDICT);
+      const char* names[] = {"b.txt", "a\xff.png", nullptr};
+      g_variant_builder_add(&filesOptions, "{sv}", "files", g_variant_new_bytestring_array(names, -1));
+      Reply saveFiles;
+      call(
+          client.get(), kObjectPath, kInterface, "SaveFiles",
+          openFileParameters("/org/freedesktop/portal/desktop/request/1_1/fifth", g_variant_builder_end(&filesOptions)),
+          saveFiles
+      );
+      until([&] { return saveFiles.done; });
+      TEST_CHECK(state.requests == 5 && state.request->mode == luciole::FileChooserMode::SaveFiles);
+      TEST_CHECK((state.request->files == std::vector<std::string>{"b.txt", "a\xff.png"}));
     }
     settle();
     TEST_CHECK(g_dbus_connection_close_sync(stranger.get(), nullptr, nullptr));

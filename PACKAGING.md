@@ -220,7 +220,7 @@ Luciole also owns its application name, `dev.noctalia.luciole`, and exports `org
 
 The `.portal` file has no `UseIn` key: the backend is used only when a `portals.conf` names it, for example `org.freedesktop.impl.portal.FileChooser=luciole;gtk`. xdg-desktop-portal skips a listed backend whose `.portal` file is not installed, so that line falls back to the next one when Luciole is absent. It does not fall back when Luciole is installed but fails. The frontend reads `.portal` files when it starts; restart `xdg-desktop-portal` after installing or removing Luciole.
 
-This backend currently implements OpenFile only. SaveFile and SaveFiles return an unknown-method error, so do not route the FileChooser interface to Luciole by default yet.
+The backend implements OpenFile, SaveFile and SaveFiles. Saving only returns destinations; the application writes the files. An existing file is returned only after the user confirms replacing it.
 
 ### Shell completions
 

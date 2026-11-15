@@ -88,3 +88,16 @@ std::vector<luciole::DirectoryEntry> luciole::chooserSelection(const DirectoryMo
   }
   return entries;
 }
+
+std::string_view luciole::fileNameProblem(std::string_view name) {
+  if (name.empty()) {
+    return "Enter a file name.";
+  }
+  if (name == "." || name == "..") {
+    return "Choose another name.";
+  }
+  if (name.contains('/') || name.contains('\0')) {
+    return "A file name cannot contain “/”.";
+  }
+  return {};
+}
