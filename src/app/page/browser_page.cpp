@@ -1253,7 +1253,13 @@ void BrowserPage::runAction(
   static constexpr auto kHandlers = std::to_array<Handler>({
       {Action::Back, [](BrowserPage& page, const Call&) { (void)page.browser().back(); }},
       {Action::Forward, [](BrowserPage& page, const Call&) { (void)page.browser().forward(); }},
-      {Action::Up, [](BrowserPage& page, const Call&) { (void)page.browser().up(); }},
+      {Action::Up,
+      [](BrowserPage& page, const Call&) {
+        // Selects the folder just left once the parent loads.
+        if (auto current = page.browser().model().snapshot().location; page.browser().up()) {
+          page.revealOnReload({std::move(*current)});
+        }
+      }},
       {Action::Home, [](BrowserPage& page, const Call&) { page.browser().home(); }},
       {Action::Root, [](BrowserPage& page, const Call&) { page.browser().open(luciole::Location::fromPath("/")); }},
       {Action::Refresh, [](BrowserPage& page, const Call&) { page.browser().refresh(); }},
