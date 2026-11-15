@@ -1,8 +1,15 @@
 #include "fs/directory_session.h"
 
 #include "fs/gio_interop.h"
+#include "fs/heap_trim.h"
+#include "fs/native_listing.h"
 
+#include <algorithm>
+#include <chrono>
+#include <string>
+#include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace {
@@ -27,7 +34,14 @@ namespace {
   constexpr const char* kIconAttribute = G_FILE_ATTRIBUTE_STANDARD_ICON;
   constexpr const char* kTrashAttributes = G_FILE_ATTRIBUTE_TRASH_ORIG_PATH "," G_FILE_ATTRIBUTE_TRASH_DELETION_DATE;
   constexpr int kBatchSize = 64;
-  constexpr unsigned int kMonitorDelayMs = 80;
+  // Delay between a change notification and its rescan; slow scans extend it up to the maximum.
+  constexpr std::chrono::milliseconds kMonitorDelay{80};
+  constexpr std::chrono::milliseconds kMaxMonitorDelay{2000};
+  // A scan that finishes after further changes is discarded, unless nothing was published for this long.
+  constexpr std::chrono::seconds kChurnPublishInterval{1};
+  // Publishing at least this many entries, or replacing that many, frees enough heap to return it to the system.
+  constexpr std::size_t kHeapTrimEntries = 10'000;
+  constexpr std::string_view kEntryLimitMessage = "Tree entry limit reached. Open this folder to see all items.";
 
   void closeEnumerator(GFileEnumerator* enumerator) {
     if (enumerator == nullptr || g_file_enumerator_is_closed(enumerator)) {
@@ -79,6 +93,9 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
   guint timer = 0;
   bool dirty = false;
   bool entriesAccessInvalidated = false;
+  std::chrono::steady_clock::time_point scanStarted;
+  std::chrono::steady_clock::time_point lastPublished;
+  std::chrono::milliseconds lastScanDuration{0};
 
   ~State() { stop(); }
 
@@ -184,8 +201,11 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
     if (timer != 0) {
       return;
     }
+    // A folder that changes continuously is rescanned at most every other scan duration, so scanning cannot
+    // consume the whole main thread.
+    const auto delay = std::clamp(2 * lastScanDuration, kMonitorDelay, kMaxMonitorDelay);
     timer = g_timeout_add_full(
-        G_PRIORITY_DEFAULT, kMonitorDelayMs,
+        G_PRIORITY_DEFAULT, static_cast<guint>(delay.count()),
         [](gpointer data) -> gboolean {
           if (const auto state = static_cast<std::weak_ptr<State>*>(data)->lock()) {
             state->timer = 0;
@@ -266,6 +286,7 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
 
   void begin() {
     stopScan();
+    scanStarted = std::chrono::steady_clock::now();
     ++snapshot.generation;
     snapshot.status = DirectoryStatus::Loading;
     snapshot.error.reset();
@@ -280,6 +301,73 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
     scan->local = scan->local && localPath;
     icons.setLocalFolder(localPath.get());
     queryMetadata();
+    if (scan->local) {
+      listNatively(localPath.get());
+    } else {
+      enumerate();
+    }
+    notify();
+  }
+
+  // Local folders: readdir and statx on a worker, published in one step.
+  void listNatively(std::string path) {
+    struct Job {
+      std::string path;
+      std::size_t limit = 0;
+      NativeListing listing;
+    };
+    auto* task = g_task_new(
+        nullptr, scan->cancellable.get(),
+        [](GObject*, GAsyncResult* result, gpointer data) {
+          const std::unique_ptr<Request> request(static_cast<Request*>(data));
+          auto& job = *static_cast<Job*>(g_task_get_task_data(G_TASK(result)));
+          if (const auto state = request->state.lock(); state && state->scan == request->scan) {
+            state->listed(std::move(job.listing));
+          }
+        },
+        new Request{.state = weak_from_this(), .scan = scan}
+    );
+    g_task_set_task_data(task, new Job{.path = std::move(path), .limit = entryLimit, .listing = {}}, [](gpointer data) {
+      delete static_cast<Job*>(data);
+    });
+    g_task_run_in_thread(task, [](GTask* task, gpointer, gpointer data, GCancellable* cancellable) {
+      auto& job = *static_cast<Job*>(data);
+      job.listing = listNativeFolder(job.path, job.limit, cancellable);
+      g_task_return_boolean(task, TRUE);
+    });
+    g_object_unref(task);
+  }
+
+  void listed(NativeListing listing) {
+    if (listing.unsupported) {
+      enumerate();
+      return;
+    }
+    for (auto& entry : listing.entries) {
+      entry.id = identify(entry);
+    }
+    scan->entries = std::move(listing.entries);
+    if (listing.limited) {
+      complete(FileError{FileErrorKind::Unsupported, std::string(kEntryLimitMessage)});
+    } else {
+      complete(std::nullopt);
+    }
+  }
+
+  // A name keeps its previous ID within this session; new names get new ones.
+  std::uint64_t identify(const DirectoryEntry& entry) {
+    if (resolveId) {
+      return resolveId(entry);
+    }
+    const auto [identity, inserted] = scan->identities.try_emplace(entry.name, 0);
+    if (inserted) {
+      const auto previous = identities.find(identity->first);
+      identity->second = previous != identities.end() ? previous->second : nextId++;
+    }
+    return identity->second;
+  }
+
+  void enumerate() {
     std::string attributes = kAttributes;
     if (!scan->local) {
       attributes.append(",").append(kIconAttribute);
@@ -305,24 +393,14 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
         },
         new Request{.state = weak_from_this(), .scan = scan}
     );
-    notify();
   }
 
   void append(GFileInfo* info) {
     const char* name = g_file_info_get_name(info);
     const GioPtr<GFile> child(g_file_get_child(scan->parent.get(), name));
     const GString uri(g_file_get_uri(child.get()));
-    std::uint64_t id = 0;
-    if (!resolveId) {
-      const auto [identity, inserted] = scan->identities.try_emplace(name, 0);
-      if (inserted) {
-        const auto previous = identities.find(identity->first);
-        identity->second = previous != identities.end() ? previous->second : nextId++;
-      }
-      id = identity->second;
-    }
     DirectoryEntry entry{
-        .id = id,
+        .id = 0,
         // A child of a local folder has GIO's canonical form already.
         .location = scan->local ? Location::fromCanonicalNativeUri(uri.get()) : Location::fromUri(uri.get()),
         .name = name,
@@ -336,10 +414,15 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
         .access = readFileAccess(info),
         .parentDisplayName = {},
     };
-    entry.icon = scan->local ? icons.getLocal(info, entry.location) : icons.get(info, entry.location);
+    entry.icon = scan->local ? icons.getLocal(
+                                   name, g_file_info_get_file_type(info),
+                                   infoString(info, G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE), entry.location
+                               )
+                             : icons.get(info, entry.location);
     if (scan->trash) {
-      entry.trash = readTrashInfo(info);
-      entry.parentDisplayName = trashOriginalParentText(entry.trash);
+      auto trash = std::make_shared<const TrashInfo>(readTrashInfo(info));
+      entry.parentDisplayName = trashOriginalParentText(*trash);
+      entry.trash = std::move(trash);
     }
     entry.details = readEntryMetadata(info);
     entry.identity = readFileIdentity(info);
@@ -347,20 +430,13 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
     if (const auto size = infoUint64(info, G_FILE_ATTRIBUTE_STANDARD_SIZE); size && *size <= G_MAXINT64) {
       entry.size = size;
     }
-    if (const auto seconds = infoUint64(info, G_FILE_ATTRIBUTE_TIME_CHANGED)) {
-      auto nanos = infoUint32(info, "time::changed-nsec");
-      if (!nanos) {
-        nanos = infoUint32(info, G_FILE_ATTRIBUTE_TIME_CHANGED_USEC).value_or(0) * 1000U;
-      }
-      entry.contentRevision = std::to_string(*seconds) + ':' + std::to_string(*nanos);
-    }
+    entry.contentRevision = readChangeRevision(info);
     entry.modifiedSeconds = infoUint64(info, G_FILE_ATTRIBUTE_TIME_MODIFIED);
-    if (const char* etag = g_file_info_get_etag(info); etag != nullptr) {
+    // Unlike g_file_info_get_etag, absent on children GIO could not stat is not a programming error here.
+    if (const char* etag = infoString(info, G_FILE_ATTRIBUTE_ETAG_VALUE); etag != nullptr) {
       entry.etag = etag;
     }
-    if (resolveId) {
-      entry.id = resolveId(entry);
-    }
+    entry.id = identify(entry);
     scan->entries.push_back(std::move(entry));
   }
 
@@ -393,11 +469,7 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
                 state->append(G_FILE_INFO(item->data));
               }
               if (limited) {
-                state->complete(
-                    FileError{
-                        FileErrorKind::Unsupported, "Tree entry limit reached. Open this folder to see all items."
-                    }
-                );
+                state->complete(FileError{FileErrorKind::Unsupported, std::string(kEntryLimitMessage)});
               } else if (!prefetch) {
                 state->nextBatch();
               }
@@ -410,13 +482,45 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
     );
   }
 
+  // Prefers the identities monitor events maintained during this scan, keeps the scan's IDs unique, and keeps the
+  // live identities of names the scan missed for the follow-up rescan.
+  void reconcileChurnedIdentities() {
+    std::unordered_set<std::uint64_t> used;
+    used.reserve(scan->entries.size());
+    for (auto& entry : scan->entries) {
+      if (const auto live = identities.find(entry.name); live != identities.end()) {
+        entry.id = live->second;
+      }
+      if (!used.insert(entry.id).second) {
+        entry.id = nextId++;
+        used.insert(entry.id);
+      }
+      scan->identities.insert_or_assign(entry.name, entry.id);
+    }
+    for (const auto& [name, id] : identities) {
+      if (!used.contains(id)) {
+        scan->identities.try_emplace(name, id);
+      }
+    }
+  }
+
   void complete(std::optional<FileError> error) {
-    if (dirty) {
+    const auto now = std::chrono::steady_clock::now();
+    lastScanDuration = std::chrono::duration_cast<std::chrono::milliseconds>(now - scanStarted);
+    const bool churned = dirty;
+    if (churned && now - lastPublished < kChurnPublishInterval) {
       stopScan();
       schedule();
       return;
     }
+    // A folder that keeps changing still publishes its latest complete scan at that interval, then rescans.
+    if (churned && !resolveId) {
+      reconcileChurnedIdentities();
+    }
+    lastPublished = now;
+    const auto replaced = snapshot.entries.size();
     snapshot.entries = std::move(scan->entries);
+    const bool trim = std::max(replaced, snapshot.entries.size()) >= kHeapTrimEntries;
     entriesAccessInvalidated = false;
     scan->enumerating = false;
     closeEnumerator(scan->enumerator.get());
@@ -435,7 +539,15 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
     } else {
       publishMetadata();
     }
+    const auto published = scan;
     notify();
+    if (trim) {
+      scheduleHeapTrim();
+    }
+    // The observer may have navigated; only this scan's changes still need a rescan.
+    if (churned && scan == published) {
+      schedule();
+    }
   }
 };
 

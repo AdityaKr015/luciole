@@ -4,6 +4,7 @@
 #include "browser/entry_details.h"
 #include "core/input/key_modifiers.h"
 #include "core/log.h"
+#include "fs/entry_access.h"
 #include "fs/gio_ptr.h"
 #include "model/details_columns.h"
 #include "ui/browser/file_icon.h"
@@ -386,18 +387,18 @@ void luciole::FileViewAdapter::bindTile(Node& tile, std::size_t index, bool, boo
   const auto id = model.rows()[index];
   const auto* entry = model.entry(id);
   if (entry != nullptr) {
+    const bool readOnly = luciole::entryAccess(*entry).write == false || m_readOnly == true;
     const bool selected = m_columnActive && model.selection().selected.contains(id);
     const bool focused = selected || (m_focused() && model.selection().focused == id);
     if (m_mode == ViewMode::Grid) {
       static_cast<FileTile&>(tile).bind(
           *entry, model.typeLabel(id), selected, focused, hovered, m_gridIconSize, m_cut && m_cut(entry->location),
-          m_presentation, entry->access.write == false || m_readOnly == true
+          m_presentation, readOnly
       );
     } else {
       static_cast<FileRow&>(tile).bind(
           *entry, model.typeLabel(id), selected, focused, hovered, m_columns, m_columnOrder,
-          m_cut && m_cut(entry->location), m_pathEntry == id && !m_columnActive, m_presentation,
-          entry->access.write == false || m_readOnly == true,
+          m_cut && m_cut(entry->location), m_pathEntry == id && !m_columnActive, m_presentation, readOnly,
           m_mode == ViewMode::List ? m_browser.treeRow(id) : TreeRowInfo{}
       );
     }

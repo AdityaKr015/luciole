@@ -1,5 +1,6 @@
 #include "app/page/browser_page.h"
 
+#include "app/startup_trace.h"
 #include "browser/action_registry.h"
 #include "browser/browser_controller.h"
 #include "browser/location_presentation.h"
@@ -124,6 +125,9 @@ BrowserPage::BrowserPage(
   m_browser.setSearchRecursive(settings.typingMode != luciole::TypingMode::Filter);
   m_browser.setChangedCallback([this] {
     m_browserDirty = true;
+    if (const auto& snapshot = m_browser.model().snapshot(); snapshot.status == luciole::DirectoryStatus::Ready) {
+      luciole::startupListingReady(snapshot.entries.size());
+    }
     m_surface->requestUpdate();
   });
   m_browser.setFileActivatedCallback([this](const luciole::Location& location) { m_launcher.open(location); });
@@ -1288,7 +1292,7 @@ void BrowserPage::runAction(
       {Action::ContainingFolder,
        [](BrowserPage& page, const Call& call) { page.showContaining(call.targets.front().location); }},
       {Action::OriginalLocation,
-       [](BrowserPage& page, const Call& call) { page.showContaining(*call.targets.front().trash.original); }},
+       [](BrowserPage& page, const Call& call) { page.showContaining(*call.targets.front().trashInfo().original); }},
       {Action::Pin, [](BrowserPage& page, const Call& call) { page.pinTargets(call.targets); }},
       {Action::Unpin, [](BrowserPage& page, const Call& call) { page.unpinTargets(call.targets); }},
       {Action::CutFiles, fileClipboard},

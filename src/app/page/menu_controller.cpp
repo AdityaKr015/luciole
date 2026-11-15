@@ -20,6 +20,7 @@
 #include "core/input/key_modifiers.h"
 #include "core/input/key_symbols.h"
 #include "fs/archive_type.h"
+#include "fs/entry_access.h"
 #include "platform/desktop_integration.h"
 #include "platform/terminal_launcher.h"
 #include "render/scene/input_dispatcher.h"
@@ -143,7 +144,8 @@ std::vector<ContextMenuControlEntry> MenuController::itemMenuEntries(const lucio
       && single->location.isNative()
       && !trash
       && (single->type == luciole::FileType::Regular || single->symlink)
-      && (single->access.execute == true || single->location.basename().value_or("").ends_with(".desktop"))) {
+      && (luciole::entryAccess(*single).execute == true
+          || single->location.basename().value_or("").ends_with(".desktop"))) {
     add(Action::RunProgram);
     if (!single->location.basename().value_or("").ends_with(".desktop")) {
       add(Action::RunInTerminal);
@@ -171,7 +173,7 @@ std::vector<ContextMenuControlEntry> MenuController::itemMenuEntries(const lucio
          .label = "Paste into Folder",
          .enabled = !m_page.operationsBusy()
              && luciole::transferLocationSupported(single->location)
-             && single->access.write != false}
+             && luciole::entryAccess(*single).write != false}
     );
   }
   if (m_page.hasOtherPane()) {
@@ -181,7 +183,7 @@ std::vector<ContextMenuControlEntry> MenuController::itemMenuEntries(const lucio
   entries.push_back({.id = CopyLocation, .label = "Copy Location", .hasSubmenu = true});
   addSeparator(entries);
   if (single != nullptr) {
-    if (luciole::isSupportedArchive(single->location, single->contentType)) {
+    if (luciole::isSupportedArchive(single->location, single->contentType.value_or(""))) {
       add(Action::BrowseArchive);
       add(Action::ExtractHere);
       add(Action::ExtractTo);
@@ -190,7 +192,7 @@ std::vector<ContextMenuControlEntry> MenuController::itemMenuEntries(const lucio
     if (single->location.parent() != model.snapshot().location) {
       add(Action::ContainingFolder);
     }
-    if (single->trash.original) {
+    if (single->trashInfo().original) {
       add(Action::OriginalLocation);
     }
   }
