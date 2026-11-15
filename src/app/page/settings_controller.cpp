@@ -123,7 +123,7 @@ void SettingsController::toggle() {
       m_page.menuSurface()->requestLayout();
     }
   });
-  m_page.menuDispatcher().setFocus(m_page.menuDispatcher().firstTabFocusUnder(m_view));
+  m_page.menuDispatcher().setFocus(m_page.menuDispatcher().firstTabFocusUnder(m_view->navigation()));
 }
 
 bool SettingsController::key(const KeyboardEvent& event) {
