@@ -46,6 +46,10 @@ namespace {
   constexpr std::chrono::seconds kChurnPublishInterval{1};
   // Publishing at least this many entries, or replacing that many, frees enough heap to return it to the system.
   constexpr std::size_t kHeapTrimEntries = 10'000;
+  // The first sniffed content types publish after this long; each later batch waits twice as long as the previous
+  // one, up to the maximum, so a large folder republishes only a few times.
+  constexpr std::chrono::milliseconds kSniffPublishInterval{100};
+  constexpr std::chrono::milliseconds kMaxSniffPublishInterval{1600};
   constexpr std::string_view kEntryLimitMessage = "Tree entry limit reached. Open this folder to see all items.";
 
   void closeEnumerator(GFileEnumerator* enumerator) {
@@ -159,6 +163,11 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
     GioPtr<GFile> parent;
     // Shared by every entry of the scan; each entry's location is this folder's child.
     std::shared_ptr<const Location> folder;
+    // Local path of a native listing, and the names whose contents its sniffing pass still has to read.
+    std::string path;
+    std::shared_ptr<const std::vector<std::string>> sniff = std::make_shared<const std::vector<std::string>>();
+    std::size_t sniffed = 0;
+    std::chrono::milliseconds sniffInterval = kSniffPublishInterval;
     // Identities of this scan's entries by name; the published entries replace State::identities, and this table
     // is dropped then.
     std::unordered_map<std::string, std::uint64_t> identities;
@@ -183,6 +192,8 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
   std::shared_ptr<Scan> scan;
   GioPtr<GFileMonitor> monitor;
   NameIds identities;
+  // Names in the published entries whose content type is still the name-based guess.
+  std::unordered_set<std::string> unsniffed;
   std::uint64_t nextId = 1;
   IdResolver resolveId;
   guint timer = 0;
@@ -384,6 +395,7 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
     scanStarted = std::chrono::steady_clock::now();
     ++snapshot.generation;
     snapshot.status = DirectoryStatus::Loading;
+    snapshot.contentTypesPending = false;
     snapshot.error.reset();
     invalidateMetadata(true);
     scan = std::make_shared<Scan>();
@@ -406,6 +418,7 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
 
   // Local folders: readdir and statx on a worker, published in one step.
   void listNatively(std::string path) {
+    scan->path = path;
     struct Job {
       std::string path;
       std::size_t limit = 0;
@@ -448,11 +461,128 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
         entry.id = nextId++;
       }
     }
+    if (!listing.uncertain.empty()) {
+      keepSniffedTypes(listing);
+    }
     scan->entries = std::move(listing.entries);
+    const auto listedScan = scan;
     if (listing.limited) {
       complete(FileError{FileErrorKind::Unsupported, std::string(kEntryLimitMessage)});
     } else {
       complete(std::nullopt);
+    }
+    if (scan && scan == listedScan && !snapshot.error && !scan->sniff->empty()) {
+      unsniffed = {scan->sniff->begin(), scan->sniff->end()};
+      sniffContents();
+    }
+  }
+
+  // Uncertain entries reuse the published type of an unchanged file; the others wait for sniffContents().
+  void keepSniffedTypes(NativeListing& listing) {
+    std::unordered_map<std::string_view, const DirectoryEntry*> previous;
+    previous.reserve(snapshot.entries.size());
+    for (const auto& entry : snapshot.entries) {
+      previous.emplace(entry.name, &entry);
+    }
+    auto names = std::make_shared<std::vector<std::string>>();
+    for (const auto index : listing.uncertain) {
+      auto& entry = listing.entries[index];
+      const auto found = previous.find(entry.name);
+      if (found != previous.end()
+          && !unsniffed.contains(entry.name)
+          && found->second->type == entry.type
+          && found->second->size == entry.size
+          && found->second->modifiedSeconds == entry.modifiedSeconds
+          && found->second->contentRevision == entry.contentRevision) {
+        entry.contentType = found->second->contentType;
+        entry.icon = found->second->icon;
+      } else {
+        names->push_back(entry.name);
+      }
+    }
+    scan->sniff = std::move(names);
+  }
+
+  // Reads the contents of uncertain entries on a worker, publishing GIO's sniffed types about every 100 ms.
+  void sniffContents() {
+    struct Job {
+      std::string folder;
+      std::shared_ptr<const std::vector<std::string>> names;
+      std::size_t begin = 0;
+      std::chrono::milliseconds interval{0};
+      std::vector<std::optional<std::string>> types;
+    };
+    auto* task = g_task_new(
+        nullptr, scan->cancellable.get(),
+        [](GObject*, GAsyncResult* result, gpointer data) {
+          const std::unique_ptr<Request> request(static_cast<Request*>(data));
+          auto& job = *static_cast<Job*>(g_task_get_task_data(G_TASK(result)));
+          if (const auto state = request->state.lock(); state && state->scan == request->scan) {
+            state->sniffed(job.begin, job.types);
+          }
+        },
+        new Request{.state = weak_from_this(), .scan = scan}
+    );
+    g_task_set_task_data(
+        task,
+        new Job{
+            .folder = scan->path,
+            .names = scan->sniff,
+            .begin = scan->sniffed,
+            .interval = std::exchange(scan->sniffInterval, std::min(2 * scan->sniffInterval, kMaxSniffPublishInterval)),
+            .types = {}
+        },
+        [](gpointer data) { delete static_cast<Job*>(data); }
+    );
+    g_task_run_in_thread(task, [](GTask* task, gpointer, gpointer data, GCancellable* cancellable) {
+      auto& job = *static_cast<Job*>(data);
+      const auto deadline = std::chrono::steady_clock::now() + job.interval;
+      const std::string_view separator = job.folder.ends_with('/') ? "" : "/";
+      for (auto i = job.begin; i < job.names->size() && g_cancellable_is_cancelled(cancellable) == FALSE; ++i) {
+        job.types.push_back(sniffContentType(std::string(job.folder).append(separator).append((*job.names)[i])));
+        if (std::chrono::steady_clock::now() >= deadline) {
+          break;
+        }
+      }
+      g_task_return_boolean(task, TRUE);
+    });
+    g_object_unref(task);
+  }
+
+  void sniffed(std::size_t begin, const std::vector<std::optional<std::string>>& types) {
+    std::unordered_map<std::string_view, const std::string*> found;
+    for (std::size_t i = 0; i < types.size(); ++i) {
+      const auto& name = (*scan->sniff)[begin + i];
+      unsniffed.erase(name);
+      if (types[i]) {
+        found.emplace(name, &*types[i]);
+      }
+    }
+    std::vector<DirectoryEntry> entries(snapshot.entries.begin(), snapshot.entries.end());
+    bool changed = false;
+    for (auto& entry : entries) {
+      const auto type = found.find(entry.name);
+      if (type == found.end() || (entry.contentType && *entry.contentType == *type->second)) {
+        continue;
+      }
+      entry.contentType = InternedText(*type->second);
+      entry.icon = icons.getLocal(entry.name.c_str(), G_FILE_TYPE_REGULAR, type->second->c_str(), *scan->folder);
+      changed = true;
+    }
+    const auto current = scan;
+    current->sniffed = begin + types.size();
+    const bool done = types.empty() || current->sniffed >= current->sniff->size();
+    if (changed || done) {
+      if (changed) {
+        snapshot.entries = std::move(entries);
+        identities.rebase(snapshot.entries);
+      }
+      snapshot.contentTypesPending = !done;
+      notify();
+    }
+    // The observer may have navigated away.
+    if (!done && scan == current) {
+      sniffContents();
     }
   }
 
@@ -619,6 +749,8 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
     lastPublished = now;
     const auto replaced = snapshot.entries.size();
     snapshot.entries = std::move(scan->entries);
+    unsniffed.clear();
+    snapshot.contentTypesPending = !error && !scan->sniff->empty();
     const bool trim = std::max(replaced, snapshot.entries.size()) >= kHeapTrimEntries;
     entriesAccessInvalidated = false;
     scan->enumerating = false;
@@ -699,6 +831,7 @@ void luciole::DirectorySession::cancel() {
   state->identities.clear();
   ++state->snapshot.generation;
   state->snapshot.status = DirectoryStatus::Cancelled;
+  state->snapshot.contentTypesPending = false;
   state->snapshot.error.reset();
   state->invalidateMetadata(false);
   state->notify();

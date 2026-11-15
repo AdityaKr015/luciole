@@ -25,6 +25,8 @@ namespace luciole {
     std::optional<FileError> accessError = std::nullopt;
     std::optional<FileError> filesystemError = std::nullopt;
     bool incrementalResults = false; // Fresh current-scan batches, rather than retained refresh entries.
+    // Some local entries still carry a name-based content type; sniffed types follow as further publications.
+    bool contentTypesPending = false;
   };
 
   // Main/default-context service. Observers run there and must not throw.

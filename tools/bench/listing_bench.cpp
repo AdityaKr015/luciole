@@ -144,6 +144,10 @@ int main(int argc, char** argv) {
     const double cpuAfter = processCpuMs();
     const long pssModel = pssKib();
     const auto entries = session->snapshot().entries.size();
+    // Sniffed content types of uncertain names follow the listing.
+    pump.until([&] { return !session->snapshot().contentTypesPending; });
+    const auto typed = Clock::now();
+    const double cpuTyped = processCpuMs();
     long pssEmpty = -1;
     if (!empty.empty()) {
       session->open(luciole::Location::fromPath(empty));
@@ -157,10 +161,11 @@ int main(int argc, char** argv) {
     }
     std::println(
         R"({{"run":{},"entries":{},"session_ms":{:.2f},"apply_ms":{:.2f},"cpu_ms":{:.2f},"longest_dispatch_ms":{:.2f},)"
+        R"("typed_ms":{:.2f},"typed_cpu_ms":{:.2f},)"
         R"("pss_before_kib":{},"pss_after_session_kib":{},"pss_after_model_kib":{},"bytes_per_entry":{:.1f},)"
         R"("pss_after_empty_kib":{}}})",
         run, entries, milliseconds(ready - opened), milliseconds(applied - ready), cpuAfter - cpuBefore, longest,
-        pssBefore, pssSession, pssModel,
+        milliseconds(typed - opened), cpuTyped - cpuBefore, pssBefore, pssSession, pssModel,
         entries == 0 ? 0.0 : static_cast<double>(pssModel - pssBefore) * 1024.0 / static_cast<double>(entries), pssEmpty
     );
   }

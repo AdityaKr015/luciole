@@ -154,7 +154,9 @@ namespace {
     return display;
   }
 
-  std::string contentType(const struct statx& info, const char* name, const std::string& path) {
+  // The name-based type; `uncertain` is set when GIO would sniff the contents instead.
+  std::string contentType(const struct statx& info, const char* name, bool& uncertain) {
+    uncertain = false;
     const auto mode = info.stx_mode;
     if (S_ISLNK(mode)) {
       return "inode/symlink";
@@ -177,19 +179,9 @@ namespace {
     if (S_ISSOCK(mode)) {
       return "inode/socket";
     }
-    gboolean uncertain = FALSE;
-    luciole::GString guess(g_content_type_guess(name, nullptr, 0, &uncertain));
-    if (uncertain != FALSE) {
-      // GIO sniffs the contents of uncertain names; let it do exactly that.
-      const luciole::GioPtr<GFile> file(g_file_new_for_path(path.c_str()));
-      const luciole::GioPtr<GFileInfo> sniffed(g_file_query_info(
-          file.get(), G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, nullptr
-      ));
-      if (const char* type =
-              sniffed ? luciole::infoString(sniffed.get(), G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE) : nullptr) {
-        return type;
-      }
-    }
+    gboolean guessUncertain = FALSE;
+    const luciole::GString guess(g_content_type_guess(name, nullptr, 0, &guessUncertain));
+    uncertain = guessUncertain != FALSE;
     return guess ? guess.get() : "";
   }
 
@@ -314,7 +306,8 @@ luciole::listNativeFolder(const std::string& path, std::size_t entryLimit, GCanc
     const auto device = makedev(info.stx_dev_major, info.stx_dev_minor);
     const bool writable = folder.writable
         && (!folder.sticky || folder.user == info.stx_uid || folder.user == folder.owner || folder.user == 0);
-    const auto type = contentType(info, name, full);
+    bool uncertain = false;
+    const auto type = contentType(info, name, uncertain);
     DirectoryEntry entry{
         .id = 0,
         .place = EntryPlace::inFolder(folderLocation),
@@ -368,7 +361,19 @@ luciole::listNativeFolder(const std::string& path, std::size_t entryLimit, GCanc
     entry.icon = icons.getLocal(
         name, gioFileType(mode), entry.contentType ? entry.contentType->c_str() : nullptr, *folderLocation
     );
+    if (uncertain) {
+      result.uncertain.push_back(static_cast<std::uint32_t>(result.entries.size()));
+    }
     result.entries.push_back(std::move(entry));
   }
   return result;
+}
+
+std::optional<std::string> luciole::sniffContentType(const std::string& path) {
+  const GioPtr<GFile> file(g_file_new_for_path(path.c_str()));
+  const GioPtr<GFileInfo> sniffed(g_file_query_info(
+      file.get(), G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, nullptr
+  ));
+  const char* type = sniffed ? infoString(sniffed.get(), G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE) : nullptr;
+  return type != nullptr ? std::optional<std::string>(type) : std::nullopt;
 }

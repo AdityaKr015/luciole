@@ -89,8 +89,11 @@ namespace {
         != session.snapshot().entries.end();
   }
 
+  // Ready, with sniffed content types published.
   void ready(Pump& pump, const DirectorySession& session) {
-    pump.until([&session] { return session.snapshot().status != DirectoryStatus::Loading; });
+    pump.until([&session] {
+      return session.snapshot().status != DirectoryStatus::Loading && !session.snapshot().contentTypesPending;
+    });
     TEST_CHECK(session.snapshot().status == DirectoryStatus::Ready);
   }
 
@@ -660,6 +663,35 @@ namespace {
     fs::permissions(fixture.path / "locked", fs::perms::owner_all);
   }
 
+  // Uncertain names publish at once with their name-based type; GIO's sniffed type follows, and rescans of an
+  // unchanged file keep it without reading the file again.
+  void testDeferredSniffing(Pump& pump) {
+    Fixture fixture;
+    const auto picture = fixture.path / "picture";
+    std::ofstream(picture, std::ios::binary) << std::string("\x89PNG\r\n\x1a\n", 8) << std::string(64, '\0');
+    DirectorySession session;
+    bool publishedPending = false;
+    session.setChangedCallback([&] {
+      publishedPending = publishedPending
+          || (session.snapshot().status == DirectoryStatus::Ready && session.snapshot().contentTypesPending);
+    });
+    session.open(Location::fromPath(fixture.path.native()));
+    ready(pump, session);
+    TEST_CHECK(publishedPending);
+    TEST_CHECK(entry(session, "picture").contentType == "image/png");
+
+    publishedPending = false;
+    session.refresh();
+    ready(pump, session);
+    TEST_CHECK(!publishedPending && entry(session, "picture").contentType == "image/png");
+
+    std::ofstream(picture, std::ios::binary | std::ios::trunc) << "plain words\n";
+    session.refresh();
+    ready(pump, session);
+    TEST_CHECK(publishedPending && entry(session, "picture").contentType == "text/plain");
+    session.setChangedCallback({});
+  }
+
   // Children that cannot be inspected leave the listing to GIO, which reports what it can.
   void testNativeUnsupportedFallsBack(Pump& pump) {
     if (::geteuid() == 0) {
@@ -710,6 +742,7 @@ int main() {
     testCapabilityLifecycle(pump);
     testNativeMatchesGio(pump);
     testNativeUnsupportedFallsBack(pump);
+    testDeferredSniffing(pump);
     std::println("directory session checks passed");
     return 0;
   } catch (const std::exception& error) {
