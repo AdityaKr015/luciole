@@ -118,6 +118,7 @@ private:
   luciole::ViewPreferenceWriter m_preferences;
   luciole::PinService m_pins;
   luciole::DriveMonitor m_drives;
+  bool m_drivesStarted = false;
   luciole::FileIconCache m_icons;
   // One thumbnail pipeline for every page.
   luciole::ThumbnailService m_thumbnails;

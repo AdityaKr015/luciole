@@ -1,6 +1,7 @@
 #include "app/workspace_application.h"
 
 #include "app/file_manager_service.h"
+#include "app/startup_trace.h"
 #include "browser/location_presentation.h"
 #include "browser/tab_workspace.h"
 #include "clipboard/text_clipboard.h"
@@ -768,6 +769,18 @@ luciole::WindowId WorkspaceApplication::newWindow() {
   host->surface.setAnimationManager(&m_animations);
   host->surface.setPrepareFrameCallback([this, raw](bool, bool) { prepare(*raw); });
   host->surface.setUpdateCallback([] {});
+  host->surface.setFrameCallbacks(
+      [] { luciole::startupRendered(); },
+      [this] {
+        luciole::startupFrameDone();
+        // Device rows follow the first frame instead of delaying it.
+        if (!m_drivesStarted) {
+          m_drivesStarted = true;
+          m_drives.start();
+          luciole::startupTrace("drives-started");
+        }
+      }
+  );
   host->surface.setConfigureCallback([this, raw](std::uint32_t, std::uint32_t) {
     if (raw->tooltip) {
       raw->tooltip->dismiss();
