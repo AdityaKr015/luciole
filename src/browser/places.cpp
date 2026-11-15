@@ -1,6 +1,7 @@
 #include "browser/places.h"
 
 #include "fs/background_job.h"
+#include "fs/directory_watch.h"
 #include "fs/gio_ptr.h"
 
 #include <algorithm>
@@ -75,13 +76,25 @@ struct luciole::PinService::State : std::enable_shared_from_this<State> {
     std::vector<SavedWindow> windows;
     std::vector<UserPlace> places;
     std::string error;
+    std::vector<std::filesystem::path> watchPaths;
   };
   struct Work {
     std::optional<std::vector<Bookmark>> bookmarks;
     std::optional<std::vector<SavedWindow>> windows;
+    std::vector<Bookmark> expected;
   };
-  explicit State(std::filesystem::path path) : store(std::move(path)) {}
+  State(std::filesystem::path path, std::filesystem::path sharedPath, std::filesystem::path legacyPath)
+      : store(std::move(path)), shared(sharedPath, legacyPath), sharedPath(std::move(sharedPath)),
+        legacyPath(std::move(legacyPath)) {}
   StateStore store; // Accessed only by serial worker tasks.
+  SharedBookmarks shared;
+  std::filesystem::path sharedPath;
+  std::filesystem::path legacyPath;
+  std::vector<std::unique_ptr<DirectoryWatch>> watches;
+  guint reloadSource = 0;
+  bool reloadPending = false;
+  bool active = true;
+  std::vector<std::filesystem::path> resolvedPaths;
   std::vector<Bookmark> bookmarks;
   std::vector<SavedWindow> windows;
   std::vector<UserPlace> places;
@@ -93,6 +106,124 @@ struct luciole::PinService::State : std::enable_shared_from_this<State> {
   bool busy = false;
   bool pinBusy = false;
 
+  void stop() {
+    active = false;
+    changed = {};
+    watches.clear();
+    if (reloadSource != 0) {
+      g_source_remove(std::exchange(reloadSource, 0));
+    }
+  }
+  void watch() {
+    if (!active) {
+      return;
+    }
+    auto targets = resolvedPaths;
+    targets.push_back(sharedPath);
+    targets.push_back(legacyPath);
+    std::unordered_set<std::string> paths;
+    for (const auto& target : targets) {
+      for (auto path = target.parent_path(); !path.empty(); path = path.parent_path()) {
+        paths.insert(path.native());
+        if (path == path.root_path()) {
+          break;
+        }
+      }
+    }
+    std::vector<std::unique_ptr<DirectoryWatch>> next;
+    for (const auto& path : paths) {
+      auto monitor = DirectoryWatch::start(path, [weak = weak_from_this(), targets](const auto& changed) {
+        if (auto owner = weak.lock()) {
+          if (std::ranges::any_of(targets, [&](const auto& target) {
+                return changed == target || target.native().starts_with(changed.native() + '/');
+              })) {
+            owner->scheduleReload();
+          }
+        }
+      });
+      if (monitor) {
+        next.push_back(std::move(monitor));
+      }
+    }
+    watches = std::move(next);
+  }
+  void scheduleReload() {
+    if (!active || reloadSource != 0) {
+      return;
+    }
+    reloadSource = g_timeout_add_full(
+        G_PRIORITY_DEFAULT, 50,
+        +[](gpointer data) -> gboolean {
+          if (auto owner = static_cast<std::weak_ptr<State>*>(data)->lock()) {
+            owner->reloadSource = 0;
+            owner->requestReload();
+          }
+          return G_SOURCE_REMOVE;
+        },
+        new std::weak_ptr<State>(weak_from_this()),
+        +[](gpointer data) { delete static_cast<std::weak_ptr<State>*>(data); }
+    );
+  }
+  void requestReload() {
+    if (busy) {
+      reloadPending = true;
+    } else {
+      run(std::nullopt);
+    }
+  }
+
+  static bool builtin(const Location& location, const std::vector<UserPlace>& places) {
+    return std::ranges::any_of(places, [&](const auto& place) { return place.bookmark.location == location; });
+  }
+  static std::vector<Bookmark> layout(const SessionState& state, const std::vector<UserPlace>& places) {
+    auto result = state.bookmarks;
+    if (!state.placesCustomized) {
+      std::vector<Bookmark> initial;
+      for (const auto& place : places) {
+        const auto existing = std::ranges::find(result, place.bookmark.location, &Bookmark::location);
+        initial.push_back(existing != result.end() ? *existing : place.bookmark);
+      }
+      for (const auto& bookmark : result) {
+        if (!builtin(bookmark.location, places)) {
+          initial.push_back(bookmark);
+        }
+      }
+      result = std::move(initial);
+    }
+    if (std::ranges::none_of(result, [](const auto& pin) { return pin.location == Location::trash(); })) {
+      result.push_back({"Trash", Location::trash()});
+    }
+    return result;
+  }
+  static std::vector<Bookmark> combine(
+      const std::vector<Bookmark>& local, const std::vector<Bookmark>& shared, const std::vector<UserPlace>& places
+  ) {
+    std::vector<Bookmark> result;
+    std::vector<Bookmark> custom;
+    for (const auto& pin : shared) {
+      if (!builtin(pin.location, places)) {
+        custom.push_back(pin);
+      }
+    }
+    auto next = custom.begin();
+    for (const auto& pin : local) {
+      if (builtin(pin.location, places)) {
+        const auto external = std::ranges::find(shared, pin.location, &Bookmark::location);
+        result.push_back(external != shared.end() && !pin.location.isTrash() ? *external : pin);
+      } else if (next != custom.end()) {
+        result.push_back(*next++);
+      }
+    }
+    result.insert(result.end(), next, custom.end());
+    for (const auto& pin : shared) {
+      if (builtin(pin.location, places)
+          && std::ranges::none_of(result, [&](const auto& existing) { return existing.location == pin.location; })) {
+        result.push_back(pin);
+      }
+    }
+    return result;
+  }
+
   void notify() const {
     const auto callback = changed;
     if (callback) {
@@ -101,7 +232,7 @@ struct luciole::PinService::State : std::enable_shared_from_this<State> {
   }
   void
   run(std::optional<std::vector<Bookmark>> proposed, std::optional<std::vector<SavedWindow>> proposedWindows = {}) {
-    queue.push_back({std::move(proposed), std::move(proposedWindows)});
+    queue.push_back({std::move(proposed), std::move(proposedWindows), bookmarks});
     startNext();
   }
   void startNext() {
@@ -120,60 +251,75 @@ struct luciole::PinService::State : std::enable_shared_from_this<State> {
       sessionError.clear();
     }
     runJob<Result>(
-        [owner = shared_from_this(), proposed = std::move(work.bookmarks), proposedWindows = std::move(work.windows)] {
+        [owner = shared_from_this(), proposed = std::move(work.bookmarks), proposedWindows = std::move(work.windows),
+         expected = std::move(work.expected)] mutable {
           Result result;
+          result.bookmarks = expected;
           auto& store = owner->store;
+          auto& shared = owner->shared;
           try {
             result.places = configuredUserPlaces();
-            if (proposed) {
-              const auto outcome = store.saveBookmarks(*proposed);
+            if (proposedWindows) {
+              store.saveWindows(*proposedWindows);
               if (!store.issues().empty()) {
                 result.error = store.issues().front().format();
               }
-              result.ready = outcome != AtomicWriteState::NotCommitted;
-              if (!result.ready) {
-                result.ready = store.load();
-              }
-            } else if (proposedWindows) {
-              const auto outcome = store.saveWindows(*proposedWindows);
-              if (!store.issues().empty()) {
-                result.error = store.issues().front().format();
-              }
-              result.ready = outcome != AtomicWriteState::NotCommitted;
-              if (!result.ready) {
-                result.ready = store.load();
-              }
-            } else {
-              result.ready = store.load();
-              if (!result.ready && !store.issues().empty()) {
-                result.error = store.issues().front().format();
-              }
+              result.windows = store.state().windows;
+              result.ready = true;
+              return result;
             }
-            result.bookmarks = store.state().bookmarks;
+            if (!store.load()) {
+              result.error = store.issues().front().format();
+              return result;
+            }
             result.windows = store.state().windows;
-            if (!store.state().placesCustomized) {
-              auto available = StateStore::bookmarkLimit - result.bookmarks.size();
-              std::vector<Bookmark> initial;
-              for (const auto& place : result.places) {
-                const auto existing = std::ranges::find(result.bookmarks, place.bookmark.location, &Bookmark::location);
-                if (existing != result.bookmarks.end()) {
-                  initial.push_back(*existing);
-                } else if (available != 0) {
-                  initial.push_back(place.bookmark);
-                  --available;
-                }
-              }
-              for (const auto& bookmark : result.bookmarks) {
-                if (std::ranges::none_of(initial, [&](const auto& pin) { return pin.location == bookmark.location; })) {
-                  initial.push_back(bookmark);
-                }
-              }
-              result.bookmarks = std::move(initial);
+            if (!shared.load()) {
+              result.error = shared.error();
+              return result;
             }
-            if (std::ranges::none_of(result.bookmarks, [](const auto& pin) {
-                  return pin.location == Location::trash();
-                })) {
-              result.bookmarks.push_back({"Trash", Location::trash()});
+            result.watchPaths = shared.watchPaths();
+            auto local = layout(store.state(), result.places);
+            result.bookmarks = combine(local, shared.bookmarks(), result.places);
+            result.ready = true;
+            if (proposed) {
+              if (proposed->size() > StateStore::placesLimit) {
+                result.error = "Places supports at most 267 rows; remove some bookmarks before adding more.";
+                return result;
+              }
+              if (result.bookmarks != expected) {
+                result.error = "Places changed in another application; review the updated list and retry.";
+                return result;
+              }
+              std::vector<Bookmark> published;
+              for (const auto& pin : *proposed) {
+                if (!builtin(pin.location, result.places)
+                    || std::ranges::any_of(shared.bookmarks(), [&](const auto& existing) {
+                         return existing.location == pin.location;
+                       })) {
+                  published.push_back(pin);
+                }
+              }
+              const auto written = shared.save(published);
+              if (written.state == AtomicWriteState::NotCommitted) {
+                result.error = written.error;
+                if (shared.load()) {
+                  result.bookmarks = combine(local, shared.bookmarks(), result.places);
+                }
+                return result;
+              }
+              result.error = written.error;
+              const auto saved = store.saveBookmarks(*proposed);
+              if (saved == AtomicWriteState::NotCommitted) {
+                // The shared commit stands even if the separate local layout could not be saved.
+                result.error = store.issues().front().format();
+                store.load();
+                result.bookmarks = combine(layout(store.state(), result.places), shared.bookmarks(), result.places);
+              } else {
+                result.bookmarks = std::move(*proposed);
+                if (result.error.empty() && !store.issues().empty()) {
+                  result.error = store.issues().front().format();
+                }
+              }
             }
           } catch (const std::exception& error) {
             result.error = error.what();
@@ -199,6 +345,18 @@ struct luciole::PinService::State : std::enable_shared_from_this<State> {
           } else {
             owner->error = std::move(loaded->error);
           }
+          if (owner->active) {
+            if (!sessionWrite && loaded->ready && owner->resolvedPaths != loaded->watchPaths) {
+              owner->resolvedPaths = std::move(loaded->watchPaths);
+              // Re-read after attaching new target watches to cover the read-to-watch handoff.
+              owner->reloadPending = true;
+            }
+            owner->watch();
+            if (owner->reloadPending) {
+              owner->reloadPending = false;
+              owner->run(std::nullopt);
+            }
+          }
           owner->startNext();
           owner->notify();
         }
@@ -207,14 +365,15 @@ struct luciole::PinService::State : std::enable_shared_from_this<State> {
   }
 };
 
-luciole::PinService::PinService(std::filesystem::path path) : m_state(std::make_shared<State>(std::move(path))) {}
-luciole::PinService::~PinService() { m_state->changed = {}; }
-void luciole::PinService::setChangedCallback(std::function<void()> callback) { m_state->changed = std::move(callback); }
-void luciole::PinService::reload() {
-  if (!m_state->busy) {
-    m_state->run(std::nullopt);
-  }
+luciole::PinService::PinService(
+    std::filesystem::path path, std::filesystem::path bookmarks, std::filesystem::path legacy
+)
+    : m_state(std::make_shared<State>(std::move(path), std::move(bookmarks), std::move(legacy))) {
+  m_state->watch();
 }
+luciole::PinService::~PinService() { m_state->stop(); }
+void luciole::PinService::setChangedCallback(std::function<void()> callback) { m_state->changed = std::move(callback); }
+void luciole::PinService::reload() { m_state->requestReload(); }
 bool luciole::PinService::editable() const { return m_state->ready && !m_state->pinBusy; }
 bool luciole::PinService::busy() const { return m_state->busy; }
 const std::vector<luciole::Bookmark>& luciole::PinService::bookmarks() const { return m_state->bookmarks; }

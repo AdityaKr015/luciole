@@ -41,6 +41,8 @@ Click an entry to select it, Ctrl+click to toggle it and Shift+click to select a
 
 Places contains Home, available XDG user folders, File System, Trash and your pinned folders. Pin or unpin a folder through its context menu, or drag a folder into Places. Drag rows to reorder them. Trash can move within the list but cannot be unpinned. Its context menu offers Empty Trash.
 
+Pinned folders use the shared GTK bookmark file, also used by Nemo and Nautilus. Adding, removing, renaming or reordering user bookmarks in Luciole updates that file; changes from another application appear automatically. Built-in Places keep their Luciole layout and are not automatically added to other applications' bookmarks. Old Luciole-only pins are not imported.
+
 Settings → Sidebar & preview controls sidebar visibility, width, drive rows and the optional folder tree. The separate expandable-folder preference adds a tree within List view. Both tree options are off by default.
 
 ## Tabs and split view

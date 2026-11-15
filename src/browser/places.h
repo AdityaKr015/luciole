@@ -1,5 +1,6 @@
 #pragma once
 
+#include "config/shared_bookmarks.h"
 #include "config/state_store.h"
 
 #include <functional>
@@ -16,7 +17,10 @@ namespace luciole {
 
   class PinService {
   public:
-    explicit PinService(std::filesystem::path path);
+    explicit PinService(
+        std::filesystem::path path, std::filesystem::path bookmarks = SharedBookmarks::pathFromEnvironment(),
+        std::filesystem::path legacy = SharedBookmarks::legacyFromEnvironment()
+    );
     ~PinService();
     PinService(const PinService&) = delete;
     PinService& operator=(const PinService&) = delete;

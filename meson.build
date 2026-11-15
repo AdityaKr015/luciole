@@ -152,6 +152,7 @@ config_lib = static_library('luciole-config',
   files(
     'src/config/diagnostic.cpp',
     'src/config/settings.cpp',
+    'src/config/shared_bookmarks.cpp',
     'src/config/state_store.cpp',
     'src/config/toml_decoder.cpp',
     'src/config/view_preference_writer.cpp',

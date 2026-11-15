@@ -168,7 +168,7 @@ void RenameController::openPlaceRename(const luciole::Bookmark& bookmark) {
   const auto current = *found; // NOLINT(performance-unnecessary-copy-initialization): own the editing snapshot.
   auto editor = std::make_unique<NameDialog>(
       m_page.dialogWidth(DialogWidth::Small), "Rename place", "pencil", current.label,
-      "Changes the sidebar label only.",
+      "Changes the place label without renaming the folder.",
       [](const std::string& label) -> std::optional<std::string> {
         if (const auto error = luciole::bookmarkLabelProblem(label)) {
           return error;

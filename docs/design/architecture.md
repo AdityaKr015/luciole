@@ -13,7 +13,7 @@
 | `lib/` | Mirrored renderer, text, scene/input, shared controls, generic Wayland transport and image texture residency |
 | `src/model/` | Plain browsing/thumbnail options and shared domain types |
 | `src/fs/` | URI-backed locations, filesystem queries, directory sessions, errors and anchored local persistence |
-| `src/config/` | Validated settings, GUI overrides and separate versioned Places state |
+| `src/config/` | Validated settings, GUI overrides, shared bookmarks and private layout/window state |
 | `src/browser/` | Published directory model, controllers, selection, history, Miller chains and tab/job routing |
 | `src/operations/` | Worker-backed file jobs, conflicts, per-item outcomes and archive services |
 | `src/imaging/`, `src/system/`, `src/thumbnails/` | Decoders, artwork resolution, generation providers, metadata and disk cache |

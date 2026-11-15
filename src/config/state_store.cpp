@@ -50,8 +50,8 @@ namespace {
         add(key, *error);
       }
     };
-    if (state.bookmarks.size() > luciole::StateStore::bookmarkLimit) {
-      add("bookmarks", "at most 256 bookmarks are supported");
+    if (state.bookmarks.size() > luciole::StateStore::placesLimit) {
+      add("bookmarks", "at most 267 Places rows are supported");
     }
     std::unordered_set<std::string> uris;
     for (std::size_t i = 0; i < state.bookmarks.size(); ++i) {
@@ -198,9 +198,8 @@ namespace {
         state.placesCustomized = customized->as_boolean()->get();
       }
     }
-    if (const auto* bookmarks = decoder.array(
-            *table, "bookmarks", "bookmarks", luciole::StateStore::bookmarkLimit, state.placesCustomized
-        )) {
+    if (const auto* bookmarks =
+            decoder.array(*table, "bookmarks", "bookmarks", luciole::StateStore::placesLimit, state.placesCustomized)) {
       for (std::size_t i = 0; i < bookmarks->size(); ++i) {
         const auto key = std::format("bookmarks[{}]", i);
         const auto* bookmark = bookmarks->get(i)->as_table();
@@ -271,6 +270,8 @@ namespace {
     return text;
   }
 } // namespace
+
+std::optional<std::string> luciole::storedUriProblem(const std::string& uri) { return uriProblem(uri); }
 
 std::optional<std::string> luciole::bookmarkLabelProblem(std::string_view label) {
   if (label.empty()) {

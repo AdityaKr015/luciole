@@ -4,7 +4,7 @@ Open Settings with Ctrl+, or the main menu. It is a page inside the existing win
 
 Settings stays open when another window gains focus, preserving your selected category and unfinished edits. Close it with Escape or its close button. Settings follows the available window size while open. Enlarging the window restores its normal dialog size; narrowing it switches to compact category navigation without resetting your selected category or edits.
 
-Luciole uses `luciole/` for its application-owned directories. Existing data under the previous application name is not imported automatically. To retain settings or Places, move the corresponding files into the paths documented below while the application is closed.
+Luciole uses `luciole/` for its application-owned directories. Existing data under the previous application name is not imported automatically. To retain settings or built-in Places layout, move the corresponding files into the paths documented below while the application is closed.
 
 ## Files and precedence
 
@@ -125,7 +125,9 @@ The Image/PDF size limit applies to image and PDF sources. Video stills and embe
 
 ## Other writable data
 
-Places and optional last-window tab state live in `$XDG_STATE_HOME/luciole/state.toml`, defaulting to `~/.local/state/luciole/state.toml`. Tab restoration is controlled by `browser.restore_last_window`.
+User bookmarks live in `$XDG_CONFIG_HOME/gtk-3.0/bookmarks`, defaulting to `~/.config/gtk-3.0/bookmarks`, shared with Nemo, Nautilus and GTK file choosers. Each line contains a URI and an optional label separated by a space. The older `~/.gtk-bookmarks` is read as a fallback when the modern file has not been found; edits go to the modern path. Read-only or symlink-managed files can be displayed, but Luciole refuses edits that would replace a read-only or linked file. Old Luciole pins are not migrated.
+
+Built-in Places layout and optional last-window tab state remain in `$XDG_STATE_HOME/luciole/state.toml`, defaulting to `~/.local/state/luciole/state.toml`. Cached user rows there preserve their placement among built-ins; their contents always come from the shared bookmark file. Deleting a shared user bookmark removes it from Luciole even when an old cache row remains. Tab restoration is controlled by `browser.restore_last_window`.
 
 Thumbnails use the shared `$XDG_CACHE_HOME/thumbnails/` cache plus a Luciole ownership ledger under `$XDG_CACHE_HOME/luciole/`. The default cache root is `~/.cache`. Custom actions live in the [Scripts directory](scripts.md).
 

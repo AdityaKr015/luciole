@@ -9,6 +9,7 @@
 
 namespace luciole {
   std::optional<std::string> bookmarkLabelProblem(std::string_view label);
+  std::optional<std::string> storedUriProblem(const std::string& uri);
 
   struct Bookmark {
     std::string label;
@@ -37,11 +38,12 @@ namespace luciole {
     bool operator==(const SessionState&) const = default;
   };
 
-  // Typed adaptation of Noctalia's StateStore, with no generic owner/key bag.
+  // Private Places layout and window state; shared bookmarks own user pin contents.
   // Single owning I/O thread; load before saving and marshal snapshots to UI.
   class StateStore {
   public:
     static constexpr std::size_t bookmarkLimit = 256;
+    static constexpr std::size_t placesLimit = bookmarkLimit + 11; // Home, eight XDG directories, Trash and root.
     explicit StateStore(std::filesystem::path path);
     static std::filesystem::path pathFromEnvironment();
     bool load(); // Failure preserves the last valid snapshot and the file.
