@@ -13,7 +13,15 @@
 
 namespace {
   constexpr Logger kLog("file-launch");
-}
+
+  luciole::ApplicationChoice applicationChoice(GAppInfo* app) {
+    const char* id = g_app_info_get_id(app);
+    luciole::ApplicationChoice choice;
+    choice.id = id ? id : "";
+    choice.app = std::shared_ptr<GAppInfo>(G_APP_INFO(g_object_ref(app)), g_object_unref);
+    return choice;
+  }
+} // namespace
 
 struct luciole::FileLauncher::State {
   GioPtr<GCancellable> cancellable{g_cancellable_new()};
@@ -376,9 +384,7 @@ void luciole::FileLauncher::open(const Location& location) {
               "request {}: handler={} at {:.2f} ms", request->serial, id ? id : "unknown",
               static_cast<double>(g_get_monotonic_time() - request->started) / 1000.0
           );
-          ApplicationChoice choice;
-          choice.id = id ? id : "";
-          choice.app = std::shared_ptr<GAppInfo>(G_APP_INFO(g_object_ref(application.get())), g_object_unref);
+          auto choice = applicationChoice(application.get());
           State::dispatch(
               state, {request->location}, std::move(choice), std::move(request->context), request->serial,
               request->started
@@ -387,4 +393,76 @@ void luciole::FileLauncher::open(const Location& location) {
         request
     );
   });
+}
+
+void luciole::FileLauncher::open(const std::vector<Location>& locations) {
+  if (locations.empty()) {
+    return;
+  }
+  if (locations.size() == 1) {
+    open(locations.front());
+    return;
+  }
+  struct Group {
+    ApplicationChoice application;
+    std::vector<Location> locations;
+  };
+  struct Batch {
+    std::shared_ptr<State> state;
+    std::vector<Location> locations;
+    std::vector<std::optional<ApplicationChoice>> applications;
+    std::size_t remaining;
+  };
+  struct Request {
+    std::shared_ptr<Batch> batch;
+    std::size_t index;
+  };
+  auto batch = std::make_shared<Batch>(
+      Batch{m_state, locations, std::vector<std::optional<ApplicationChoice>>(locations.size()), locations.size()}
+  );
+  m_state->active += locations.size();
+  for (std::size_t index = 0; index < locations.size(); ++index) {
+    auto* request = new Request{batch, index};
+    const auto file = gioFile(locations[index]);
+    g_file_query_default_handler_async(
+        file.get(), G_PRIORITY_DEFAULT, m_state->cancellable.get(),
+        [](GObject* source, GAsyncResult* result, gpointer data) {
+          const std::unique_ptr<Request> request(static_cast<Request*>(data));
+          const auto& batch = request->batch;
+          const auto& state = batch->state;
+          --state->active;
+          GError* raw = nullptr;
+          const GioPtr<GAppInfo> app(g_file_query_default_handler_finish(G_FILE(source), result, &raw));
+          const GErrorPtr error(raw);
+          if (!g_cancellable_is_cancelled(state->cancellable.get())) {
+            if (app) {
+              batch->applications[request->index] = applicationChoice(app.get());
+            } else if (const auto changed = state->changed) {
+              changed(error ? error->message : "No application is associated with this file.");
+            }
+            if (--batch->remaining == 0 && !g_cancellable_is_cancelled(state->cancellable.get())) {
+              std::vector<Group> groups;
+              for (std::size_t index = 0; index < batch->applications.size(); ++index) {
+                if (!batch->applications[index]) {
+                  continue;
+                }
+                const auto& application = *batch->applications[index];
+                auto found = std::ranges::find_if(groups, [&application](const Group& group) {
+                  return g_app_info_equal(group.application.app.get(), application.app.get());
+                });
+                if (found == groups.end()) {
+                  groups.push_back({application, {batch->locations[index]}});
+                } else {
+                  found->locations.push_back(batch->locations[index]);
+                }
+              }
+              for (auto& group : groups) {
+                State::dispatch(state, group.locations, std::move(group.application));
+              }
+            }
+          }
+        },
+        request
+    );
+  }
 }
