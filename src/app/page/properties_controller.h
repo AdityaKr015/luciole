@@ -56,6 +56,8 @@ private:
       bool withResults
   );
   void showAdvanced(bool advanced, bool focus = false);
+  // Swaps the permission body for the per-item outcomes of the last bulk or recursive job.
+  void showDetails(bool shown);
   bool canApply() const;
   void sync();
   void syncMetadata();
@@ -71,9 +73,9 @@ private:
   Flex *m_permissionBasic = nullptr, *m_permissionAdvanced = nullptr;
   Button *m_permissionAdvancedOpen = nullptr, *m_permissionAdvancedBack = nullptr;
   bool m_aclActive = false;
-  std::size_t m_permissionResultTab = 2;
   PermissionResultsView* m_permissionResults = nullptr;
-  Button *m_permissionReport = nullptr, *m_permissionCancel = nullptr;
+  Button *m_permissionReport = nullptr, *m_permissionCancel = nullptr, *m_permissionDetails = nullptr;
+  bool m_detailsShown = false;
   Label* m_permissionStatus = nullptr;
   Segmented* m_permissionTabs = nullptr;
   ScrollView* m_permissionScroll = nullptr;

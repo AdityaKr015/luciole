@@ -37,11 +37,30 @@
 #include <vector>
 
 namespace {
+  // Equal tabs wide enough for "Permissions"; the strip is centered rather than spanning the dialog.
+  constexpr float kTabWidth = 128.0F;
   // Text width inside a General card: dialog padding, scrollbar gutter, then the card's own padding.
   float generalCardWidth(float dialogWidth) {
     return std::max(1.0F, dialogWidth - Style::spaceMd * 4 - Style::scrollbarWidth - Style::scrollbarGap);
   }
 } // namespace
+
+void PropertiesController::showDetails(bool shown) {
+  if (!m_permissionResults || shown == m_detailsShown) {
+    return;
+  }
+  m_detailsShown = shown;
+  // The per-item list takes the body's place; the footer keeps the summary, Apply and Close.
+  m_permissionResults->setVisible(shown);
+  m_permissionResults->setParticipatesInLayout(shown);
+  m_permissionScroll->setVisible(!shown);
+  m_permissionScroll->setParticipatesInLayout(!shown);
+  m_permissionDetails->setText(shown ? "Back" : "Details…");
+  m_permissionDetails->setGlyph(shown ? "chevron-left" : "");
+  m_permissionReport->setVisible(shown);
+  m_permissionReport->setParticipatesInLayout(shown);
+  m_page.menuSurface()->requestLayout();
+}
 
 PropertiesController::PropertiesController(PageContext& page, luciole::FileIconCache& icons)
     : m_page(page), m_icons(icons) {
@@ -240,12 +259,21 @@ void PropertiesController::sync() {
       m_permissionStatus->setColor(
           colorSpecFromRole(snapshot.failed() ? ColorRole::Error : ColorRole::OnSurfaceVariant)
       );
-      m_permissionReport->setEnabled(!permissions.busy() && !snapshot.report.empty() && m_page.clipboard().available());
+      // Clipboard access needs a recent input serial, which the click itself provides; checking it here left the
+      // button greyed out whenever the job finished between inputs.
+      m_permissionReport->setEnabled(!permissions.busy() && !snapshot.report.empty());
       m_permissionCancel->setVisible(saving);
       m_permissionCancel->setParticipatesInLayout(saving);
       m_permissionCancel->setEnabled(!snapshot.cancelRequested);
-      if (snapshot.finished) {
-        m_permissionTabs->setSelectedIndex(m_permissionResultTab);
+      // Reading a multi-selection fills one Ready row per item; that is the selection, not a result. Details
+      // become available once an item was changed, failed, or skipped.
+      const bool outcomes = snapshot.results && std::ranges::any_of(*snapshot.results, [](const auto& row) {
+                              return row.outcome != luciole::PermissionOutcome::Ready;
+                            });
+      m_permissionDetails->setVisible(outcomes);
+      m_permissionDetails->setParticipatesInLayout(outcomes);
+      if (!outcomes) {
+        showDetails(false);
       }
     }
     if (snapshot.failed() && !snapshot.finished && snapshot.phase == luciole::PermissionPhase::Ready) {
@@ -455,20 +483,25 @@ PropertiesController::Body PropertiesController::buildBody(
     auto advanced = ui::column(
         {.out = &advancedGroup,
          .align = FlexAlign::Stretch,
-         .gap = Style::spaceSm,
+         .gap = Style::spaceMd,
          .visible = false,
          .participatesInLayout = false},
+        // Page header: back arrow beside the page title, like a sub-page.
         ui::row(
-            {.justify = FlexJustify::Start},
+            {.align = FlexAlign::Center, .gap = Style::spaceSm},
             ui::button(
                 {.out = &advancedBack,
-                 .text = "Back to permissions",
                  .glyph = "chevron-left",
+                 .controlHeight = Style::controlHeightSm,
                  .variant = ButtonVariant::Ghost,
+                 .tooltip = "Back to permissions",
+                 .minWidth = Style::controlHeightSm,
+                 .maxWidth = Style::controlHeightSm,
                  .onClick = [this] { showAdvanced(false, true); }}
-            )
+            ),
+            ui::label({.text = "Access control list", .fontSize = Style::fontSizeTitle, .fontWeight = FontWeight::Bold})
         ),
-        ui::label({.text = "Advanced permissions", .fontWeight = FontWeight::SemiBold}), std::move(aclControl)
+        std::move(aclControl)
     );
     body->content()->addChild(
         ui::column(
@@ -538,17 +571,23 @@ void PropertiesController::show(const std::vector<luciole::DirectoryEntry>& targ
   auto* results = body.results;
   const auto literal = [](Label& label) { label.setUseMarkup(false); };
   Segmented* tabs = nullptr;
-  Button *save = nullptr, *reportButton = nullptr, *cancelButton = nullptr;
+  Button *save = nullptr, *reportButton = nullptr, *cancelButton = nullptr, *detailsButton = nullptr;
   Label* progress = nullptr;
-  std::vector<ui::SegmentedOption> propertyTabs{
-      {.label = "General", .glyph = {}, .tooltip = {}}, {.label = "Permissions", .glyph = {}, .tooltip = {}}
+  const auto onTabChange = [this, generalGroup, permissionsGroup, scroll](std::size_t index) {
+    showDetails(false);
+    generalGroup->setVisible(index == 0);
+    generalGroup->setParticipatesInLayout(index == 0);
+    if (permissionsGroup) {
+      permissionsGroup->setVisible(index == 1);
+      permissionsGroup->setParticipatesInLayout(index == 1);
+    }
+    showAdvanced(false);
+    if (m_permissionSave) {
+      m_permissionSave->setEnabled(canApply() && !m_page.operationsBusy());
+    }
+    scroll->requestScrollToOffset(0);
+    m_page.menuSurface()->requestLayout();
   };
-  constexpr std::size_t resultTab = 2;
-  if (withResults) {
-    propertyTabs.push_back({.label = "Results", .glyph = {}, .tooltip = {}});
-  }
-  // Equal tabs wide enough for "Permissions"; the strip is centered rather than spanning the dialog.
-  const float tabsWidth = 128.0F * static_cast<float>(propertyTabs.size());
   auto root = ui::column(
       {.align = FlexAlign::Stretch},
       luciole::dialogHeader("Properties", "list-details", [this] { m_page.dismissMenu(); }),
@@ -556,30 +595,14 @@ void PropertiesController::show(const std::vector<luciole::DirectoryEntry>& targ
           {.justify = FlexJustify::Center, .visible = editable, .participatesInLayout = editable},
           ui::segmented(
               {.out = &tabs,
-               .options = std::move(propertyTabs),
+               .options =
+                   std::vector<ui::SegmentedOption>{
+                       {.label = "General", .glyph = {}, .tooltip = {}},
+                       {.label = "Permissions", .glyph = {}, .tooltip = {}}
+                   },
                .equalSegmentWidths = true,
-               .width = tabsWidth,
-               .onChange =
-                   [this, generalGroup, permissionsGroup, scroll, results](std::size_t index) {
-                     generalGroup->setVisible(index == 0);
-                     generalGroup->setParticipatesInLayout(index == 0);
-                     if (permissionsGroup) {
-                       permissionsGroup->setVisible(index == 1);
-                       permissionsGroup->setParticipatesInLayout(index == 1);
-                     }
-                     showAdvanced(false);
-                     if (m_permissionSave) {
-                       m_permissionSave->setEnabled(canApply() && !m_page.operationsBusy());
-                     }
-                     if (results) {
-                       results->setVisible(index == resultTab);
-                       results->setParticipatesInLayout(index == resultTab);
-                       scroll->setVisible(index != resultTab);
-                       scroll->setParticipatesInLayout(index != resultTab);
-                     }
-                     scroll->requestScrollToOffset(0);
-                     m_page.menuSurface()->requestLayout();
-                   }}
+               .width = kTabWidth * 2.0F,
+               .onChange = onTabChange}
           )
       ),
       std::move(body.node)
@@ -593,23 +616,38 @@ void PropertiesController::show(const std::vector<luciole::DirectoryEntry>& targ
     }
     root->addChild(
         ui::row(
-            {.align = FlexAlign::Center, .justify = FlexJustify::End, .gap = Style::spaceSm},
+            {.align = FlexAlign::Center, .gap = Style::spaceSm},
+            // Per-item outcomes of the last bulk or recursive job; shown only once there are some.
+            ui::button(
+                {.out = &detailsButton,
+                 .text = "Details…",
+                 .variant = ButtonVariant::Ghost,
+                 .visible = false,
+                 .participatesInLayout = false,
+                 .onClick = [this] { showDetails(!m_detailsShown); }}
+            ),
             ui::button(
                 {.out = &reportButton,
                  .text = "Copy report",
                  .enabled = false,
                  .variant = ButtonVariant::Ghost,
-                 .visible = withResults,
-                 .participatesInLayout = withResults,
+                 .visible = false,
+                 .participatesInLayout = false,
                  .onClick =
                      [this] {
-                       if (m_job) {
-                         m_page.clipboard().setClipboardText(
-                             m_job->service<luciole::PermissionService>().snapshot().report
-                         );
+                       if (!m_job) {
+                         return;
                        }
+                       if (!m_page.clipboard().available()) {
+                         m_page.actionError("The clipboard is not available.");
+                         return;
+                       }
+                       m_page.clipboard().setClipboardText(
+                           m_job->service<luciole::PermissionService>().snapshot().report
+                       );
                      }}
             ),
+            ui::spacer(),
             ui::button(
                 {.out = &cancelButton,
                  .text = "Cancel",
@@ -686,9 +724,9 @@ void PropertiesController::show(const std::vector<luciole::DirectoryEntry>& targ
     m_aclEditor = body.acl;
     m_bulkAclEditor = body.bulkAcl;
     m_aclActive = false;
-    m_permissionResultTab = resultTab;
     m_permissionResults = results;
     m_permissionReport = reportButton;
+    m_permissionDetails = detailsButton;
     m_permissionCancel = cancelButton;
     m_permissionStatus = progress;
     m_permissionTabs = tabs;
@@ -730,9 +768,9 @@ void PropertiesController::close() {
   m_aclEditor = nullptr;
   m_bulkAclEditor = nullptr;
   m_aclActive = false;
-  m_permissionResultTab = 2;
   m_permissionResults = nullptr;
-  m_permissionReport = m_permissionCancel = nullptr;
+  m_permissionReport = m_permissionCancel = m_permissionDetails = nullptr;
+  m_detailsShown = false;
   m_permissionStatus = nullptr;
   m_permissionTabs = nullptr;
   m_permissionSave = nullptr;

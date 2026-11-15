@@ -14,6 +14,8 @@ class RecursivePermissionEditor;
 
 // The snapshot's failure text, or its status message when it did not fail as a whole.
 std::string permissionStatusText(const luciole::PermissionSnapshot& snapshot);
+// "rwxr-x---  0750": symbolic like ls, with s/S and t/T for the special bits, then octal.
+std::string permissionModeText(std::uint32_t mode);
 
 class PermissionEditor final : public Flex {
 public:
