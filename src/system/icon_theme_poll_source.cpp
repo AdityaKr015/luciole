@@ -22,6 +22,7 @@ namespace fs = std::filesystem;
 namespace {
   using Clock = std::chrono::steady_clock;
   constexpr Logger kLog("icon-theme");
+  // Fallback check while the watch set is missing or incomplete; a complete set reports every relevant change.
   constexpr std::chrono::seconds kCheckInterval{60};
   constexpr std::chrono::milliseconds kDebounceInterval{100};
   constexpr std::uint32_t kEntryChange = IN_CREATE | IN_CLOSE_WRITE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO;
@@ -197,14 +198,22 @@ namespace {
       auto result = std::make_unique<RefreshResult>();
       result->changed = changed;
       if (changed) {
+        // Before any lookup no icon bytes exist that predate the watches, so comparing signatures is enough.
+        const bool unloaded = initial && !content;
+        result->changed = !unloaded;
         while (!g_cancellable_is_cancelled(cancelled)) {
           const auto paths = IconResolver::themeWatchPaths();
           auto watches = std::make_unique<WatchSet>(*paths, cancelled);
           if (g_task_return_error_if_cancelled(task)) {
             return;
           }
-          // Refresh bytes loaded before their watches existed. Ancestors cover edits during this validation.
-          IconResolver::invalidateThemeContent();
+          if (unloaded && IconResolver::lookupCount() == 0) {
+            result->changed = IconResolver::checkThemeChanged() || result->changed;
+          } else {
+            // Refresh bytes loaded before their watches existed. Ancestors cover edits during this validation.
+            IconResolver::invalidateThemeContent();
+            result->changed = true;
+          }
           if (samePaths(*paths, *IconResolver::themeWatchPaths())) {
             result->watches = std::shared_ptr<WatchSet>(watches.release(), retireWatches);
             break;
@@ -260,6 +269,8 @@ struct IconThemePollSource::Impl : std::enable_shared_from_this<Impl> {
     }
     active.reset();
   }
+
+  bool periodic() const { return !active || !active->complete; }
 
   void queueChange(bool content, bool metadata) {
     contentPending = contentPending || content;
@@ -342,9 +353,10 @@ bool IconThemePollSource::refreshing() const {
 
 int IconThemePollSource::pollTimeoutMs() const {
   const auto now = Clock::now();
-  int timeout = millisecondsUntil(m_impl->nextCheck, now);
+  int timeout = m_impl->periodic() ? millisecondsUntil(m_impl->nextCheck, now) : -1;
   if (!m_impl->busy && (m_impl->contentPending || m_impl->metadataPending)) {
-    timeout = std::min(timeout, millisecondsUntil(m_impl->debounceUntil, now));
+    const int debounce = millisecondsUntil(m_impl->debounceUntil, now);
+    timeout = timeout < 0 ? debounce : std::min(timeout, debounce);
   }
   return timeout;
 }
@@ -357,7 +369,7 @@ void IconThemePollSource::dispatch(const std::vector<pollfd>& fds, std::size_t s
     m_impl->drain();
   }
   const auto now = Clock::now();
-  if (now >= m_impl->nextCheck) {
+  if (m_impl->periodic() && now >= m_impl->nextCheck) {
     m_impl->nextCheck = now + kCheckInterval;
     m_impl->metadataPending = true;
     m_impl->debounceUntil = now;
