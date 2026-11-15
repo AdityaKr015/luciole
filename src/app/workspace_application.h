@@ -17,6 +17,7 @@
 extern volatile std::sig_atomic_t g_stopRequested;
 
 class WorkspaceApplication {
+  static constexpr std::size_t pageLimit = 64;
   struct Host {
     luciole::WindowId id;
     luciole::WindowSurface surface;

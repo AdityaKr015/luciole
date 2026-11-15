@@ -52,28 +52,27 @@ namespace {
          .onChange = [changed = std::move(changed)](std::size_t) { changed(); }}
     );
   }
-  // "rwxr-x---  0750": symbolic like ls, with s/S and t/T for the special bits, then octal.
-  std::string modeText(std::uint32_t mode) {
-    std::string text = "---------";
-    constexpr std::string_view letters = "rwxrwxrwx";
-    for (std::size_t i = 0; i < 9; ++i) {
-      if ((mode & bits[i]) != 0) {
-        text[i] = letters[i];
-      }
-    }
-    const auto special = [&](std::size_t index, std::uint32_t bit, char set, char unset) {
-      if ((mode & bit) != 0) {
-        text[index] = text[index] == 'x' ? set : unset;
-      }
-    };
-    special(2, 04000, 's', 'S');
-    special(5, 02000, 's', 'S');
-    special(8, 01000, 't', 'T');
-    return std::format("{}  {:04o}", text, mode & 07777U);
-  }
 } // namespace
 std::string permissionStatusText(const luciole::PermissionSnapshot& snapshot) {
   return snapshot.error ? luciole::fileErrorText(*snapshot.error) : snapshot.message;
+}
+std::string permissionModeText(std::uint32_t mode) {
+  std::string text = "---------";
+  constexpr std::string_view letters = "rwxrwxrwx";
+  for (std::size_t i = 0; i < 9; ++i) {
+    if ((mode & bits[i]) != 0) {
+      text[i] = letters[i];
+    }
+  }
+  const auto special = [&](std::size_t index, std::uint32_t bit, char set, char unset) {
+    if ((mode & bit) != 0) {
+      text[index] = text[index] == 'x' ? set : unset;
+    }
+  };
+  special(2, 04000, 's', 'S');
+  special(5, 02000, 's', 'S');
+  special(8, 01000, 't', 'T');
+  return std::format("{}  {:04o}", text, mode & 07777U);
 }
 PermissionEditor::PermissionEditor(std::function<void()> edited, bool multiple, bool folders)
     : m_multiple(multiple), m_edited(std::move(edited)) {
@@ -286,7 +285,7 @@ bool PermissionEditor::canApply() const {
 void PermissionEditor::changed() {
   if (!m_syncing) {
     if (!m_multiple) {
-      m_mode->setText(modeText(mode()));
+      m_mode->setText(permissionModeText(mode()));
     }
     m_edited();
   }
@@ -346,7 +345,7 @@ void PermissionEditor::sync(const luciole::PermissionSnapshot& snapshot) {
   m_mode->setText(
       m_multiple ? (snapshot.unknownItems > 0 ? std::format("{} items · {} unknown", items, snapshot.unknownItems)
                                               : std::format("{} items", items))
-          : snapshot.info ? modeText(mode())
+          : snapshot.info ? permissionModeText(mode())
                           : "Unknown"
   );
   if (m_multiple) {

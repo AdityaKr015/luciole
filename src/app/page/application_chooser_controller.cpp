@@ -134,7 +134,7 @@ void ApplicationChooserController::show(const std::vector<luciole::DirectoryEntr
       )
   );
   luciole::applyDialogStyle(*root);
-  m_page.showCenteredDialog(std::move(root), 480.0F);
+  m_page.showDialog(std::move(root), DialogWidth::Medium);
   if (!m_page.menuSurface()) {
     return;
   }
