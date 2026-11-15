@@ -154,7 +154,7 @@ BrowserPage::BrowserPage(
     adapter->setActivateCallback([this](luciole::EntryId id) {
       auto request = actionRequest(false);
       if (const auto* entry = browser().model().entry(id)) {
-        request.targets.push_back({id, entry->location});
+        request.targets.push_back({id, entry->location()});
       }
       dispatchAction(Action::Open, request);
     });
@@ -840,7 +840,7 @@ bool BrowserPage::openInNewTab(float x, float y) {
     if (auto index = m_list->itemAtScene(x, y); index && *index < browser().model().rows().size()) {
       const auto* entry = browser().model().entry(browser().model().rows()[*index]);
       if (entry && entry->type == luciole::FileType::Directory) {
-        m_workspaceRequest(command, entry->location);
+        m_workspaceRequest(command, entry->location());
       }
       return true;
     }
@@ -1176,7 +1176,7 @@ luciole::ActionRequest BrowserPage::actionRequest(bool withTargets) const {
 luciole::ActionRequest BrowserPage::requestFor(const std::vector<luciole::DirectoryEntry>& entries) const {
   auto request = actionRequest(false);
   for (const auto& entry : entries) {
-    request.targets.push_back({entry.id, entry.location});
+    request.targets.push_back({entry.id, entry.location()});
   }
   return request;
 }
@@ -1290,7 +1290,7 @@ void BrowserPage::runAction(
       {Action::FoldersFirst, sort},
       {Action::Open, [](BrowserPage& page, const Call& call) { page.openTargets(call.targets); }},
       {Action::ContainingFolder,
-       [](BrowserPage& page, const Call& call) { page.showContaining(call.targets.front().location); }},
+       [](BrowserPage& page, const Call& call) { page.showContaining(call.targets.front().location()); }},
       {Action::OriginalLocation,
        [](BrowserPage& page, const Call& call) { page.showContaining(*call.targets.front().trashInfo().original); }},
       {Action::Pin, [](BrowserPage& page, const Call& call) { page.pinTargets(call.targets); }},
@@ -1318,12 +1318,12 @@ void BrowserPage::runAction(
        [](BrowserPage& page, const Call& call) { page.m_archiveController.compress(call.targets); }},
       {Action::ExtractHere,
        [](BrowserPage& page, const Call& call) {
-         page.m_archiveController.extractHere(call.targets.front().location);
+         page.m_archiveController.extractHere(call.targets.front().location());
        }},
       {Action::ExtractTo,
-       [](BrowserPage& page, const Call& call) { page.m_archiveController.extractTo(call.targets.front().location); }},
+       [](BrowserPage& page, const Call& call) { page.m_archiveController.extractTo(call.targets.front().location()); }},
       {Action::BrowseArchive,
-       [](BrowserPage& page, const Call& call) { page.m_archiveController.browse(call.targets.front().location); }},
+       [](BrowserPage& page, const Call& call) { page.m_archiveController.browse(call.targets.front().location()); }},
       {Action::CreateFolder, createItem},
       {Action::CreateFile, createItem},
       {Action::NewDocument,
@@ -1367,7 +1367,7 @@ void BrowserPage::runAction(
       {Action::Redo, [](BrowserPage& page, const Call&) { (void)page.m_hub.replayHistory(page.m_workspaceId, true); }},
       {Action::Operations, [](BrowserPage& page, const Call&) { page.m_operations.open(); }},
       {Action::TargetTerminal,
-       [](BrowserPage& page, const Call& call) { page.openTerminal(call.targets.front().location); }},
+       [](BrowserPage& page, const Call& call) { page.openTerminal(call.targets.front().location()); }},
   });
   static_assert(luciole::actionTableInOrder(kHandlers));
   kHandlers[std::to_underlying(action)].run(*this, {.action = action, .request = request, .targets = targets});
@@ -1376,7 +1376,7 @@ void BrowserPage::runAction(
 void BrowserPage::copyFiles(Action action, const std::vector<luciole::DirectoryEntry>& targets) {
   luciole::FilePayload payload{.locations = {}, .cut = action == Action::CutFiles};
   for (const auto& target : targets) {
-    payload.locations.push_back(target.location);
+    payload.locations.push_back(target.location());
   }
   if (!m_clipboard.setFiles(std::move(payload))) {
     actionError("The file selection could not be copied to the clipboard.");
@@ -1398,7 +1398,7 @@ void BrowserPage::copyPaths(
     append(*request.folder);
   } else {
     for (const auto& target : targets) {
-      append(target.location);
+      append(target.location());
     }
   }
   if (text.size() > 1024 * 1024) {
@@ -1462,8 +1462,8 @@ void BrowserPage::openTargets(const std::vector<luciole::DirectoryEntry>& target
 void BrowserPage::pinTargets(const std::vector<luciole::DirectoryEntry>& targets) {
   std::vector<luciole::Bookmark> pins;
   for (const auto& target : targets) {
-    if (!m_pins.contains(target.location)) {
-      pins.push_back({target.displayName, target.location});
+    if (auto location = target.location(); !m_pins.contains(location)) {
+      pins.push_back({target.displayName(), std::move(location)});
     }
   }
   m_sidebar.pinFolders(std::move(pins), m_pins.bookmarks().size());
@@ -1473,7 +1473,7 @@ void BrowserPage::unpinTargets(const std::vector<luciole::DirectoryEntry>& targe
   std::vector<luciole::Location> locations;
   locations.reserve(targets.size());
   for (const auto& target : targets) {
-    locations.push_back(target.location);
+    locations.push_back(target.location());
   }
   m_pins.removeMany(locations);
 }
@@ -1562,7 +1562,7 @@ bool BrowserPage::targetsCurrent(const std::vector<luciole::DirectoryEntry>& tar
   const bool current = std::ranges::all_of(targets, [this](const auto& target) {
     const auto* entry = browser().model().entry(target.id);
     return entry != nullptr
-        && entry->location == target.location
+        && entry->location() == target.location()
         && std::ranges::contains(browser().model().rows(), target.id);
   });
   if (!current) {
@@ -1952,7 +1952,7 @@ void BrowserPage::revealPendingTargets() {
     const bool properties = std::exchange(m_revealProperties, false);
     std::vector<luciole::EntryId> ids;
     for (const auto id : model.rows()) {
-      if (const auto* entry = model.entry(id); entry && std::ranges::contains(targets, entry->location)) {
+      if (const auto* entry = model.entry(id); entry && std::ranges::contains(targets, entry->location())) {
         ids.push_back(id);
       }
     }
@@ -2376,7 +2376,7 @@ std::unique_ptr<Flex> BrowserPage::buildFilePane() {
   miller->activate = [this](luciole::EntryId id) {
     auto request = actionRequest(false);
     if (const auto* entry = browser().model().entry(id)) {
-      request.targets.push_back({id, entry->location});
+      request.targets.push_back({id, entry->location()});
     }
     dispatchAction(Action::Open, request);
   };

@@ -40,7 +40,7 @@ std::string luciole::entryColumnText(const DirectoryEntry& entry, DetailsColumn 
   case DetailsColumn::Permissions:
     return entry.details.mode ? std::format("{:04o}", *entry.details.mode) : "Unknown";
   case DetailsColumn::Location: {
-    const auto parent = entry.location.parent();
+    const auto parent = entry.location().parent();
     return parent ? locationEditText(*parent) : "Unknown";
   }
   }

@@ -192,7 +192,7 @@ namespace {
         !fs::exists(trashFiles() / "delete-selected-test")
         && read(trashFiles() / "keep-selected-test") == "keep unrelated"
     );
-    entry.location = luciole::Location::trash();
+    entry.place = luciole::Location::trash();
     TEST_CHECK(service.prepareSelection({entry}));
     pump.until([&] { return !service.busy(); });
     TEST_CHECK(service.snapshot().status == Status::Error && !service.empty());

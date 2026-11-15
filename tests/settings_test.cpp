@@ -403,22 +403,16 @@ namespace {
     data.status = luciole::DirectoryStatus::Ready;
     data.entries = {
         {.id = 1,
-         .location = luciole::Location::fromPath((fixture.directory / ".hidden").native()),
+         .place = luciole::Location::fromPath((fixture.directory / ".hidden").native()),
          .name = ".hidden",
-         .displayName = ".hidden",
          .hidden = true,
          .size = 20,
-         .modifiedSeconds = std::nullopt,
-         .etag = std::nullopt,
-         .parentDisplayName = {}},
+         .modifiedSeconds = std::nullopt},
         {.id = 2,
-         .location = luciole::Location::fromPath((fixture.directory / "visible").native()),
+         .place = luciole::Location::fromPath((fixture.directory / "visible").native()),
          .name = "visible",
-         .displayName = "visible",
          .size = 5,
-         .modifiedSeconds = std::nullopt,
-         .etag = std::nullopt,
-         .parentDisplayName = {}},
+         .modifiedSeconds = std::nullopt},
     };
     model.applySnapshot(std::move(data));
     TEST_CHECK((model.rows() == std::vector<luciole::EntryId>{1, 2}));

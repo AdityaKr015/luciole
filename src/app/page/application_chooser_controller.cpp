@@ -52,7 +52,7 @@ void ApplicationChooserController::show(const std::vector<luciole::DirectoryEntr
   session->request = m_page.requestFor(entries);
   for (const auto& entry : entries) {
     session->types.emplace_back(entry.contentType.value_or("application/octet-stream"));
-    session->locations.push_back(entry.location);
+    session->locations.push_back(entry.location());
   }
   std::ranges::sort(session->types);
   const auto duplicates = std::ranges::unique(session->types);

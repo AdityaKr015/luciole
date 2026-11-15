@@ -35,6 +35,8 @@ struct luciole::RecursiveSearch::State : std::enable_shared_from_this<State> {
   struct Folder {
     Location location;
     unsigned int depth = 0;
+    // Shared by every result found in this folder; set when the folder becomes current.
+    std::shared_ptr<const Location> shared = nullptr;
   };
   struct Scan {
     GioPtr<GCancellable> cancellable{g_cancellable_new()};
@@ -90,6 +92,7 @@ struct luciole::RecursiveSearch::State : std::enable_shared_from_this<State> {
     }
     scan->current = std::move(scan->pending.front());
     scan->pending.pop_front();
+    scan->current->shared = std::make_shared<const Location>(scan->current->location);
     const auto file = gioFile(scan->current->location);
     auto* request = new Request{shared_from_this(), scan};
     g_file_enumerate_children_async(
@@ -205,29 +208,31 @@ struct luciole::RecursiveSearch::State : std::enable_shared_from_this<State> {
     }
     const GString relative(g_file_get_relative_path(gioFile(*scan->root).get(), parent.get()));
     const GString parentName(g_filename_display_name(relative && *relative.get() != '\0' ? relative.get() : "."));
-    scan->entries.push_back(
-        {.id = nextId++,
-         .location = location,
-         .name = name,
-         .displayName = std::move(displayName),
-         .type = type,
-         .hidden = hidden,
-         .symlink = symlink,
-         .size = g_file_info_has_attribute(info, G_FILE_ATTRIBUTE_STANDARD_SIZE) && g_file_info_get_size(info) >= 0
-             ? std::optional<std::uint64_t>(g_file_info_get_size(info))
-             : std::nullopt,
-         .modifiedSeconds = g_file_info_has_attribute(info, G_FILE_ATTRIBUTE_TIME_MODIFIED)
-             ? std::optional<std::uint64_t>(g_file_info_get_attribute_uint64(info, G_FILE_ATTRIBUTE_TIME_MODIFIED))
-             : std::nullopt,
-         .etag = std::nullopt,
-         .access = readFileAccess(info),
-         .parentDisplayName = parentName.get(),
-         .icon = std::make_shared<const FileIconSource>(readFileIcon(info, location)),
-         .trash = location.isTrash() ? std::make_shared<const TrashInfo>(readTrashInfo(info)) : nullptr,
-         .identity = readFileIdentity(info),
-         .contentType = readContentType(info),
-         .details = readEntryMetadata(info)}
-    );
+    DirectoryEntry entry{
+        .id = nextId++,
+        .place = EntryPlace::inFolder(scan->current->shared),
+        .name = name,
+        .type = type,
+        .hidden = hidden,
+        .symlink = symlink,
+        .size = g_file_info_has_attribute(info, G_FILE_ATTRIBUTE_STANDARD_SIZE) && g_file_info_get_size(info) >= 0
+            ? std::optional<std::uint64_t>(g_file_info_get_size(info))
+            : std::nullopt,
+        .modifiedSeconds = g_file_info_has_attribute(info, G_FILE_ATTRIBUTE_TIME_MODIFIED)
+            ? std::optional<std::uint64_t>(g_file_info_get_attribute_uint64(info, G_FILE_ATTRIBUTE_TIME_MODIFIED))
+            : std::nullopt,
+        .access = readFileAccess(info),
+        .icon = std::make_shared<const FileIconSource>(readFileIcon(info, location)),
+        .contentType = readContentType(info),
+        .details = readEntryMetadata(info)
+    };
+    entry.setDisplayName(std::move(displayName));
+    entry.setParentDisplayName(parentName.get());
+    entry.setIdentity(readFileIdentity(info));
+    if (location.isTrash()) {
+      entry.setTrash(readTrashInfo(info));
+    }
+    scan->entries.push_back(std::move(entry));
   }
 };
 

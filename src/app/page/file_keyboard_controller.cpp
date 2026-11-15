@@ -271,7 +271,7 @@ bool FileKeyboardController::listKey(const KeyboardEvent& event) {
       if (request.targets.empty()) {
         const auto* entry = model.entry(*model.selection().focused);
         if (entry) {
-          request.targets.push_back({entry->id, entry->location});
+          request.targets.push_back({entry->id, entry->location()});
         }
       }
       m_page.dispatchAction(Action::Open, request);

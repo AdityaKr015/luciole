@@ -22,14 +22,11 @@ namespace {
   entry(luciole::EntryId id, const std::string& name, luciole::FileType type = luciole::FileType::Regular) {
     return {
         .id = id,
-        .location = luciole::Location::fromPath("/tmp/action-fixture/" + name),
+        .place = luciole::Location::fromPath("/tmp/action-fixture/" + name),
         .name = name,
-        .displayName = name,
         .type = type,
         .size = {},
-        .modifiedSeconds = {},
-        .etag = {},
-        .parentDisplayName = {}
+        .modifiedSeconds = {}
     };
   }
   luciole::DirectorySnapshot snapshot() {
@@ -77,25 +74,25 @@ namespace {
     model.applySnapshot(data);
     TEST_CHECK(!R::state(A::CutFiles, c, request).enabled && R::state(A::CopyFiles, c, request).enabled);
     test::editEntries(data, [&](auto& entries) {
-      entries[0].location = luciole::Location::fromUri("sftp://example.invalid/source");
+      entries[0].place = luciole::Location::fromUri("sftp://example.invalid/source");
     });
     ++data.generation;
     model.applySnapshot(data);
     TEST_CHECK(R::state(A::CopyFiles, c, R::capture(c)).enabled);
     test::editEntries(data, [&](auto& entries) {
-      entries[0].location = luciole::Location::fromUri("smb://example.invalid/share/source");
+      entries[0].place = luciole::Location::fromUri("smb://example.invalid/share/source");
     });
     ++data.generation;
     model.applySnapshot(data);
     TEST_CHECK(R::state(A::CopyFiles, c, R::capture(c)).enabled);
     test::editEntries(data, [&](auto& entries) {
-      entries[0].location = luciole::Location::fromUri("https://example.invalid/file");
+      entries[0].place = luciole::Location::fromUri("https://example.invalid/file");
     });
     ++data.generation;
     model.applySnapshot(data);
     TEST_CHECK(!R::state(A::CopyFiles, c, R::capture(c)).enabled);
     test::editEntries(data, [&](auto& entries) {
-      entries[0].location = luciole::Location::fromPath("/tmp/action-fixture/broken");
+      entries[0].place = luciole::Location::fromPath("/tmp/action-fixture/broken");
       entries[0].symlink = true;
       entries[0].access.read = false;
       entries[0].access.rename = true;
@@ -115,7 +112,7 @@ namespace {
     TEST_CHECK(!R::state(A::CopyFiles, c, R::capture(c)).enabled);
     test::editEntries(data, [&](auto& entries) {
       entries[0].symlink = true;
-      entries[0].location = luciole::Location::fromUri("sftp://example.invalid/broken");
+      entries[0].place = luciole::Location::fromUri("sftp://example.invalid/broken");
     });
     ++data.generation;
     model.applySnapshot(data);
@@ -149,7 +146,7 @@ namespace {
     data.metadata.access.execute = true;
     data.location = luciole::Location::fromUri("sftp://example.invalid/folder");
     test::editEntries(data, [&](auto& entries) {
-      entries.back().location = luciole::Location::fromUri("sftp://example.invalid/folder/child");
+      entries.back().place = luciole::Location::fromUri("sftp://example.invalid/folder/child");
       entries.back().access.execute = true;
     });
     ++data.generation;
@@ -183,7 +180,7 @@ namespace {
     model.applySnapshot(data);
     TEST_CHECK(!R::state(A::RunProgram, context, request).enabled);
     test::editEntries(data, [&](auto& entries) {
-      entries.front().location = luciole::Location::fromPath("/tmp/action-fixture/test.desktop");
+      entries.front().place = luciole::Location::fromPath("/tmp/action-fixture/test.desktop");
     });
     ++data.generation;
     model.applySnapshot(data);
@@ -191,7 +188,7 @@ namespace {
     TEST_CHECK(R::state(A::RunProgram, context, request).enabled);
     TEST_CHECK(!R::state(A::RunInTerminal, context, request).enabled);
     test::editEntries(data, [&](auto& entries) {
-      entries.front().location = luciole::Location::fromUri("sftp://server/test.desktop");
+      entries.front().place = luciole::Location::fromUri("sftp://server/test.desktop");
     });
     ++data.generation;
     model.applySnapshot(data);
@@ -205,9 +202,9 @@ namespace {
     data.location = luciole::Location::trash();
     test::editEntries(data, [&](auto& entries) {
       entries.erase(entries.begin() + 1, entries.end());
-      entries[0].location = luciole::Location::fromUri("trash:///alpha.txt");
-      entries[0].identity = luciole::FileIdentity{"trash-volume", "item-1"};
-      entries[0].trash = std::make_shared<const luciole::TrashInfo>(
+      entries[0].place = luciole::Location::fromUri("trash:///alpha.txt");
+      entries[0].setIdentity(luciole::FileIdentity{"trash-volume", "item-1"});
+      entries[0].setTrash(
           luciole::TrashInfo{.original = luciole::Location::fromPath("/tmp/original/alpha.txt"), .deletionDate = {}}
       );
     });
@@ -223,7 +220,7 @@ namespace {
         !R::state(A::Restore, context, request).enabled && !R::state(A::DeletePermanently, context, request).enabled
     );
     context.operationsBusy = false;
-    test::editEntries(data, [&](auto& entries) { entries[0].trash.reset(); });
+    test::editEntries(data, [&](auto& entries) { entries[0].setTrash(std::nullopt); });
     ++data.generation;
     model.applySnapshot(data);
     TEST_CHECK(
@@ -236,14 +233,14 @@ namespace {
     test::editEntries(data, [&](auto& entries) { entries[0].access.remove = true; });
     data.location = luciole::Location::fromUri("trash:///folder");
     test::editEntries(data, [&](auto& entries) {
-      entries[0].location = luciole::Location::fromUri("trash:///folder/alpha.txt");
+      entries[0].place = luciole::Location::fromUri("trash:///folder/alpha.txt");
     });
     ++data.generation;
     model.applySnapshot(data);
     TEST_CHECK(!R::state(A::DeletePermanently, context, R::capture(context)).enabled);
     data.location = luciole::Location::fromPath("/tmp/action-fixture");
     test::editEntries(data, [&](auto& entries) {
-      entries[0].location = luciole::Location::fromPath("/tmp/action-fixture/alpha.txt");
+      entries[0].place = luciole::Location::fromPath("/tmp/action-fixture/alpha.txt");
     });
     ++data.generation;
     model.applySnapshot(data);
@@ -259,7 +256,7 @@ namespace {
     const auto state = [&] { return R::state(A::EmptyTrash, context, R::capture(context)); };
     TEST_CHECK(!state().enabled && state().reason == "Trash is already empty.");
     auto hidden = entry(1, ".hidden");
-    hidden.location = luciole::Location::trash().child(hidden.name);
+    hidden.place = luciole::Location::trash().child(hidden.name);
     hidden.hidden = true;
     data.entries = {hidden};
     ++data.generation;
@@ -307,7 +304,7 @@ namespace {
   void testLinkActions() {
     luciole::DirectoryModel model;
     auto data = snapshot();
-    test::editEntries(data, [&](auto& entries) { entries[0].identity = luciole::FileIdentity{"native", "source"}; });
+    test::editEntries(data, [&](auto& entries) { entries[0].setIdentity(luciole::FileIdentity{"native", "source"}); });
     model.applySnapshot(data);
     model.select(1);
     luciole::ActionContext context{.model = model, .context = 44, .query = {}, .pinned = {}};
@@ -338,19 +335,19 @@ namespace {
       entries[0].symlink = false;
     });
     for (const auto& uri : {"trash:///source", "sftp://example.invalid/source"}) {
-      test::editEntries(data, [&](auto& entries) { entries[0].location = luciole::Location::fromUri(uri); });
+      test::editEntries(data, [&](auto& entries) { entries[0].place = luciole::Location::fromUri(uri); });
       ++data.generation;
       model.applySnapshot(data);
       TEST_CHECK(!enabled());
     }
     test::editEntries(data, [&](auto& entries) {
-      entries[0].location = luciole::Location::fromPath("/tmp/action-fixture/alpha.txt");
+      entries[0].place = luciole::Location::fromPath("/tmp/action-fixture/alpha.txt");
     });
-    test::editEntries(data, [&](auto& entries) { entries[0].identity.reset(); });
+    test::editEntries(data, [&](auto& entries) { entries[0].setIdentity(std::nullopt); });
     ++data.generation;
     model.applySnapshot(data);
     TEST_CHECK(!enabled());
-    test::editEntries(data, [&](auto& entries) { entries[0].identity = luciole::FileIdentity{"native", "source"}; });
+    test::editEntries(data, [&](auto& entries) { entries[0].setIdentity(luciole::FileIdentity{"native", "source"}); });
     ++data.generation;
     model.applySnapshot(data);
     context.query = "source";
@@ -419,7 +416,7 @@ namespace {
     model.select(6);
     TEST_CHECK(R::state(A::Compress, c, R::capture(c)).enabled);
     test::editEntries(data, [&](auto& entries) {
-      entries.back().location = luciole::Location::fromUri("sftp://example.invalid/sample.tar.gz");
+      entries.back().place = luciole::Location::fromUri("sftp://example.invalid/sample.tar.gz");
       entries.back().access.read = true;
     });
     ++data.generation;
@@ -447,7 +444,7 @@ namespace {
     for (const auto action : {A::BrowseArchive, A::ExtractHere, A::ExtractTo}) {
       TEST_CHECK(!R::state(action, context, request).enabled);
     }
-    TEST_CHECK(luciole::archiveFolderName(data.entries[6].location) == "download");
+    TEST_CHECK(luciole::archiveFolderName(data.entries[6].location()) == "download");
     TEST_CHECK(!luciole::isSupportedArchive(luciole::Location::fromUri("sftp://example.invalid/test.zip.001"), {}));
     TEST_CHECK(!luciole::splitZipPart(luciole::Location::fromPath("/tmp/test.zip.01")));
     TEST_CHECK(!luciole::splitZipPart(luciole::Location::fromPath("/tmp/test.zip.001.bak")));
@@ -463,7 +460,7 @@ namespace {
     for (const auto action : {A::BrowseArchive, A::ExtractHere, A::ExtractTo}) {
       TEST_CHECK(R::state(action, sevenZipContext, sevenZipRequest).enabled);
     }
-    TEST_CHECK(luciole::archiveFolderName(sevenZipData.entries.back().location) == "package");
+    TEST_CHECK(luciole::archiveFolderName(sevenZipData.entries.back().location()) == "package");
     TEST_CHECK(luciole::isSupportedArchive(luciole::Location::fromPath("/tmp/opaque"), "application/x-7z-compressed"));
     TEST_CHECK(
         !luciole::isSupportedArchive(luciole::Location::fromPath("/tmp/split.7z.001"), "application/x-7z-compressed")
@@ -502,7 +499,7 @@ namespace {
       for (const auto action : {A::BrowseArchive, A::ExtractHere, A::ExtractTo}) {
         TEST_CHECK(R::state(action, context, request).enabled == luciole::archiveCompressionAvailable(compression));
       }
-      TEST_CHECK(luciole::archiveFolderName(data.entries.back().location) == "package");
+      TEST_CHECK(luciole::archiveFolderName(data.entries.back().location()) == "package");
       const auto opaque = luciole::Location::fromPath("/tmp/opaque-container");
       TEST_CHECK(
           luciole::isSupportedArchive(
@@ -583,7 +580,7 @@ namespace {
     TEST_CHECK(!R::state(A::Open, c, request).enabled);
     c.context = request.context;
     test::editEntries(data, [&](auto& entries) {
-      entries[1].location = luciole::Location::fromPath("/tmp/action-fixture/renamed.txt");
+      entries[1].place = luciole::Location::fromPath("/tmp/action-fixture/renamed.txt");
     });
     ++data.generation;
     model.applySnapshot(data);
@@ -605,7 +602,7 @@ namespace {
     TEST_CHECK(!R::state(A::PinCurrent, c, folder).enabled && R::state(A::UnpinCurrent, c, folder).enabled);
     test::editEntries(data, [&](auto& entries) {
       for (auto& item : entries) {
-        item.identity = luciole::FileIdentity{"native", std::to_string(item.id)};
+        item.setIdentity(luciole::FileIdentity{"native", std::to_string(item.id)});
       }
     });
     ++data.generation;
@@ -618,7 +615,7 @@ namespace {
         && R::state(A::Properties, c, multiple).enabled
     );
     test::editEntries(data, [&](auto& entries) {
-      entries.front().location = luciole::Location::fromPath("/tmp/another-folder/alpha");
+      entries.front().place = luciole::Location::fromPath("/tmp/another-folder/alpha");
     });
     ++data.generation;
     model.applySnapshot(data);
@@ -631,7 +628,7 @@ namespace {
     remote.location = luciole::Location::fromUri("sftp://example.test/files");
     remote.entries = {entry(90, "remote")};
     test::editEntries(remote, [&](auto& entries) {
-      entries.front().location = luciole::Location::fromUri("sftp://example.test/files/remote");
+      entries.front().place = luciole::Location::fromUri("sftp://example.test/files/remote");
     });
     remote.generation = ++data.generation;
     model.applySnapshot(remote);

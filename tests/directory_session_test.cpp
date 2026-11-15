@@ -143,7 +143,8 @@ namespace {
       session.open(Location::fromPath(folder.native()));
       ready(pump, session);
       for (const auto& entry : session.snapshot().entries) {
-        const auto file = luciole::gioFile(entry.location);
+        const auto location = entry.location();
+        const auto file = luciole::gioFile(location);
         const luciole::GioPtr<GFileInfo> info(g_file_query_info(
             file.get(),
             G_FILE_ATTRIBUTE_STANDARD_NAME "," G_FILE_ATTRIBUTE_STANDARD_TYPE "," G_FILE_ATTRIBUTE_STANDARD_ICON
@@ -151,11 +152,11 @@ namespace {
             G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, nullptr
         ));
         TEST_CHECK(info);
-        const auto expected = luciole::readFileIcon(info.get(), entry.location);
+        const auto expected = luciole::readFileIcon(info.get(), location);
         TEST_CHECK(entry.icon && *entry.icon == expected);
         special += expected.names.front().starts_with("user-") || expected.names.front().starts_with("folder-");
-        TEST_CHECK(Location::fromUri(entry.location.uri()) == entry.location);
-        TEST_CHECK(Location::fromPath((folder / entry.name).native()) == entry.location);
+        TEST_CHECK(Location::fromUri(location.uri()) == location);
+        TEST_CHECK(Location::fromPath((folder / entry.name).native()) == location);
       }
     }
     // Home, Desktop, Docs and Pictures; equal artwork is stored once.
@@ -263,8 +264,8 @@ namespace {
     ready(pump, session);
     TEST_CHECK(session.snapshot().entries.size() == 155);
     TEST_CHECK(!session.snapshot().monitorError);
-    TEST_CHECK(entry(session, unusual).location.nativePath() == (fixture.path / unusual).native());
-    TEST_CHECK(g_utf8_validate(entry(session, unusual).displayName.c_str(), -1, nullptr));
+    TEST_CHECK(entry(session, unusual).location().nativePath() == (fixture.path / unusual).native());
+    TEST_CHECK(g_utf8_validate(entry(session, unusual).displayName().c_str(), -1, nullptr));
     TEST_CHECK(entry(session, ".hidden").hidden);
     TEST_CHECK(entry(session, "broken-link").symlink);
     TEST_CHECK(entry(session, "folder").type == luciole::FileType::Directory);
@@ -313,7 +314,7 @@ namespace {
     TEST_CHECK(found != search.snapshot().entries.end() && &*found == first);
     const auto unusual = std::ranges::find(search.snapshot().entries, raw, &luciole::DirectoryEntry::name);
     TEST_CHECK(
-        unusual != search.snapshot().entries.end() && unusual->location.nativePath() == (fixture.path / raw).native()
+        unusual != search.snapshot().entries.end() && unusual->location().nativePath() == (fixture.path / raw).native()
     );
     const auto complete = search.snapshot();
     search.setChangedCallback({});
@@ -321,7 +322,7 @@ namespace {
     search.cancel();
     TEST_CHECK(retained.entries.size() < 151 && &retained.entries.front() == first);
     TEST_CHECK(complete.entries.size() == 151 && complete.entries.front().id == first->id);
-    TEST_CHECK(first->location.nativePath().has_value());
+    TEST_CHECK(first->location().nativePath().has_value());
   }
 
   void testGenerationAndLifetime(Pump& pump) {
@@ -593,7 +594,8 @@ namespace {
 
   // Every fact of a native listing equals what GIO's local backend reports for the same file.
   void compareWithGio(const luciole::DirectoryEntry& entry) {
-    const auto file = luciole::gioFile(entry.location);
+    const auto location = entry.location();
+    const auto file = luciole::gioFile(location);
     const luciole::GioPtr<GFileInfo> info(g_file_query_info(
         file.get(), "standard::*,time::*,unix::*,owner::*,access::*,etag::value,id::*",
         G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, nullptr
@@ -601,20 +603,20 @@ namespace {
     TEST_CHECK(info);
     TEST_CHECK(entry.accessDeferred);
     TEST_CHECK(entry.name == g_file_info_get_name(info.get()));
-    TEST_CHECK(entry.displayName == g_file_info_get_display_name(info.get()));
+    TEST_CHECK(entry.displayName() == g_file_info_get_display_name(info.get()));
     TEST_CHECK(entry.type == luciole::fileType(g_file_info_get_file_type(info.get())));
     TEST_CHECK(entry.symlink == luciole::readIsSymlink(info.get()));
     TEST_CHECK(entry.hidden == (g_file_info_get_is_hidden(info.get()) != FALSE || entry.name.starts_with('.')));
     TEST_CHECK(entry.size == luciole::infoUint64(info.get(), G_FILE_ATTRIBUTE_STANDARD_SIZE));
     TEST_CHECK(entry.modifiedSeconds == luciole::infoUint64(info.get(), G_FILE_ATTRIBUTE_TIME_MODIFIED));
-    TEST_CHECK(entry.etag == std::optional<std::string>(g_file_info_get_etag(info.get())));
+    TEST_CHECK(entry.etag() == std::optional<std::string>(g_file_info_get_etag(info.get())));
     const auto changed = luciole::infoUint64(info.get(), G_FILE_ATTRIBUTE_TIME_CHANGED);
     const auto nanos = luciole::infoUint32(info.get(), "time::changed-nsec");
     TEST_CHECK(changed && nanos && entry.contentRevision == luciole::ChangeRevision(*changed, *nanos));
     TEST_CHECK(entry.details == luciole::readEntryMetadata(info.get()));
-    TEST_CHECK(entry.identity == luciole::readFileIdentity(info.get()));
+    TEST_CHECK(entry.identity() == luciole::readFileIdentity(info.get()));
     TEST_CHECK(entry.contentType == luciole::readContentType(info.get()));
-    TEST_CHECK(entry.icon && *entry.icon == luciole::readFileIcon(info.get(), entry.location));
+    TEST_CHECK(entry.icon && *entry.icon == luciole::readFileIcon(info.get(), location));
     const auto expected = luciole::readFileAccess(info.get());
     TEST_CHECK(entry.access.rename == expected.rename);
     TEST_CHECK(entry.access.remove == expected.remove);

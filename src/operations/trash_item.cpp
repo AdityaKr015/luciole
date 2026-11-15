@@ -56,14 +56,15 @@ bool luciole::isTopLevelTrashItem(const Location& location) {
 }
 
 luciole::TrashItemIdentity luciole::readTrashItemIdentity(const DirectoryEntry& entry) {
-  if (!entry.identity || entry.type == FileType::Unknown) {
+  auto identity = entry.identity();
+  if (!identity || entry.type == FileType::Unknown) {
     throwFileError(FileErrorKind::Unsupported, "The trash service cannot identify these items safely.");
   }
   return {
-      .id = *entry.identity,
+      .id = std::move(*identity),
       .type = entry.type,
       .symlink = entry.symlink,
-      .etag = entry.etag,
+      .etag = entry.etag(),
       .original = entry.trashInfo().original ? entry.trashInfo().original->nativePath() : std::nullopt,
       .deleted = entry.trashInfo().deletionDate
   };

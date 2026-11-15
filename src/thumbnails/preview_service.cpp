@@ -14,12 +14,12 @@
 namespace {
   bool sameSource(const luciole::DirectoryEntry& a, const luciole::DirectoryEntry& b) {
     return a.id == b.id
-        && a.location == b.location
-        && a.displayName == b.displayName
+        && a.location() == b.location()
+        && a.displayName() == b.displayName()
         && luciole::sameIcon(a.icon, b.icon)
         && a.access.read == b.access.read
-        && a.identity == b.identity
-        && a.etag == b.etag
+        && a.identity() == b.identity()
+        && a.etag() == b.etag()
         && a.size == b.size
         && a.modifiedSeconds == b.modifiedSeconds
         && a.contentRevision == b.contentRevision
@@ -39,12 +39,13 @@ namespace {
   };
   TextResult readText(const luciole::DirectoryEntry& entry, GCancellable* cancel) {
     using namespace luciole;
-    const auto path = entry.location.nativePath();
+    const auto location = entry.location();
+    const auto path = location.nativePath();
     if (!path) {
       return {{}, "Text previews are available for local files."};
     }
     const GioPtr<GFileInfo> fs(
-        g_file_query_filesystem_info(gioFile(entry.location).get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE, cancel, nullptr)
+        g_file_query_filesystem_info(gioFile(location).get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE, cancel, nullptr)
     );
     if (!fs
         || !g_file_info_has_attribute(fs.get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE)
@@ -71,15 +72,17 @@ namespace {
       return {{}, "The file changed. Select it again.", true};
     }
     const GioPtr<GFileInfo> info(g_file_query_info(
-        gioFile(entry.location).get(),
+        gioFile(location).get(),
         G_FILE_ATTRIBUTE_ID_FILE "," G_FILE_ATTRIBUTE_ID_FILESYSTEM "," G_FILE_ATTRIBUTE_ETAG_VALUE
                                  "," G_FILE_ATTRIBUTE_TIME_CHANGED
                                  ",time::changed-nsec," G_FILE_ATTRIBUTE_TIME_CHANGED_USEC,
         G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, cancel, nullptr
     ));
+    const auto identity = entry.identity();
+    const auto etag = entry.etag();
     if (!info
-        || (entry.identity && readFileIdentity(info.get()) != entry.identity)
-        || (entry.etag && (!g_file_info_get_etag(info.get()) || *entry.etag != g_file_info_get_etag(info.get())))) {
+        || (identity && readFileIdentity(info.get()) != identity)
+        || (etag && (!g_file_info_get_etag(info.get()) || *etag != g_file_info_get_etag(info.get())))) {
       return {{}, "The file changed. Select it again.", true};
     }
     if (entry.contentRevision && readChangeRevision(info.get()) != entry.contentRevision) {

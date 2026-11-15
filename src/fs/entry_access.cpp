@@ -8,7 +8,7 @@ luciole::FileAccess luciole::entryAccess(const DirectoryEntry& entry) {
   if (!entry.accessDeferred) {
     return access;
   }
-  const auto path = entry.location.nativePath();
+  const auto path = entry.location().nativePath();
   if (!path) {
     return access;
   }

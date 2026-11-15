@@ -35,7 +35,7 @@ void ArchiveController::compress(const std::vector<luciole::DirectoryEntry>& tar
   std::vector<luciole::Location> sources;
   sources.reserve(targets.size());
   for (const auto& target : targets) {
-    sources.push_back(target.location);
+    sources.push_back(target.location());
   }
   openDialog(std::move(sources), {}, true);
 }

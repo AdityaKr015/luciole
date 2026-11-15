@@ -83,7 +83,7 @@ namespace {
   }
   fs::path backing(const luciole::DirectoryEntry& entry) {
     const luciole::GioPtr<GFileInfo> info(g_file_query_info(
-        luciole::gioFile(entry.location).get(), G_FILE_ATTRIBUTE_STANDARD_TARGET_URI,
+        luciole::gioFile(entry.location()).get(), G_FILE_ATTRIBUTE_STANDARD_TARGET_URI,
         G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, nullptr
     ));
     TEST_CHECK(info);
@@ -99,11 +99,13 @@ namespace {
     auto entry = pump.listing(luciole::Location::fromPath(fixture.root.native())).front();
     luciole::RestoreService service;
     TEST_CHECK(!service.start({}) && !service.start({entry}));
-    entry.location = luciole::Location::fromUri("trash:///unavailable");
-    entry.trash = std::make_shared<const luciole::TrashInfo>(luciole::TrashInfo{
-        .original = luciole::Location::fromPath((fixture.root / "keep.txt").native()),
-        .deletionDate = entry.trashInfo().deletionDate,
-    });
+    entry.place = luciole::Location::fromUri("trash:///unavailable");
+    entry.setTrash(
+        luciole::TrashInfo{
+            .original = luciole::Location::fromPath((fixture.root / "keep.txt").native()),
+            .deletionDate = entry.trashInfo().deletionDate,
+        }
+    );
     TEST_CHECK(!service.start({entry, entry}));
     TEST_CHECK(service.start({entry}) && !service.start({entry}));
     pump.done(service);

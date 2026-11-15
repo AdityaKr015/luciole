@@ -300,6 +300,7 @@ PropertiesController::buildGeneral(const std::vector<luciole::DirectoryEntry>& t
   FileMetadataView* metadataView = nullptr;
   if (targets.size() == 1) {
     const auto& entry = targets.front();
+    const auto location = entry.location();
     auto icon = std::make_unique<luciole::FileIcon>(m_icons, 48.0F);
     icon->bind(luciole::iconSource(entry.icon), colorSpecFromRole(ColorRole::OnSurface));
     general->addChild(
@@ -308,7 +309,7 @@ PropertiesController::buildGeneral(const std::vector<luciole::DirectoryEntry>& t
             ui::column(
                 {.align = FlexAlign::Start, .gap = Style::spaceXs, .flexGrow = 1.0F},
                 ui::label(
-                    {.text = entry.displayName,
+                    {.text = entry.displayName(),
                      .fontWeight = FontWeight::SemiBold,
                      .maxWidth = width - 104.0F,
                      .maxLines = 2,
@@ -323,11 +324,11 @@ PropertiesController::buildGeneral(const std::vector<luciole::DirectoryEntry>& t
         )
     );
     general->addChild(ui::separator({}));
-    field("Location", luciole::locationEditText(entry.location));
+    field("Location", luciole::locationEditText(location));
     if (entry.contentType) {
       field("MIME", *entry.contentType);
     }
-    if (entry.location.isTrash()) {
+    if (location.isTrash()) {
       const auto& trash = entry.trashInfo();
       field("Original", trash.original ? luciole::locationEditText(*trash.original) : "Unknown");
       field("Deleted", trash.deletionDate.value_or("Unknown"));
@@ -502,10 +503,11 @@ void PropertiesController::show(const std::vector<luciole::DirectoryEntry>& targ
   const bool editable = !targets.empty() && targets.size() <= 4096;
   const bool multiple = targets.size() > 1;
   const bool folders = std::ranges::any_of(targets, [](const auto& entry) {
-    return entry.type == luciole::FileType::Directory
-        && !entry.symlink
-        && entry.location.nativePath()
-        && !entry.location.isTrash();
+    if (entry.type != luciole::FileType::Directory || entry.symlink) {
+      return false;
+    }
+    const auto location = entry.location();
+    return location.nativePath() && !location.isTrash();
   });
   const bool withResults = multiple || folders;
   auto& surface = m_page.surface();
@@ -677,7 +679,7 @@ void PropertiesController::show(const std::vector<luciole::DirectoryEntry>& targ
     m_job = m_page.jobs().create<luciole::PermissionService>(JobScope::Page);
     auto& permissions = m_job->service<luciole::PermissionService>();
     if (captureCurrentLocation) {
-      (void)permissions.prepare(targets.front().location);
+      (void)permissions.prepare(targets.front().location());
     } else if (multiple) {
       (void)permissions.prepare(targets);
     } else {

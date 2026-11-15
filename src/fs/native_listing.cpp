@@ -265,6 +265,7 @@ luciole::listNativeFolder(const std::string& path, std::size_t entryLimit, GCanc
   Names names;
   FileIconPool icons;
   icons.setLocalFolder(path.c_str());
+  const auto folderLocation = std::make_shared<const Location>(Location::fromPath(path));
   constexpr unsigned kRequired = STATX_TYPE
       | STATX_MODE
       | STATX_NLINK
@@ -311,19 +312,13 @@ luciole::listNativeFolder(const std::string& path, std::size_t entryLimit, GCanc
     const auto full = childPath(folder.path, name);
     const auto mode = info.stx_mode;
     const auto device = makedev(info.stx_dev_major, info.stx_dev_minor);
-    const GString uri(g_filename_to_uri(full.c_str(), nullptr, nullptr));
-    if (!uri) {
-      result.unsupported = true;
-      break;
-    }
     const bool writable = folder.writable
         && (!folder.sticky || folder.user == info.stx_uid || folder.user == folder.owner || folder.user == 0);
     const auto type = contentType(info, name, full);
     DirectoryEntry entry{
         .id = 0,
-        .location = Location::fromCanonicalNativeUri(uri.get()),
+        .place = EntryPlace::inFolder(folderLocation),
         .name = name,
-        .displayName = displayName(folder, name, full),
         .type = luciole::fileType(gioFileType(mode)),
         .hidden = name[0] == '.'
             || hidden.contains(name)
@@ -335,23 +330,25 @@ luciole::listNativeFolder(const std::string& path, std::size_t entryLimit, GCanc
         .symlink = S_ISLNK(mode),
         .size = info.stx_size <= G_MAXINT64 ? std::optional<std::uint64_t>(info.stx_size) : std::nullopt,
         .modifiedSeconds = static_cast<std::uint64_t>(info.stx_mtime.tv_sec),
-        .etag = std::format(
-            "{}:{}:{}", static_cast<unsigned long>(info.stx_mtime.tv_sec), info.stx_mtime.tv_nsec / 1000,
-            info.stx_mtime.tv_nsec
-        ),
-        .access =
-            {.read = std::nullopt,
-             .write = std::nullopt,
-             .execute = std::nullopt,
-             .rename = writable,
-             .trash = writable && canTrash(folder, full),
-             .remove = writable},
-        .parentDisplayName = {},
+        .access = {
+            .read = std::nullopt,
+            .write = std::nullopt,
+            .execute = std::nullopt,
+            .rename = writable,
+            .trash = writable && canTrash(folder, full),
+            .remove = writable
+        },
     };
+    entry.setDisplayName(displayName(folder, name, full));
     entry.accessDeferred = true;
-    entry.identity = FileIdentity{
-        .filesystem = std::format("l{}", static_cast<std::uint64_t>(device)),
-        .file = std::format("l{}:{}", static_cast<std::uint64_t>(device), info.stx_ino),
+    // GIO's local etag::value and id::filesystem/id::file, kept as numbers.
+    entry.tags = LocalTags{
+        .etagSeconds = static_cast<std::uint64_t>(info.stx_mtime.tv_sec),
+        .device = static_cast<std::uint64_t>(device),
+        .inode = info.stx_ino,
+        .etagNanoseconds = info.stx_mtime.tv_nsec,
+        .etag = true,
+        .identity = true,
     };
     entry.contentType = type.empty() ? InternedText() : InternedText(type);
     entry.details = EntryMetadata{
@@ -369,7 +366,7 @@ luciole::listNativeFolder(const std::string& path, std::size_t entryLimit, GCanc
         .seconds = static_cast<std::uint64_t>(info.stx_ctime.tv_sec), .nanoseconds = info.stx_ctime.tv_nsec
     };
     entry.icon = icons.getLocal(
-        name, gioFileType(mode), entry.contentType ? entry.contentType->c_str() : nullptr, entry.location
+        name, gioFileType(mode), entry.contentType ? entry.contentType->c_str() : nullptr, *folderLocation
     );
     result.entries.push_back(std::move(entry));
   }

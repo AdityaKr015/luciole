@@ -81,7 +81,9 @@ std::optional<luciole::Location> luciole::Location::parent() const {
 luciole::Location luciole::Location::child(const std::string& name) const {
   rejectNul(name);
   const GioPtr<GFile> child(g_file_get_child(gioFile(*this).get(), name.c_str()));
-  return locationFromFile(child.get());
+  // GIO's URI of a child already is canonical; listings resolve every entry through here.
+  const GString uri(g_file_get_uri(child.get()));
+  return Location(uri.get());
 }
 
 luciole::Location luciole::Location::resolve(const std::string& relativePath) const {

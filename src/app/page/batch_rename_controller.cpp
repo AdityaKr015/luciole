@@ -197,7 +197,7 @@ void BatchRenameController::revealRenamed(VirtualGridView& list) {
       }
       std::vector<luciole::EntryId> ids;
       for (const auto id : model.rows()) {
-        if (const auto* entry = model.entry(id); entry && uris.contains(entry->location.uri())) {
+        if (const auto* entry = model.entry(id); entry && uris.contains(entry->location().uri())) {
           ids.push_back(id);
         }
       }

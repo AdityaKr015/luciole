@@ -75,17 +75,21 @@ namespace luciole {
     bool setScrollAnchor(std::optional<EntryId> id);
 
   private:
+    // Per-entry keys live NUL-terminated in m_keyText; presentations hold offsets.
     struct Presentation {
-      std::string sortKey;
-      // Empty when the folded display name equals the display name; see filterText().
-      std::string filterKey;
+      std::uint32_t sortKey = 0;
+      // kNoKey when the folded display name equals the display name; see filterText().
+      std::uint32_t filterKey = kNoKey;
       // Points into m_typeLabels; equal labels share one string.
       const std::string* typeLabel = nullptr;
-      // Points into m_alternateSortKeys; nodes keep their addresses across rehash.
-      const std::string* alternateSortKey = nullptr;
       bool knownType = false;
     };
     static constexpr std::uint32_t kNoRow = UINT32_MAX;
+    static constexpr std::uint32_t kNoKey = UINT32_MAX;
+
+    const char* keyText(std::uint32_t offset) const { return m_keyText.data() + offset; }
+    // Open-addressing slot of `id` in `slots` over `entries`, or the empty slot where it would go.
+    static std::size_t sourceSlot(const std::vector<std::uint32_t>& slots, const DirectoryEntries& entries, EntryId id);
 
     void prepareSortKeys();
     void rebuildProjection();
@@ -111,9 +115,13 @@ namespace luciole {
     std::unordered_set<std::string> m_typeLabels;
     // Indexed like m_snapshot.entries.
     std::vector<Presentation> m_presentations;
-    std::unordered_map<EntryId, std::uint32_t> m_sourceById;
+    std::string m_keyText;
+    // Source indexes by entry ID: open addressing over m_snapshot.entries, kNoRow marks an empty slot.
+    std::vector<std::uint32_t> m_sourceSlots;
     // One selected text-sort field, shared by repeated values/containing folders.
     std::unordered_map<std::string, std::string> m_alternateSortKeys;
+    // Indexed like m_snapshot.entries while a text sort field is prepared; points into m_alternateSortKeys.
+    std::vector<const std::string*> m_alternateKeys;
     std::optional<SortField> m_preparedSortField;
     std::vector<EntryId> m_rows;
     std::unordered_map<EntryId, EntryId> m_treeParents;

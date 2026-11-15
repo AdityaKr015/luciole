@@ -72,7 +72,7 @@ void RenameController::openFileRename(luciole::DirectoryEntry target) {
     m_fileRenamePreparing = true;
     control->setSaving(true);
     m_job = m_page.jobs().create<luciole::RenameService>(JobScope::Page);
-    if (!m_job->service<luciole::RenameService>().prepare(m_fileRenameTarget->location)) {
+    if (!m_job->service<luciole::RenameService>().prepare(m_fileRenameTarget->location())) {
       control->showError("Another rename is still finishing.");
     }
   }

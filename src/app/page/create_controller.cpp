@@ -164,7 +164,8 @@ void CreateController::openLinkDialog(const luciole::DirectoryEntry& target) {
     m_page.actionError("This item cannot be linked right now.");
     return;
   }
-  const auto parent = target.location.parent();
+  const auto location = target.location();
+  const auto parent = location.parent();
   if (!parent) {
     m_page.actionError("The source has no containing folder.");
     return;
@@ -173,8 +174,8 @@ void CreateController::openLinkDialog(const luciole::DirectoryEntry& target) {
   auto& surface = m_page.surface();
   const float width = std::min(480.0F, static_cast<float>(surface.width()) - 32.0F);
   auto root = std::make_unique<LinkDialog>(
-      width, luciole::locationEditText(target.location), "Link to " + target.displayName,
-      luciole::locationEditText(base), target.type == luciole::FileType::Regular && !target.symlink,
+      width, luciole::locationEditText(location), "Link to " + target.displayName(), luciole::locationEditText(base),
+      target.type == luciole::FileType::Regular && !target.symlink,
       [this, base](std::string name, const std::string& path, luciole::CreateKind kind) {
         if (!m_linkDialog || !m_job) {
           return;

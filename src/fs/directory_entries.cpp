@@ -1,10 +1,159 @@
 #include "fs/directory_entries.h"
 
 #include <algorithm>
+#include <charconv>
+#include <format>
 #include <stdexcept>
+#include <string_view>
 #include <unordered_set>
 #include <utility>
 
+namespace {
+  // Reads one decimal number up to `end` (or the text's end when end is '\0'), advancing `text`.
+  bool readNumber(std::string_view& text, char end, std::uint64_t& value) {
+    const auto stop = end == '\0' ? text.size() : text.find(end);
+    if (stop == std::string_view::npos || stop == 0) {
+      return false;
+    }
+    const auto [rest, error] = std::from_chars(text.data(), text.data() + stop, value);
+    if (error != std::errc{} || rest != text.data() + stop) {
+      return false;
+    }
+    text.remove_prefix(end == '\0' ? stop : stop + 1);
+    return true;
+  }
+
+  std::string localEtag(std::uint64_t seconds, std::uint32_t nanoseconds) {
+    return std::format("{}:{}:{}", seconds, nanoseconds / 1000, nanoseconds);
+  }
+
+  std::string localFilesystem(std::uint64_t device) { return std::format("l{}", device); }
+  std::string localFile(std::uint64_t device, std::uint64_t inode) { return std::format("l{}:{}", device, inode); }
+} // namespace
+
+luciole::EntryPlace::EntryPlace(Location location)
+    : m_location(std::make_shared<const Location>(std::move(location))) {}
+
+luciole::EntryPlace luciole::EntryPlace::inFolder(std::shared_ptr<const Location> folder) {
+  EntryPlace place;
+  place.m_location = std::move(folder);
+  place.m_inFolder = true;
+  return place;
+}
+
+luciole::Location luciole::EntryPlace::resolve(const std::string& name) const {
+  if (!m_location) {
+    throw std::logic_error("directory entry without a location");
+  }
+  return m_inFolder ? m_location->child(name) : *m_location;
+}
+
+const std::string& luciole::DirectoryEntry::displayName() const {
+  return extra && extra->displayName ? *extra->displayName : name;
+}
+
+std::optional<std::string> luciole::DirectoryEntry::etag() const {
+  if (tags.etag) {
+    return localEtag(tags.etagSeconds, tags.etagNanoseconds);
+  }
+  return extra ? extra->etag : std::nullopt;
+}
+
+std::optional<luciole::FileIdentity> luciole::DirectoryEntry::identity() const {
+  if (tags.identity) {
+    return FileIdentity{.filesystem = localFilesystem(tags.device), .file = localFile(tags.device, tags.inode)};
+  }
+  return extra ? extra->identity : std::nullopt;
+}
+
+const std::string& luciole::DirectoryEntry::parentDisplayName() const {
+  static const std::string none;
+  return extra ? extra->parentDisplayName : none;
+}
+
+const luciole::TrashInfo* luciole::DirectoryEntry::trash() const {
+  return extra && extra->trash ? &*extra->trash : nullptr;
+}
+
+const luciole::TrashInfo& luciole::DirectoryEntry::trashInfo() const {
+  static const TrashInfo none;
+  const auto* info = trash();
+  return info != nullptr ? *info : none;
+}
+
+luciole::EntryExtra& luciole::DirectoryEntry::editExtra() {
+  // Extra facts are shared between copies; edits copy them first.
+  auto copy = extra ? std::make_shared<EntryExtra>(*extra) : std::make_shared<EntryExtra>();
+  auto& result = *copy;
+  extra = std::move(copy);
+  return result;
+}
+
+void luciole::DirectoryEntry::setDisplayName(std::string displayName) {
+  if (displayName == name) {
+    if (extra && extra->displayName) {
+      editExtra().displayName.reset();
+    }
+    return;
+  }
+  editExtra().displayName = std::move(displayName);
+}
+
+void luciole::DirectoryEntry::setEtag(std::optional<std::string> etag) {
+  tags.etag = false;
+  if (etag) {
+    std::string_view text = *etag;
+    std::uint64_t seconds = 0, micro = 0, nano = 0;
+    if (readNumber(text, ':', seconds)
+        && readNumber(text, ':', micro)
+        && readNumber(text, '\0', nano)
+        && nano < 1'000'000'000
+        && localEtag(seconds, static_cast<std::uint32_t>(nano)) == *etag) {
+      tags.etag = true;
+      tags.etagSeconds = seconds;
+      tags.etagNanoseconds = static_cast<std::uint32_t>(nano);
+      etag.reset();
+    }
+  }
+  if (etag || (extra && extra->etag)) {
+    editExtra().etag = std::move(etag);
+  }
+}
+
+void luciole::DirectoryEntry::setIdentity(std::optional<FileIdentity> identity) {
+  tags.identity = false;
+  if (identity && identity->filesystem.starts_with('l') && identity->file.starts_with('l')) {
+    std::string_view filesystem = std::string_view(identity->filesystem).substr(1);
+    std::string_view file = std::string_view(identity->file).substr(1);
+    std::uint64_t device = 0, fileDevice = 0, inode = 0;
+    if (readNumber(filesystem, '\0', device)
+        && readNumber(file, ':', fileDevice)
+        && readNumber(file, '\0', inode)
+        && device == fileDevice
+        && localFilesystem(device) == identity->filesystem
+        && localFile(device, inode) == identity->file) {
+      tags.identity = true;
+      tags.device = device;
+      tags.inode = inode;
+      identity.reset();
+    }
+  }
+  if (identity || (extra && extra->identity)) {
+    editExtra().identity = std::move(identity);
+  }
+}
+
+void luciole::DirectoryEntry::setParentDisplayName(std::string text) {
+  if (!text.empty() || (extra && !extra->parentDisplayName.empty())) {
+    editExtra().parentDisplayName = std::move(text);
+  }
+}
+
+void luciole::DirectoryEntry::setTrash(std::optional<TrashInfo> trash) {
+  if (trash || (extra && extra->trash)) {
+    editExtra().trash = std::move(trash);
+  }
+}
 struct luciole::DirectoryEntries::Storage {
   struct Block {
     std::shared_ptr<const std::vector<DirectoryEntry>> entries;

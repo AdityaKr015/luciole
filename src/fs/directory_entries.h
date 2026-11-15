@@ -16,11 +16,46 @@
 #include <vector>
 
 namespace luciole {
+  // Where an entry lives. A listing shares one folder between its entries, and each entry's location is that
+  // folder's child named by the entry; other entries hold their whole location.
+  class EntryPlace {
+  public:
+    EntryPlace() = default;
+    EntryPlace(Location location); // NOLINT(google-explicit-constructor): a whole location is a place
+    static EntryPlace inFolder(std::shared_ptr<const Location> folder);
+
+    Location resolve(const std::string& name) const;
+    // The shared folder, or null when this place holds a whole location.
+    const Location* folder() const { return m_inFolder ? m_location.get() : nullptr; }
+
+  private:
+    std::shared_ptr<const Location> m_location;
+    bool m_inFolder = false;
+  };
+
+  // Facts few entries have; ordinary local entries share none.
+  struct EntryExtra {
+    std::optional<std::string> displayName; // Only when it differs from the name.
+    std::optional<std::string> etag;        // Only when it is not a local modification tag.
+    std::optional<FileIdentity> identity;   // Only when it is not a local device and inode pair.
+    std::string parentDisplayName;
+    std::optional<TrashInfo> trash;
+  };
+
+  // Local providers' entity tag and identity as numbers; the text forms are rebuilt exactly on request.
+  struct LocalTags {
+    std::uint64_t etagSeconds = 0;
+    std::uint64_t device = 0;
+    std::uint64_t inode = 0;
+    std::uint32_t etagNanoseconds = 0;
+    bool etag = false;
+    bool identity = false;
+  };
+
   struct DirectoryEntry {
     std::uint64_t id = 0;
-    Location location;
+    EntryPlace place;
     std::string name; // Original filename bytes, including non-UTF-8 names on Unix.
-    std::string displayName;
     FileType type = FileType::Unknown;
     bool hidden = false;
     bool symlink = false;
@@ -28,23 +63,36 @@ namespace luciole {
     bool accessDeferred = false;
     std::optional<std::uint64_t> size;
     std::optional<std::uint64_t> modifiedSeconds;
-    std::optional<std::string> etag;
     FileAccess access{};
-    std::string parentDisplayName; // Search result context; never an operation address.
     SharedFileIcon icon = nullptr; // Shared between entries with equal artwork; null means none.
-    // Set only for Trash items; most listings have none.
-    std::shared_ptr<const TrashInfo> trash = nullptr;
-    std::optional<FileIdentity> identity = std::nullopt;
     // Provider's regular MIME type, with its fast type as a fallback.
     InternedText contentType = nullptr;
     EntryMetadata details{};
     std::optional<ChangeRevision> contentRevision = std::nullopt;
+    LocalTags tags{};
+    std::shared_ptr<const EntryExtra> extra = nullptr;
 
+    Location location() const { return place.resolve(name); }
+    // Presentation text; equals the name unless the provider reports another.
+    const std::string& displayName() const;
+    std::optional<std::string> etag() const;
+    std::optional<FileIdentity> identity() const;
+    // Search result context; never an operation address.
+    const std::string& parentDisplayName() const;
+    // Set only for Trash items.
+    const TrashInfo* trash() const;
     // The Trash facts, empty outside the Trash.
-    const TrashInfo& trashInfo() const {
-      static const TrashInfo none;
-      return trash ? *trash : none;
-    }
+    const TrashInfo& trashInfo() const;
+
+    // Setters keep local forms compact and move everything else into the shared extra facts.
+    void setDisplayName(std::string displayName);
+    void setEtag(std::optional<std::string> etag);
+    void setIdentity(std::optional<FileIdentity> identity);
+    void setParentDisplayName(std::string text);
+    void setTrash(std::optional<TrashInfo> trash);
+
+  private:
+    EntryExtra& editExtra();
   };
 
   // Published entries are immutable. Copies retain payloads; producers publish a new collection.

@@ -35,10 +35,10 @@ namespace {
             || g_file_info_get_attribute_uint64(info, G_FILE_ATTRIBUTE_TIME_MODIFIED) != *source.modifiedSeconds)) {
       return false;
     }
-    if (source.identity && luciole::readFileIdentity(info) != source.identity) {
+    if (const auto identity = source.identity(); identity && luciole::readFileIdentity(info) != identity) {
       return false;
     }
-    if (source.etag && (!g_file_info_get_etag(info) || *source.etag != g_file_info_get_etag(info))) {
+    if (const auto etag = source.etag(); etag && (!g_file_info_get_etag(info) || *etag != g_file_info_get_etag(info))) {
       return false;
     }
     if (source.contentRevision && luciole::readChangeRevision(info) != source.contentRevision) {
@@ -169,7 +169,8 @@ namespace {
 
 luciole::MetadataFields
 luciole::probePreviewMetadata(const DirectoryEntry& entry, ThumbnailOptions options, GCancellable* cancel) {
-  const auto path = entry.location.nativePath();
+  const auto location = entry.location();
+  const auto path = location.nativePath();
   const std::string mime(entry.contentType.value_or(""));
   const bool image = mime.starts_with("image/"), media = mime.starts_with("video/") || mime.starts_with("audio/");
   const bool launcher = g_content_type_is_a(mime.c_str(), "application/x-desktop");
@@ -177,7 +178,7 @@ luciole::probePreviewMetadata(const DirectoryEntry& entry, ThumbnailOptions opti
     return {};
   }
   const GioPtr<GFileInfo> current(g_file_query_info(
-      gioFile(entry.location).get(),
+      gioFile(location).get(),
       G_FILE_ATTRIBUTE_ETAG_VALUE
       "," G_FILE_ATTRIBUTE_ID_FILE "," G_FILE_ATTRIBUTE_ID_FILESYSTEM "," G_FILE_ATTRIBUTE_TIME_CHANGED
       ",time::changed-nsec," G_FILE_ATTRIBUTE_TIME_CHANGED_USEC "," G_FILE_ATTRIBUTE_STANDARD_SIZE
@@ -197,7 +198,7 @@ luciole::probePreviewMetadata(const DirectoryEntry& entry, ThumbnailOptions opti
     return fields;
   }
   const GioPtr<GFileInfo> filesystem(
-      g_file_query_filesystem_info(gioFile(entry.location).get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE, cancel, nullptr)
+      g_file_query_filesystem_info(gioFile(location).get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE, cancel, nullptr)
   );
   if (!filesystem
       || !g_file_info_has_attribute(filesystem.get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE)

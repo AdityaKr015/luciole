@@ -30,18 +30,15 @@ namespace {
   luciole::DirectoryEntry entry(const std::filesystem::path& path, const std::string& mime = "text/plain") {
     luciole::DirectoryEntry result{
         .id = 1,
-        .location = luciole::Location::fromPath(path.native()),
+        .place = luciole::Location::fromPath(path.native()),
         .name = path.filename().native(),
-        .displayName = path.filename().native(),
         .size = std::nullopt,
-        .modifiedSeconds = std::nullopt,
-        .etag = std::nullopt,
-        .parentDisplayName = {}
+        .modifiedSeconds = std::nullopt
     };
     result.id = 1;
-    result.location = luciole::Location::fromPath(path.native());
+    result.place = luciole::Location::fromPath(path.native());
     result.name = path.filename().native();
-    result.displayName = result.name;
+    result.setDisplayName(result.name);
     result.type = luciole::FileType::Regular;
     result.contentType = mime;
     struct stat stat{};
@@ -126,7 +123,9 @@ namespace {
     }
     preview.show(entry(b), 512, {});
     finish();
-    TEST_CHECK(preview.snapshot().text == "current file" && preview.snapshot().entry->location == entry(b).location);
+    TEST_CHECK(
+        preview.snapshot().text == "current file" && preview.snapshot().entry->location() == entry(b).location()
+    );
     write(a, std::string(1000000, 'a'));
     preview.show(entry(a), 512, {});
     finish();
@@ -155,7 +154,7 @@ namespace {
     finish();
     TEST_CHECK(preview.snapshot().status == luciole::PreviewStatus::Unavailable);
     auto remote = entry(b);
-    remote.location = luciole::Location::fromUri("sftp://example.invalid/file.txt");
+    remote.place = luciole::Location::fromUri("sftp://example.invalid/file.txt");
     preview.show(remote, 512, {});
     finish();
     TEST_CHECK(preview.snapshot().status == luciole::PreviewStatus::Unavailable);

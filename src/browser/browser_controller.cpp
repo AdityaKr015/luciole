@@ -28,7 +28,7 @@ luciole::BrowserController::BrowserController(SortOptions sort, bool showHidden,
     const auto* entry = m_model.entry(id);
     if (context != m_contextSerial
         || !entry
-        || entry->location != target
+        || entry->location() != target
         || !std::ranges::contains(m_model.rows(), id)) {
       return;
     }
@@ -103,10 +103,11 @@ std::optional<luciole::BrowseViewport> luciole::BrowserController::takeRestoredV
 std::optional<luciole::BrowserController::Reference>
 luciole::BrowserController::reference(std::optional<EntryId> id) const {
   const auto* entry = id ? m_model.entry(*id) : nullptr;
-  if (!entry || !entry->identity) {
+  auto identity = entry ? entry->identity() : std::nullopt;
+  if (!identity) {
     return std::nullopt;
   }
-  return Reference{entry->location.uri(), *entry->identity};
+  return Reference{entry->location().uri(), std::move(*identity)};
 }
 void luciole::BrowserController::saveVisit() {
   if (m_history.empty() || m_restoring) {
@@ -471,7 +472,7 @@ void luciole::BrowserController::publish(DirectorySnapshot snapshot) {
       if (unresolved == 0) {
         break;
       }
-      const auto found = visible.find(m_model.entry(id)->location.uri());
+      const auto found = visible.find(m_model.entry(id)->location().uri());
       if (found != visible.end() && !found->second) {
         found->second = id;
         --unresolved;
@@ -482,7 +483,9 @@ void luciole::BrowserController::publish(DirectorySnapshot snapshot) {
         return std::nullopt;
       }
       const auto found = visible.find(reference->uri);
-      if (found == visible.end() || !found->second || m_model.entry(*found->second)->identity != reference->identity) {
+      if (found == visible.end()
+          || !found->second
+          || m_model.entry(*found->second)->identity() != reference->identity) {
         return std::nullopt;
       }
       return found->second;
@@ -550,16 +553,17 @@ void luciole::BrowserController::activate(EntryId id) {
   if (entry == nullptr || std::ranges::find(m_model.rows(), id) == m_model.rows().end()) {
     return;
   }
-  if (entry->location.isTrash()) {
+  const auto location = entry->location();
+  if (location.isTrash()) {
     if (entry->type == FileType::Directory && !entry->symlink) {
-      open(entry->location);
+      open(location);
     } else {
       showMessage("Restore this item before opening it.");
     }
   } else if (entry->symlink) {
     queryFileType(
-        entry->location, m_activation->token,
-        [state = m_activation, id, target = entry->location,
+        location, m_activation->token,
+        [state = m_activation, id, target = location,
          context = m_contextSerial](std::expected<FileType, FileError> type) {
           const auto callback = state->resolved;
           if (callback && (type || type.error().kind != FileErrorKind::Cancelled)) {
@@ -568,10 +572,9 @@ void luciole::BrowserController::activate(EntryId id) {
         }
     );
   } else if (entry->type == FileType::Directory) {
-    open(entry->location);
+    open(location);
   } else if (m_fileActivated) {
     const auto callback = m_fileActivated;
-    const auto location = entry->location;
     callback(location);
   } else {
     showMessage("Opening files is not available yet.");

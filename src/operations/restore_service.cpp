@@ -95,7 +95,7 @@ struct luciole::RestoreService::State {
     const auto choice = owner->gate.ask(
         TransferConflict{
             0,
-            entry.location,
+            entry.location(),
             destination,
             destination.displayName().value_or(std::string{}),
             entry.type == FileType::Directory,
@@ -117,7 +117,8 @@ struct luciole::RestoreService::State {
   ) {
     const auto expected = readTrashItemIdentity(entry);
     const auto& trash = entry.trashInfo();
-    if (!isTopLevelTrashItem(entry.location) || !trash.original || !trash.original->nativePath()) {
+    const auto source = entry.location();
+    if (!isTopLevelTrashItem(source) || !trash.original || !trash.original->nativePath()) {
       throwFileError(FileErrorKind::InvalidArgument, "This item has no usable original location.");
     }
     const auto original = *trash.original;
@@ -133,7 +134,7 @@ struct luciole::RestoreService::State {
       if (token.cancelled()) {
         return;
       }
-      if (expected != queryTrashItem(entry.location, token).identity()) {
+      if (expected != queryTrashItem(source, token).identity()) {
         throwFileError(FileErrorKind::Changed, "The selected item changed. It was left in Trash.");
       }
       if (queryTrashItem(parent, token, true).id != parentInfo.id) {
@@ -153,9 +154,8 @@ struct luciole::RestoreService::State {
           | (replace ? G_FILE_COPY_OVERWRITE : G_FILE_COPY_NONE)
       );
       // Observe cancellation between complete provider moves, never midway through publication.
-      const bool moved = g_file_move(
-          gioFile(entry.location).get(), gioFile(destination).get(), flags, nullptr, nullptr, nullptr, &raw
-      );
+      const bool moved =
+          g_file_move(gioFile(source).get(), gioFile(destination).get(), flags, nullptr, nullptr, nullptr, &raw);
       const GErrorPtr error(raw);
       if (moved) {
         result.outcome = RestoreOutcome::Restored;
@@ -228,7 +228,8 @@ bool luciole::RestoreService::start(std::vector<DirectoryEntry> selection) {
   }
   std::set<std::string> sources;
   for (const auto& entry : selection) {
-    if (!isTopLevelTrashItem(entry.location) || !sources.insert(entry.location.uri()).second) {
+    const auto location = entry.location();
+    if (!isTopLevelTrashItem(location) || !sources.insert(location.uri()).second) {
       return false;
     }
   }
@@ -242,7 +243,7 @@ bool luciole::RestoreService::start(std::vector<DirectoryEntry> selection) {
         std::vector<RestoreResult> results;
         std::set<std::string> seen;
         for (const auto& entry : selection) {
-          results.push_back({entry.location, std::nullopt, entry.displayName, RestoreOutcome::Cancelled, {}});
+          results.push_back({entry.location(), std::nullopt, entry.displayName(), RestoreOutcome::Cancelled, {}});
         }
         for (std::size_t index = 0; index < selection.size(); ++index) {
           if (token.cancelled()) {
@@ -251,7 +252,7 @@ bool luciole::RestoreService::start(std::vector<DirectoryEntry> selection) {
           const auto& entry = selection[index];
           auto& result = results[index];
           try {
-            if (!seen.insert(entry.location.uri()).second) {
+            if (!seen.insert(entry.location().uri()).second) {
               throwFileError(FileErrorKind::InvalidArgument, "The restore selection contains a repeated item.");
             }
             State::restore(owner, token, entry, result);

@@ -45,14 +45,14 @@ namespace luciole {
   // Deduplicates the icon sources of one listing. Not thread-safe.
   class FileIconPool {
   public:
-    // For infos that carry the provider's standard::icon.
-    SharedFileIcon get(GFileInfo* info, const Location& location);
+    // For infos that carry the provider's standard::icon; `folder` contains the entry.
+    SharedFileIcon get(GFileInfo* info, const Location& folder);
     // Children of a local folder listed without standard::icon. GIO's local backend derives that icon from
     // the content type and the user's special folders, building two icon objects per file; this derives the
     // same icon once per distinct value. nullptr clears the folder.
     void setLocalFolder(const char* path);
-    // name is the raw filename; contentType is GIO's regular content type, null when unknown.
-    SharedFileIcon getLocal(const char* name, GFileType type, const char* contentType, const Location& location);
+    // name is the raw filename; contentType is GIO's regular content type, null when unknown; `folder` contains it.
+    SharedFileIcon getLocal(const char* name, GFileType type, const char* contentType, const Location& folder);
 
   private:
     struct SpecialIcon {

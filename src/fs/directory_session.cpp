@@ -5,12 +5,17 @@
 #include "fs/native_listing.h"
 
 #include <algorithm>
+#include <bit>
 #include <chrono>
+#include <cstdint>
+#include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 namespace {
   constexpr const char* kAccessAttributes =
@@ -55,6 +60,93 @@ namespace {
         nullptr
     );
   }
+
+  struct NameHash {
+    using is_transparent = void;
+    std::size_t operator()(std::string_view name) const { return std::hash<std::string_view>{}(name); }
+  };
+
+  // Session IDs by child name. Published entries already carry both, so the table indexes them (4 bytes a slot)
+  // and only keeps the names monitor events changed since that publication.
+  class NameIds {
+  public:
+    void clear() {
+      m_entries = {};
+      m_slots.clear();
+      m_changes.clear();
+    }
+
+    // The first entry of a name wins, like the scan that assigned the IDs.
+    void index(const luciole::DirectoryEntries& entries) {
+      m_entries = entries;
+      m_changes.clear();
+      m_slots.assign(entries.empty() ? 0 : std::bit_ceil(entries.size() * 2), kEmpty);
+      for (std::uint32_t i = 0; i < entries.size(); ++i) {
+        const auto slot = probe(entries[i].name);
+        if (m_slots[slot] == kEmpty) {
+          m_slots[slot] = i;
+        }
+      }
+    }
+
+    std::optional<std::uint64_t> find(std::string_view name) const {
+      if (const auto changed = m_changes.find(name); changed != m_changes.end()) {
+        return changed->second;
+      }
+      if (m_slots.empty()) {
+        return std::nullopt;
+      }
+      const auto slot = m_slots[probe(name)];
+      return slot == kEmpty ? std::nullopt : std::optional(m_entries[slot].id);
+    }
+
+    // The indexed entries were replaced by copies in the same order with the same names and IDs.
+    void rebase(const luciole::DirectoryEntries& entries) {
+      if (!m_slots.empty()) {
+        m_entries = entries;
+      }
+    }
+
+    // nullopt forgets the name.
+    void set(std::string_view name, std::optional<std::uint64_t> id) {
+      if (const auto changed = m_changes.find(name); changed != m_changes.end()) {
+        changed->second = id;
+      } else {
+        m_changes.emplace(std::string(name), id);
+      }
+    }
+
+    // Every name with an ID.
+    void forEach(const std::function<void(std::string_view, std::uint64_t)>& visit) const {
+      for (const auto slot : m_slots) {
+        if (slot != kEmpty && !m_changes.contains(std::string_view(m_entries[slot].name))) {
+          visit(m_entries[slot].name, m_entries[slot].id);
+        }
+      }
+      for (const auto& [name, id] : m_changes) {
+        if (id) {
+          visit(name, *id);
+        }
+      }
+    }
+
+  private:
+    static constexpr std::uint32_t kEmpty = UINT32_MAX;
+
+    // The slot holding `name`, or the empty slot where it would go.
+    std::size_t probe(std::string_view name) const {
+      const auto mask = m_slots.size() - 1;
+      for (auto slot = NameHash{}(name)&mask;; slot = (slot + 1) & mask) {
+        if (m_slots[slot] == kEmpty || m_entries[m_slots[slot]].name == name) {
+          return slot;
+        }
+      }
+    }
+
+    luciole::DirectoryEntries m_entries;
+    std::vector<std::uint32_t> m_slots;
+    std::unordered_map<std::string, std::optional<std::uint64_t>, NameHash, std::equal_to<>> m_changes;
+  };
 } // namespace
 
 struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
@@ -65,7 +157,10 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
     GioPtr<GFileEnumerator> enumerator;
     std::vector<DirectoryEntry> entries;
     GioPtr<GFile> parent;
-    // Identities of this scan's entries by name; replaces State::identities when the scan publishes.
+    // Shared by every entry of the scan; each entry's location is this folder's child.
+    std::shared_ptr<const Location> folder;
+    // Identities of this scan's entries by name; the published entries replace State::identities, and this table
+    // is dropped then.
     std::unordered_map<std::string, std::uint64_t> identities;
     bool local = false;
     bool trash = false;
@@ -87,7 +182,7 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
   std::function<void()> changed;
   std::shared_ptr<Scan> scan;
   GioPtr<GFileMonitor> monitor;
-  std::unordered_map<std::string, std::uint64_t> identities;
+  NameIds identities;
   std::uint64_t nextId = 1;
   IdResolver resolveId;
   guint timer = 0;
@@ -137,6 +232,7 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
         entry.access = {};
       }
       snapshot.entries = std::move(entries);
+      identities.rebase(snapshot.entries);
       entriesAccessInvalidated = true;
     }
   }
@@ -228,13 +324,12 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
     // Only an explicit same-directory rename proves continuity. Replacements
     // and delete/create sequences get a new identity even at the same name.
     if (event == G_FILE_MONITOR_EVENT_RENAMED && other != nullptr) {
-      auto node = name ? identities.extract(name.get()) : decltype(identities)::node_type{};
+      const auto id = name ? identities.find(name.get()) : std::nullopt;
+      if (name) {
+        identities.set(name.get(), std::nullopt);
+      }
       if (const auto otherName = childName(other)) {
-        identities.erase(otherName.get());
-        if (!node.empty()) {
-          node.key() = otherName.get();
-          identities.insert(std::move(node));
-        }
+        identities.set(otherName.get(), id);
       }
     } else if (
         name
@@ -243,7 +338,7 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
             || event == G_FILE_MONITOR_EVENT_CREATED
             || event == G_FILE_MONITOR_EVENT_MOVED_IN)
     ) {
-      identities.erase(name.get());
+      identities.set(name.get(), std::nullopt);
     }
     const bool wasDirty = dirty;
     dirty = true;
@@ -292,8 +387,8 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
     snapshot.error.reset();
     invalidateMetadata(true);
     scan = std::make_shared<Scan>();
-    scan->identities.reserve(identities.size());
     scan->parent = gioFile(*snapshot.location);
+    scan->folder = std::make_shared<const Location>(*snapshot.location);
     scan->local =
         g_file_is_native(scan->parent.get()) != FALSE && g_file_has_uri_scheme(scan->parent.get(), "file") != FALSE;
     scan->trash = snapshot.location->isTrash();
@@ -343,8 +438,15 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
       enumerate();
       return;
     }
+    // A folder lists each name once, so IDs come straight from the published table without a scan table.
     for (auto& entry : listing.entries) {
-      entry.id = identify(entry);
+      if (resolveId) {
+        entry.id = resolveId(entry);
+      } else if (const auto previous = identities.find(entry.name)) {
+        entry.id = *previous;
+      } else {
+        entry.id = nextId++;
+      }
     }
     scan->entries = std::move(listing.entries);
     if (listing.limited) {
@@ -361,8 +463,10 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
     }
     const auto [identity, inserted] = scan->identities.try_emplace(entry.name, 0);
     if (inserted) {
-      const auto previous = identities.find(identity->first);
-      identity->second = previous != identities.end() ? previous->second : nextId++;
+      identity->second = identities.find(identity->first).value_or(0);
+      if (identity->second == 0) {
+        identity->second = nextId++;
+      }
     }
     return identity->second;
   }
@@ -397,35 +501,30 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
 
   void append(GFileInfo* info) {
     const char* name = g_file_info_get_name(info);
-    const GioPtr<GFile> child(g_file_get_child(scan->parent.get(), name));
-    const GString uri(g_file_get_uri(child.get()));
     DirectoryEntry entry{
         .id = 0,
-        // A child of a local folder has GIO's canonical form already.
-        .location = scan->local ? Location::fromCanonicalNativeUri(uri.get()) : Location::fromUri(uri.get()),
+        .place = EntryPlace::inFolder(scan->folder),
         .name = name,
-        .displayName = g_file_info_get_display_name(info),
         .type = fileType(g_file_info_get_file_type(info)),
         .hidden = infoBoolean(info, G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN).value_or(false) || name[0] == '.',
         .symlink = readIsSymlink(info) != FALSE,
         .size = std::nullopt,
         .modifiedSeconds = std::nullopt,
-        .etag = std::nullopt,
         .access = readFileAccess(info),
-        .parentDisplayName = {},
     };
+    entry.setDisplayName(g_file_info_get_display_name(info));
     entry.icon = scan->local ? icons.getLocal(
                                    name, g_file_info_get_file_type(info),
-                                   infoString(info, G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE), entry.location
+                                   infoString(info, G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE), *scan->folder
                                )
-                             : icons.get(info, entry.location);
+                             : icons.get(info, *scan->folder);
     if (scan->trash) {
-      auto trash = std::make_shared<const TrashInfo>(readTrashInfo(info));
-      entry.parentDisplayName = trashOriginalParentText(*trash);
-      entry.trash = std::move(trash);
+      auto trash = readTrashInfo(info);
+      entry.setParentDisplayName(trashOriginalParentText(trash));
+      entry.setTrash(std::move(trash));
     }
     entry.details = readEntryMetadata(info);
-    entry.identity = readFileIdentity(info);
+    entry.setIdentity(readFileIdentity(info));
     entry.contentType = readContentType(info);
     if (const auto size = infoUint64(info, G_FILE_ATTRIBUTE_STANDARD_SIZE); size && *size <= G_MAXINT64) {
       entry.size = size;
@@ -434,7 +533,7 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
     entry.modifiedSeconds = infoUint64(info, G_FILE_ATTRIBUTE_TIME_MODIFIED);
     // Unlike g_file_info_get_etag, absent on children GIO could not stat is not a programming error here.
     if (const char* etag = infoString(info, G_FILE_ATTRIBUTE_ETAG_VALUE); etag != nullptr) {
-      entry.etag = etag;
+      entry.setEtag(etag);
     }
     entry.id = identify(entry);
     scan->entries.push_back(std::move(entry));
@@ -488,8 +587,8 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
     std::unordered_set<std::uint64_t> used;
     used.reserve(scan->entries.size());
     for (auto& entry : scan->entries) {
-      if (const auto live = identities.find(entry.name); live != identities.end()) {
-        entry.id = live->second;
+      if (const auto live = identities.find(entry.name)) {
+        entry.id = *live;
       }
       if (!used.insert(entry.id).second) {
         entry.id = nextId++;
@@ -497,11 +596,11 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
       }
       scan->identities.insert_or_assign(entry.name, entry.id);
     }
-    for (const auto& [name, id] : identities) {
+    identities.forEach([&](std::string_view name, std::uint64_t id) {
       if (!used.contains(id)) {
-        scan->identities.try_emplace(name, id);
+        scan->identities.try_emplace(std::string(name), id);
       }
-    }
+    });
   }
 
   void complete(std::optional<FileError> error) {
@@ -526,7 +625,14 @@ struct luciole::DirectorySession::State : std::enable_shared_from_this<State> {
     closeEnumerator(scan->enumerator.get());
     scan->enumerator.reset();
     if (!resolveId) {
-      identities = std::move(scan->identities);
+      // The published entries carry the scan's names and IDs; only other names stay in the change table.
+      identities.index(snapshot.entries);
+      for (const auto& [name, id] : scan->identities) {
+        if (identities.find(name) != id) {
+          identities.set(name, id);
+        }
+      }
+      scan->identities = {};
     }
     snapshot.error = std::move(error);
     if (snapshot.location->isTrash() && snapshot.error && snapshot.error->kind == FileErrorKind::Unsupported) {

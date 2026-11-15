@@ -151,11 +151,11 @@ namespace {
     TEST_CHECK(
         first != entries.end()
         && first->trashInfo().deletionDate
-        && first->location.isTrash()
-        && first->parentDisplayName == a.native()
+        && first->location().isTrash()
+        && first->parentDisplayName() == a.native()
     );
     const auto id = first->id;
-    const auto operation = first->location;
+    const auto operation = first->location();
     browser.model().select(id);
     browser.activate(id);
     TEST_CHECK(!launched && browser.model().snapshot().location == luciole::Location::trash());
@@ -164,7 +164,7 @@ namespace {
     TEST_CHECK(
         browser.model().selectedIds().empty()
         && std::ranges::any_of(browser.model().snapshot().entries, [&](const auto& entry) {
-             return entry.location == operation;
+             return entry.location() == operation;
            })
     );
     browser.toggleHidden();
@@ -175,14 +175,14 @@ namespace {
     browser.activate(folder->id);
     pump.ready(browser);
     TEST_CHECK(
-        browser.model().rows().size() == 1 && browser.model().snapshot().entries.front().displayName == "inside.txt"
+        browser.model().rows().size() == 1 && browser.model().snapshot().entries.front().displayName() == "inside.txt"
     );
     TEST_CHECK(browser.up());
     pump.ready(browser);
     TEST_CHECK(browser.model().snapshot().location == luciole::Location::trash() && !browser.canUp());
     browser.setSearchQuery("inside");
     pump.ready(browser);
-    TEST_CHECK(browser.model().rows().size() == 1 && browser.model().snapshot().entries.front().location.isTrash());
+    TEST_CHECK(browser.model().rows().size() == 1 && browser.model().snapshot().entries.front().location().isTrash());
     browser.activate(browser.model().rows().front());
     TEST_CHECK(!launched);
     browser.setSearchQuery({});

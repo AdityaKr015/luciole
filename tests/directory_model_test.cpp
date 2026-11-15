@@ -29,14 +29,11 @@ namespace {
   DirectoryEntry entry(EntryId id, const std::string& name, luciole::FileType type = luciole::FileType::Regular) {
     return {
         .id = id,
-        .location = Location::fromPath("/tmp/luciole-model-fixture/" + name),
+        .place = Location::fromPath("/tmp/luciole-model-fixture/" + name),
         .name = name,
-        .displayName = name,
         .type = type,
         .size = std::nullopt,
-        .modifiedSeconds = std::nullopt,
-        .etag = std::nullopt,
-        .parentDisplayName = {}
+        .modifiedSeconds = std::nullopt
     };
   }
 
@@ -59,12 +56,12 @@ namespace {
     auto hidden = entry(3, ".hidden"), hiddenBackup = entry(4, ".hidden~");
     hidden.hidden = hiddenBackup.hidden = true;
     auto renamed = entry(2, "notes.txt~");
-    renamed.displayName = "A normal label";
+    renamed.setDisplayName("A normal label");
     auto ordinary = entry(10, "ordinary.txt");
-    ordinary.displayName = "A label ending~";
+    ordinary.setDisplayName("A label ending~");
     auto raw = entry(9, "raw-\xff~");
     raw.name = std::string("raw-\xff~");
-    raw.displayName = "raw bytes";
+    raw.setDisplayName("raw bytes");
     DirectoryModel model;
     model.applySnapshot(snapshot(
         {entry(1, "notes.txt"), renamed, hidden, hiddenBackup, entry(5, "directory~", luciole::FileType::Directory),
@@ -81,7 +78,7 @@ namespace {
     for (const auto id : {2, 3, 4, 7, 8, 9}) {
       TEST_CHECK(!std::ranges::contains(model.rows(), id));
     }
-    TEST_CHECK(model.entry(2)->name == "notes.txt~" && model.entry(2)->displayName == "A normal label");
+    TEST_CHECK(model.entry(2)->name == "notes.txt~" && model.entry(2)->displayName() == "A normal label");
     model.setFilter({.showHidden = true, .text = {}, .showBackups = false});
     TEST_CHECK(
         model.rows().size() == 5 && std::ranges::contains(model.rows(), 3) && !std::ranges::contains(model.rows(), 4)
@@ -115,8 +112,8 @@ namespace {
     const auto expanded = model.snapshot();
     model.applySnapshot(snapshot({entry(1, "replacement")}, 3));
     TEST_CHECK(model.selection().selected.empty() && !model.entry(3));
-    TEST_CHECK(expanded.entries[1].displayName == "café-文.txt" && &expanded.entries[1] == child);
-    TEST_CHECK(retained.entries[1].name == "raw-\xff" && retained.entries[0].displayName == "folder");
+    TEST_CHECK(expanded.entries[1].displayName() == "café-文.txt" && &expanded.entries[1] == child);
+    TEST_CHECK(retained.entries[1].name == "raw-\xff" && retained.entries[0].displayName() == "folder");
     auto appended = luciole::DirectoryEntries::concatenate({projection, luciole::DirectoryEntries{entry(5, "last")}});
     projection = {};
     TEST_CHECK(appended.size() == 3 && &appended[1] == child && appended.back().id == 5);
@@ -163,7 +160,7 @@ namespace {
     data.entries = {entry(5, "same-b"), entry(4, "same-a")};
     test::editEntries(data, [&](auto& entries) {
       for (auto& item : entries) {
-        item.displayName = "Same";
+        item.setDisplayName("Same");
       }
     });
     model.setSort({});
@@ -190,8 +187,8 @@ namespace {
       rows(model, {2, 1, 3});
       TEST_CHECK(model.selection().selected.contains(1));
     }
-    a.location = Location::fromPath("/tmp/a/file");
-    b.location = Location::fromPath("/tmp/b/file");
+    a.place = Location::fromPath("/tmp/a/file");
+    b.place = Location::fromPath("/tmp/b/file");
     model.applySnapshot(snapshot({b, a}));
     model.setSort({SortField::Location, false, false});
     rows(model, {1, 2});
@@ -214,10 +211,10 @@ namespace {
     b.details.owner = c.details.owner = "alpha";
     a.details.group = c.details.group = "group2";
     b.details.group = "group10";
-    a.location = Location::fromPath("/tmp/z/item2");
-    b.location = Location::fromPath("/tmp/a/item10");
-    c.location = Location::fromPath("/tmp/a/item1");
-    unknown.location = Location::fromPath("/");
+    a.place = Location::fromPath("/tmp/z/item2");
+    b.place = Location::fromPath("/tmp/a/item10");
+    c.place = Location::fromPath("/tmp/a/item1");
+    unknown.place = Location::fromPath("/");
     a.contentType = "text/plain";
     b.contentType = c.contentType = "image/png";
     DirectoryModel model;
@@ -247,8 +244,8 @@ namespace {
     b.details.group = "group1";
     c.details.group = {};
     unknown.details.group = "";
-    b.displayName = "item0";
-    b.location = Location::fromPath("/tmp/0/item10");
+    b.setDisplayName("item0");
+    b.place = Location::fromPath("/tmp/0/item10");
     a.contentType = unknown.contentType = "image/png";
     b.contentType = "application/octet-stream";
     c.contentType = "text/plain";
@@ -259,7 +256,7 @@ namespace {
     check(SortField::Group, {3, 2, 1, 4}, {1, 2, 3, 4});
     check(SortField::Type, {4, 1, 3, 2}, {3, 1, 4, 2});
     check(SortField::Name, {2, 4, 1, 3}, {3, 1, 4, 2});
-    TEST_CHECK(model.entry(2)->name == "item10" && model.entry(2)->displayName == "item0");
+    TEST_CHECK(model.entry(2)->name == "item10" && model.entry(2)->displayName() == "item0");
     // Removing IDs and adding a new row must not retain an old presentation by source index.
     auto replacement = entry(9, "item3");
     replacement.details.owner = "alpha";
@@ -278,7 +275,7 @@ namespace {
       auto item = entry(id, "café-" + std::to_string(id));
       item.details.owner = "owner" + std::to_string(id);
       item.details.group = "group" + std::to_string(count + 1 - id);
-      item.location = Location::fromPath("/tmp/folder" + std::to_string(id) + "/item");
+      item.place = Location::fromPath("/tmp/folder" + std::to_string(id) + "/item");
       entries.push_back(std::move(item));
     }
     std::ranges::reverse(entries);

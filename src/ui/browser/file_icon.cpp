@@ -54,12 +54,12 @@ void luciole::FileIcon::bind(const FileIconSource& source, ColorSpec foreground)
 void luciole::FileIcon::bindFile(const DirectoryEntry& entry, ColorSpec foreground) {
   const bool changed = !m_thumbnailSource
       || entry.id != m_thumbnailSource->id
-      || entry.location != m_thumbnailSource->location
-      || entry.etag != m_thumbnailSource->etag
+      || entry.location() != m_thumbnailSource->location()
+      || entry.etag() != m_thumbnailSource->etag()
       || entry.size != m_thumbnailSource->size
       || entry.modifiedSeconds != m_thumbnailSource->modifiedSeconds
       || entry.contentRevision != m_thumbnailSource->contentRevision
-      || entry.identity != m_thumbnailSource->identity
+      || entry.identity() != m_thumbnailSource->identity()
       || entry.type != m_thumbnailSource->type
       || entry.symlink != m_thumbnailSource->symlink
       || entry.contentType != m_thumbnailSource->contentType;

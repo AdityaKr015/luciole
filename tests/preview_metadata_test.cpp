@@ -53,20 +53,19 @@ namespace {
         G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, nullptr, nullptr
     ));
     TEST_CHECK(info != nullptr);
-    return {
+    luciole::DirectoryEntry result{
         .id = 1,
-        .location = location,
+        .place = location,
         .name = path.filename().native(),
-        .displayName = path.filename().native(),
         .type = luciole::FileType::Regular,
         .size = g_file_info_get_attribute_uint64(info.get(), G_FILE_ATTRIBUTE_STANDARD_SIZE),
         .modifiedSeconds = g_file_info_get_attribute_uint64(info.get(), G_FILE_ATTRIBUTE_TIME_MODIFIED),
-        .etag = g_file_info_get_etag(info.get()),
-        .parentDisplayName = {},
-        .identity = luciole::readFileIdentity(info.get()),
         .contentType = mime,
         .contentRevision = luciole::readChangeRevision(info.get()),
     };
+    result.setEtag(g_file_info_get_etag(info.get()));
+    result.setIdentity(luciole::readFileIdentity(info.get()));
+    return result;
   }
   luciole::MetadataFields inspect(const fs::path& path, const std::string& mime) {
     luciole::PreviewMetadataService metadata;
@@ -246,7 +245,7 @@ namespace {
     }));
     TEST_CHECK(preview.snapshot().text == "UTF-8 café");
     stale = source;
-    stale.identity = luciole::FileIdentity{"old", "old"};
+    stale.setIdentity(luciole::FileIdentity{"old", "old"});
     metadata.show(stale, {});
     wait([&] { return !metadata.busy(); });
     TEST_CHECK(metadata.fields().empty());
