@@ -16,8 +16,8 @@ namespace luciole {
     bool operator==(const DriveUsage&) const = default;
   };
 
-  // One mountable volume or mount reported by GIO's volume monitor (removable media, extra partitions,
-  // network mounts), as Nautilus lists them under "Other Locations".
+  // The root filesystem ("/" as File System), then each mountable volume or mount reported by GIO's volume
+  // monitor (removable media, extra partitions, network mounts), as Nautilus lists them under "Other Locations".
   struct Drive {
     // Stable while the device stays attached; identifies the drive across change notifications.
     std::string key;
@@ -41,10 +41,11 @@ namespace luciole {
     DriveMonitor(const DriveMonitor&) = delete;
     DriveMonitor& operator=(const DriveMonitor&) = delete;
 
-    // Starts GIO's volume monitor; drives() stays empty before. Blocks while GIO starts its monitor services,
-    // so the application calls it after its first frame. Idempotent.
+    // Starts GIO's volume monitor; drives() holds only the root filesystem before. Blocks while GIO starts its
+    // monitor services, so the application calls it after its first frame. Idempotent.
     void start();
 
+    // The root filesystem, then mounted drives, then unmounted ones.
     const std::vector<Drive>& drives() const;
     const Drive* find(const std::string& key) const;
     void setChangedCallback(std::function<void()> callback);

@@ -40,6 +40,19 @@ struct luciole::DriveMonitor::State : std::enable_shared_from_this<State> {
   std::function<void()> usageChanged;
   std::set<std::string> usagePending;
 
+  // "/" leads the list as File System; GIO's volume monitor never reports it.
+  void addRoot() {
+    drives.push_back(
+        {.key = "root",
+         .label = "File System",
+         .glyph = "database",
+         .root = Location::fromPath("/"),
+         .removable = false,
+         .ejectable = false,
+         .usage = std::nullopt}
+    );
+  }
+
   void add(Handle handle) {
     Drive drive;
     GMount* mount = handle.mount.get();
@@ -80,6 +93,7 @@ struct luciole::DriveMonitor::State : std::enable_shared_from_this<State> {
     auto previous = std::move(drives);
     drives.clear();
     handles.clear();
+    addRoot();
     GList* volumes = g_volume_monitor_get_volumes(monitor.get());
     for (GList* item = volumes; item != nullptr; item = item->next) {
       add({.volume = GioPtr<GVolume>(G_VOLUME(item->data)), .mount = nullptr});
@@ -94,6 +108,8 @@ struct luciole::DriveMonitor::State : std::enable_shared_from_this<State> {
       }
     }
     g_list_free(mounts);
+    // Mounted drives first, keeping GIO's order within each group; the root entry stays at the top.
+    std::ranges::stable_partition(drives, [](const Drive& drive) { return drive.root.has_value(); });
     // Keep the last known usage until the next query answers, so bars do not flicker on rebuilds.
     for (auto& drive : drives) {
       const auto old = std::ranges::find(previous, drive.key, &Drive::key);
@@ -114,6 +130,7 @@ luciole::DriveMonitor::DriveMonitor() : m_state(std::make_shared<State>()) {
   const GioPtr<GFileInfo> info(
       g_file_query_filesystem_info(root.get(), G_FILE_ATTRIBUTE_FILESYSTEM_READONLY, nullptr, nullptr)
   );
+  m_state->addRoot();
 }
 
 luciole::DriveMonitor::~DriveMonitor() {
@@ -159,9 +176,6 @@ void luciole::DriveMonitor::setUsageChangedCallback(std::function<void()> callba
 }
 
 void luciole::DriveMonitor::refreshUsage() {
-  if (!m_state->monitor) {
-    return;
-  }
   struct Request {
     std::weak_ptr<State> state;
     std::string key;
@@ -216,13 +230,13 @@ void luciole::DriveMonitor::mount(
     const std::string& key, std::function<void(std::optional<Location>, std::string)> done
 ) {
   const auto* drive = find(key);
+  if (drive != nullptr && drive->root) {
+    done(drive->root, {});
+    return;
+  }
   const auto handle = m_state->handles.find(key);
   if (drive == nullptr || handle == m_state->handles.end()) {
     done(std::nullopt, "This drive is no longer available.");
-    return;
-  }
-  if (drive->root) {
-    done(drive->root, {});
     return;
   }
   struct Request {
