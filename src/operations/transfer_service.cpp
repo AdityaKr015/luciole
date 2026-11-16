@@ -721,7 +721,7 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
                     const auto answer = owner->gate.ask(std::move(conflict), token, [owner] { State::notify(owner); });
                     return answer ? answer->choice : TransferConflictChoice::Cancel;
                   },
-                  &work, !retry && job->request.action != TransferAction::Move && !job->request.destination.isNative()
+                  &work, !retry && !job->request.destination.isNative()
               )
             : retry ? retryJob(*job, work, owner->completed)
                     : runFirst(*job, work, owner->completed);
@@ -748,6 +748,9 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
           } catch (const FileErrorException&) {
             moveCaptureChanged = true;
           }
+        }
+        if (!receipt && !retry && job->provider) {
+          receipt = job->provider->takeMoveReceipt(token);
         }
         if (!receipt && (moveCaptureChanged || !movesComplete)) {
           const auto retain = [&](const auto& prepared) {

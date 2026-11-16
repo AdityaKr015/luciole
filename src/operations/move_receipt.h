@@ -89,9 +89,10 @@ namespace luciole {
     std::shared_ptr<const CopyEffect> m_previous, m_retained;
     std::shared_ptr<const MoveTrees> m_trees, m_previousTrees;
   };
-  // One bounded application-wide native move record, including retained replacement/merge data.
+  // One application-wide Move record; the default implementation retains native rename/merge identities.
   class MoveReceipt {
   public:
+    virtual ~MoveReceipt() = default;
     using Revisions = std::map<std::pair<dev_t, ino_t>, struct stat>;
     static std::shared_ptr<const MoveReceipt> capture(
         const std::vector<std::shared_ptr<const MoveEffect>>& effects,
@@ -102,9 +103,9 @@ namespace luciole {
         const std::vector<std::shared_ptr<const MoveEffect>>& effects, const Location& destination,
         std::size_t& remaining, const CancelToken& token, const std::vector<std::shared_ptr<const MoveFolder>>& folders
     );
-    MoveReplayResult reverse(const CancelToken& token, std::atomic<std::size_t>& completed) const;
-    std::vector<TransferResult> unconfirmed(const FileError& error) const;
-    std::size_t size() const { return m_effects.size() + m_folders.size(); }
+    virtual MoveReplayResult reverse(const CancelToken& token, std::atomic<std::size_t>& completed) const;
+    virtual std::vector<TransferResult> unconfirmed(const FileError& error) const;
+    virtual std::size_t size() const { return m_effects.size() + m_folders.size(); }
 
   private:
     static std::vector<std::shared_ptr<const MoveEffect>>

@@ -2,6 +2,7 @@
 
 #include "fs/background_job.h"
 #include "fs/transfer_types.h"
+#include "operations/provider_move_receipt.h"
 #include "operations/provider_transfer.h"
 
 #include <algorithm>
@@ -206,10 +207,18 @@ namespace {
 } // namespace
 
 struct luciole::ProviderCopyStorage {
+  // Keep GVfs mount specs alive until this record's worker I/O and cleanup have finished.
+  // Location is URI-only; temporary query handles alone can lose GVfs's weakly interned spec.
+  GioPtr<GFile> anchorHandle, originHandle;
   Location destination, anchor;
   std::string nonce, payloadName;
   provider_history::Tree tree;
-  std::vector<DirectoryProof> parents;
+  std::vector<DirectoryProof> parents, originParents;
+  std::optional<Location> origin, originAnchor;
+  std::string originNonce;
+  bool originCreated = false, originMarkerReady = false;
+  std::optional<ph::Tree> original;
+  bool originRemoved = false, atOrigin = false;
   std::optional<provider_history::Tree> previous;
   bool previousStored = false;
   bool local = false, localItemCreated = false, localPreviousCreated = false;
@@ -225,7 +234,84 @@ struct luciole::ProviderCopyStorage {
         payloadName(std::move(name)), tree(std::move(proof)), parents(std::move(containing)),
         previous(std::move(predecessor)) {}
 
-  Location current() const { return hidden ? (local ? payload(false) : anchor.child("item")) : destination; }
+  Location current() const {
+    if (originRemoved) {
+      return atOrigin ? *origin : destination;
+    }
+    return hidden ? (local ? payload(false) : anchor.child("item")) : destination;
+  }
+  void validateOriginGuard(const CancelToken& token) const {
+    if (!originAnchor) {
+      return;
+    }
+    if (!originCreated) {
+      if (ph::info(*originAnchor, token, true)) {
+        throwFileError(FileErrorKind::Changed, "Original-parent guard creation was not confirmed.");
+      }
+      return;
+    }
+    if (originMarkerReady) {
+      marker(*originAnchor, originNonce, token);
+    }
+    const auto expected = originMarkerReady ? std::vector<std::string>{kMarker} : std::vector<std::string>{};
+    if (ph::children(*originAnchor, token, 1) != expected) {
+      throwFileError(FileErrorKind::Changed, "Original-parent history contains unrecorded data.");
+    }
+  }
+  void cleanupOriginGuard(const CancelToken& token) const {
+    if (!originCreated) {
+      return;
+    }
+    validateOriginGuard(token);
+    if (originMarkerReady) {
+      ph::erase(originAnchor->child(kMarker), token);
+    }
+    ph::erase(*originAnchor, token);
+  }
+  void validateOriginParents(const CancelToken& token) const {
+    validateOriginGuard(token);
+    for (const auto& parent : originParents) {
+      if (directoryProof(parent.location, token).attributes != parent.attributes) {
+        throwFileError(FileErrorKind::Changed, "A moved item's original containing folder changed.");
+      }
+    }
+  }
+  void validateMove(const CancelToken& token) const {
+    validateOriginParents(token);
+    ph::verify(current(), tree, token);
+    if (previous) {
+      ph::verify(atOrigin ? destination : anchor.child("previous"), *previous, token);
+      vacant(atOrigin ? anchor.child("previous") : *origin, token);
+    } else {
+      vacant(atOrigin ? destination : *origin, token);
+    }
+  }
+  void reverseMove(const CancelToken& token, TransferResult& result, bool& changed) {
+    const auto returnTo = atOrigin ? destination : *origin;
+    result.source = current();
+    if (atOrigin && previous) {
+      ph::move(destination, anchor.child("previous"), token);
+      changed = true;
+      result.children.emplace_back(destination, TransferOutcome::Moved);
+      result.children.back().destination = anchor.child("previous");
+    }
+    vacant(returnTo, token);
+    ph::move(current(), returnTo, token);
+    changed = true;
+    result.children.emplace_back(result.source, TransferOutcome::Moved);
+    result.children.back().destination = returnTo;
+    if (!atOrigin && previous) {
+      ph::verify(anchor.child("previous"), *previous, token);
+      vacant(destination, token);
+      ph::move(anchor.child("previous"), destination, token);
+      result.children.emplace_back(anchor.child("previous"), TransferOutcome::Moved);
+      result.children.back().destination = destination;
+    }
+    atOrigin = !atOrigin;
+    validate(token);
+    result.destination = returnTo;
+    result.outcome = TransferOutcome::Moved;
+  }
   Location payload(bool predecessor) const {
     return anchor.child(predecessor ? "previous" : "item").child(payloadName);
   }
@@ -329,6 +415,10 @@ struct luciole::ProviderCopyStorage {
     }
   }
   std::vector<std::string> storageNames() const {
+    if (originRemoved) {
+      return !atOrigin && previousStored ? std::vector<std::string>{kMarker, "previous"}
+                                         : std::vector<std::string>{kMarker};
+    }
     if (local) {
       std::vector<std::string> names{kMarker};
       if (localItemCreated) {
@@ -357,6 +447,10 @@ struct luciole::ProviderCopyStorage {
     const auto names = ph::children(anchor, token, local ? 3 : 2);
     if (names != storageNames() || (previous && !previousStored)) {
       throwFileError(FileErrorKind::Changed, "Remote history contains unknown entries.");
+    }
+    if (originRemoved) {
+      validateMove(token);
+      return;
     }
     if (local) {
       validateLocal(token);
@@ -387,6 +481,7 @@ struct luciole::ProviderCopyStorage {
       throwFileError(FileErrorKind::Other, "Incomplete remote reversal retained data for inspection.");
     }
     CleanupDeadline deadline;
+    validateOriginGuard(deadline.token);
     if (!local) {
       validateParents(deadline.token);
     }
@@ -401,7 +496,7 @@ struct luciole::ProviderCopyStorage {
       }
       if (local) {
         cleanupLocal(deadline.token);
-      } else if (hidden || previousStored) {
+      } else if ((originRemoved && !atOrigin && previousStored) || (!originRemoved && (hidden || previousStored))) {
         const auto location = anchor.child(hidden ? "item" : "previous");
         const auto& proof = hidden ? tree : *previous;
         ph::verify(location, proof, deadline.token);
@@ -411,6 +506,7 @@ struct luciole::ProviderCopyStorage {
       ph::erase(anchor.child(kMarker), deadline.token);
     }
     ph::erase(anchor, deadline.token);
+    cleanupOriginGuard(deadline.token);
   }
 };
 
@@ -443,6 +539,9 @@ std::shared_ptr<const luciole::ProviderCopyEffect> luciole::ProviderCopyEffect::
               } catch (...) {
                 auto error = currentFileError();
                 error.message += " Inspect remote history at " + owned->anchor.uri();
+                if (owned->originAnchor) {
+                  error.message += " and " + owned->originAnchor->uri();
+                }
                 std::println(stderr, "[file-history] {}", error.message);
                 const std::scoped_lock lock(cleanupMutex);
                 if (cleanupErrors.size() == 12) {
@@ -456,6 +555,9 @@ std::shared_ptr<const luciole::ProviderCopyEffect> luciole::ProviderCopyEffect::
       }
   );
   storage->local = local;
+  if (!local) {
+    storage->anchorHandle = gioFile(storage->anchor);
+  }
   storage->anchorAttempted = true;
   createDirectory(storage->anchor, token);
   storage->anchorCreated = true;
@@ -490,6 +592,52 @@ std::shared_ptr<const luciole::ProviderCopyEffect> luciole::ProviderCopyEffect::
     bool replacement, const std::optional<Location>& historyRoot
 ) {
   return prepareWithStorage(destination, staged, budget, token, replacement, historyRoot, true);
+}
+
+std::shared_ptr<const luciole::ProviderCopyEffect> luciole::ProviderCopyEffect::prepareMove(
+    const Location& source, const Location& destination, const Location& staged, provider_history::Budget& budget,
+    const CancelToken& token, bool replacement, const std::optional<Location>& historyRoot
+) {
+  if (!transferLinkTarget(source, destination)
+      || (!source.isNative() && !source.uri().starts_with("sftp:"))
+      || (!destination.isNative() && !destination.uri().starts_with("sftp:"))) {
+    throwFileError(FileErrorKind::Unsupported, "Move history requires one local or SFTP namespace.");
+  }
+  auto parents = containingFolders(source, source.resolve("/"), token);
+  auto original = ph::capture(source, budget, token);
+  auto effect = prepare(destination, staged, budget, token, replacement, historyRoot);
+  auto& storage = *effect->m_storage;
+  if (storage.local || !sameContents(original, storage.tree)) {
+    throwFileError(FileErrorKind::Changed, "The moved source differs from the staged data.");
+  }
+  storage.origin = source;
+  storage.originHandle = gioFile(source);
+  storage.originParents = std::move(parents);
+  storage.original = std::move(original);
+  const GString uuid(g_uuid_string_random()), nonce(g_uuid_string_random());
+  storage.originAnchor = source.parent()->child(std::string(".luciole-history-") + uuid.get());
+  storage.originNonce = nonce.get();
+  createDirectory(*storage.originAnchor, token);
+  storage.originCreated = true;
+  restrictDirectory(*storage.originAnchor, token);
+  writeMarker(storage.originAnchor->child(kMarker), storage.originNonce, token);
+  storage.originMarkerReady = true;
+  return effect;
+}
+
+void luciole::ProviderCopyEffect::beforeSourceRemoval(const CancelToken& token) const {
+  auto& storage = *m_storage;
+  if (!storage.origin || !storage.original) {
+    throwFileError(FileErrorKind::Changed, "The original Move proof is unavailable.");
+  }
+  storage.validateOriginParents(token);
+  storage.validate(token);
+  ph::verify(*storage.origin, *storage.original, token);
+}
+void luciole::ProviderCopyEffect::sourceRemoved(const CancelToken& token) const {
+  m_storage->originRemoved = true;
+  m_storage->original.reset();
+  m_storage->validate(token);
 }
 
 void luciole::ProviderCopyEffect::published(const CancelToken& token, const std::optional<Location>& previous) const {
@@ -537,11 +685,13 @@ std::shared_ptr<const luciole::CopyReceipt> luciole::ProviderCopyReceipt::captur
   try {
     for (const auto& effect : effects) {
       const auto& destination = effect->m_storage->destination;
-      if (!effect->m_storage->published || std::ranges::any_of(destinations, [&](const Location& earlier) {
-            return transferLocationsEqual(destination, earlier)
-                || transferLocationInside(destination, earlier)
-                || transferLocationInside(earlier, destination);
-          })) {
+      if (!effect->m_storage->published
+          || effect->m_storage->origin
+          || std::ranges::any_of(destinations, [&](const Location& earlier) {
+               return transferLocationsEqual(destination, earlier)
+                   || transferLocationInside(destination, earlier)
+                   || transferLocationInside(earlier, destination);
+             })) {
         throwFileError(FileErrorKind::Changed, "The remote copy selection cannot supply history.");
       }
       effect->m_storage->validate(token);
@@ -697,4 +847,169 @@ bool luciole::ProviderCopyReceipt::cleanupPending() { return pendingCleanup.load
 std::vector<luciole::FileError> luciole::ProviderCopyReceipt::takeCleanupErrors() {
   const std::scoped_lock lock(cleanupMutex);
   return std::exchange(cleanupErrors, {});
+}
+
+struct luciole::ProviderMoveReceipt::State {
+  std::mutex mutex;
+  std::vector<std::shared_ptr<const ProviderCopyEffect>> effects;
+  std::uint64_t generation = 0;
+};
+luciole::ProviderMoveReceipt::ProviderMoveReceipt(std::shared_ptr<State> state, std::uint64_t generation, bool atOrigin)
+    : m_state(std::move(state)), m_generation(generation), m_atOrigin(atOrigin) {}
+
+std::shared_ptr<const luciole::MoveReceipt> luciole::ProviderMoveReceipt::capture(
+    const std::vector<std::shared_ptr<const ProviderCopyEffect>>& effects, const CancelToken& token
+) {
+  if (effects.empty() || effects.size() > 128) {
+    return {};
+  }
+  const auto overlaps = [](const Location& first, const Location& second) {
+    const auto a = transferLinkTarget(first, second), b = transferLinkTarget(second, first);
+    return a && b && (*a == *b || a->starts_with(*b + "/") || b->starts_with(*a + "/"));
+  };
+  std::vector<Location> paths;
+  paths.reserve(effects.size() * 2);
+  try {
+    for (const auto& effect : effects) {
+      const auto& item = *effect->m_storage;
+      if (!item.published
+          || !item.originRemoved
+          || item.atOrigin
+          || !item.origin
+          || overlaps(*item.origin, item.destination)) {
+        throwFileError(FileErrorKind::Changed, "The remote Move proof is incomplete or overlaps itself.");
+      }
+      for (const auto& path : paths) {
+        if (overlaps(path, *item.origin) || overlaps(path, item.destination)) {
+          throwFileError(FileErrorKind::Unsupported, "Overlapping remote Moves cannot supply history.");
+        }
+      }
+      item.validate(token);
+      paths.push_back(*item.origin);
+      paths.push_back(item.destination);
+    }
+  } catch (...) {
+    for (const auto& effect : effects) {
+      effect->preserveInactive();
+    }
+    throw;
+  }
+  auto state = std::make_shared<State>();
+  state->effects = effects;
+  return std::shared_ptr<const MoveReceipt>(new ProviderMoveReceipt(std::move(state), 0, false));
+}
+
+std::size_t luciole::ProviderMoveReceipt::size() const { return m_state->effects.size(); }
+std::vector<luciole::TransferResult> luciole::ProviderMoveReceipt::failureResults(const FileError& error) const {
+  std::vector<TransferResult> results;
+  results.reserve(size());
+  for (const auto& effect : m_state->effects) {
+    results.emplace_back(
+        m_atOrigin ? *effect->m_storage->origin : effect->m_storage->destination, TransferOutcome::Failed, error
+    );
+  }
+  return results;
+}
+std::vector<luciole::TransferResult> luciole::ProviderMoveReceipt::unconfirmed(const FileError& error) const {
+  const std::unique_lock lock(m_state->mutex, std::try_to_lock);
+  if (lock.owns_lock() && m_generation == m_state->generation) {
+    ++m_state->generation;
+    for (const auto& effect : m_state->effects) {
+      effect->m_storage->retain = true;
+    }
+  }
+  auto results = failureResults(error);
+  for (std::size_t i = 0; i < size(); ++i) {
+    results[i].outcome = TransferOutcome::Partial;
+    const auto& item = *m_state->effects[i]->m_storage;
+    results[i].error->message +=
+        " Inspect " + item.origin->uri() + ", " + item.destination.uri() + " and " + item.anchor.uri();
+  }
+  return results;
+}
+
+luciole::MoveReplayResult
+luciole::ProviderMoveReceipt::reverse(const CancelToken& token, std::atomic<std::size_t>& completed) const {
+  MoveReplayResult reply;
+  reply.results.reserve(size());
+  const std::unique_lock lock(m_state->mutex, std::try_to_lock);
+  try {
+    if (!lock.owns_lock()) {
+      throwFileError(FileErrorKind::Other, "Another remote reversal is using this Move history.");
+    }
+    if (m_generation != m_state->generation) {
+      throwFileError(FileErrorKind::Changed, "Remote Move history is stale.");
+    }
+    for (const auto& effect : m_state->effects) {
+      effect->m_storage->validate(token);
+    }
+  } catch (...) {
+    const auto error = currentFileError();
+    reply.results = failureResults(error);
+    if (error.kind == FileErrorKind::Cancelled) {
+      for (auto& result : reply.results) {
+        result.outcome = TransferOutcome::Cancelled;
+      }
+    }
+    reply.retireHistory = invalidates(error);
+    if (reply.retireHistory && lock.owns_lock() && m_generation == m_state->generation) {
+      ++m_state->generation;
+      for (const auto& effect : m_state->effects) {
+        effect->m_storage->retain = true;
+      }
+    }
+    completed.store(size());
+    return reply;
+  }
+  bool stopped = false, applied = false;
+  for (const auto& effect : m_state->effects) {
+    auto& item = *effect->m_storage;
+    reply.results.emplace_back(item.current(), TransferOutcome::Skipped);
+    auto& result = reply.results.back();
+    if (stopped) {
+      result.error = FileError{FileErrorKind::Other, "Not attempted after remote Move reversal stopped."};
+      completed.fetch_add(1);
+      continue;
+    }
+    bool attempted = false, moved = false;
+    try {
+      item.validate(token);
+      ph::check(token);
+      attempted = true;
+      item.reverseMove(token, result, moved);
+      applied |= moved;
+    } catch (...) {
+      applied |= moved;
+      auto error = currentFileError();
+      bool uncertain = attempted && !moved;
+      if (uncertain) {
+        try {
+          CleanupDeadline deadline;
+          item.validate(deadline.token);
+          uncertain = false;
+        } catch (...) {
+        }
+      }
+      reply.retireHistory = applied || uncertain || invalidates(error);
+      if (reply.retireHistory) {
+        ++m_state->generation;
+        for (const auto& other : m_state->effects) {
+          other->m_storage->retain = true;
+        }
+      }
+      error.message += " Inspect " + item.origin->uri() + ", " + item.destination.uri() + " and " + item.anchor.uri();
+      result.error = std::move(error);
+      result.outcome = moved || uncertain ? TransferOutcome::Partial
+          : token.cancelled()             ? TransferOutcome::Cancelled
+                                          : TransferOutcome::Failed;
+      stopped = true;
+    }
+    completed.fetch_add(1);
+  }
+  if (!stopped) {
+    ++m_state->generation;
+    reply.receipt =
+        std::shared_ptr<const MoveReceipt>(new ProviderMoveReceipt(m_state, m_state->generation, !m_atOrigin));
+  }
+  return reply;
 }

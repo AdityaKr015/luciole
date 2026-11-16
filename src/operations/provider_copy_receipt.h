@@ -18,12 +18,20 @@ namespace luciole {
         const Location& destination, const Location& staged, provider_history::Budget& budget, const CancelToken& token,
         bool replacement = false, const std::optional<Location>& historyRoot = std::nullopt
     );
+    // Provider Move capture verifies both the original source and the staged destination contents.
+    static std::shared_ptr<const ProviderCopyEffect> prepareMove(
+        const Location& source, const Location& destination, const Location& staged, provider_history::Budget& budget,
+        const CancelToken& token, bool replacement = false, const std::optional<Location>& historyRoot = std::nullopt
+    );
+    void beforeSourceRemoval(const CancelToken& token) const;
+    void sourceRemoved(const CancelToken& token) const;
     void published(const CancelToken& token, const std::optional<Location>& previous = std::nullopt) const;
     // Worker-only retirement preserves displaced versions when a complete history cannot be captured.
     void preserveInactive() const;
 
   private:
     friend class ProviderCopyReceipt;
+    friend class ProviderMoveReceipt;
     static std::shared_ptr<const ProviderCopyEffect> prepareWithStorage(
         const Location& destination, const Location& staged, provider_history::Budget& budget, const CancelToken& token,
         bool replacement, const std::optional<Location>& historyRoot, bool local

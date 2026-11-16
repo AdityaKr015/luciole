@@ -4,6 +4,7 @@
 #include "fs/gio_interop.h"
 #include "operations/copy_receipt.h"
 #include "operations/provider_copy_receipt.h"
+#include "operations/provider_move_receipt.h"
 #include "operations/transfer_staging.h"
 
 #include <algorithm>
@@ -454,6 +455,41 @@ struct luciole::ProviderTransfer::State {
     return tree;
   }
 
+  std::shared_ptr<const ProviderCopyEffect> prepareHistory(
+      const Node& node, const Location& target, const Location& item, bool replacing, const CancelToken& token
+  ) {
+    if (!collectingRemote) {
+      return {};
+    }
+    try {
+      if (remoteEffects.size() < 128) {
+        return request.action == TransferAction::Move
+            ? ProviderCopyEffect::prepareMove(
+                  node.source, target, item, historyBudget, token, replacing, request.destination
+              )
+            : ProviderCopyEffect::prepare(target, item, historyBudget, token, replacing, request.destination);
+      }
+    } catch (const FileErrorException&) {
+    }
+    disableRemoteHistory();
+    return {};
+  }
+  void completeMove(Tree& tree, const std::shared_ptr<const ProviderCopyEffect>& proof, const CancelToken& token) {
+    if (proof && collectingRemote) {
+      proof->beforeSourceRemoval(token);
+    }
+    removeSource(tree, token);
+    if (proof && collectingRemote) {
+      try {
+        proof->sourceRemoved(token);
+        remoteEffects.push_back(proof);
+      } catch (const FileErrorException&) {
+        proof->preserveInactive();
+        disableRemoteHistory();
+      }
+    }
+  }
+
   void execute(
       Node& node, const CancelToken& token, std::atomic<std::uint64_t>& bytes, const Choose& choose,
       transfer::Work* nativeCopies, unsigned depth = 0
@@ -566,6 +602,9 @@ struct luciole::ProviderTransfer::State {
             && request.allowMerge
             && folders
         ) {
+          if (request.action == TransferAction::Move) {
+            disableRemoteHistory();
+          }
           node.merged = true;
           node.result.destination = target;
           node.destinationStamp = std::move(existing);
@@ -615,23 +654,11 @@ struct luciole::ProviderTransfer::State {
       const auto stage = node.parent.child(std::string(".luciole-transfer-") + uuid.get());
       mkdir(stage, token);
       bool retain = false;
+      std::shared_ptr<const ProviderCopyEffect> remoteProof;
       try {
         const auto item = stage.child("item"), backup = stage.child("previous");
         auto tree = stageItem(node, item, token, bytes);
-        std::shared_ptr<const ProviderCopyEffect> remoteProof;
-        if (collectingRemote) {
-          try {
-            if (remoteEffects.size() == 128) {
-              disableRemoteHistory();
-            } else {
-              remoteProof = ProviderCopyEffect::prepare(
-                  target, item, historyBudget, token, static_cast<bool>(existing), request.destination
-              );
-            }
-          } catch (const FileErrorException&) {
-            disableRemoteHistory();
-          }
-        }
+        remoteProof = prepareHistory(node, target, item, static_cast<bool>(existing), token);
         unchanged(parent.get(), info(node.parent, token).get(), false);
         if (existing) {
           unchanged(existing.get(), info(target, token).get());
@@ -660,7 +687,9 @@ struct luciole::ProviderTransfer::State {
         if (remoteProof && collectingRemote) {
           try {
             remoteProof->published(token, existing ? std::optional(backup) : std::nullopt);
-            remoteEffects.push_back(std::move(remoteProof));
+            if (request.action != TransferAction::Move) {
+              remoteEffects.push_back(std::move(remoteProof));
+            }
           } catch (const FileErrorException& error) {
             disableRemoteHistory();
             if (existing) {
@@ -673,7 +702,7 @@ struct luciole::ProviderTransfer::State {
           }
         }
         if (request.action == TransferAction::Move) {
-          removeSource(*tree, token);
+          completeMove(*tree, remoteProof, token);
         }
         node.result.outcome = request.action == TransferAction::Move ? TransferOutcome::Moved
             : request.action == TransferAction::Link                 ? TransferOutcome::Linked
@@ -681,6 +710,9 @@ struct luciole::ProviderTransfer::State {
         node.result.error.reset();
         cleanup(stage);
       } catch (...) {
+        if (remoteProof && request.action == TransferAction::Move) {
+          remoteProof->preserveInactive();
+        }
         const auto error = currentFileError();
         if (!retain) {
           try {
@@ -718,14 +750,39 @@ std::size_t luciole::ProviderTransfer::retryable() const {
 }
 std::vector<luciole::TransferResult> luciole::ProviderTransfer::run(
     const CancelToken& token, std::atomic<std::uint64_t>& bytes, std::atomic<std::size_t>& completed,
-    const Choose& choose, transfer::Work* nativeCopies, bool captureRemoteCopies
+    const Choose& choose, transfer::Work* nativeCopies, bool captureRemoteHistory
 ) {
   auto& state = *m_state;
-  if (!captureRemoteCopies) {
+  if (!captureRemoteHistory) {
     state.disableRemoteHistory();
   }
   if (state.roots.empty()) {
-    state.collectingRemote = captureRemoteCopies && state.request.action != TransferAction::Move;
+    state.collectingRemote = captureRemoteHistory;
+    if (state.request.action == TransferAction::Move && state.collectingRemote) {
+      std::vector<Location> paths;
+      paths.reserve(state.request.sources.size() <= 128 ? state.request.sources.size() * 2 : 0);
+      state.collectingRemote = !state.request.sources.empty() && state.request.sources.size() <= 128;
+      for (const auto& source : state.request.sources) {
+        if (!state.collectingRemote) {
+          break;
+        }
+        const auto name = source.basename();
+        if (!name || !validName(*name) || !transferLinkTarget(source, state.request.destination)) {
+          state.collectingRemote = false;
+          break;
+        }
+        for (const auto& path : {source, state.request.destination.child(*name)}) {
+          for (const auto& previous : paths) {
+            const auto a = transferLinkTarget(path, previous), b = transferLinkTarget(previous, path);
+            if (a && b && (*a == *b || a->starts_with(*b + "/") || b->starts_with(*a + "/"))) {
+              state.collectingRemote = false;
+              break;
+            }
+          }
+          paths.push_back(path);
+        }
+      }
+    }
     for (const auto& source : state.request.sources) {
       state.roots.push_back(std::make_unique<Node>(source, state.request.destination, state.roots.size()));
     }
@@ -782,6 +839,9 @@ std::optional<std::size_t> luciole::ProviderTransfer::completedCopies() const {
 }
 
 std::shared_ptr<const luciole::CopyReceipt> luciole::ProviderTransfer::takeCopyReceipt(const CancelToken& token) {
+  if (m_state->request.action == TransferAction::Move) {
+    return {};
+  }
   const auto count = completedCopies();
   auto effects = std::move(m_state->remoteEffects);
   const bool complete = std::exchange(m_state->collectingRemote, false) && count && *count == effects.size();
@@ -789,6 +849,32 @@ std::shared_ptr<const luciole::CopyReceipt> luciole::ProviderTransfer::takeCopyR
     try {
       return ProviderCopyReceipt::capture(effects, token, m_state->request.action);
     } catch (const FileErrorException&) { /* Optional history does not change completed copy outcomes. */
+    }
+  }
+  for (const auto& effect : effects) {
+    effect->preserveInactive();
+  }
+  return {};
+}
+
+std::shared_ptr<const luciole::MoveReceipt> luciole::ProviderTransfer::takeMoveReceipt(const CancelToken& token) {
+  if (m_state->request.action != TransferAction::Move) {
+    return {};
+  }
+  std::size_t moved = 0;
+  bool complete = true;
+  for (const auto& node : m_state->roots) {
+    complete &= !node->merged
+        && !node->result.error
+        && (node->result.outcome == TransferOutcome::Moved || node->result.outcome == TransferOutcome::Skipped);
+    moved += node->result.outcome == TransferOutcome::Moved ? 1 : 0;
+  }
+  auto effects = std::move(m_state->remoteEffects);
+  complete &= std::exchange(m_state->collectingRemote, false) && moved == effects.size();
+  if (complete) {
+    try {
+      return ProviderMoveReceipt::capture(effects, token);
+    } catch (const FileErrorException&) { /* Optional capture leaves completed Move effects intact. */
     }
   }
   for (const auto& effect : effects) {

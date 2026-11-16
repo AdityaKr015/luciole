@@ -33,6 +33,7 @@ test_table = [
   {'name': 'rename-service', 'deps': [operations_dep, browser_dep, event_loop_dep], 'env': gio_env},
   {'name': 'batch-rename-service', 'deps': [operations_dep, event_loop_dep], 'env': gio_env},
   {'name': 'permission-service', 'deps': [operations_dep, event_loop_dep], 'env': gio_env},
+  {'name': 'provider-move-history', 'deps': [operations_dep, event_loop_dep], 'timeout': 60, 'env': gio_env},
   {'name': 'provider-copy-history', 'deps': [operations_dep, event_loop_dep], 'timeout': 60, 'env': gio_env, 'wrapper': files('provider_copy_history_test.py')},
   {'name': 'provider-transfer', 'deps': [operations_dep, event_loop_dep], 'env': gio_env},
   {'name': 'transfer-service', 'deps': [operations_dep, event_loop_dep], 'timeout': 90, 'env': gio_env},
