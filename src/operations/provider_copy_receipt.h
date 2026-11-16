@@ -23,6 +23,17 @@ namespace luciole {
         const Location& source, const Location& destination, const Location& staged, provider_history::Budget& budget,
         const CancelToken& token, bool replacement = false, const std::optional<Location>& historyRoot = std::nullopt
     );
+    // Merge Moves retain the original source tree and record only changed destination children.
+    static std::shared_ptr<const ProviderCopyEffect> prepareMergeSource(
+        const Location& source, const Location& destination, provider_history::Budget& budget, const CancelToken& token,
+        const std::optional<Location>& historyRoot = std::nullopt
+    );
+    static std::shared_ptr<const ProviderCopyEffect> prepareMergeCopy(
+        const std::shared_ptr<const ProviderCopyEffect>& owner, const Location& source, const Location& destination,
+        const Location& staged, provider_history::Budget& budget, const CancelToken& token, bool replacement,
+        const std::optional<Location>& historyRoot = std::nullopt
+    );
+    void retireMergedSource(const CancelToken& token) const;
     void beforeSourceRemoval(const CancelToken& token) const;
     void sourceRemoved(const CancelToken& token) const;
     void published(const CancelToken& token, const std::optional<Location>& previous = std::nullopt) const;

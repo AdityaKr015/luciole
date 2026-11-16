@@ -134,8 +134,8 @@ namespace {
     const auto found = tree.attributes.find(name);
     return found == tree.attributes.end() ? std::string_view{} : found->second;
   }
-  bool sameContents(const ph::Tree& first, const ph::Tree& second) {
-    if (first.name != second.name
+  bool sameContents(const ph::Tree& first, const ph::Tree& second, bool compareName = true) {
+    if ((compareName && first.name != second.name)
         || first.directory != second.directory
         || first.digest != second.digest
         || first.children.size() != second.children.size()
@@ -198,6 +198,10 @@ namespace {
     }
     throwFileError(FileErrorKind::Unsupported, "Remote copy history requires bounded containing folders.");
   }
+  bool overlaps(const Location& first, const Location& second) {
+    const auto a = transferLinkTarget(first, second), b = transferLinkTarget(second, first);
+    return a && b && (*a == *b || a->starts_with(*b + "/") || b->starts_with(*a + "/"));
+  }
   bool invalidates(const FileError& error) {
     return error.kind == FileErrorKind::Changed
         || error.kind == FileErrorKind::Missing
@@ -209,14 +213,16 @@ namespace {
 struct luciole::ProviderCopyStorage {
   // Keep GVfs mount specs alive until this record's worker I/O and cleanup have finished.
   // Location is URI-only; temporary query handles alone can lose GVfs's weakly interned spec.
-  GioPtr<GFile> anchorHandle, originHandle;
+  GioPtr<GFile> anchorHandle, peerHandle;
   Location destination, anchor;
   std::string nonce, payloadName;
   provider_history::Tree tree;
-  std::vector<DirectoryProof> parents, originParents;
-  std::optional<Location> origin, originAnchor;
-  std::string originNonce;
-  bool originCreated = false, originMarkerReady = false;
+  std::vector<DirectoryProof> parents, originParents, mergeParents;
+  std::optional<Location> mergeDestination;
+  std::shared_ptr<const ProviderCopyStorage> mergeOwner;
+  std::optional<Location> origin, peerAnchor;
+  std::string peerNonce;
+  bool peerCreated = false, peerMarkerReady = false;
   std::optional<ph::Tree> original;
   bool originRemoved = false, atOrigin = false;
   std::optional<provider_history::Tree> previous;
@@ -240,36 +246,85 @@ struct luciole::ProviderCopyStorage {
     }
     return hidden ? (local ? payload(false) : anchor.child("item")) : destination;
   }
-  void validateOriginGuard(const CancelToken& token) const {
-    if (!originAnchor) {
+  void bindPeer(const Location& parent, const CancelToken& token) {
+    const GString uuid(g_uuid_string_random()), secret(g_uuid_string_random());
+    peerHandle = gioFile(parent);
+    peerAnchor = parent.child(std::string(".luciole-history-") + uuid.get());
+    peerNonce = secret.get();
+    createDirectory(*peerAnchor, token);
+    peerCreated = true;
+    restrictDirectory(*peerAnchor, token);
+    writeMarker(peerAnchor->child(kMarker), peerNonce, token);
+    peerMarkerReady = true;
+  }
+  Location originalLocation() const { return origin ? *origin : mergeOwner ? mergeOwner->destination : destination; }
+  std::string inspectionPaths() const {
+    const auto target = mergeDestination ? *mergeDestination : destination;
+    auto message = " Inspect " + originalLocation().uri() + ", " + target.uri() + " and " + anchor.uri();
+    if (peerAnchor) {
+      message += ", with folder binding " + peerAnchor->uri();
+    }
+    return message;
+  }
+  Location expectedLocation(bool undone) const {
+    if (origin) {
+      return undone ? *origin : destination;
+    }
+    return (mergeDestination ? !undone : undone) ? anchor.child("item") : destination;
+  }
+  void reverseServer(const CancelToken& token, TransferResult& result, bool& changed) {
+    const auto from = previous ? destination : current();
+    const auto to = previous ? anchor.child(hidden ? "previous" : "item") : hidden ? destination : anchor.child("item");
+    result.source = from;
+    ph::move(from, to, token);
+    changed = true;
+    result.destination = to;
+    if (previous) {
+      result.children.emplace_back(from, TransferOutcome::Moved);
+      result.children.back().destination = to;
+      const auto restore = anchor.child(hidden ? "item" : "previous");
+      ph::verify(to, hidden ? *previous : tree, token);
+      ph::verify(restore, hidden ? tree : *previous, token);
+      vacant(destination, token);
+      ph::move(restore, destination, token);
+      result.children.emplace_back(restore, TransferOutcome::Moved);
+      result.children.back().destination = destination;
+      result.destination = destination;
+    }
+    hidden = !hidden;
+    validate(token);
+    result.outcome = TransferOutcome::Moved;
+  }
+  void validatePeerGuard(const CancelToken& token) const {
+    if (!peerAnchor) {
       return;
     }
-    if (!originCreated) {
-      if (ph::info(*originAnchor, token, true)) {
-        throwFileError(FileErrorKind::Changed, "Original-parent guard creation was not confirmed.");
+    if (!peerCreated) {
+      if (ph::info(*peerAnchor, token, true)) {
+        throwFileError(FileErrorKind::Changed, "History folder binding creation was not confirmed.");
       }
       return;
     }
-    if (originMarkerReady) {
-      marker(*originAnchor, originNonce, token);
+    if (peerMarkerReady) {
+      marker(*peerAnchor, peerNonce, token);
     }
-    const auto expected = originMarkerReady ? std::vector<std::string>{kMarker} : std::vector<std::string>{};
-    if (ph::children(*originAnchor, token, 1) != expected) {
-      throwFileError(FileErrorKind::Changed, "Original-parent history contains unrecorded data.");
+    const auto expected = peerMarkerReady ? std::vector<std::string>{kMarker} : std::vector<std::string>{};
+    if (ph::children(*peerAnchor, token, 1) != expected) {
+      throwFileError(FileErrorKind::Changed, "A history folder binding contains unrecorded data.");
     }
   }
-  void cleanupOriginGuard(const CancelToken& token) const {
-    if (!originCreated) {
+  void cleanupPeerGuard(const CancelToken& token) const {
+    if (!peerCreated) {
       return;
     }
-    validateOriginGuard(token);
-    if (originMarkerReady) {
-      ph::erase(originAnchor->child(kMarker), token);
+    validatePeerGuard(token);
+    if (peerMarkerReady) {
+      ph::erase(peerAnchor->child(kMarker), token);
     }
-    ph::erase(*originAnchor, token);
+    ph::erase(*peerAnchor, token);
   }
   void validateOriginParents(const CancelToken& token) const {
-    validateOriginGuard(token);
+    validatePeerGuard(token);
     for (const auto& parent : originParents) {
       if (directoryProof(parent.location, token).attributes != parent.attributes) {
         throwFileError(FileErrorKind::Changed, "A moved item's original containing folder changed.");
@@ -443,6 +498,14 @@ struct luciole::ProviderCopyStorage {
   }
   void validate(const CancelToken& token) const {
     validateParents(token);
+    if (mergeDestination) {
+      validatePeerGuard(token);
+      for (const auto& parent : mergeParents) {
+        if (directoryProof(parent.location, token).attributes != parent.attributes) {
+          throwFileError(FileErrorKind::Changed, "A merge destination containing folder changed.");
+        }
+      }
+    }
     marker(anchor, nonce, token);
     const auto names = ph::children(anchor, token, local ? 3 : 2);
     if (names != storageNames() || (previous && !previousStored)) {
@@ -481,7 +544,7 @@ struct luciole::ProviderCopyStorage {
       throwFileError(FileErrorKind::Other, "Incomplete remote reversal retained data for inspection.");
     }
     CleanupDeadline deadline;
-    validateOriginGuard(deadline.token);
+    validatePeerGuard(deadline.token);
     if (!local) {
       validateParents(deadline.token);
     }
@@ -506,7 +569,7 @@ struct luciole::ProviderCopyStorage {
       ph::erase(anchor.child(kMarker), deadline.token);
     }
     ph::erase(anchor, deadline.token);
-    cleanupOriginGuard(deadline.token);
+    cleanupPeerGuard(deadline.token);
   }
 };
 
@@ -539,8 +602,8 @@ std::shared_ptr<const luciole::ProviderCopyEffect> luciole::ProviderCopyEffect::
               } catch (...) {
                 auto error = currentFileError();
                 error.message += " Inspect remote history at " + owned->anchor.uri();
-                if (owned->originAnchor) {
-                  error.message += " and " + owned->originAnchor->uri();
+                if (owned->peerAnchor) {
+                  error.message += " and " + owned->peerAnchor->uri();
                 }
                 std::println(stderr, "[file-history] {}", error.message);
                 const std::scoped_lock lock(cleanupMutex);
@@ -611,18 +674,84 @@ std::shared_ptr<const luciole::ProviderCopyEffect> luciole::ProviderCopyEffect::
     throwFileError(FileErrorKind::Changed, "The moved source differs from the staged data.");
   }
   storage.origin = source;
-  storage.originHandle = gioFile(source);
   storage.originParents = std::move(parents);
   storage.original = std::move(original);
-  const GString uuid(g_uuid_string_random()), nonce(g_uuid_string_random());
-  storage.originAnchor = source.parent()->child(std::string(".luciole-history-") + uuid.get());
-  storage.originNonce = nonce.get();
-  createDirectory(*storage.originAnchor, token);
-  storage.originCreated = true;
-  restrictDirectory(*storage.originAnchor, token);
-  writeMarker(storage.originAnchor->child(kMarker), storage.originNonce, token);
-  storage.originMarkerReady = true;
+  storage.bindPeer(*source.parent(), token);
   return effect;
+}
+
+std::shared_ptr<const luciole::ProviderCopyEffect> luciole::ProviderCopyEffect::prepareMergeSource(
+    const Location& source, const Location& destination, provider_history::Budget& budget, const CancelToken& token,
+    const std::optional<Location>& historyRoot
+) {
+  if (!transferLinkTarget(source, destination) || overlaps(source, destination)) {
+    throwFileError(FileErrorKind::Unsupported, "A Move merge requires independent paths in one server namespace.");
+  }
+  auto effect = prepare(source, source, budget, token, false, source.parent());
+  auto& storage = *effect->m_storage;
+  if (!storage.tree.directory || storage.local) {
+    throwFileError(FileErrorKind::Unsupported, "Move merge history requires an original folder.");
+  }
+  storage.mergeDestination = destination;
+  storage.mergeParents = containingFolders(destination, historyRoot, token);
+  storage.mergeParents.push_back(directoryProof(destination, token));
+  storage.bindPeer(destination, token);
+  effect->published(token);
+  return effect;
+}
+
+std::shared_ptr<const luciole::ProviderCopyEffect> luciole::ProviderCopyEffect::prepareMergeCopy(
+    const std::shared_ptr<const ProviderCopyEffect>& owner, const Location& source, const Location& destination,
+    const Location& staged, provider_history::Budget& budget, const CancelToken& token, bool replacement,
+    const std::optional<Location>& historyRoot
+) {
+  if (!owner || !owner->m_storage->mergeDestination || owner->m_storage->hidden) {
+    throwFileError(FileErrorKind::Changed, "The Move merge's original source is unavailable.");
+  }
+  const auto& original = *owner->m_storage;
+  const GString relative(g_file_get_relative_path(gioFile(original.destination).get(), gioFile(source).get()));
+  if (!relative || !*relative.get()) {
+    throwFileError(FileErrorKind::Changed, "The copied child is outside the Move merge source.");
+  }
+  const ph::Tree* subtree = &original.tree;
+  std::string_view remaining(relative.get());
+  while (!remaining.empty()) {
+    const auto slash = remaining.find('/');
+    const auto name = remaining.substr(0, slash);
+    const auto found = std::ranges::find(subtree->children, name, &ph::Tree::name);
+    if (found == subtree->children.end()) {
+      throwFileError(FileErrorKind::Changed, "The copied child changed since merge preparation.");
+    }
+    subtree = &*found;
+    remaining = slash == std::string_view::npos ? std::string_view{} : remaining.substr(slash + 1);
+  }
+  auto effect = prepare(destination, staged, budget, token, replacement, historyRoot);
+  if (!sameContents(*subtree, effect->m_storage->tree, false)) {
+    throwFileError(FileErrorKind::Changed, "Copied contents differ from the retained merge source.");
+  }
+  effect->m_storage->mergeOwner = owner->m_storage;
+  return effect;
+}
+
+void luciole::ProviderCopyEffect::retireMergedSource(const CancelToken& token) const {
+  auto& storage = *m_storage;
+  if (!storage.mergeDestination || !storage.published || storage.hidden) {
+    throwFileError(FileErrorKind::Changed, "The original merge source cannot be retained.");
+  }
+  storage.validate(token);
+  ph::check(token);
+  // Preserve an unconfirmed rename even if the server committed before its reply was lost.
+  storage.retain = true;
+  try {
+    ph::move(storage.destination, storage.anchor.child("item"), token);
+    storage.hidden = true;
+    storage.validate(token);
+    storage.retain = false;
+  } catch (...) {
+    auto error = currentFileError();
+    error.message += storage.inspectionPaths();
+    throw FileErrorException(std::move(error));
+  }
 }
 
 void luciole::ProviderCopyEffect::beforeSourceRemoval(const CancelToken& token) const {
@@ -687,6 +816,8 @@ std::shared_ptr<const luciole::CopyReceipt> luciole::ProviderCopyReceipt::captur
       const auto& destination = effect->m_storage->destination;
       if (!effect->m_storage->published
           || effect->m_storage->origin
+          || effect->m_storage->mergeDestination
+          || effect->m_storage->mergeOwner
           || std::ranges::any_of(destinations, [&](const Location& earlier) {
                return transferLocationsEqual(destination, earlier)
                    || transferLocationInside(destination, earlier)
@@ -775,10 +906,6 @@ luciole::ProviderCopyReceipt::reverse(const CancelToken& token, std::atomic<std:
       continue;
     }
     bool attempted = false, moved = false;
-    const auto from = item.previous ? item.destination : item.current();
-    const auto to = item.previous ? item.anchor.child(item.hidden ? "previous" : "item")
-        : item.hidden             ? item.destination
-                                  : item.anchor.child("item");
     try {
       item.validate(token);
       provider_history::check(token);
@@ -787,24 +914,8 @@ luciole::ProviderCopyReceipt::reverse(const CancelToken& token, std::atomic<std:
         item.reverseLocal(token, result, moved);
         applied |= moved;
       } else {
-        provider_history::move(from, to, token);
-        moved = applied = true;
-        result.destination = to;
-        if (item.previous) {
-          result.children.emplace_back(from, TransferOutcome::Moved);
-          result.children.back().destination = to;
-          const auto restore = item.anchor.child(item.hidden ? "item" : "previous");
-          ph::verify(to, item.hidden ? *item.previous : item.tree, token);
-          ph::verify(restore, item.hidden ? item.tree : *item.previous, token);
-          vacant(item.destination, token);
-          ph::move(restore, item.destination, token);
-          result.children.emplace_back(restore, TransferOutcome::Moved);
-          result.children.back().destination = item.destination;
-          result.destination = item.destination;
-        }
-        item.hidden = !item.hidden;
-        item.validate(token);
-        result.outcome = TransferOutcome::Moved;
+        item.reverseServer(token, result, moved);
+        applied |= moved;
       }
     } catch (...) {
       applied |= moved;
@@ -863,30 +974,36 @@ std::shared_ptr<const luciole::MoveReceipt> luciole::ProviderMoveReceipt::captur
   if (effects.empty() || effects.size() > 128) {
     return {};
   }
-  const auto overlaps = [](const Location& first, const Location& second) {
-    const auto a = transferLinkTarget(first, second), b = transferLinkTarget(second, first);
-    return a && b && (*a == *b || a->starts_with(*b + "/") || b->starts_with(*a + "/"));
-  };
   std::vector<Location> paths;
   paths.reserve(effects.size() * 2);
   try {
     for (const auto& effect : effects) {
       const auto& item = *effect->m_storage;
-      if (!item.published
-          || !item.originRemoved
-          || item.atOrigin
-          || !item.origin
-          || overlaps(*item.origin, item.destination)) {
-        throwFileError(FileErrorKind::Changed, "The remote Move proof is incomplete or overlaps itself.");
+      const bool moved = item.origin && item.originRemoved && !item.atOrigin;
+      const bool mergedSource = item.mergeDestination && item.hidden && !item.origin;
+      const bool mergedCopy = item.mergeOwner && !item.hidden && !item.origin;
+      if (!item.published || (!moved && !mergedSource && !mergedCopy)) {
+        throwFileError(FileErrorKind::Changed, "The remote Move proof is incomplete.");
+      }
+      if (mergedCopy && !std::ranges::any_of(effects, [&](const auto& owner) {
+            return owner->m_storage == item.mergeOwner && owner->m_storage->mergeDestination.has_value();
+          })) {
+        throwFileError(FileErrorKind::Changed, "The Move merge source proof is unavailable.");
+      }
+      const auto original = moved ? *item.origin : item.destination;
+      if (moved && overlaps(original, item.destination)) {
+        throwFileError(FileErrorKind::Unsupported, "A remote Move overlaps itself.");
       }
       for (const auto& path : paths) {
-        if (overlaps(path, *item.origin) || overlaps(path, item.destination)) {
-          throwFileError(FileErrorKind::Unsupported, "Overlapping remote Moves cannot supply history.");
+        if (overlaps(path, original) || (moved && overlaps(path, item.destination))) {
+          throwFileError(FileErrorKind::Unsupported, "Overlapping remote Move effects cannot supply history.");
         }
       }
       item.validate(token);
-      paths.push_back(*item.origin);
-      paths.push_back(item.destination);
+      paths.push_back(original);
+      if (moved) {
+        paths.push_back(item.destination);
+      }
     }
   } catch (...) {
     for (const auto& effect : effects) {
@@ -896,6 +1013,10 @@ std::shared_ptr<const luciole::MoveReceipt> luciole::ProviderMoveReceipt::captur
   }
   auto state = std::make_shared<State>();
   state->effects = effects;
+  // Source trees are restored/retained before their destination copies change in either direction.
+  std::stable_partition(state->effects.begin(), state->effects.end(), [](const auto& effect) {
+    return effect->m_storage->mergeDestination.has_value();
+  });
   return std::shared_ptr<const MoveReceipt>(new ProviderMoveReceipt(std::move(state), 0, false));
 }
 
@@ -904,9 +1025,9 @@ std::vector<luciole::TransferResult> luciole::ProviderMoveReceipt::failureResult
   std::vector<TransferResult> results;
   results.reserve(size());
   for (const auto& effect : m_state->effects) {
-    results.emplace_back(
-        m_atOrigin ? *effect->m_storage->origin : effect->m_storage->destination, TransferOutcome::Failed, error
-    );
+    auto detail = error;
+    detail.message += effect->m_storage->inspectionPaths();
+    results.emplace_back(effect->m_storage->expectedLocation(m_atOrigin), TransferOutcome::Failed, std::move(detail));
   }
   return results;
 }
@@ -921,9 +1042,6 @@ std::vector<luciole::TransferResult> luciole::ProviderMoveReceipt::unconfirmed(c
   auto results = failureResults(error);
   for (std::size_t i = 0; i < size(); ++i) {
     results[i].outcome = TransferOutcome::Partial;
-    const auto& item = *m_state->effects[i]->m_storage;
-    results[i].error->message +=
-        " Inspect " + item.origin->uri() + ", " + item.destination.uri() + " and " + item.anchor.uri();
   }
   return results;
 }
@@ -976,7 +1094,11 @@ luciole::ProviderMoveReceipt::reverse(const CancelToken& token, std::atomic<std:
       item.validate(token);
       ph::check(token);
       attempted = true;
-      item.reverseMove(token, result, moved);
+      if (item.origin) {
+        item.reverseMove(token, result, moved);
+      } else {
+        item.reverseServer(token, result, moved);
+      }
       applied |= moved;
     } catch (...) {
       applied |= moved;
@@ -997,7 +1119,7 @@ luciole::ProviderMoveReceipt::reverse(const CancelToken& token, std::atomic<std:
           other->m_storage->retain = true;
         }
       }
-      error.message += " Inspect " + item.origin->uri() + ", " + item.destination.uri() + " and " + item.anchor.uri();
+      error.message += item.inspectionPaths();
       result.error = std::move(error);
       result.outcome = moved || uncertain ? TransferOutcome::Partial
           : token.cancelled()             ? TransferOutcome::Cancelled
