@@ -124,4 +124,4 @@ Native permission and ownership editing is available in Properties. Multiple sel
 
 Mounted, authenticated SFTP, SMB and WebDAV locations support the verified copy/move paths through installed GIO/GVfs backends. Some providers cannot preserve native symlinks, raw filename bytes or every metadata field. Read-only targets, conflicts, disconnects and partial moves remain explicit outcomes. Luciole does not provide its own server connection or credentials dialog yet.
 
-See [runtime providers](../../PACKAGING.md#gvfs-and-trash) for provider packaging requirements and [the remaining plan](../../PLAN.md) for unfinished device/network integration.
+See [runtime providers](../../PACKAGING.md#gvfs-and-trash) for provider packaging requirements.

@@ -18,7 +18,7 @@ It offers grid, list and Miller column views, tabs, split view and rich file pre
   <a href="https://github.com/noctalia-dev/luciole/stargazers">
     <img src="https://img.shields.io/github/stars/noctalia-dev/luciole?style=for-the-badge&labelColor=FFF59B&color=FFF59B&logo=github&logoColor=070722" alt="GitHub stars" />
   </a>
-  <a href="docs/user/index.md">
+  <a href="https://docs.noctalia.dev/luciole/">
     <img src="https://img.shields.io/badge/docs-FFF59B?style=for-the-badge&logo=gitbook&logoColor=070722&labelColor=FFF59B" alt="Documentation" />
   </a>
   <a href="https://discord.noctalia.dev">

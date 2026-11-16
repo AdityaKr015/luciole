@@ -215,7 +215,7 @@ meson test -C build-check --print-errorlogs
 
 Tests additionally need Python 3, `dbus-daemon`, `glib-compile-schemas`, `wayland-server` development files and libwebp development files. Provide FFmpeg, ffmpegthumbnailer, Poppler utilities, 7-Zip and Glycin loaders, including AVIF/HEIF support. Ordinary headless suites need no compositor; their local-VFS override does not verify GVfs activation.
 
-Smoke-test the installed binary's help/version, configuration validation, fonts, completions and an installed window with asset overrides unset. Verify image/helper availability and session access to `trash:///`. Use disposable files for operation checks. Destructive whole-Trash checks require a private mount namespace hiding user drives, not just temporary HOME/XDG directories; see [test isolation](AGENTS.md#verification-and-tests).
+Smoke-test the installed binary's help/version, configuration validation, fonts, completions and an installed window with asset overrides unset. Verify image/helper availability and session access to `trash:///`. Use disposable files for operation checks. Destructive whole-Trash checks require a private mount namespace hiding user drives, not just temporary HOME/XDG directories.
 
 ## Contact
 

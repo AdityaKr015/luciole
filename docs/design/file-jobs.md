@@ -48,7 +48,7 @@ Ordinary dropped URI lists have a separate 120-second worker-read deadline, reta
 
 The delayed-payload regression reproduces a valid offer being destroyed at five seconds in the previous build, then verifies delivery after 5.3 seconds with the fix. Wire peers also check overlapping old/new drops, prompt read-end closure on transport destruction and malformed/empty/non-UTF-8 payload errors. These are receiver protocol checks; they do not prove a producer supports exporting files or establish universal Xwayland interoperability.
 
-X11 Direct Save requires a source-window-property handshake that an ordinary native Wayland MIME offer cannot supply. Luciole does not accept `XdndDirectSave0` or arbitrary raw data. Additional export adapters and any compositor bridge remain separate work in PLAN.md. No shared rendering-library edit, Qt/KIO linkage or additional compiled dependency is introduced.
+X11 Direct Save requires a source-window-property handshake that an ordinary native Wayland MIME offer cannot supply. Luciole does not accept `XdndDirectSave0` or arbitrary raw data. Additional export adapters and any compositor bridge are not implemented. No shared rendering-library edit, Qt/KIO linkage or additional compiled dependency is introduced.
 
 ## Remote destination Copy history
 
@@ -215,7 +215,7 @@ Desktop confirmation displays the captured name/Exec and launches the captured k
 
 ## Verification
 
-Use temporary fixtures for races, conflicts, raw/Unicode names, partial moves, source retention and cancellation. Tests are declared in [tests/meson.build](../../tests/meson.build), including transfer/provider-transfer, archive, Trash/restore, clipboard/payload, job-routing and launcher suites. Real GTK/Qt interoperability, private network servers, compositor input and crash/failure injection complement headless tests. Preserve the exact boundaries of previous results in [AGENTS.md](../../AGENTS.md) and outstanding coverage in [PLAN.md](../../PLAN.md#release-verification-and-open-follow-ups).
+Use temporary fixtures for races, conflicts, raw/Unicode names, partial moves, source retention and cancellation. Tests are declared in [tests/meson.build](../../tests/meson.build), including transfer/provider-transfer, archive, Trash/restore, clipboard/payload, job-routing and launcher suites. Real GTK/Qt interoperability, private network servers, compositor input and crash/failure injection complement headless tests.
 
 ## Terminal launch policy
 

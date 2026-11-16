@@ -112,7 +112,6 @@ stdenv.mkDerivation (finalAttrs: {
         "__pycache__"
         "result"
         "AGENTS.md"
-        "PLAN.md"
       ])
       && !(lib.hasPrefix "build-" name)
       && !(lib.hasPrefix "result-" name);
