@@ -19,7 +19,7 @@ namespace luciole {
     int item() const { return m_item.get(); }
     void validateItem() const { requireItem(); }
     void adopt(Fd item);
-    void publish(const std::string& name);
+    void publish(const std::string& name, int parent = -1);
     // Exchange with a pinned visible item, possibly in a different same-filesystem folder.
     void exchange(const std::string& name, int parent, int visibleItem);
     void removeItem();

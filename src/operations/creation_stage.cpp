@@ -78,9 +78,10 @@ void luciole::CreationStage::requireItem() const {
   }
 }
 
-void luciole::CreationStage::publish(const std::string& name) {
+void luciole::CreationStage::publish(const std::string& name, int parent) {
   requireItem();
-  if (::syscall(SYS_renameat2, fd(), "item", m_parent.get(), name.c_str(), RENAME_NOREPLACE) != 0) {
+  if (::syscall(SYS_renameat2, fd(), "item", parent >= 0 ? parent : m_parent.get(), name.c_str(), RENAME_NOREPLACE)
+      != 0) {
     throwErrno(errno);
   }
 }

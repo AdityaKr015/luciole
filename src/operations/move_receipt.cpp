@@ -242,13 +242,14 @@ std::shared_ptr<const luciole::MoveEffect> luciole::MoveEffect::captureContents(
 }
 
 std::vector<std::shared_ptr<const luciole::MoveEffect>> luciole::MoveReceipt::compose(
-    const std::vector<std::shared_ptr<const MoveEffect>>& effects, bool refresh, const CancelToken& token
+    const std::vector<std::shared_ptr<const MoveEffect>>& effects, bool refresh, const CancelToken& token,
+    const std::vector<std::shared_ptr<const CopyEffect>>& copies
 ) {
   auto result = effects;
   std::size_t remaining = 16384;
   for (std::size_t i = 0; i < effects.size(); ++i) {
     const auto& effect = effects[i];
-    if (!effect->m_trees || (effect->m_trees->complete && !refresh)) {
+    if (!effect->m_trees || (effect->m_trees->complete && !refresh && copies.empty())) {
       continue;
     }
     CopyHistoryTree draft(*effect->m_trees->before);
@@ -276,6 +277,20 @@ std::vector<std::shared_ptr<const luciole::MoveEffect>> luciole::MoveReceipt::co
       draft.replace(
           *path, child->m_trees ? *child->m_trees->before : leaf,
           child->m_previous ? child->m_previous->m_tree.get() : nullptr, *effect->m_identity->revisions, token
+      );
+    }
+    for (const auto& copied : copies) {
+      checkCancelled(token);
+      const auto path = relativePath(effect->m_destination, copied->m_destination);
+      if (!path) {
+        continue;
+      }
+      if (path->empty()) {
+        throwFileError(FileErrorKind::Unsupported, "Mixed parent replacement history is unavailable.");
+      }
+      draft.replace(
+          *path, *copied->m_tree, copied->m_previous ? copied->m_previous->m_tree.get() : nullptr,
+          *effect->m_identity->revisions, token
       );
     }
     auto trees = std::make_shared<MoveTrees>(*effect->m_trees);
@@ -332,7 +347,8 @@ std::shared_ptr<const luciole::MoveFolder> luciole::MoveFolder::retain(
   return result;
 }
 
-luciole::MoveParents luciole::MoveReceipt::parents(const CancelToken& token) const {
+luciole::MoveParents
+luciole::MoveReceipt::parents(const CancelToken& token, const std::vector<std::pair<Location, int>>& extra) const {
   MoveParents result;
   for (const auto& folder : m_folders) {
     if (folder->m_item->m_hidden) {
@@ -378,6 +394,9 @@ luciole::MoveParents luciole::MoveReceipt::parents(const CancelToken& token) con
         bind(*previous->m_destination.parent(), previous->parent());
       }
     }
+  }
+  for (const auto& [location, held] : extra) {
+    bind(*location.parent(), held);
   }
   // Every projected parent derives from a pinned root whose exact tree validates before replay.
   for (const auto& [location, ancestor] : ancestors) {
@@ -425,7 +444,8 @@ luciole::MoveReceipt::coalesce(const std::vector<std::shared_ptr<const MoveEffec
 
 std::shared_ptr<const luciole::MoveReceipt> luciole::MoveReceipt::capture(
     const std::vector<std::shared_ptr<const MoveEffect>>& effects,
-    const std::vector<std::shared_ptr<const MoveFolder>>& folders, bool undone, bool sequence, const CancelToken& token
+    const std::vector<std::shared_ptr<const MoveFolder>>& folders, bool undone, bool sequence, const CancelToken& token,
+    const std::vector<std::shared_ptr<const CopyEffect>>& copies
 ) {
   if (effects.size() + folders.size() == 0 || effects.size() + folders.size() > 4096) {
     return {};
@@ -437,8 +457,11 @@ std::shared_ptr<const luciole::MoveReceipt> luciole::MoveReceipt::capture(
   receipt->m_folders = folders;
   receipt->m_undone = undone;
   receipt->m_sequence = sequence || needsSequence(effects, token);
+  if (receipt->m_sequence && !copies.empty()) {
+    throwFileError(FileErrorKind::Unsupported, "Mixed ancestor replacement history is unavailable.");
+  }
   receipt->m_effects = receipt->m_sequence ? (sequence ? effects : prepareSequence(effects, token))
-                                           : coalesce(compose(effects, false, token));
+                                           : coalesce(compose(effects, false, token, copies));
   if (receipt->m_sequence) {
     std::ranges::reverse(receipt->m_effects);
     receipt->validateSequence(token);
@@ -614,6 +637,14 @@ luciole::MoveReplayResult luciole::MoveReceipt::reverseImpl(
   bool stopped = false, applied = false;
   if (!m_undone) {
     stopped = !restoreFolders(folders, token, reply, completed, applied);
+  }
+  if (!stopped && hooks && hooks->beforeMoves) {
+    try {
+      hooks->beforeMoves(applied);
+    } catch (const std::exception&) {
+      reply.retireHistory |= invalidates(currentFileError());
+      stopped = true;
+    }
   }
   for (std::size_t i = 0; i < m_effects.size() && !stopped; ++i) {
     auto& result = reply.results[i];

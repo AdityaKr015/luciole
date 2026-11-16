@@ -731,7 +731,7 @@ luciole::CopyReplayResult luciole::CopyReceipt::reverseImpl(
         );
       } else if (effect->m_hidden) {
         effect->vacant();
-        storage.stage->publish(*effect->m_destination.basename());
+        storage.stage->publish(*effect->m_destination.basename(), storage.parent.get());
         moved = applied = true;
         result.destination = effect->m_destination;
         result.outcome = m_action == TransferAction::Link ? TransferOutcome::Linked : TransferOutcome::Copied;

@@ -3476,6 +3476,310 @@ namespace {
       TEST_CHECK(errors.empty() == !partial);
     }
   }
+
+  void testNativeParentCopiedChildren(Pump& pump) {
+    if (::access("/dev/shm", W_OK) != 0) {
+      return;
+    }
+    for (bool replacingParent : {false, true}) {
+      for (bool discardUndone : {false, true}) {
+        Fixture source;
+        Fixture target("/dev/shm");
+        if (!differentDevices(source, target)) {
+          return;
+        }
+        fs::create_directories(target.source("one/tree/sub"));
+        fs::create_directories(target.source("two/tree/nested/sub"));
+        fs::create_directories(source.source("tree/sub"));
+        fs::create_directories(source.source("tree/nested/sub"));
+        fs::create_directories(source.source("tree/whole/deep"));
+        write(target.source("one/tree/sub/value"), "original native value");
+        write(target.source("one/tree/keep"), "original native sibling");
+        write(target.source("two/tree/nested/sub/value"), "nested native value");
+        write(source.source("tree/sub/value"), "copied replacement");
+        write(source.source("tree/nested/sub/value"), "nested copied replacement");
+        write(source.source("tree/whole/deep/文.txt"), "whole copied folder");
+        const auto raw = std::string("raw-") + static_cast<char>(0xff);
+        write(source.source("tree/" + raw), "raw copied name");
+        fs::create_symlink("missing", source.source("tree/broken"));
+        fs::create_hard_link(target.source("one/tree/sub/value"), target.source("loose"));
+        if (replacingParent) {
+          fs::create_directory(target.destination("tree"));
+          write(target.destination("tree/previous"), "original destination root");
+        }
+        write(target.destination("outside"), "unrelated destination sibling");
+        struct stat parent{}, nested{}, previous{};
+        TEST_CHECK(::stat(target.source("one/tree").c_str(), &parent) == 0);
+        TEST_CHECK(::stat(target.source("two/tree/nested").c_str(), &nested) == 0);
+        if (replacingParent) {
+          TEST_CHECK(::stat(target.destination("tree").c_str(), &previous) == 0);
+        }
+        luciole::TransferService service;
+        const auto first = location(target.source("one/tree"));
+        pump.run(
+            service,
+            {first, location(target.source("two/tree")), location(target.source("loose")),
+             location(source.source("tree"))},
+            target.destination(""), TransferAction::Move, [&](const auto& conflict) {
+              return conflict.source == first ? TransferConflictChoice::Replace
+                  : conflict.canMerge         ? TransferConflictChoice::Merge
+                                              : TransferConflictChoice::Replace;
+            }
+        );
+        auto receipt = service.takeReceipt();
+        if (!receipt) {
+          for (const auto& result : service.results()) {
+            if (result.error) {
+              std::println("Parent capture: {}", result.error->message);
+            }
+          }
+        }
+        TEST_CHECK(receipt && !fs::exists(target.source("one/tree")) && !fs::exists(source.source("tree")));
+        TEST_CHECK(read(target.destination("tree/sub/value")) == "copied replacement");
+        for (int cycle = 0; cycle < 2; ++cycle) {
+          const auto old = receipt;
+          pump.replay(service, receipt);
+          receipt = service.takeReceipt();
+          if (!receipt) {
+            for (const auto& result : service.results()) {
+              if (result.error) {
+                std::println("Parent Undo: {}", result.error->message);
+              }
+            }
+          }
+          TEST_CHECK(receipt && !service.historyRetired());
+          TEST_CHECK(read(target.source("one/tree/sub/value")) == "original native value");
+          TEST_CHECK(read(target.source("two/tree/nested/sub/value")) == "nested native value");
+          TEST_CHECK(read(source.source("tree/sub/value")) == "copied replacement");
+          TEST_CHECK(read(source.source("tree/nested/sub/value")) == "nested copied replacement");
+          TEST_CHECK(read(source.source("tree/whole/deep/文.txt")) == "whole copied folder");
+          TEST_CHECK(
+              read(source.source("tree/" + raw)) == "raw copied name"
+              && fs::read_symlink(source.source("tree/broken")) == "missing"
+          );
+          struct stat actual{}, alias{};
+          TEST_CHECK(::stat(target.source("one/tree").c_str(), &actual) == 0 && luciole::sameIdentity(parent, actual));
+          TEST_CHECK(
+              ::stat(target.source("two/tree/nested").c_str(), &actual) == 0 && luciole::sameIdentity(nested, actual)
+          );
+          TEST_CHECK(
+              ::stat(target.source("one/tree/sub/value").c_str(), &actual) == 0
+              && ::stat(target.source("loose").c_str(), &alias) == 0
+              && luciole::sameIdentity(actual, alias)
+          );
+          if (replacingParent) {
+            TEST_CHECK(read(target.destination("tree/previous")) == "original destination root");
+            TEST_CHECK(
+                ::stat(target.destination("tree").c_str(), &actual) == 0 && luciole::sameIdentity(previous, actual)
+            );
+          } else {
+            TEST_CHECK(!fs::exists(target.destination("tree")));
+          }
+          if (discardUndone && cycle == 1) {
+            break;
+          }
+          pump.replay(service, old);
+          TEST_CHECK(!service.receipt() && service.historyRetired());
+          pump.replay(service, receipt);
+          receipt = service.takeReceipt();
+          if (!receipt) {
+            for (const auto& result : service.results()) {
+              if (result.error) {
+                std::println("Parent Redo: {}", result.error->message);
+              }
+            }
+          }
+          if (!receipt || fs::exists(target.source("one/tree")) || fs::exists(source.source("tree"))) {
+            std::println(
+                stderr,
+                "Parent Redo paths: native={}, copied={}, cycle={}, replacing={}, receipt={}, results={}, retired={}",
+                fs::exists(target.source("one/tree")), fs::exists(source.source("tree")), cycle, replacingParent,
+                static_cast<bool>(receipt), service.results().size(), service.historyRetired()
+            );
+            for (const auto& result : service.results()) {
+              std::println(
+                  stderr, "Parent result {} -> {} ({})", result.source.uri(),
+                  result.destination ? result.destination->uri() : "none", static_cast<int>(result.outcome)
+              );
+            }
+          }
+          TEST_CHECK(receipt && !fs::exists(target.source("one/tree")) && !fs::exists(source.source("tree")));
+          TEST_CHECK(read(target.destination("tree/sub/value")) == "copied replacement");
+          TEST_CHECK(read(target.destination("tree/nested/sub/value")) == "nested copied replacement");
+          TEST_CHECK(read(target.destination("tree/whole/deep/文.txt")) == "whole copied folder");
+          TEST_CHECK(read(target.destination("tree/keep")) == "original native sibling");
+          TEST_CHECK(!fs::exists(target.destination("tree/previous")));
+        }
+        TEST_CHECK(read(target.destination("outside")) == "unrelated destination sibling");
+        receipt.reset();
+        noPrivateMoves(source);
+        noPrivateMoves(target);
+      }
+    }
+  }
+  void testNativeParentCopyGuards(Pump& pump) {
+    if (::access("/dev/shm", W_OK) != 0) {
+      return;
+    }
+    for (unsigned scenario = 0; scenario < 6; ++scenario) {
+      [&] {
+        Fixture source;
+        Fixture target("/dev/shm");
+        if (!differentDevices(source, target)) {
+          return;
+        }
+        fs::create_directories(target.source("one/tree/sub"));
+        fs::create_directories(source.source("tree/sub"));
+        write(target.source("one/tree/sub/value"), "native baseline");
+        write(target.source("one/tree/keep"), "native sibling");
+        write(source.source("tree/sub/value"), "copied payload");
+        luciole::TransferService service;
+        pump.run(
+            service, {location(target.source("one/tree")), location(source.source("tree"))}, target.destination(""),
+            TransferAction::Move, [](const auto& conflict) {
+              return conflict.canMerge ? TransferConflictChoice::Merge : TransferConflictChoice::Replace;
+            }
+        );
+        auto receipt = service.takeReceipt();
+        TEST_CHECK(receipt);
+        if (scenario == 0) {
+          fs::create_directory(target.source("one/tree"));
+          pump.replay(service, receipt);
+          TEST_CHECK(!service.receipt() && !service.historyRetired());
+          TEST_CHECK(
+              !fs::exists(source.source("tree")) && read(target.destination("tree/sub/value")) == "copied payload"
+          );
+          fs::remove(target.source("one/tree"));
+          luciole::CancelToken cancelled;
+          cancelled.cancel();
+          std::atomic<std::size_t> completed{0};
+          const auto reply = receipt->reverse(cancelled, completed);
+          TEST_CHECK(!reply.receipt && !reply.retireHistory && completed.load() == receipt->size());
+          pump.replay(service, receipt);
+          TEST_CHECK(service.receipt());
+          return;
+        }
+        if (scenario == 1) {
+          write(target.destination("tree/sub/value"), "changed copied destination");
+        } else if (scenario == 2) {
+          write(target.destination("tree/new-child"), "later user child");
+        } else {
+          pump.replay(service, receipt);
+          receipt = service.takeReceipt();
+          TEST_CHECK(receipt);
+          if (scenario == 3) {
+            write(source.source("tree/sub/value"), "edited source after Undo");
+          } else if (scenario == 4) {
+            write(target.source("one/tree/keep"), "edited native parent");
+          } else {
+            fs::rename(target.source("one"), target.source("held"));
+            fs::create_directories(target.source("one/tree/sub"));
+            write(target.source("one/tree/sub/foreign"), "unrelated source binding");
+          }
+        }
+        pump.replay(service, receipt);
+        TEST_CHECK(!service.receipt() && service.historyRetired());
+        if (scenario <= 2) {
+          TEST_CHECK(!fs::exists(source.source("tree")) && !fs::exists(target.source("one/tree")));
+          TEST_CHECK(fs::exists(target.destination("tree/sub/value")));
+        } else {
+          TEST_CHECK(!fs::exists(target.destination("tree")));
+          TEST_CHECK(
+              read(source.source("tree/sub/value")) == (scenario == 3 ? "edited source after Undo" : "copied payload")
+          );
+          if (scenario == 5) {
+            TEST_CHECK(read(target.source("one/tree/sub/foreign")) == "unrelated source binding");
+          }
+        }
+      }();
+      drainHistoryCleanup();
+      const auto errors = luciole::CopyReceipt::takeCleanupErrors();
+      TEST_CHECK(errors.empty() == (scenario == 0));
+    }
+  }
+
+  void testNativeParentCaptureFailure(Pump& pump) {
+    if (::access("/dev/shm", W_OK) != 0) {
+      return;
+    }
+    for (bool changed : {false, true}) {
+      [&] {
+        Fixture source;
+        Fixture target("/dev/shm");
+        if (!differentDevices(source, target)) {
+          return;
+        }
+        fs::create_directory(target.source("tree"));
+        fs::create_directory(source.source("tree"));
+        write(target.source("tree/b"), "native predecessor");
+        write(target.source("tree/keep"), "native sibling");
+        write(source.source("tree/a"), "first copied source");
+        write(source.source("tree/b"), "second copied source");
+        struct stat old{};
+        TEST_CHECK(::stat(target.source("tree/b").c_str(), &old) == 0);
+        luciole::TransferService service;
+        pump.run(
+            service, {location(target.source("tree")), location(source.source("tree"))}, target.destination(""),
+            TransferAction::Move, [&](const auto& conflict) {
+              if (conflict.canMerge) {
+                return TransferConflictChoice::Merge;
+              }
+              if (changed) {
+                write(target.destination("tree/keep"), "user changed the native parent");
+                return TransferConflictChoice::Replace;
+              }
+              return TransferConflictChoice::Skip;
+            }
+        );
+        TEST_CHECK(!service.receipt() && read(target.destination("tree/a")) == "first copied source");
+        if (changed) {
+          TEST_CHECK(service.results()[1].outcome == TransferOutcome::Moved && !fs::exists(source.source("tree")));
+          TEST_CHECK(read(target.destination("tree/b")) == "second copied source");
+          const auto retained = retainedItem(target, old);
+          TEST_CHECK(read(retained) == "native predecessor" && service.report().contains(location(retained).uri()));
+        } else {
+          TEST_CHECK(service.results()[1].outcome == TransferOutcome::Partial);
+          TEST_CHECK(
+              read(source.source("tree/b")) == "second copied source"
+              && read(target.destination("tree/b")) == "native predecessor"
+          );
+          noPrivateMoves(source);
+          noPrivateMoves(target);
+        }
+      }();
+      drainHistoryCleanup();
+      const auto errors = luciole::CopyReceipt::takeCleanupErrors();
+      TEST_CHECK(errors.empty() == !changed);
+    }
+  }
+  void testCopiedParentHistoryBoundary(Pump& pump) {
+    if (::access("/dev/shm", W_OK) != 0) {
+      return;
+    }
+    Fixture source;
+    Fixture target("/dev/shm");
+    if (!differentDevices(source, target)) {
+      return;
+    }
+    fs::create_directory(source.source("tree"));
+    fs::create_directory(target.source("tree"));
+    write(source.source("tree/original"), "copied parent payload");
+    write(target.source("tree/later"), "native child payload");
+    luciole::TransferService service;
+    pump.run(
+        service, {location(source.source("tree")), location(target.source("tree"))}, target.destination(""),
+        TransferAction::Move, [](const auto& conflict) {
+          return conflict.canMerge ? TransferConflictChoice::Merge : TransferConflictChoice::Replace;
+        }
+    );
+    TEST_CHECK(!service.receipt() && !fs::exists(source.source("tree")) && !fs::exists(target.source("tree")));
+    TEST_CHECK(
+        read(target.destination("tree/original")) == "copied parent payload"
+        && read(target.destination("tree/later")) == "native child payload"
+    );
+    noPrivateMoves(source);
+    noPrivateMoves(target);
+  }
   void testCrossFilesystem(Pump& pump) {
     if (::access("/dev/shm", W_OK) != 0) {
       std::println("Cross-filesystem check skipped: /dev/shm unavailable");
@@ -4067,6 +4371,45 @@ namespace {
       TEST_CHECK(errors.empty() == (scenario == 0));
     }
   }
+
+  void testMountedNativeParent(Pump& pump, bool reverseDirection) {
+    MountedFixture f;
+    const auto from = reverseDirection ? f.aliases.source("") : f.storage.source("");
+    const auto to = reverseDirection ? f.storage.destination("") : f.aliases.destination("");
+    fs::create_directories(to / "inbox/tree/sub");
+    fs::create_directories(from / "tree/sub");
+    write(to / "inbox/tree/sub/value", "native baseline");
+    write(from / "tree/sub/value", "bind-mounted copied child");
+    struct stat original{};
+    TEST_CHECK(::stat((to / "inbox/tree").c_str(), &original) == 0);
+    luciole::TransferService service;
+    pump.run(
+        service, {location(to / "inbox/tree"), location(from / "tree")}, to, TransferAction::Move,
+        [](const auto& conflict) {
+          return conflict.canMerge ? TransferConflictChoice::Merge : TransferConflictChoice::Replace;
+        }
+    );
+    auto receipt = service.takeReceipt();
+    TEST_CHECK(receipt);
+    for (int cycle = 0; cycle < 2; ++cycle) {
+      pump.replay(service, receipt);
+      receipt = service.takeReceipt();
+      TEST_CHECK(receipt);
+      TEST_CHECK(
+          read(to / "inbox/tree/sub/value") == "native baseline"
+          && read(from / "tree/sub/value") == "bind-mounted copied child"
+      );
+      struct stat actual{};
+      TEST_CHECK(::stat((to / "inbox/tree").c_str(), &actual) == 0 && luciole::sameIdentity(original, actual));
+      TEST_CHECK(!fs::exists(to / "tree"));
+      pump.replay(service, receipt);
+      receipt = service.takeReceipt();
+      TEST_CHECK(receipt);
+      TEST_CHECK(read(to / "tree/sub/value") == "bind-mounted copied child" && !fs::exists(from / "tree"));
+    }
+    receipt.reset();
+    noPrivateMoves(f.storage);
+  }
   int mountedHistoryChecks() {
     // Always create a private mount namespace before changing propagation or making any bind mount.
     if (::unshare(CLONE_NEWNS) != 0) {
@@ -4082,6 +4425,8 @@ namespace {
     testMountedMoveHistory(pump, false);
     testMountedMoveHistory(pump, true);
     testMountedMoveGuards(pump);
+    testMountedNativeParent(pump, false);
+    testMountedNativeParent(pump, true);
     std::println("Same-device bind-mount Move history checks passed");
     return 0;
   }
@@ -4156,6 +4501,10 @@ int main(int argc, char** argv) {
     testMixedMoveMerges(pump);
     testMixedMoveGuards(pump);
     testCopiedMergeEmptyAndPartial(pump);
+    testNativeParentCopiedChildren(pump);
+    testNativeParentCopyGuards(pump);
+    testNativeParentCaptureFailure(pump);
+    testCopiedParentHistoryBoundary(pump);
     testCrossFilesystem(pump);
     testMerge(pump);
     testMergeSkipAndCancel(pump);

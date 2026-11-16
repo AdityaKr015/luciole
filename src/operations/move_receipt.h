@@ -99,7 +99,7 @@ namespace luciole {
     static std::shared_ptr<const MoveReceipt> capture(
         const std::vector<std::shared_ptr<const MoveEffect>>& effects,
         const std::vector<std::shared_ptr<const MoveFolder>>& folders = {}, bool undone = false, bool sequence = false,
-        const CancelToken& token = {}
+        const CancelToken& token = {}, const std::vector<std::shared_ptr<const CopyEffect>>& copies = {}
     );
     static std::vector<std::shared_ptr<const MoveEffect>> checkpoint(
         const std::vector<std::shared_ptr<const MoveEffect>>& effects, const Location& destination,
@@ -114,6 +114,7 @@ namespace luciole {
     // Compose native and copied phases without exposing independently replayable component receipts.
     struct ReplayHooks {
       std::function<void(const MoveParents&)> preflight;
+      std::function<void(bool&)> beforeMoves;
       std::function<void(bool&)> apply;
     };
     MoveReplayResult
@@ -122,7 +123,7 @@ namespace luciole {
     coalesce(const std::vector<std::shared_ptr<const MoveEffect>>& effects);
     static std::vector<std::shared_ptr<const MoveEffect>> compose(
         const std::vector<std::shared_ptr<const MoveEffect>>& effects, bool refresh = false,
-        const CancelToken& token = {}
+        const CancelToken& token = {}, const std::vector<std::shared_ptr<const CopyEffect>>& copies = {}
     );
     static bool needsSequence(const std::vector<std::shared_ptr<const MoveEffect>>& effects, const CancelToken& token);
     static std::vector<std::shared_ptr<const MoveEffect>>
@@ -134,7 +135,7 @@ namespace luciole {
     std::shared_ptr<const CopyEffect> sequencePrevious(
         const MoveEffect& effect, bool before, const CancelToken& token, const MoveParents& bindings
     ) const;
-    MoveParents parents(const CancelToken& token = {}) const;
+    MoveParents parents(const CancelToken& token = {}, const std::vector<std::pair<Location, int>>& extra = {}) const;
     void validateFolders(const MoveParents& bindings, const CancelToken& token) const;
     bool restoreFolders(
         std::vector<std::shared_ptr<const MoveFolder>>& folders, const CancelToken& token, MoveReplayResult& reply,

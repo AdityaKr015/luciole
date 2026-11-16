@@ -52,21 +52,27 @@ struct luciole::CopiedMoveEffect::State {
   explicit State(Origin original) : origin(std::move(original)) {}
   std::shared_ptr<const CopyEffect> source, destination;
   Origin origin;
+  std::shared_ptr<const MoveHistoryRoot> root;
   bool published = false, retired = false;
 };
 std::shared_ptr<const luciole::CopiedMoveEffect> luciole::CopiedMoveEffect::prepare(
     const Location& source, int from, const Location& destination, int target, int stage, bool replacing,
-    std::size_t& remaining, const CancelToken& token, const std::shared_ptr<HistoryRevisions>& revisions
+    std::size_t& remaining, const CancelToken& token, const std::shared_ptr<HistoryRevisions>& revisions,
+    std::shared_ptr<const MoveHistoryRoot> root
 ) {
   // This proof follows an actual staged copy/remove path, including EXDEV on one device's bind mounts.
   auto state =
       std::make_shared<State>(Origin{source, std::make_shared<const Fd>(checkedFd(::fcntl(from, F_DUPFD_CLOEXEC, 0)))});
+  state->root = std::move(root);
   state->source = CopyEffect::prepareAt(source, from, from, *source.basename(), remaining, token, revisions);
   state->destination = CopyEffect::prepare(destination, target, stage, replacing, remaining, token, revisions);
   return std::shared_ptr<const CopiedMoveEffect>(new CopiedMoveEffect(std::move(state)));
 }
+std::shared_ptr<const luciole::CopyEffect> luciole::CopiedMoveEffect::destinationProof() const {
+  return m_state->destination;
+}
 void luciole::CopiedMoveEffect::published(int stage) const {
-  m_state->destination = m_state->destination->published(stage);
+  m_state->destination = m_state->destination->published(stage, m_state->root ? m_state->root->parent.get() : -1);
   m_state->published = true;
 }
 void luciole::CopiedMoveEffect::beforeSourceRemoval(const CancelToken& token) const {
@@ -95,6 +101,8 @@ struct luciole::CopiedMoveReceipt::State {
   std::mutex mutex;
   std::shared_ptr<const CopyReceipt> sources, destinations;
   std::shared_ptr<const MoveReceipt> native;
+  std::shared_ptr<const MoveHistoryRoot> root;
+  bool dependent = false;
   std::vector<Location> nativeLocations;
   std::vector<std::pair<Location, Location>> locations;
   std::vector<Origin> origins;
@@ -140,9 +148,27 @@ std::shared_ptr<const luciole::MoveReceipt> luciole::CopiedMoveReceipt::capture(
       for (const auto& copied : destinations) {
         const auto& a = moved->destination();
         const auto& b = copied->m_destination;
-        if (transferLocationsEqual(a, b) || transferLocationInside(a, b) || transferLocationInside(b, a)) {
-          throwFileError(FileErrorKind::Unsupported, "Mixed Move destinations must remain independent.");
+        if (transferLocationInside(b, a) && moved->hasContents()) {
+          state->dependent = true;
+          state->root = moved->retentionRoot();
+        } else if (transferLocationsEqual(a, b) || transferLocationInside(a, b) || transferLocationInside(b, a)) {
+          throwFileError(FileErrorKind::Unsupported, "This mixed Move destination dependency has no proof.");
         }
+      }
+    }
+  }
+  if (state->dependent) {
+    if (!state->root) {
+      throwFileError(FileErrorKind::Unsupported, "Dependent Move history has no retention root.");
+    }
+    for (const auto& copied : destinations) {
+      if (!sameMount(copied->parent(), state->root->parent.get())) {
+        throwFileError(FileErrorKind::Unsupported, "Dependent Move history requires a common retention mount.");
+      }
+    }
+    for (const auto& moved : state->native->m_effects) {
+      if (moved->encloses(state->root->location)) {
+        throwFileError(FileErrorKind::Unsupported, "Move retention cannot travel inside a moved ancestor.");
       }
     }
   }
@@ -163,13 +189,15 @@ std::shared_ptr<const luciole::MoveReceipt> luciole::CopiedMoveReceipt::capture(
 std::size_t luciole::CopiedMoveReceipt::size() const {
   return m_state->locations.size() + m_state->nativeLocations.size();
 }
-void luciole::CopiedMoveReceipt::preflight(const CopyReceipt& receipt, const CancelToken& token) {
+void luciole::CopiedMoveReceipt::preflight(
+    const CopyReceipt& receipt, const CancelToken& token, const MoveParents& parents
+) {
   if (receipt.m_generation != receipt.m_revisions->generation()) {
     throwFileError(FileErrorKind::Changed, "Copied Move history is stale.");
   }
   for (const auto& effect : receipt.m_effects) {
     check(token);
-    effect->validate(token);
+    effect->validate(token, parents);
     if (effect->m_hidden && !effect->m_previous) {
       effect->vacant();
     }
@@ -202,7 +230,7 @@ void luciole::CopiedMoveReceipt::retain(std::vector<TransferResult>& values) con
   }
 }
 void luciole::CopiedMoveReceipt::preflight(const CancelToken& token, const MoveParents& parents) const {
-  preflight(*m_state->destinations, token);
+  preflight(*m_state->destinations, token, parents);
   if (m_undone) {
     if (!m_state->sources || m_state->restored.size() != m_state->locations.size()) {
       throwFileError(FileErrorKind::Changed, "The restored Move source proof is incomplete.");
@@ -216,6 +244,22 @@ void luciole::CopiedMoveReceipt::preflight(const CancelToken& token, const MoveP
       vacant(origin.location, origin.parent->get());
     }
   }
+}
+luciole::MoveParents luciole::CopiedMoveReceipt::destinationParents(const CancelToken& token) const {
+  std::vector<std::pair<Location, int>> anchors;
+  for (const auto& effect : m_state->destinations->m_effects) {
+    anchors.emplace_back(effect->m_destination, effect->parent());
+  }
+  return m_state->native->parents(token, anchors);
+}
+void luciole::CopiedMoveReceipt::refreshDestinations(const CancelToken& token) const {
+  // These exclusive component roots stay independent across replay; refresh only the job generation.
+  auto next = std::make_shared<CopyReceipt>();
+  next->m_effects = m_state->destinations->m_effects;
+  next->m_revisions = m_state->destinations->m_revisions;
+  next->m_generation = next->m_revisions->generation();
+  preflight(*next, token, m_state->dependent ? destinationParents(token) : MoveParents{});
+  m_state->destinations = std::move(next);
 }
 void luciole::CopiedMoveReceipt::restoreSources(
     const CancelToken& token, MoveReplayResult& reply, bool& applied
@@ -310,7 +354,8 @@ void luciole::CopiedMoveReceipt::reverseDestinations(
 ) const {
   const auto before = m_state->destinations->m_revisions->generation();
   std::atomic<std::size_t> completed{0};
-  auto phase = m_state->destinations->reverse(token, completed);
+  auto phase =
+      m_state->destinations->reverseImpl(token, completed, {}, m_state->root ? m_state->root->parent.get() : -1, true);
   applied |= before != m_state->destinations->m_revisions->generation();
   for (std::size_t i = 0; i < m_state->locations.size(); ++i) {
     reply.results[i].children.push_back(phase.results[i]);
@@ -415,15 +460,27 @@ luciole::CopiedMoveReceipt::reverse(const CancelToken& token, std::atomic<std::s
     if (m_state->native) {
       MoveReplayResult copied;
       bool attempted = false;
+      const auto applyCopies = [&](bool& changed) {
+        attempted = true;
+        copied = reverseCopied(token, changed);
+        const auto failure =
+            std::ranges::find_if(copied.results, [](const auto& item) { return item.error.has_value(); });
+        if (failure != copied.results.end()) {
+          throw FileErrorException(*failure->error);
+        }
+      };
       const MoveReceipt::ReplayHooks hooks{
-          [&](const MoveParents& parents) { preflight(token, parents); },
+          [&](const MoveParents& parents) {
+            preflight(token, m_state->dependent ? destinationParents(token) : parents);
+          },
           [&](bool& changed) {
-            attempted = true;
-            copied = reverseCopied(token, changed);
-            const auto failure =
-                std::ranges::find_if(copied.results, [](const auto& item) { return item.error.has_value(); });
-            if (failure != copied.results.end()) {
-              throw FileErrorException(*failure->error);
+            if (m_state->dependent && !m_undone) {
+              applyCopies(changed);
+            }
+          },
+          [&](bool& changed) {
+            if (!m_state->dependent || m_undone) {
+              applyCopies(changed);
             }
           }
       };
@@ -455,7 +512,7 @@ luciole::CopiedMoveReceipt::reverse(const CancelToken& token, std::atomic<std::s
       m_state->native = reply.receipt;
       reply.receipt.reset();
       // Native replay advances the shared job generation after copied destination reversal.
-      m_state->destinations = CopyReceipt::capture(m_state->destinations->m_effects, TransferAction::Copy, token);
+      refreshDestinations(token);
     } else {
       reply = reverseCopied(token, applied);
       const auto failure = std::ranges::find_if(reply.results, [](const auto& item) { return item.error.has_value(); });

@@ -138,6 +138,18 @@ namespace luciole::transfer {
       }
     }
 
+    void queueSourceRemoval(
+        Node& node, const Tree& tree, int destination, std::shared_ptr<const CopiedMoveEffect> proof, Work& work
+    ) {
+      work.pendingMoves.push_back(
+          {.node = &node,
+           .tree = tree,
+           .destination = opened(::fcntl(destination, F_DUPFD_CLOEXEC, 0)),
+           .outcome = TransferOutcome::Moved,
+           .proof = std::move(proof)}
+      );
+    }
+
     TransferResult transferItem(Node& node, int destination, TransferAction action, Work& work) {
       auto& source = node.source;
       const auto& binding = *node.destination;
@@ -338,13 +350,7 @@ namespace luciole::transfer {
             recordPublication(copyProof, moveProof, replace.has_value(), stage, work);
             if (action == TransferAction::Move) {
               // The sources go only after the published copy is durable; flushMoves() syncs a batch at once.
-              work.pendingMoves.push_back(
-                  {.node = &node,
-                   .tree = *tree,
-                   .destination = opened(::fcntl(destination, F_DUPFD_CLOEXEC, 0)),
-                   .outcome = Moved,
-                   .proof = std::move(moveProof)}
-              );
+              queueSourceRemoval(node, *tree, destination, std::move(moveProof), work);
               deferred = true;
               result.outcome = Moved;
             }

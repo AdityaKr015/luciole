@@ -218,37 +218,57 @@ namespace {
     if (!work.prepareCopiedMove) {
       return;
     }
-    std::vector<luciole::Location> paths;
+    struct Root {
+      luciole::Location source, destination;
+      bool folder;
+    };
+    std::vector<Root> roots;
     for (std::size_t i = 0; i < sources.size(); ++i) {
       if (processed[sources[i].index] || included[i]) {
         continue;
       }
-      if (paths.size() == 8192) {
+      if (roots.size() == 4096) {
         work.prepareCopiedMove = {};
         return;
       }
-      paths.push_back(sources[i].location);
-      paths.push_back(destination.child(sources[i].name));
+      roots.push_back({sources[i].location, destination.child(sources[i].name), S_ISDIR(sources[i].metadata.st_mode)});
     }
-    // Check independence only if a Move actually needs staged copying. Native sequencing is unchanged.
-    work.prepareCopiedMove =
-        [prepare = std::move(work.prepareCopiedMove), paths = std::move(paths), checked = false, independent = true](
-            const Source& source, const luciole::Location& target, int parent, int stage, bool replacing
-        ) mutable -> std::shared_ptr<const luciole::CopiedMoveEffect> {
+    work.prepareCopiedMove = [prepare = std::move(work.prepareCopiedMove), roots = std::move(roots),
+                              parent = work.copiedMergeParent, checked = false, independent = true](
+                                 const Source& source, const luciole::Location& target, int folder, int stage,
+                                 bool replacing
+                             ) mutable -> std::shared_ptr<const luciole::CopiedMoveEffect> {
+      const auto overlap = [](const auto& a, const auto& b) {
+        return luciole::transferLocationsEqual(a, b)
+            || luciole::transferLocationInside(a, b)
+            || luciole::transferLocationInside(b, a);
+      };
       if (!checked) {
         checked = true;
-        for (std::size_t i = 0; i < paths.size() && independent; ++i) {
-          for (std::size_t j = 0; j < i; ++j) {
-            if (luciole::transferLocationsEqual(paths[i], paths[j])
-                || luciole::transferLocationInside(paths[i], paths[j])
-                || luciole::transferLocationInside(paths[j], paths[i])) {
+        for (std::size_t i = 0; i < roots.size() && independent; ++i) {
+          for (const auto& other : roots) {
+            if (overlap(roots[i].source, other.destination)) {
               independent = false;
-              break;
+            }
+          }
+          for (std::size_t j = 0; j < i && independent; ++j) {
+            if (overlap(roots[i].source, roots[j].source)) {
+              independent = false;
+            }
+            if (overlap(roots[i].destination, roots[j].destination)
+                && !(
+                    roots[i].folder
+                    && roots[j].folder
+                    && roots[i].destination == roots[j].destination
+                    && parent
+                    && parent(roots[i].destination)
+                )) {
+              independent = false;
             }
           }
         }
       }
-      return independent ? prepare(source, target, parent, stage, replacing) : nullptr;
+      return independent ? prepare(source, target, folder, stage, replacing) : nullptr;
     };
   }
 
@@ -511,8 +531,11 @@ namespace {
     };
     std::vector<Prepared> prepared;
     bool captureFailed = false;
-    void attach(Work& work, std::size_t& remaining, const std::function<bool()>& room) {
-      work.prepareCopiedMove = [&, room](
+    void attach(
+        Work& work, std::size_t& remaining, const std::function<bool()>& room,
+        const std::function<std::shared_ptr<const MoveHistoryRoot>(const Location&, int)>& retention
+    ) {
+      work.prepareCopiedMove = [&, room, retention](
                                    const Source& source, const luciole::Location& destination, int target, int stage,
                                    bool replacing
                                ) -> std::shared_ptr<const luciole::CopiedMoveEffect> {
@@ -520,7 +543,7 @@ namespace {
           try {
             auto effect = luciole::CopiedMoveEffect::prepare(
                 source.location, source.parent.get(), destination, target, stage, replacing, remaining, work.token,
-                work.history
+                work.history, retention(destination, target)
             );
             prepared.push_back({effect, source.index});
             return effect;
@@ -547,6 +570,14 @@ namespace {
         captureFailed = true;
         return {};
       }
+    }
+    std::vector<std::shared_ptr<const CopyEffect>> destinations() const {
+      std::vector<std::shared_ptr<const CopyEffect>> effects;
+      effects.reserve(prepared.size());
+      for (const auto& item : prepared) {
+        effects.push_back(item.effect->destinationProof());
+      }
+      return effects;
     }
     void preserve(std::vector<luciole::TransferResult>& outcomes) const {
       for (const auto& item : prepared) {
@@ -646,7 +677,7 @@ namespace {
         for (const auto& retained : retainedFolders) {
           folders.push_back(retained.effect);
         }
-        auto native = MoveReceipt::capture(moves, folders, false, false, token);
+        auto native = MoveReceipt::capture(moves, folders, false, false, token, copied.destinations());
         if (copied.prepared.empty()) {
           return native;
         }
@@ -663,6 +694,11 @@ namespace {
     }
     void attach(Work& work) {
       if (collecting) {
+        work.copiedMergeParent = [&](const Location& folder) {
+          return collecting && std::ranges::any_of(moves, [&](const auto& effect) {
+                   return effect->destination() == folder && effect->hasContents();
+                 });
+        };
         work.prepareMerge = [&](const Location& folder) {
           if (!collecting) {
             return;
@@ -824,7 +860,12 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
             && job->request.action == TransferAction::Move
             && job->request.destination.isNative()
             && std::ranges::all_of(job->request.sources, [](const auto& source) { return source.isNative(); })) {
-          copiedMoves.attach(work, moveHistory.remaining, [&] { return moveHistory.collecting && moveHistory.room(); });
+          copiedMoves.attach(
+              work, moveHistory.remaining, [&] { return moveHistory.collecting && moveHistory.room(); },
+              [&](const Location& destination, int parent) {
+                return moveHistory.retention(*destination.parent(), parent);
+              }
+          );
         }
         Fd copyRetentionParent;
         bool collectingCopies =
@@ -904,7 +945,7 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
         if (!retry && !remote && movesComplete) {
           receipt = moveHistory.capture(moved, merged, copiedMoves, moveCaptureChanged);
         }
-        if (!receipt && (!movesComplete || copiedMoves.captureFailed)) {
+        if (!receipt && (!movesComplete || moveCaptureChanged || copiedMoves.captureFailed)) {
           copiedMoves.preserve(outcomes);
         }
         if (!receipt && !retry && job->provider) {
