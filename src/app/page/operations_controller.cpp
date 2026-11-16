@@ -28,6 +28,8 @@ std::unique_ptr<Button> OperationsController::buildButton() {
        .glyph = "progress",
        .variant = ButtonVariant::Ghost,
        .tooltip = "File operations",
+       // A file picker starts no file jobs; progress of browsing windows does not belong in it.
+       .visible = !m_page.choosing(),
        .onClick = [this] {
          if (m_page.activePopup().kind() == ActivePopup::Kind::Operations) {
            m_page.dismissPopup();
@@ -128,7 +130,7 @@ void OperationsController::open() {
       m_page.popupSurface()->requestLayout();
     }
   });
-  (void)m_page.popupDispatcher().cycleTabFocus(false);
+  luciole::focusFirstDialogControl(m_page.popupDispatcher());
   markDirty();
 }
 

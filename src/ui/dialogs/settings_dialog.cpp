@@ -98,10 +98,40 @@ SettingsDialog::SettingsDialog(
        {"Select names", luciole::TypingMode::Typeahead}}
   );
   addBool(P::SwitchToNewTab, "Switch to new folder tabs");
-  card("Window");
   addBool(P::RestoreLastWindow, "Restore tabs from last closed window");
+  card("Terminal");
+  addTerminal();
+  section("Appearance", "paint");
+  card("Window");
   addBool(P::AlwaysShowTabBar, "Always show tab bar");
   addBool(P::AlwaysShowStatusBar, "Always show status bar");
+  addBool(P::CompactMenus, "Compact context menus");
+  card("Sidebar");
+  addBool(P::ShowSidebar, "Show sidebar");
+  addBool(P::SidebarTree, "Show folder tree");
+  addBool(P::ShowDrives, "Show drives");
+  addNumber(P::SidebarWidth, "Sidebar width", widths(luciole::kMinSidebarWidth, luciole::kMaxSidebarWidth));
+  card("Preview");
+  addBool(P::ShowPreview, "Show preview");
+  addBool(P::ChooserShowPreview, "Show preview in file picker");
+  addNumber(P::PreviewWidth, "Preview width", widths(208, 800));
+  section("Views", "layout-grid");
+  card("View");
+  addChoice(
+      P::ViewMode, "View",
+      {{"Grid", luciole::ViewMode::Grid}, {"List", luciole::ViewMode::List}, {"Columns", luciole::ViewMode::Miller}}
+  );
+  addChoice(
+      P::Density, "Density",
+      {{"Compact", luciole::ViewDensity::Compact}, {"Comfortable", luciole::ViewDensity::Comfortable}}
+  );
+  addBool(P::ShowEmblems, "Link and read-only emblems");
+  addChoice(
+      P::FilenameTruncation, "Long filenames",
+      {{"Shorten in the middle", luciole::FilenameTruncation::Middle},
+       {"Shorten at the end", luciole::FilenameTruncation::End}},
+      "List and column views"
+  );
   card("Files");
   addBool(P::ShowHidden, "Show hidden files");
   addBool(P::ShowBackups, "Show backup files (*~)");
@@ -121,25 +151,6 @@ SettingsDialog::SettingsDialog(
   );
   addBool(P::SortDescending, "Reverse order");
   addBool(P::DirectoriesFirst, "Folders first");
-  card("Terminal");
-  addTerminal();
-  section("Views", "layout-grid");
-  card("View");
-  addChoice(
-      P::ViewMode, "View",
-      {{"Grid", luciole::ViewMode::Grid}, {"List", luciole::ViewMode::List}, {"Columns", luciole::ViewMode::Miller}}
-  );
-  addChoice(
-      P::Density, "Density",
-      {{"Compact", luciole::ViewDensity::Compact}, {"Comfortable", luciole::ViewDensity::Comfortable}}
-  );
-  addBool(P::ShowEmblems, "Link and read-only emblems");
-  addChoice(
-      P::FilenameTruncation, "Long filenames",
-      {{"Shorten in the middle", luciole::FilenameTruncation::Middle},
-       {"Shorten at the end", luciole::FilenameTruncation::End}},
-      "List and column views"
-  );
   card("Grid");
   addNumber(P::GridIconSize, "Icon size", {luciole::kGridIconSizes.begin(), luciole::kGridIconSizes.end()});
   addBool(P::ShowSizeCaption, "File size caption");
@@ -181,15 +192,6 @@ SettingsDialog::SettingsDialog(
   addNumber(P::GroupColumnWidth, "Group", widths(64, 2048));
   addNumber(P::PermissionsColumnWidth, "Permissions", widths(64, 2048));
   addNumber(P::LocationColumnWidth, "Location", widths(64, 2048));
-  section("Sidebar & preview", "layout-sidebar");
-  card("Sidebar");
-  addBool(P::ShowSidebar, "Show sidebar");
-  addBool(P::SidebarTree, "Show folder tree");
-  addBool(P::ShowDrives, "Show drives");
-  addNumber(P::SidebarWidth, "Sidebar width", widths(luciole::kMinSidebarWidth, luciole::kMaxSidebarWidth));
-  card("Preview");
-  addBool(P::ShowPreview, "Show preview");
-  addNumber(P::PreviewWidth, "Preview width", widths(208, 800));
   section("Thumbnails", "photo");
   card("Generation");
   addChoice(
@@ -200,7 +202,6 @@ SettingsDialog::SettingsDialog(
       "All locations can generate thumbnails on mounted shares. Unmounted locations use cached thumbnails."
   );
   addNumber(P::ThumbnailMaxFileMib, "Image/PDF size limit", {1, 1024}, "MiB");
-  addNumber(P::ThumbnailMaxMegapixels, "Image pixel limit", {1, 64}, "MP");
   card("Cache");
   addNumber(P::ThumbnailCacheMib, "Disk cache limit", {16, 1024}, "MiB");
   m_section->addChild(

@@ -126,7 +126,7 @@ With relative `datadir=share`, Meson installs:
 <prefix>/share/luciole/assets/fonts/tabler.json
 <prefix>/share/luciole/assets/fonts/tabler-icons-license.txt
 <prefix>/share/luciole/templates/colors.toml
-<prefix>/share/dbus-1/services/org.freedesktop.FileManager1.service
+<prefix>/share/dbus-1/services/dev.noctalia.luciole.FileManager1.service
 <prefix>/share/dbus-1/services/org.freedesktop.impl.portal.desktop.luciole.service
 <prefix>/share/xdg-desktop-portal/portals/luciole.portal
 <prefix>/share/applications/dev.noctalia.luciole.desktop
@@ -153,7 +153,7 @@ A staged-install smoke test must point to its staged assets. Remove development 
 
 ### D-Bus activation
 
-`org.freedesktop.FileManager1.service` starts the configured absolute binary path with `--file-manager-service`. Keep the prefix correct and make the session's Wayland environment available to activation. The generic service filename may conflict with another file manager; follow the distribution's provider-selection policy.
+`dev.noctalia.luciole.FileManager1.service` registers `org.freedesktop.FileManager1` and starts the configured absolute binary path with `--file-manager-service`. Keep the prefix correct and make the session's Wayland environment available to activation. The file is named after Luciole, as Dolphin's `org.kde.dolphin.FileManager1.service` is, so it never conflicts with the generic `org.freedesktop.FileManager1.service` that Nautilus ships. When several file managers provide the name, the bus activates one of them. To prefer Luciole, a user copies this file to `~/.local/share/dbus-1/services/org.freedesktop.FileManager1.service`, which takes precedence over system directories.
 
 Installing Luciole does not select it as the `inode/directory` MIME default. The application also owns `dev.noctalia.luciole` for single-instance forwarding, without a separate service file for that name.
 
@@ -215,7 +215,7 @@ meson test -C build-check --print-errorlogs
 
 Tests additionally need Python 3, `dbus-daemon`, `glib-compile-schemas`, `wayland-server` development files and libwebp development files. Provide FFmpeg, ffmpegthumbnailer, Poppler utilities, 7-Zip and Glycin loaders, including AVIF/HEIF support. Ordinary headless suites need no compositor; their local-VFS override does not verify GVfs activation.
 
-Smoke-test the installed binary's help/version, configuration validation, fonts, completions and an installed window with asset overrides unset. Verify image/helper availability and session access to `trash:///`. Use disposable files for operation checks. Destructive whole-Trash checks require a private mount namespace hiding user drives, not just temporary HOME/XDG directories; see [test isolation](AGENTS.md#verification-and-tests).
+Smoke-test the installed binary's help/version, configuration validation, fonts, completions and an installed window with asset overrides unset. Verify image/helper availability and session access to `trash:///`. Use disposable files for operation checks. Destructive whole-Trash checks require a private mount namespace hiding user drives, not just temporary HOME/XDG directories.
 
 ## Contact
 

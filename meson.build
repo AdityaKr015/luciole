@@ -403,6 +403,7 @@ app = executable('luciole',
     'src/app/page/properties_controller.cpp',
     'src/app/page/rename_controller.cpp',
     'src/app/page/settings_controller.cpp',
+    'src/app/page/shortcuts_controller.cpp',
     'src/app/page/sidebar_controller.cpp',
     'src/app/page/status_bar_controller.cpp',
     'src/app/page/submenu_controller.cpp',
@@ -424,8 +425,8 @@ app = executable('luciole',
 )
 
 configure_file(
-  input: 'assets/dbus/org.freedesktop.FileManager1.service.in',
-  output: 'org.freedesktop.FileManager1.service',
+  input: 'assets/dbus/dev.noctalia.luciole.FileManager1.service.in',
+  output: 'dev.noctalia.luciole.FileManager1.service',
   configuration: {'bindir': get_option('prefix') / get_option('bindir')},
   install_dir: get_option('datadir') / 'dbus-1/services',
 )

@@ -26,6 +26,7 @@ namespace luciole {
     bool showBackups = true;
     bool alwaysShowTabBar = true;
     bool alwaysShowStatusBar = false;
+    bool compactMenus = true;
     BrowsePresentation presentation;
     int gridIconSize = kDefaultGridIconSize;
     int sidebarWidth = kDefaultSidebarWidth;
@@ -34,6 +35,7 @@ namespace luciole {
     bool showDrives = true;
     bool expandableFolders = false;
     bool showPreview = true;
+    bool chooserShowPreview = false; // File picker windows keep their own preview visibility.
     int previewWidth = 320;
     int millerColumnWidth = 260;
     bool millerShowParents = true;
@@ -67,6 +69,7 @@ namespace luciole {
     ShowBackups,
     AlwaysShowTabBar,
     AlwaysShowStatusBar,
+    CompactMenus,
     SortBy,
     SortDescending,
     DirectoriesFirst,
@@ -84,6 +87,7 @@ namespace luciole {
     ShowDrives,
     ExpandableFolders,
     ShowPreview,
+    ChooserShowPreview,
     PreviewWidth,
     MillerColumnWidth,
     MillerShowParents,
@@ -109,7 +113,6 @@ namespace luciole {
     LocationColumnWidth,
     ThumbnailPolicy,
     ThumbnailMaxFileMib,
-    ThumbnailMaxMegapixels,
     ThumbnailCacheMib,
     TerminalCommand,
     Count
@@ -142,6 +145,7 @@ namespace luciole {
     static constexpr PreferenceKey<bool> ShowBackups{Id::ShowBackups};
     static constexpr PreferenceKey<bool> AlwaysShowTabBar{Id::AlwaysShowTabBar};
     static constexpr PreferenceKey<bool> AlwaysShowStatusBar{Id::AlwaysShowStatusBar};
+    static constexpr PreferenceKey<bool> CompactMenus{Id::CompactMenus};
     static constexpr PreferenceKey<luciole::SortField> SortBy{Id::SortBy};
     static constexpr PreferenceKey<bool> SortDescending{Id::SortDescending};
     static constexpr PreferenceKey<bool> DirectoriesFirst{Id::DirectoriesFirst};
@@ -159,6 +163,7 @@ namespace luciole {
     static constexpr PreferenceKey<bool> ShowDrives{Id::ShowDrives};
     static constexpr PreferenceKey<bool> ExpandableFolders{Id::ExpandableFolders};
     static constexpr PreferenceKey<bool> ShowPreview{Id::ShowPreview};
+    static constexpr PreferenceKey<bool> ChooserShowPreview{Id::ChooserShowPreview};
     static constexpr PreferenceKey<int> PreviewWidth{Id::PreviewWidth};
     static constexpr PreferenceKey<int> MillerColumnWidth{Id::MillerColumnWidth};
     static constexpr PreferenceKey<bool> MillerShowParents{Id::MillerShowParents};
@@ -184,7 +189,6 @@ namespace luciole {
     static constexpr PreferenceKey<int> LocationColumnWidth{Id::LocationColumnWidth};
     static constexpr PreferenceKey<luciole::ThumbnailPolicy> ThumbnailPolicy{Id::ThumbnailPolicy};
     static constexpr PreferenceKey<int> ThumbnailMaxFileMib{Id::ThumbnailMaxFileMib};
-    static constexpr PreferenceKey<int> ThumbnailMaxMegapixels{Id::ThumbnailMaxMegapixels};
     static constexpr PreferenceKey<int> ThumbnailCacheMib{Id::ThumbnailCacheMib};
   };
 

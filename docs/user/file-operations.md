@@ -16,7 +16,7 @@ Deferred extraction cannot target a provider URI or pin an archive entry in Plac
 
 When names collide, the conflict dialog offers Replace, Skip and a numbered new name. Folder copies can merge into existing folders. Apply-to-all choices are scoped to the current job. Failed-item retries are explicit. Cancellation stops remaining work; it does not undo already completed changes. Supported native copies, links and moves, remote copies and SFTP link transfers have [Undo/Redo](#undo-and-redo); interrupted-job recovery remains pending.
 
-The background menu provides New Folder (Ctrl+Shift+N) and New Document. New Document offers an empty file and files from the configured XDG Templates folder. Create Link on a single native item creates a symbolic or hard link where supported.
+The background menu provides New Folder (Ctrl+Shift+N) and New Document. New Document offers an empty file (Ctrl+Alt+N) and files from the configured XDG Templates folder. Create Link on a single native item creates a symbolic or hard link where supported.
 
 F2 renames one item. Multiple selected native items from the same containing folder open batch rename. Preview the proposed names before applying them.
 
@@ -124,4 +124,4 @@ Native permission and ownership editing is available in Properties. Multiple sel
 
 Mounted, authenticated SFTP, SMB and WebDAV locations support the verified copy/move paths through installed GIO/GVfs backends. Some providers cannot preserve native symlinks, raw filename bytes or every metadata field. Read-only targets, conflicts, disconnects and partial moves remain explicit outcomes. Luciole does not provide its own server connection or credentials dialog yet.
 
-See [runtime providers](../../PACKAGING.md#gvfs-and-trash) for provider packaging requirements and [the remaining plan](../../PLAN.md) for unfinished device/network integration.
+See [runtime providers](../../PACKAGING.md#gvfs-and-trash) for provider packaging requirements.
