@@ -50,10 +50,9 @@ public:
 private:
   struct Body;
 
-  Body buildGeneral(const std::vector<luciole::DirectoryEntry>& targets, float width, bool editable);
+  Body buildGeneral(const std::vector<luciole::DirectoryEntry>& targets, bool editable);
   Body buildBody(
-      const std::vector<luciole::DirectoryEntry>& targets, float width, bool editable, bool multiple, bool folders,
-      bool withResults
+      const std::vector<luciole::DirectoryEntry>& targets, bool editable, bool multiple, bool folders, bool withResults
   );
   void showAdvanced(bool advanced, bool focus = false);
   // Swaps the permission body for the per-item outcomes of the last bulk or recursive job.

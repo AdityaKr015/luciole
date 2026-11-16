@@ -33,6 +33,7 @@
 #include <format>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -42,6 +43,55 @@ namespace {
   // Text width inside a General card: dialog padding, scrollbar gutter, then the card's own padding.
   float generalCardWidth(float dialogWidth) {
     return std::max(1.0F, dialogWidth - Style::spaceMd * 4 - Style::scrollbarWidth - Style::scrollbarGap);
+  }
+
+  // Names the targets above the tabs, so every tab shows what it applies to.
+  std::unique_ptr<Flex>
+  identityRow(const std::vector<luciole::DirectoryEntry>& targets, luciole::FileIconCache& icons, float width) {
+    const auto isFolder = [](const luciole::DirectoryEntry& entry) {
+      return entry.type == luciole::FileType::Directory;
+    };
+    auto icon = std::make_unique<luciole::FileIcon>(icons, 48.0F);
+    std::string title;
+    std::string caption;
+    if (targets.size() == 1) {
+      const auto& entry = targets.front();
+      icon->bind(luciole::iconSource(entry.icon), colorSpecFromRole(ColorRole::OnSurface));
+      title = entry.displayName();
+      caption = luciole::fileTypeDescription(entry.type, entry.symlink, entry.contentType);
+    } else {
+      const auto folders = static_cast<std::size_t>(std::ranges::count_if(targets, isFolder));
+      const auto files = targets.size() - folders;
+      const auto count = [](std::size_t n, std::string_view one, std::string_view many) {
+        return std::format("{} {}", n, n == 1 ? one : many);
+      };
+      icon->bind(
+          {.names = {files == 0 ? "folder" : "text-x-generic"}, .filePath = {}, .desktopFile = {}},
+          colorSpecFromRole(ColorRole::OnSurface)
+      );
+      title = std::format("{} items", targets.size());
+      caption = folders == 0 ? count(files, "file", "files")
+          : files == 0       ? count(folders, "folder", "folders")
+                             : count(files, "file", "files") + ", " + count(folders, "folder", "folders");
+    }
+    return ui::row(
+        {.align = FlexAlign::Center, .gap = Style::spaceMd}, std::move(icon),
+        ui::column(
+            {.align = FlexAlign::Start, .gap = Style::spaceXs, .flexGrow = 1.0F},
+            ui::label(
+                {.text = std::move(title),
+                 .fontWeight = FontWeight::SemiBold,
+                 .maxWidth = width - 104.0F,
+                 .maxLines = 2,
+                 .configure = [](Label& label) { label.setUseMarkup(false); }}
+            ),
+            ui::label(
+                {.text = std::move(caption),
+                 .fontSize = Style::fontSizeCaption,
+                 .color = colorSpecFromRole(ColorRole::OnSurfaceVariant)}
+            )
+        )
+    );
   }
 } // namespace
 
@@ -311,10 +361,9 @@ struct PropertiesController::Body {
 };
 
 PropertiesController::Body
-PropertiesController::buildGeneral(const std::vector<luciole::DirectoryEntry>& targets, float width, bool editable) {
+PropertiesController::buildGeneral(const std::vector<luciole::DirectoryEntry>& targets, bool editable) {
   auto general = ui::column({.align = FlexAlign::Stretch, .gap = Style::spaceMd});
   auto* generalGroup = general.get();
-  const auto literal = [](Label& label) { label.setUseMarkup(false); };
   luciole::MetadataFields fields;
   const auto field = [&](std::string name, std::string value) {
     fields.push_back({.label = std::move(name), .value = std::move(value), .preview = false});
@@ -322,28 +371,6 @@ PropertiesController::buildGeneral(const std::vector<luciole::DirectoryEntry>& t
   if (targets.size() == 1) {
     const auto& entry = targets.front();
     const auto location = entry.location();
-    auto icon = std::make_unique<luciole::FileIcon>(m_icons, 48.0F);
-    icon->bind(luciole::iconSource(entry.icon), colorSpecFromRole(ColorRole::OnSurface));
-    general->addChild(
-        ui::row(
-            {.align = FlexAlign::Center, .gap = Style::spaceMd}, std::move(icon),
-            ui::column(
-                {.align = FlexAlign::Start, .gap = Style::spaceXs, .flexGrow = 1.0F},
-                ui::label(
-                    {.text = entry.displayName(),
-                     .fontWeight = FontWeight::SemiBold,
-                     .maxWidth = width - 104.0F,
-                     .maxLines = 2,
-                     .configure = literal}
-                ),
-                ui::label(
-                    {.text = luciole::fileTypeDescription(entry.type, entry.symlink, entry.contentType),
-                     .fontSize = Style::fontSizeCaption,
-                     .color = colorSpecFromRole(ColorRole::OnSurfaceVariant)}
-                )
-            )
-        )
-    );
     field("Location", luciole::locationEditText(location));
     if (entry.contentType) {
       field("MIME", *entry.contentType);
@@ -366,11 +393,8 @@ PropertiesController::buildGeneral(const std::vector<luciole::DirectoryEntry>& t
         field("Modified", text.get());
       }
     }
-  } else {
-    field("Selection", std::format("{} items", targets.size()));
-    if (!editable) {
-      field("Permissions", "Select at most 4096 items for permission editing.");
-    }
+  } else if (!editable) {
+    field("Permissions", "Select at most 4096 items for permission editing.");
   }
   Flex* details = nullptr;
   general->addChild(luciole::card("Details", &details));
@@ -401,8 +425,7 @@ PropertiesController::buildGeneral(const std::vector<luciole::DirectoryEntry>& t
 }
 
 PropertiesController::Body PropertiesController::buildBody(
-    const std::vector<luciole::DirectoryEntry>& targets, float width, bool editable, bool multiple, bool folders,
-    bool withResults
+    const std::vector<luciole::DirectoryEntry>& targets, bool editable, bool multiple, bool folders, bool withResults
 ) {
   ScrollView* scroll = nullptr;
   auto body = ui::scrollView(
@@ -411,7 +434,7 @@ PropertiesController::Body PropertiesController::buildBody(
   body->setReserveScrollbarGutter(true);
   body->content()->setAlign(FlexAlign::Stretch);
   body->content()->setGap(Style::spaceMd);
-  auto general = buildGeneral(targets, width, editable);
+  auto general = buildGeneral(targets, editable);
   body->content()->addChild(std::move(general.node));
   PermissionEditor* editor = nullptr;
   AclEditor* acl = nullptr;
@@ -558,7 +581,7 @@ void PropertiesController::show(const std::vector<luciole::DirectoryEntry>& targ
   });
   const bool withResults = multiple || folders;
   const float width = m_page.dialogWidth(DialogWidth::Medium);
-  auto body = buildBody(targets, width, editable, multiple, folders, withResults);
+  auto body = buildBody(targets, editable, multiple, folders, withResults);
   auto* scroll = body.scroll;
   auto* generalGroup = body.general;
   auto* permissionsGroup = body.permissions;
@@ -584,7 +607,8 @@ void PropertiesController::show(const std::vector<luciole::DirectoryEntry>& targ
   };
   auto root = ui::column(
       {.align = FlexAlign::Stretch},
-      luciole::dialogHeader("Properties", "list-details", [this] { m_page.dismissMenu(); }),
+      luciole::dialogHeader("Properties", "file-info", [this] { m_page.dismissMenu(); }),
+      identityRow(targets, m_icons, width),
       ui::row(
           {.justify = FlexJustify::Center, .visible = editable, .participatesInLayout = editable},
           ui::segmented(
