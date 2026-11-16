@@ -75,7 +75,7 @@ Show parent folders is enabled by default in Settings → Views. Disable it to s
 
 ## Preview and Properties
 
-The side preview is on by default. Resize its divider to change the saved width; small windows temporarily collapse it when there is insufficient room. F8 toggles it, and Space opens a quick preview for one selected item. Images, video stills, the first PDF page and embedded audio artwork depend on installed providers. Video previews are still images, not playback.
+The side preview is on by default. Resize its divider to change the saved width; small windows temporarily collapse it when there is insufficient room. F8 toggles it, and Space opens a quick preview for one selected item. In the quick preview, the arrow keys move the selection as in the view behind it: Left and Right step one item, Up and Down one list item or one grid row. Space or Escape closes it. Images, video stills, the first PDF page and embedded audio artwork depend on installed providers. Video previews are still images, not playback.
 
 The preview shows essential content facts such as file size, dimensions, format and duration when available. Properties (Alt+Return) includes additional technical and permission information. Properties and file-operation dialogs stay open when you switch windows; use their buttons or Escape to close them. See [file operations](file-operations.md#properties-and-permissions).
 

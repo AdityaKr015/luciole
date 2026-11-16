@@ -129,17 +129,25 @@ bool PreviewController::quickKey(const KeyboardEvent& event) {
     m_page.dismissMenu();
     return true;
   }
-  if (KeySymbol::isLeft(event.sym) || KeySymbol::isRight(event.sym)) {
+  // Arrows walk the files as they do in the view behind: Left/Right one item, Up/Down one list item or one grid row.
+  const bool vertical = KeySymbol::isUp(event.sym) || KeySymbol::isDown(event.sym);
+  const bool previous = KeySymbol::isLeft(event.sym) || KeySymbol::isUp(event.sym);
+  if (vertical || KeySymbol::isLeft(event.sym) || KeySymbol::isRight(event.sym)) {
     auto& model = m_page.browser().model();
     const auto& rows = model.rows();
     const auto selected = model.selectedIds();
     if (selected.size() == 1) {
       const auto found = std::ranges::find(rows, selected.front());
       if (found != rows.end()) {
-        const auto index = static_cast<std::ptrdiff_t>(found - rows.begin()) + (KeySymbol::isLeft(event.sym) ? -1 : 1);
-        if (index >= 0 && static_cast<std::size_t>(index) < rows.size()) {
-          model.select(rows[static_cast<std::size_t>(index)]);
-        }
+        const auto stride = vertical && m_page.viewMode() == luciole::ViewMode::Grid
+            ? static_cast<std::ptrdiff_t>(std::max<std::size_t>(1, m_page.fileList()->layoutColumnCount()))
+            : 1;
+        // Clamped like the grid: Down from the last full row lands on the last item.
+        const auto index = std::clamp(
+            static_cast<std::ptrdiff_t>(found - rows.begin()) + (previous ? -stride : stride), std::ptrdiff_t{0},
+            static_cast<std::ptrdiff_t>(rows.size()) - 1
+        );
+        model.select(rows[static_cast<std::size_t>(index)]);
       }
     }
     sync();
