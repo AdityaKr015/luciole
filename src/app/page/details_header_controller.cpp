@@ -281,9 +281,8 @@ bool DetailsHeaderController::contextPress(const PointerEvent& event, float x, f
 void DetailsHeaderController::scrollWheel(const PointerEvent& event) {
   if (!m_columnResize && !m_columnDrag) {
     InputArea::PointerData data;
+    data.axisSource = event.axisSource;
     data.axisValue = event.axisValue;
-    data.axisDiscrete = event.axisDiscrete;
-    data.axisValue120 = event.axisValue120;
     data.axisLines = event.axisLines;
     scrollDetails(m_detailsOffset + data.scrollDelta(Style::scrollWheelStep));
   }

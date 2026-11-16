@@ -917,10 +917,11 @@ bool BrowserPage::millerPointer(const PointerEvent& event, float x, float y) {
       && event.type == PointerEvent::Type::Axis
       && m_filePane->containsScenePoint(x, y)
       && (event.axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL || m_connection.keyboardModifiers() == KeyMod::Shift)) {
-    const float delta = event.axisValue120 != 0
-        ? static_cast<float>(event.axisValue120) / 120.0F * Style::scrollWheelStep
-        : event.axisDiscrete != 0 ? static_cast<float>(event.axisDiscrete) * Style::scrollWheelStep
-                                  : static_cast<float>(event.axisValue);
+    InputArea::PointerData data;
+    data.axisSource = event.axisSource;
+    data.axisValue = event.axisValue;
+    data.axisLines = event.axisLines;
+    const float delta = data.scrollDelta(Style::scrollWheelStep);
     if (std::isfinite(delta)) {
       m_millerView->scrollBy(delta);
     }
