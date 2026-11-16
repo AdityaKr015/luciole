@@ -1,12 +1,3 @@
-# Luciole
-
-A native Wayland file manager built to stay smooth: quick to start, fluid when scrolling through large folders, and previews that never block the window.
-
-It offers grid, list and Miller column views, tabs, split view and rich file previews, and runs on any Wayland compositor. It also serves as the Open and Save file picker for other applications through xdg-desktop-portal. It pairs naturally with [Noctalia](https://github.com/noctalia-dev/noctalia) and [Umbriel](https://github.com/noctalia-dev/umbriel). Under the hood: C++23, direct Wayland and OpenGL ES, with no Qt or GTK.
-
-> [!IMPORTANT]
-> Luciole is young and actively evolving. It is usable today, but settings, shortcuts and behavior may change between releases, and rough edges remain.
-
 <p align="center">
   <img src="assets/icons/dev.noctalia.luciole.svg" alt="Luciole Logo" width="192" />
 </p>
@@ -25,6 +16,15 @@ It offers grid, list and Miller column views, tabs, split view and rich file pre
     <img src="https://img.shields.io/badge/discord-FFF59B?style=for-the-badge&labelColor=FFF59B&logo=discord&logoColor=070722" alt="Discord" />
   </a>
 </p>
+
+# Luciole
+
+A native Wayland file manager built to stay smooth: quick to start, fluid when scrolling through large folders, and previews that never block the window.
+
+It offers grid, list and Miller column views, tabs, split view and rich file previews, and runs on any Wayland compositor. It also serves as the Open and Save file picker for other applications through xdg-desktop-portal. It pairs naturally with [Noctalia](https://github.com/noctalia-dev/noctalia) and [Umbriel](https://github.com/noctalia-dev/umbriel). Under the hood: C++23, direct Wayland and OpenGL ES, with no Qt or GTK.
+
+> [!IMPORTANT]
+> Luciole is young and actively evolving. It is usable today, but settings, shortcuts and behavior may change between releases, and rough edges remain.
 
 ## Why Luciole?
 
