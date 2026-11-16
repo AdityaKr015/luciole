@@ -2718,12 +2718,17 @@ void BrowserPage::openPopup(
     m_connection.extension<luciole::DesktopIntegration>().setCursorShape(serial, shape);
   });
   m_menuSurface->setPrepareFrameCallback([this](bool, bool) {
-    if (m_menuSurface == nullptr || !m_renderer.makeCurrent(m_menuSurface->renderTarget())) {
+    if (m_menuSurface == nullptr) {
       return;
     }
     UiPhaseScope phase(UiPhase::Layout);
+    // Resize before binding the surface: binding fetches Mesa's back buffer, and a wl_egl_window resize after that
+    // only applies to the next frame, so this frame's old-size buffer would be shown stretched to the new size.
     if (m_dialogTier) {
       layoutDialogFrame();
+    }
+    if (!m_renderer.makeCurrent(m_menuSurface->renderTarget())) {
+      return;
     }
     m_operations.layoutDialog();
     m_aboutController.layoutDialog();
