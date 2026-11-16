@@ -15,6 +15,9 @@ namespace luciole {
   bool transferLocationsEqual(const Location& source, const Location& target);
   bool transferLocationInside(const Location& child, const Location& parent);
 
+  // Namespace eligibility only. The worker's staged symlink operation checks actual provider support.
+  std::optional<std::string> transferLinkTarget(const Location& source, const Location& destination);
+
   enum class TransferAction { Move, Copy, Link };
   enum class TransferOutcome { Moved, Copied, Skipped, Failed, Cancelled, Partial, Linked };
   struct TransferResult {

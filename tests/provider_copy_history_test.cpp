@@ -56,9 +56,10 @@ namespace {
   };
   Result upload(
       const std::vector<Location>& sources, const Location& destination,
-      const ProviderTransfer::Choose& choose = [](const auto&) { return KeepBoth; }
+      const ProviderTransfer::Choose& choose = [](const auto&) { return KeepBoth; },
+      TransferAction action = TransferAction::Copy
   ) {
-    const TransferRequest request{sources, destination, TransferAction::Copy};
+    const TransferRequest request{sources, destination, action};
     if (destination.isNative()) {
       ProviderTransfer provider(request);
       std::atomic<std::uint64_t> bytes{0};
@@ -219,6 +220,205 @@ namespace {
       TEST_CHECK(variant != 2 || read(target / "nested/content") == "incoming local history");
     }
   }
+  void linkNamespaces() {
+    const auto from = [](const std::string& uri) { return Location::fromUri(uri); };
+    TEST_CHECK(
+        transferLinkTarget(from("sftp://alice@host/a%20b%25%23"), from("sftp://alice@host:22/else")) == "/a b%#"
+    );
+    const auto source = from("sftp://alice@host/data");
+    for (const auto& uri :
+         {"sftp://bob@host/else", "sftp://host/else", "sftp://alice@other/else", "sftp://alice@host:2222/else",
+          "smb://host/share", "dav://host/else", "file:///tmp"}) {
+      TEST_CHECK(!transferLinkTarget(source, from(uri)));
+    }
+    TEST_CHECK(!transferLinkTarget(from("file:///tmp/a"), from("sftp://alice@host/tmp")));
+    TEST_CHECK(!transferLinkTarget(from("smb://host/share/a"), from("smb://host/share/b")));
+    TEST_CHECK(!transferLinkTarget(from("davs://host/a"), from("davs://host/b")));
+    TEST_CHECK(!transferLinkTarget(from("sftp://alice:secret@host/a"), from("sftp://alice@host/b")));
+    TEST_CHECK(!transferLinkTarget(from("sftp://alice@host/a?query"), from("sftp://alice@host/b")));
+    for (const auto& uri : {"sftp://alice@host/b", "smb://host/share", "dav://host/b"}) {
+      ProviderTransfer denied({{Location::fromPath("/tmp/no-provider-link-source")}, from(uri), TransferAction::Link});
+      std::atomic<std::uint64_t> bytes{0};
+      std::atomic<std::size_t> completed{0};
+      const auto result = denied.run({}, bytes, completed, {}, nullptr, true);
+      TEST_CHECK(result.front().outcome == Failed && result.front().error->kind == FileErrorKind::Unsupported);
+      TEST_CHECK(bytes == 0 && completed == 1 && !denied.takeCopyReceipt({}));
+    }
+  }
+  void linkHistory(const Location& remote, const fs::path& backend) {
+    fs::create_directories(backend / "source/tree");
+    fs::create_directories(backend / "destination");
+    const auto source = remote.child("source"), destination = remote.child("destination");
+    const std::string raw = std::string("raw-") + static_cast<char>(0xff);
+    const std::vector<std::string> names{"one.txt", "café % #.txt", raw, "tree", "alias"};
+    write(backend / "source/one.txt", "original");
+    write(backend / "source/café % #.txt", "unicode");
+    write(backend / "source" / raw, "raw bytes");
+    // A symbolic link to a folder does not copy or enumerate its special children.
+    TEST_CHECK(::mkfifo((backend / "source/tree/fifo").c_str(), 0600) == 0);
+    fs::create_symlink("absent", backend / "source/alias");
+    std::vector<Location> selected;
+    selected.reserve(names.size());
+    for (const auto& name : names) {
+      selected.push_back(source.child(name));
+    }
+    {
+      auto linked = upload(selected, destination, {}, TransferAction::Link);
+      for (const auto& item : linked.outcomes) {
+        if (item.error) {
+          std::println(stderr, "link: {}", item.error->message);
+        }
+        TEST_CHECK(item.outcome == Linked && !item.error);
+      }
+      TEST_CHECK(linked.receipt && linked.receipt->size() == names.size());
+      TEST_CHECK(linked.receipt->action() == TransferAction::Link);
+      for (const auto& name : names) {
+        TEST_CHECK(fs::is_symlink(fs::symlink_status(backend / "destination" / name)));
+        TEST_CHECK(fs::read_symlink(backend / "destination" / name) == backend / "source" / name);
+      }
+      fs::remove_all(backend / "source/tree");
+      fs::remove(backend / "source/one.txt");
+      auto redo = reversed(linked.receipt);
+      TEST_CHECK(redo->action() == TransferAction::Link);
+      write(backend / "destination/one.txt", "later occupant");
+      auto refused = replay(redo);
+      TEST_CHECK(!refused.receipt && refused.outcomes.front().outcome == Failed);
+      TEST_CHECK(read(backend / "destination/one.txt") == "later occupant");
+      fs::remove(backend / "destination/one.txt");
+      auto undo = reversed(redo);
+      TEST_CHECK(undo->action() == TransferAction::Link);
+      TEST_CHECK(fs::is_symlink(fs::symlink_status(backend / "destination/one.txt")));
+      TEST_CHECK(!fs::exists(backend / "destination/one.txt"));
+      redo = reversed(undo);
+      for (const auto& name : names) {
+        TEST_CHECK(!fs::is_symlink(fs::symlink_status(backend / "destination" / name)));
+      }
+    }
+    drain();
+    noStages(backend);
+    write(backend / "source/one.txt", "new source");
+    {
+      write(backend / "destination/one.txt", "predecessor");
+      auto linked = upload(
+          {source.child("one.txt")}, destination,
+          [](const auto& conflict) {
+            TEST_CHECK(!conflict.canMerge);
+            return Replace;
+          },
+          TransferAction::Link
+      );
+      TEST_CHECK(linked.receipt && linked.outcomes.front().outcome == Linked);
+      auto redo = reversed(linked.receipt);
+      TEST_CHECK(read(backend / "destination/one.txt") == "predecessor");
+      auto undo = reversed(redo);
+      TEST_CHECK(fs::is_symlink(backend / "destination/one.txt"));
+      fs::remove(backend / "destination/one.txt");
+      fs::create_symlink("tampered", backend / "destination/one.txt");
+      auto refused = replay(undo);
+      TEST_CHECK(!refused.receipt && refused.outcomes.front().outcome == Failed);
+      TEST_CHECK(fs::read_symlink(backend / "destination/one.txt") == "tampered");
+    }
+    drain(true);
+    const auto preserved = anchor(backend / "destination");
+    TEST_CHECK(read(preserved / "previous") == "predecessor");
+    fs::remove_all(preserved); // Only this fixture's independently verified private retained data.
+    noStages(backend);
+    fs::remove(backend / "destination/one.txt");
+    {
+      auto linked = upload({source.child("one.txt")}, source, {}, TransferAction::Link);
+      TEST_CHECK(linked.receipt && linked.outcomes.front().outcome == Linked);
+      TEST_CHECK(linked.outcomes.front().destination == source.child("one (1).txt"));
+      TEST_CHECK(read(backend / "source/one.txt") == "new source");
+      auto redo = reversed(linked.receipt);
+      TEST_CHECK(!fs::exists(backend / "source/one (1).txt"));
+    }
+    drain();
+    noStages(backend);
+    {
+      fs::create_directories(backend / "source/parent/child");
+      auto linked = upload(
+          {source.child("parent"), source.child("parent").child("child")}, destination, {}, TransferAction::Link
+      );
+      TEST_CHECK(linked.receipt && linked.receipt->size() == 2);
+      TEST_CHECK(linked.outcomes[0].outcome == Linked && linked.outcomes[1].outcome == Linked);
+      auto redo = reversed(linked.receipt);
+    }
+    drain();
+    noStages(backend);
+    {
+      // Link into the source directory itself without treating directory membership as copied content.
+      auto linked = upload({source.child("parent")}, source.child("parent"), {}, TransferAction::Link);
+      TEST_CHECK(linked.receipt && linked.outcomes.front().outcome == Linked);
+      TEST_CHECK(fs::read_symlink(backend / "source/parent/parent") == backend / "source/parent");
+      auto redo = reversed(linked.receipt);
+    }
+    drain();
+    noStages(backend);
+    {
+      fs::create_directories(backend / "destination/parent");
+      write(backend / "destination/parent/keep", "replaced folder content");
+      auto linked = upload(
+          {source.child("parent")}, destination,
+          [](const auto& conflict) {
+            TEST_CHECK(!conflict.canMerge && conflict.sourceDirectory && conflict.destinationDirectory);
+            return Replace;
+          },
+          TransferAction::Link
+      );
+      TEST_CHECK(linked.receipt && linked.outcomes.front().outcome == Linked);
+      auto redo = reversed(linked.receipt);
+      TEST_CHECK(read(backend / "destination/parent/keep") == "replaced folder content");
+      auto undo = reversed(redo);
+      TEST_CHECK(fs::is_symlink(backend / "destination/parent"));
+    }
+    drain();
+    noStages(backend);
+    {
+      auto linked = upload({source.child("one.txt"), source.child("alias")}, destination, {}, TransferAction::Link);
+      TEST_CHECK(linked.receipt && linked.receipt->size() == 2);
+      const auto first = fs::read_symlink(backend / "destination/one.txt");
+      fs::remove(backend / "destination/alias");
+      fs::create_symlink("edited", backend / "destination/alias");
+      auto refused = replay(linked.receipt);
+      TEST_CHECK(!refused.receipt && refused.outcomes.front().outcome == Failed);
+      TEST_CHECK(fs::read_symlink(backend / "destination/one.txt") == first);
+    }
+    drain();
+    noStages(backend);
+    fs::remove(backend / "destination/one.txt");
+    {
+      write(backend / "destination/one.txt", "keep");
+      auto skipped =
+          upload({source.child("one.txt")}, destination, [](const auto&) { return Skip; }, TransferAction::Link);
+      TEST_CHECK(!skipped.receipt && skipped.outcomes.front().outcome == Skipped);
+      auto cancelled =
+          upload({source.child("one.txt")}, destination, [](const auto&) { return Cancel; }, TransferAction::Link);
+      TEST_CHECK(!cancelled.receipt && cancelled.outcomes.front().outcome == Cancelled);
+      TEST_CHECK(read(backend / "destination/one.txt") == "keep");
+    }
+    drain();
+    noStages(backend);
+  }
+
+  void lostLinkReply(const Location& remote, const fs::path& backend, const fs::path& arm) {
+    fs::create_directories(backend / "source");
+    fs::create_directories(backend / "destination");
+    write(backend / "source/file", "source remains intact");
+    auto linked = upload({remote.child("source").child("file")}, remote.child("destination"), {}, TransferAction::Link);
+    TEST_CHECK(linked.receipt && linked.receipt->action() == TransferAction::Link);
+    const auto store = anchor(backend / "destination");
+    write(arm, (backend / "destination/file").native());
+    auto result = replay(linked.receipt);
+    TEST_CHECK(!result.receipt && result.outcomes.front().outcome == Partial);
+    TEST_CHECK(read(backend / "source/file") == "source remains intact");
+    TEST_CHECK(fs::is_symlink(store / "item"));
+    TEST_CHECK(fs::read_symlink(store / "item") == backend / "source/file");
+    TEST_CHECK(result.outcomes.front().error->message.contains("Inspect"));
+    linked.receipt.reset();
+    drain(true);
+    TEST_CHECK(fs::is_symlink(store / "item"));
+  }
+
   void basic(const fs::path& local, const Location& remote, const fs::path& backend) {
     fs::create_directories(local / "source/tree/nested");
     fs::create_directories(backend);
@@ -1307,7 +1507,8 @@ int main(int argc, char* argv[]) {
       && (std::string_view(argv[1]) == "--lost-reply"
           || std::string_view(argv[1]) == "--lost-replacement"
           || std::string_view(argv[1]) == "--lost-restore"
-          || std::string_view(argv[1]) == "--lost-merge")
+          || std::string_view(argv[1]) == "--lost-merge"
+          || std::string_view(argv[1]) == "--lost-link")
   ) {
     const auto remote = Location::fromUri(argv[2]);
     TEST_CHECK(remote.uri().starts_with("sftp:"));
@@ -1315,7 +1516,9 @@ int main(int argc, char* argv[]) {
     const luciole::GString uuid(g_uuid_string_random());
     const auto name = std::string("lost-reply-") + uuid.get();
     const auto backend = fs::path(argv[3]) / name, local = fs::path(argv[4]) / name;
-    if (std::string_view(argv[1]) == "--lost-merge") {
+    if (std::string_view(argv[1]) == "--lost-link") {
+      lostLinkReply(remote.child(name), backend, argv[5]);
+    } else if (std::string_view(argv[1]) == "--lost-merge") {
       lostMergeReply(local, remote.child(name), backend, argv[5]);
     } else {
       lostReply(
@@ -1323,7 +1526,12 @@ int main(int argc, char* argv[]) {
           std::string_view(argv[1]) == "--lost-restore"
       );
     }
-  } else if (argc == 5 && std::string_view(argv[1]) == "--provider") {
+  } else if (
+      argc == 5
+      && (std::string_view(argv[1]) == "--provider"
+          || std::string_view(argv[1]) == "--links"
+          || std::string_view(argv[1]) == "--denied-links")
+  ) {
     const auto remote = Location::fromUri(argv[2]);
     TEST_CHECK(remote.uri().starts_with("sftp:"));
     mount(remote);
@@ -1332,7 +1540,27 @@ int main(int argc, char* argv[]) {
     const auto backend = fs::path(argv[3]) / name, local = fs::path(argv[4]) / name;
     fs::create_directories(backend);
     fs::create_directories(local);
-    run(local, remote.child(name), backend);
+    if (std::string_view(argv[1]) == "--denied-links") {
+      fs::create_directories(backend / "source");
+      fs::create_directories(backend / "destination");
+      write(backend / "source/file", "unchanged source");
+      write(backend / "destination/file", "unchanged destination");
+      auto refused = upload(
+          {remote.child(name).child("source").child("file")}, remote.child(name).child("destination"),
+          [](const auto&) { return Replace; }, TransferAction::Link
+      );
+      TEST_CHECK(!refused.receipt && refused.outcomes.front().outcome == Failed);
+      TEST_CHECK(refused.outcomes.front().error);
+      TEST_CHECK(refused.outcomes.front().error->message.contains("Could not create symbolic link"));
+      TEST_CHECK(read(backend / "source/file") == "unchanged source");
+      TEST_CHECK(read(backend / "destination/file") == "unchanged destination");
+      drain();
+      noStages(backend);
+    } else if (std::string_view(argv[1]) == "--links") {
+      linkHistory(remote.child(name), backend);
+    } else {
+      run(local, remote.child(name), backend);
+    }
   } else {
     TEST_CHECK(argc == 1);
     const luciole::GString temp(g_dir_make_tmp("luciole-provider-history-XXXXXX", nullptr));
@@ -1340,6 +1568,8 @@ int main(int argc, char* argv[]) {
     const fs::path root(temp.get());
     fs::create_directories(root / "backend");
     run(root / "local", Location::fromPath((root / "backend").native()), root / "backend");
+    linkNamespaces();
+    linkHistory(Location::fromPath((root / "links").native()), root / "links");
     localRetention(root / "retention-local", root / "retention-backend");
     localHistoryGuards(root / "guard-local", root / "guard-backend");
     localPartialCancellation(root / "partial-local", root / "partial-backend");

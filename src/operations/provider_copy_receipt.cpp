@@ -518,17 +518,20 @@ struct luciole::ProviderCopyReceipt::State {
   std::mutex mutex;
   std::vector<std::shared_ptr<const ProviderCopyEffect>> effects;
   std::uint64_t generation = 0;
+  TransferAction action = TransferAction::Copy;
 };
 luciole::ProviderCopyReceipt::ProviderCopyReceipt(std::shared_ptr<State> state, std::uint64_t generation)
-    : m_state(std::move(state)), m_generation(generation) {}
+    : CopyReceipt(state->action), m_state(std::move(state)), m_generation(generation) {}
 
 std::shared_ptr<const luciole::CopyReceipt> luciole::ProviderCopyReceipt::capture(
-    const std::vector<std::shared_ptr<const ProviderCopyEffect>>& effects, const CancelToken& token
+    const std::vector<std::shared_ptr<const ProviderCopyEffect>>& effects, const CancelToken& token,
+    TransferAction action
 ) {
-  if (effects.empty() || effects.size() > 128) {
+  if (effects.empty() || effects.size() > 128 || action == TransferAction::Move) {
     return {};
   }
   auto state = std::make_shared<State>();
+  state->action = action;
   std::vector<Location> destinations;
   destinations.reserve(effects.size());
   try {

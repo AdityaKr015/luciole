@@ -259,9 +259,9 @@ void TransferController::chooseDrop(
   add("Move Here", "arrows-move", luciole::TransferAction::Move, pending->options.canMove);
   add(pending->payload.locations.size() == 1 ? "Create Link Here" : "Create Links Here", "link",
       luciole::TransferAction::Link,
-      pending->options.canCopy
-          && destination.isNative()
-          && std::ranges::all_of(pending->payload.locations, [](const auto& source) { return source.isNative(); }));
+      pending->options.canCopy && std::ranges::all_of(pending->payload.locations, [&](const auto& source) {
+        return luciole::transferLinkTarget(source, destination).has_value();
+      }));
   root->addChild(ui::separator({}));
   root->addChild(ui::button({.text = "Cancel", .variant = ButtonVariant::Ghost, .onClick = [this] {
                                m_page.dismissPopup();

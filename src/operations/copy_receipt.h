@@ -77,6 +77,7 @@ namespace luciole {
   // One bounded selection. Undo retains unchanged copies privately; Redo publishes the same items.
   class CopyReceipt {
   public:
+    CopyReceipt() = default;
     virtual ~CopyReceipt() = default;
     static std::shared_ptr<const CopyReceipt> capture(
         const std::vector<std::shared_ptr<const CopyEffect>>& effects, TransferAction action, const CancelToken& token
@@ -91,6 +92,9 @@ namespace luciole {
     TransferAction action() const { return m_action; }
     static bool cleanupPending();
     static std::vector<FileError> takeCleanupErrors();
+
+  protected:
+    explicit CopyReceipt(TransferAction action) : m_action(action) {}
 
   private:
     static std::shared_ptr<const CopyEffect> restoreParent(

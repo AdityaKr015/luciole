@@ -311,10 +311,12 @@ namespace {
   };
   std::optional<std::size_t> copiedCount(const Node& node) {
     if (node.result.error
-        || (node.result.outcome != TransferOutcome::Copied && node.result.outcome != TransferOutcome::Skipped)) {
+        || (node.result.outcome != TransferOutcome::Copied
+            && node.result.outcome != TransferOutcome::Linked
+            && node.result.outcome != TransferOutcome::Skipped)) {
       return std::nullopt;
     }
-    std::size_t count = !node.merged && node.result.outcome == TransferOutcome::Copied ? 1 : 0;
+    std::size_t count = !node.merged && node.result.outcome != TransferOutcome::Skipped ? 1 : 0;
     for (const auto& child : node.children) {
       const auto copied = copiedCount(*child);
       if (!copied) {
@@ -431,12 +433,34 @@ struct luciole::ProviderTransfer::State {
     }
   }
 
+  std::optional<Tree>
+  stageItem(const Node& node, const Location& item, const CancelToken& token, std::atomic<std::uint64_t>& bytes) const {
+    if (request.action == TransferAction::Link) {
+      const auto path = transferLinkTarget(node.source, node.parent);
+      if (!path) {
+        throwFileError(FileErrorKind::Unsupported, "Symbolic links require the same local or SFTP server namespace.");
+      }
+      GError* error = nullptr;
+      if (!g_file_make_symbolic_link(gioFile(item).get(), path->c_str(), gioCancellable(token), &error)) {
+        fail(error, "Could not create symbolic link");
+      }
+      unchanged(node.captured.get(), info(node.source, token).get(), false);
+      return {};
+    }
+    std::size_t count = 0;
+    auto tree = capture(node.source, token, count);
+    copy(tree, item, token, bytes);
+    validate(tree, token);
+    return tree;
+  }
+
   void execute(
       Node& node, const CancelToken& token, std::atomic<std::uint64_t>& bytes, const Choose& choose,
       transfer::Work* nativeCopies, unsigned depth = 0
   ) {
     if (node.result.outcome == TransferOutcome::Copied
         || node.result.outcome == TransferOutcome::Moved
+        || node.result.outcome == TransferOutcome::Linked
         || node.result.outcome == TransferOutcome::Skipped) {
       return;
     }
@@ -449,7 +473,7 @@ struct luciole::ProviderTransfer::State {
       }
       auto source = info(node.source, token);
       if (node.captured) {
-        unchanged(node.captured.get(), source.get(), !node.merged);
+        unchanged(node.captured.get(), source.get(), !node.merged && request.action != TransferAction::Link);
       } else {
         node.captured = std::move(source);
       }
@@ -461,8 +485,9 @@ struct luciole::ProviderTransfer::State {
           && !g_file_info_get_attribute_boolean(parent.get(), G_FILE_ATTRIBUTE_ACCESS_CAN_WRITE)) {
         throwFileError(FileErrorKind::ReadOnly, "The destination is read-only.");
       }
-      if (transferLocationsEqual(node.source, node.parent)
-          || (folder(node.captured.get()) && transferLocationInside(node.parent, node.source))) {
+      if (request.action != TransferAction::Link
+          && (transferLocationsEqual(node.source, node.parent)
+              || (folder(node.captured.get()) && transferLocationInside(node.parent, node.source)))) {
         throwFileError(FileErrorKind::WouldRecurse, "A folder cannot be placed inside itself.");
       }
       auto name = node.source.basename();
@@ -471,7 +496,11 @@ struct luciole::ProviderTransfer::State {
       }
       destinationName(node.parent, *name);
       auto target = node.parent.child(*name);
-      bool keepBoth = transferLocationsEqual(node.source, target) && request.action == TransferAction::Copy;
+      const auto linkPath =
+          request.action == TransferAction::Link ? transferLinkTarget(node.source, target) : std::nullopt;
+      const bool sameTarget = transferLocationsEqual(node.source, target)
+          || (linkPath && linkPath == transferLinkTarget(target, node.source));
+      bool keepBoth = sameTarget && request.action != TransferAction::Move;
       if (transferLocationsEqual(node.source, target) && request.action == TransferAction::Move) {
         node.result.outcome = TransferOutcome::Skipped;
         return;
@@ -503,12 +532,12 @@ struct luciole::ProviderTransfer::State {
                  : std::optional<std::uint64_t>(g_file_info_get_size(existing.get())),
              .sourceModified = fact(node.captured.get(), G_FILE_ATTRIBUTE_TIME_MODIFIED),
              .destinationModified = fact(existing.get(), G_FILE_ATTRIBUTE_TIME_MODIFIED),
-             .canMerge = request.allowMerge && folders,
+             .canMerge = request.action != TransferAction::Link && request.allowMerge && folders,
              .canApplyToAll = false,
              .scopeLabel = {}}
         );
         check(token);
-        unchanged(node.captured.get(), info(node.source, token).get());
+        unchanged(node.captured.get(), info(node.source, token).get(), request.action != TransferAction::Link);
         unchanged(existing.get(), info(target, token).get());
         unchanged(parent.get(), info(node.parent, token).get(), false);
         if (choice == TransferConflictChoice::Cancel) {
@@ -531,7 +560,12 @@ struct luciole::ProviderTransfer::State {
           if (existing) {
             throwFileError(FileErrorKind::Exists, "No unused destination filename was found.");
           }
-        } else if (choice == TransferConflictChoice::Merge && request.allowMerge && folders) {
+        } else if (
+            choice == TransferConflictChoice::Merge
+            && request.action != TransferAction::Link
+            && request.allowMerge
+            && folders
+        ) {
           node.merged = true;
           node.result.destination = target;
           node.destinationStamp = std::move(existing);
@@ -559,7 +593,7 @@ struct luciole::ProviderTransfer::State {
               || (request.action == TransferAction::Copy && child->result.outcome == TransferOutcome::Skipped);
         }
         if (complete && request.action == TransferAction::Copy) {
-          unchanged(node.captured.get(), info(node.source, token).get());
+          unchanged(node.captured.get(), info(node.source, token).get(), request.action != TransferAction::Link);
         }
         if (complete && request.action == TransferAction::Move) {
           erase(node.source, token);
@@ -582,11 +616,8 @@ struct luciole::ProviderTransfer::State {
       mkdir(stage, token);
       bool retain = false;
       try {
-        std::size_t count = 0;
-        auto tree = capture(node.source, token, count);
         const auto item = stage.child("item"), backup = stage.child("previous");
-        copy(tree, item, token, bytes);
-        validate(tree, token);
+        auto tree = stageItem(node, item, token, bytes);
         std::shared_ptr<const ProviderCopyEffect> remoteProof;
         if (collectingRemote) {
           try {
@@ -642,9 +673,11 @@ struct luciole::ProviderTransfer::State {
           }
         }
         if (request.action == TransferAction::Move) {
-          removeSource(tree, token);
+          removeSource(*tree, token);
         }
-        node.result.outcome = request.action == TransferAction::Move ? TransferOutcome::Moved : TransferOutcome::Copied;
+        node.result.outcome = request.action == TransferAction::Move ? TransferOutcome::Moved
+            : request.action == TransferAction::Link                 ? TransferOutcome::Linked
+                                                                     : TransferOutcome::Copied;
         node.result.error.reset();
         cleanup(stage);
       } catch (...) {
@@ -692,7 +725,7 @@ std::vector<luciole::TransferResult> luciole::ProviderTransfer::run(
     state.disableRemoteHistory();
   }
   if (state.roots.empty()) {
-    state.collectingRemote = captureRemoteCopies && state.request.action == TransferAction::Copy;
+    state.collectingRemote = captureRemoteCopies && state.request.action != TransferAction::Move;
     for (const auto& source : state.request.sources) {
       state.roots.push_back(std::make_unique<Node>(source, state.request.destination, state.roots.size()));
     }
@@ -705,17 +738,19 @@ std::vector<luciole::TransferResult> luciole::ProviderTransfer::run(
       if (state.request.sources.size() > 4096) {
         throwFileError(FileErrorKind::Unsupported, "Too many transfer sources.");
       }
-      if (!transferLocationSupported(node->source)
-          || !transferLocationSupported(node->parent)
-          || state.request.action == TransferAction::Link) {
+      if (!transferLocationSupported(node->source) || !transferLocationSupported(node->parent)) {
         throwFileError(
-            FileErrorKind::Unsupported,
-            "This transfer requires local or mounted SFTP, SMB or WebDAV locations; links require local paths."
+            FileErrorKind::Unsupported, "This transfer requires local or mounted SFTP, SMB or WebDAV locations."
         );
+      }
+      if (state.request.action == TransferAction::Link && !transferLinkTarget(node->source, node->parent)) {
+        throwFileError(FileErrorKind::Unsupported, "Symbolic links require the same local or SFTP server namespace.");
       }
       bool covered = !seen.insert(node->source.uri()).second;
       for (const auto& other : state.roots) {
-        if (other.get() != node.get() && transferLocationInside(node->source, other->source)) {
+        if (state.request.action != TransferAction::Link
+            && other.get() != node.get()
+            && transferLocationInside(node->source, other->source)) {
           covered = true;
           break;
         }
@@ -752,7 +787,7 @@ std::shared_ptr<const luciole::CopyReceipt> luciole::ProviderTransfer::takeCopyR
   const bool complete = std::exchange(m_state->collectingRemote, false) && count && *count == effects.size();
   if (complete) {
     try {
-      return ProviderCopyReceipt::capture(effects, token);
+      return ProviderCopyReceipt::capture(effects, token, m_state->request.action);
     } catch (const FileErrorException&) { /* Optional history does not change completed copy outcomes. */
     }
   }

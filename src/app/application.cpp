@@ -181,8 +181,8 @@ int luciole::runApplication(const std::optional<std::string>& initialLocation, S
     std::optional<luciole::FileChooserService> chooser;
     if (mode == StartupMode::FileChooserService) {
       chooser.emplace([&application](
-                          luciole::FileChooserRequest request, std::shared_ptr<luciole::FileChooserCall> call
-                      ) { application.choose(std::move(request), std::move(call)); });
+                          luciole::FileChooserRequest request, const std::shared_ptr<luciole::FileChooserCall>& call
+                      ) { application.choose(std::move(request), call); });
     }
     connection.setPointerEventCallback([&application, &desktop](const PointerEvent& event) {
       desktop.pointer(event);

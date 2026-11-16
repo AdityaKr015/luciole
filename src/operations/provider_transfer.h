@@ -23,7 +23,7 @@ namespace luciole {
     run(const CancelToken& token, std::atomic<std::uint64_t>& bytes, std::atomic<std::size_t>& completed,
         const Choose& choose, transfer::Work* nativeCopies = nullptr, bool captureRemoteCopies = false);
     std::shared_ptr<const CopyReceipt> takeCopyReceipt(const CancelToken& token);
-    // Counts committed leaves, excluding merges/skips, only when the whole selection completed.
+    // Counts committed copy/link leaves, excluding merges/skips, only when the whole selection completed.
     std::optional<std::size_t> completedCopies() const;
     std::size_t retryable() const;
 

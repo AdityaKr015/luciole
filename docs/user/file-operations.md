@@ -4,7 +4,7 @@
 
 Use Ctrl+C or Ctrl+X for the selection and Ctrl+V in the destination folder. Paste is also available from context menus, including List view. Clipboard transfers and drag/drop work between Luciole windows; the same transport supports other file managers.
 
-Drop files on a folder or the destination pane. Ctrl requests Copy, Shift requests Move and Alt offers an action chooser. Symbolic-link drops are supported for native locations. Dragging a folder into Places pins it instead of transferring its contents.
+Drop files on a folder or the destination pane. Ctrl requests Copy, Shift requests Move and Alt offers an action chooser. Alt-drop offers Create Link Here for native locations and within the same mounted SFTP server/account. These are symbolic links, not copies of the source data. Cross-server links and SMB/WebDAV link creation are unavailable. Server-side symlink support is checked before an existing destination is replaced. Dragging a folder into Places pins it instead of transferring its contents.
 
 Archive entries can also be dragged from compatible applications. An ordinary file-list offer uses the normal Copy workflow after the source prepares its files. A KDE deferred-extraction offer requests extraction directly into a local folder, including mounted folders with a native path. The source application handles passwords, progress and existing-name decisions. Luciole reports that extraction was requested; that message does not mean extraction has finished. Review or cancel that extraction in the source application. These source-owned extractions do not enter Luciole's File Operations or Undo history. Keep the source application open until it finishes.
 
@@ -14,7 +14,7 @@ There is no per-archiver drag preference: compatible producers are detected auto
 
 Deferred extraction cannot target a provider URI or pin an archive entry in Places. X11 Direct Save-only and arbitrary raw-data offers are not supported. Supporting one export protocol does not imply support for every archive application's drag behavior.
 
-When names collide, the conflict dialog offers Replace, Skip and a numbered new name. Folder copies can merge into existing folders. Apply-to-all choices are scoped to the current job. Failed-item retries are explicit. Cancellation stops remaining work; it does not undo already completed changes. Supported native copies, links and moves have [Undo/Redo](#undo-and-redo); interrupted-job recovery remains pending.
+When names collide, the conflict dialog offers Replace, Skip and a numbered new name. Folder copies can merge into existing folders. Apply-to-all choices are scoped to the current job. Failed-item retries are explicit. Cancellation stops remaining work; it does not undo already completed changes. Supported native copies, links and moves, remote copies and SFTP link transfers have [Undo/Redo](#undo-and-redo); interrupted-job recovery remains pending.
 
 The background menu provides New Folder (Ctrl+Shift+N) and New Document. New Document offers an empty file and files from the configured XDG Templates folder. Create Link on a single native item creates a symbolic or hard link where supported.
 
@@ -47,6 +47,8 @@ Undo Copy removes the unchanged copied destinations from view, leaving the origi
 Copies from mounted SFTP, SMB or WebDAV locations into native folders can also supply one Undo Copy action, including replacements, merges and numbered names. Redo republishes the retained local data without reading the remote source again, so a disconnected or changed server does not affect that replay. The same local revision checks, history bounds and retention rules apply. Provider moves do not yet supply history.
 
 Copies to mounted SFTP destinations can supply Undo/Redo for new files and folders, numbered Keep Both names and replacements. Undo moves the recorded copies into private server-side storage; Redo restores those same items without reading the original source. The server must be available. A disconnection before replay can be retried after remounting. Edited contents, changed history markers and occupied names block reversal.
+
+SFTP link transfers also supply Undo Create Links and Redo Create Links. They share the same conflict choices, private server storage and content/identity checks. A link to a folder does not traverse or copy its contents, and links never merge folders. Redo restores the recorded link even if its source disappeared; the restored link is then dangling. Existing destinations are restored by Undo when supported replacement history was captured. Links must remain within the same SFTP host, account and port. Ordinary provider refusal or optional history limits can leave a link transfer without history.
 
 For SFTP Replace, Undo restores the previous destination and Redo restores the copied version, including whole-folder replacements. Both versions must remain unchanged. Reversal uses separate server renames, so the name can briefly disappear. If the connection is lost after a rename or reversal stops partway through, Luciole preserves remaining data and reports inspection paths instead of offering further replay. It does not automatically roll back completed effects.
 

@@ -35,8 +35,10 @@ namespace luciole {
   // Provider-specific storage/revision checks behind the application's existing Copy history interface.
   class ProviderCopyReceipt final : public CopyReceipt {
   public:
-    static std::shared_ptr<const CopyReceipt>
-    capture(const std::vector<std::shared_ptr<const ProviderCopyEffect>>& effects, const CancelToken& token);
+    static std::shared_ptr<const CopyReceipt> capture(
+        const std::vector<std::shared_ptr<const ProviderCopyEffect>>& effects, const CancelToken& token,
+        TransferAction action = TransferAction::Copy
+    );
     CopyReplayResult reverse(const CancelToken& token, std::atomic<std::size_t>& completed) const override;
     std::vector<TransferResult> unconfirmed(const FileError& error) const override;
     std::size_t size() const override;

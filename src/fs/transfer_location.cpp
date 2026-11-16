@@ -6,8 +6,8 @@
 
 namespace {
   using Uri = std::unique_ptr<GUri, decltype(&g_uri_unref)>;
-  Uri parsed(const luciole::Location& location) {
-    return Uri(g_uri_parse(location.uri().c_str(), G_URI_FLAGS_NONE, nullptr), g_uri_unref);
+  Uri parsed(const luciole::Location& location, GUriFlags flags = G_URI_FLAGS_NONE) {
+    return Uri(g_uri_parse(location.uri().c_str(), flags, nullptr), g_uri_unref);
   }
   std::string folded(const char* value) {
     if (!value || !g_utf8_validate(value, -1, nullptr)) {
@@ -51,6 +51,29 @@ bool luciole::transferLocationSupported(const Location& location) {
   return (scheme == "sftp" || scheme == "smb" || scheme == "dav" || scheme == "davs")
       && g_uri_get_host(uri.get())
       && *g_uri_get_host(uri.get());
+}
+
+std::optional<std::string> luciole::transferLinkTarget(const Location& source, const Location& destination) {
+  if (!transferLocationSupported(source) || !transferLocationSupported(destination)) {
+    return {};
+  }
+  if (source.uri().starts_with("file:") && destination.uri().starts_with("file:")) {
+    return source.nativePath();
+  }
+  const auto a = parsed(source, G_URI_FLAGS_ENCODED), b = parsed(destination, G_URI_FLAGS_ENCODED);
+  if (!a
+      || !b
+      || std::string_view(g_uri_get_scheme(a.get())) != "sftp"
+      || std::string_view(g_uri_get_scheme(b.get())) != "sftp"
+      || g_ascii_strcasecmp(g_uri_get_host(a.get()), g_uri_get_host(b.get())) != 0
+      || g_strcmp0(g_uri_get_userinfo(a.get()), g_uri_get_userinfo(b.get())) != 0
+      || (g_uri_get_port(a.get()) < 0 ? 22 : g_uri_get_port(a.get()))
+          != (g_uri_get_port(b.get()) < 0 ? 22 : g_uri_get_port(b.get()))) {
+    return {};
+  }
+  // Preserve literal filename bytes rather than URI escapes; unescape rejects embedded NUL.
+  const GString path(g_uri_unescape_string(g_uri_get_path(a.get()), nullptr));
+  return path && path.get()[0] == '/' ? std::optional<std::string>(path.get()) : std::nullopt;
 }
 
 // SMB names are commonly case-insensitive. Conservatively treat case-folded aliases
