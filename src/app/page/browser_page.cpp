@@ -1692,6 +1692,16 @@ bool BrowserPage::requestCurrent(const luciole::ActionRequest& request, luciole:
 
 bool BrowserPage::operationsBusy() const { return actionContext().operationsBusy; }
 
+std::vector<std::string> BrowserPage::runningJobTitles() const {
+  std::vector<std::string> titles;
+  for (const auto& activity : m_hub.activities()) {
+    if (!activity.finished) {
+      titles.push_back(activity.title);
+    }
+  }
+  return titles;
+}
+
 bool BrowserPage::visible() const { return m_visible; }
 
 void BrowserPage::operationProgressTick() {

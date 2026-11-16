@@ -54,6 +54,8 @@ Pinned folders use the shared GTK bookmark file, also used by Nemo and Nautilus.
 
 Drives starts with File System (`/`), followed by the volumes and mounts GIO reports: removable media, extra partitions and network mounts, but not other system mounts such as `/home` or `/boot`. Mounted drives come before unmounted ones. In the Places list, each mounted drive shows a bar of its used space under its row; the bar turns red at 90% used. Unmounted drives and filesystems that do not report a size have no bar.
 
+The eject button and the drive's context menu remove a mounted drive the way GNOME Files does: Safely Remove powers off a USB disk plugged in during the session, Eject ejects removable media, and Unmount unmounts anything else. Removal never forces: while a program still has files open on the drive, nothing is unmounted and the status bar names the programs or Luciole's running file operations that keep it busy.
+
 Settings → Sidebar & preview controls sidebar visibility, width, drive rows and the optional folder tree. The separate expandable-folder preference adds a tree within List view. Both tree options are off by default.
 
 ## Tabs and split view

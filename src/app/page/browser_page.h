@@ -233,6 +233,7 @@ private:
   bool targetsCurrent(const std::vector<luciole::DirectoryEntry>& targets) override;
   bool requestCurrent(const luciole::ActionRequest& request, luciole::ActionScope scope) const override;
   bool operationsBusy() const override;
+  std::vector<std::string> runningJobTitles() const override;
   PageJobs& jobs() override;
   bool visible() const override;
   bool active() const override;
