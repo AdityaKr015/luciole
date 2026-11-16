@@ -26,6 +26,7 @@ namespace luciole {
     bool showBackups = true;
     bool alwaysShowTabBar = true;
     bool alwaysShowStatusBar = false;
+    bool compactMenus = true;
     BrowsePresentation presentation;
     int gridIconSize = kDefaultGridIconSize;
     int sidebarWidth = kDefaultSidebarWidth;
@@ -68,6 +69,7 @@ namespace luciole {
     ShowBackups,
     AlwaysShowTabBar,
     AlwaysShowStatusBar,
+    CompactMenus,
     SortBy,
     SortDescending,
     DirectoriesFirst,
@@ -143,6 +145,7 @@ namespace luciole {
     static constexpr PreferenceKey<bool> ShowBackups{Id::ShowBackups};
     static constexpr PreferenceKey<bool> AlwaysShowTabBar{Id::AlwaysShowTabBar};
     static constexpr PreferenceKey<bool> AlwaysShowStatusBar{Id::AlwaysShowStatusBar};
+    static constexpr PreferenceKey<bool> CompactMenus{Id::CompactMenus};
     static constexpr PreferenceKey<luciole::SortField> SortBy{Id::SortBy};
     static constexpr PreferenceKey<bool> SortDescending{Id::SortDescending};
     static constexpr PreferenceKey<bool> DirectoriesFirst{Id::DirectoriesFirst};
