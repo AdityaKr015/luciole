@@ -721,10 +721,7 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
                     const auto answer = owner->gate.ask(std::move(conflict), token, [owner] { State::notify(owner); });
                     return answer ? answer->choice : TransferConflictChoice::Cancel;
                   },
-                  &work,
-                  !retry
-                      && job->request.action == TransferAction::Copy
-                      && job->request.destination.uri().starts_with("sftp:")
+                  &work, !retry && job->request.action == TransferAction::Copy && !job->request.destination.isNative()
               )
             : retry ? retryJob(*job, work, owner->completed)
                     : runFirst(*job, work, owner->completed);

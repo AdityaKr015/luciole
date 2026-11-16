@@ -10,6 +10,7 @@
 #include <fstream>
 #include <print>
 #include <sys/stat.h>
+#include <thread>
 #include <unistd.h>
 
 namespace {
@@ -98,6 +99,18 @@ namespace {
         }),
         nullptr
     );
+    g_signal_connect(
+        operation.get(), "ask-password",
+        G_CALLBACK(+[](GMountOperation* op, const char*, const char*, const char*, GAskPasswordFlags flags, gpointer) {
+          if ((flags & G_ASK_PASSWORD_ANONYMOUS_SUPPORTED) != 0) {
+            g_mount_operation_set_anonymous(op, true);
+            g_mount_operation_reply(op, G_MOUNT_OPERATION_HANDLED);
+          } else {
+            g_mount_operation_reply(op, G_MOUNT_OPERATION_ABORTED);
+          }
+        }),
+        nullptr
+    );
     std::optional<bool> result;
     g_file_mount_enclosing_volume(
         gioFile(root).get(), G_MOUNT_MOUNT_NONE, operation.get(), nullptr,
@@ -135,6 +148,76 @@ namespace {
     }
     TEST_CHECK(false);
     return {};
+  }
+  void localRetention(const fs::path& local, const fs::path& backend) {
+    for (unsigned variant = 0; variant < 3; ++variant) {
+      const auto name = std::to_string(variant);
+      const auto staged = local / name / "staged";
+      const auto target = backend / name / "café item";
+      const auto old = backend / name / "previous";
+      fs::create_directories(staged / "nested");
+      fs::create_directories(target.parent_path());
+      write(staged / "nested/content", "incoming local history");
+      fs::create_directory(staged / "empty");
+      fs::create_symlink("missing", staged / "dangling");
+      if (variant) {
+        fs::create_directories(target / "nested");
+        write(target / "nested/content", "previous local history");
+      }
+      fs::path retained;
+      {
+        provider_history::Budget budget;
+        auto effect = ProviderCopyEffect::prepareLocal(
+            Location::fromPath(target.native()), Location::fromPath(staged.native()), budget, {}, variant != 0,
+            Location::fromPath(target.parent_path().native())
+        );
+        if (variant) {
+          fs::rename(target, old);
+        }
+        fs::rename(staged, target);
+        effect->published({}, variant ? std::optional(Location::fromPath(old.native())) : std::nullopt);
+        auto undo = ProviderCopyReceipt::capture({effect}, {});
+        TEST_CHECK(undo);
+        effect.reset();
+        fs::remove_all(old);
+        auto result = replay(undo);
+        TEST_CHECK(result.receipt && result.outcomes.front().outcome == Moved);
+        auto redo = result.receipt;
+        if (!variant) {
+          retained = fs::path(*result.outcomes.front().destination->nativePath()).parent_path().parent_path();
+          struct stat mode{};
+          TEST_CHECK(::lstat(retained.c_str(), &mode) == 0 && (mode.st_mode & 0777U) == 0700U);
+          TEST_CHECK(!fs::exists(target));
+        } else {
+          TEST_CHECK(read(target / "nested/content") == "previous local history");
+        }
+        for (unsigned turn = 0; turn < 3; ++turn) {
+          undo = reversed(redo);
+          TEST_CHECK(read(target / "nested/content") == "incoming local history");
+          TEST_CHECK(fs::is_empty(target / "empty") && fs::read_symlink(target / "dangling") == "missing");
+          redo = reversed(undo);
+          TEST_CHECK(!variant ? !fs::exists(target) : read(target / "nested/content") == "previous local history");
+        }
+        if (!variant) {
+          const auto bytes = retained / "item/café item/nested/content";
+          const auto stamp = fs::last_write_time(bytes);
+          write(bytes, "modified local history");
+          fs::last_write_time(bytes, stamp);
+          const auto blocked = replay(redo);
+          TEST_CHECK(!blocked.receipt && blocked.outcomes.front().error->kind == FileErrorKind::Changed);
+          TEST_CHECK(!fs::exists(target));
+        } else if (variant == 2) {
+          undo = reversed(redo);
+        }
+      }
+      drain(variant == 0);
+      if (!variant) {
+        TEST_CHECK(read(retained / "item/café item/nested/content") == "modified local history");
+        fs::remove_all(retained);
+      }
+      noStages(target.parent_path());
+      TEST_CHECK(variant != 2 || read(target / "nested/content") == "incoming local history");
+    }
   }
   void basic(const fs::path& local, const Location& remote, const fs::path& backend) {
     fs::create_directories(local / "source/tree/nested");
@@ -855,6 +938,320 @@ namespace {
     }
     drain(true);
   }
+  fs::path localAnchor(const std::string& name) {
+    const char* directory = g_getenv("LUCIOLE_HISTORY_TEST_TMP");
+    TEST_CHECK(directory && fs::path(directory) == fs::path(g_get_tmp_dir()));
+    for (const auto& entry : fs::directory_iterator(directory)) {
+      if (entry.path().filename().native().starts_with(".luciole-history-")
+          && fs::symlink_status(entry.path() / "item" / name).type() != fs::file_type::not_found) {
+        return entry.path();
+      }
+    }
+    TEST_CHECK(false);
+    return {};
+  }
+  void localHistoryGuards(const fs::path& local, const fs::path& backend) {
+    for (unsigned variant = 0; variant < 4; ++variant) {
+      const auto name = "guard-" + std::to_string(variant);
+      const auto stage = local / name, target = backend / name;
+      fs::create_directories(stage);
+      fs::create_directories(backend);
+      write(stage / "file", "retained guard bytes");
+      fs::path retained;
+      {
+        provider_history::Budget budget;
+        auto effect = ProviderCopyEffect::prepareLocal(
+            Location::fromPath(target.native()), Location::fromPath(stage.native()), budget, {}
+        );
+        fs::rename(stage, target);
+        effect->published({});
+        auto receipt = ProviderCopyReceipt::capture({effect}, {});
+        effect.reset();
+        TEST_CHECK(receipt);
+        auto redo = reversed(receipt);
+        retained = localAnchor(name);
+        if (variant == 0) {
+          fs::rename(retained / "item", retained / "held");
+          fs::create_directory_symlink(retained / "held", retained / "item");
+        } else if (variant == 1) {
+          write(retained / "item/unknown", "unrecorded contents");
+        } else if (variant == 2) {
+          TEST_CHECK(::chmod(retained.c_str(), 0755) == 0);
+        } else {
+          write(retained / "history-token", "changed marker");
+        }
+        const auto blocked = replay(redo);
+        TEST_CHECK(!blocked.receipt && blocked.outcomes.front().error->kind == FileErrorKind::Changed);
+        TEST_CHECK(!fs::exists(target));
+        TEST_CHECK(read(retained / "item" / name / "file") == "retained guard bytes");
+      }
+      drain(true);
+      TEST_CHECK(read(retained / "item" / name / "file") == "retained guard bytes");
+      fs::remove_all(retained);
+    }
+    const auto target = backend / "cleanup-pair", stage = local / "cleanup-pair", old = local / "old";
+    write(stage, "incoming cleanup bytes");
+    write(target, "previous cleanup bytes");
+    fs::path retained;
+    {
+      provider_history::Budget budget;
+      auto effect = ProviderCopyEffect::prepareLocal(
+          Location::fromPath(target.native()), Location::fromPath(stage.native()), budget, {}, true
+      );
+      fs::rename(target, old);
+      fs::rename(stage, target);
+      effect->published({}, Location::fromPath(old.native()));
+      auto receipt = ProviderCopyReceipt::capture({effect}, {});
+      TEST_CHECK(receipt);
+      fs::remove(old);
+      retained = localAnchor("cleanup-pair");
+      write(retained / "previous/cleanup-pair", "modified cleanup bytes");
+    }
+    drain(true);
+    TEST_CHECK(read(retained / "item/cleanup-pair") == "incoming cleanup bytes");
+    TEST_CHECK(read(retained / "previous/cleanup-pair") == "modified cleanup bytes");
+    TEST_CHECK(read(target) == "incoming cleanup bytes");
+    fs::remove_all(retained);
+  }
+  void portableCopies(const fs::path& local, const Location& remote, const fs::path& backend) {
+    fs::create_directories(local / "tree/nested");
+    fs::create_directories(local / "tree/empty");
+    fs::create_directories(backend);
+    write(local / "tree/nested/café space.txt", "portable tree bytes");
+    write(local / "tree/.hidden", "portable hidden bytes");
+    write(local / "file.txt", "portable file bytes");
+    {
+      auto done = upload(
+          {Location::fromPath((local / "tree").native()), Location::fromPath((local / "file.txt").native())}, remote
+      );
+      for (const auto& result : done.outcomes) {
+        if (result.error) {
+          std::println(stderr, "portable copy: {}", result.error->message);
+        }
+        TEST_CHECK(result.outcome == Copied && !result.error);
+      }
+      TEST_CHECK(done.receipt && done.receipt->size() == 2);
+      fs::remove_all(local);
+      auto redo = reversed(done.receipt);
+      TEST_CHECK(!fs::exists(backend / "tree") && !fs::exists(backend / "file.txt"));
+      for (unsigned turn = 0; turn < 3; ++turn) {
+        auto undo = reversed(redo);
+        TEST_CHECK(read(backend / "tree/nested/café space.txt") == "portable tree bytes");
+        TEST_CHECK(read(backend / "tree/.hidden") == "portable hidden bytes");
+        TEST_CHECK(read(backend / "file.txt") == "portable file bytes" && fs::is_empty(backend / "tree/empty"));
+        redo = reversed(undo);
+      }
+    }
+    drain();
+    noStages(backend);
+  }
+  void portableReplacements(const fs::path& local, const Location& remote, const fs::path& backend) {
+    for (unsigned variant = 0; variant < 4; ++variant) {
+      const auto name = std::to_string(variant);
+      const auto source = local / name / "item", target = backend / name / "item";
+      fs::create_directories(source.parent_path());
+      fs::create_directories(target.parent_path());
+      const bool incomingFolder = variant == 1 || variant == 3;
+      const bool previousFolder = variant == 2 || variant == 3;
+      if (incomingFolder) {
+        fs::create_directory(source);
+        write(source / "new", "incoming folder");
+      } else {
+        write(source, "incoming file");
+      }
+      if (previousFolder) {
+        fs::create_directory(target);
+        write(target / "old", "previous folder");
+      } else {
+        write(target, "previous file");
+      }
+      {
+        auto done =
+            upload({Location::fromPath(source.native())}, remote.child(name), [](const auto&) { return Replace; });
+        TEST_CHECK(done.receipt && done.outcomes.front().outcome == Copied);
+        fs::remove_all(source);
+        auto redo = reversed(done.receipt);
+        for (unsigned turn = 0; turn < 2; ++turn) {
+          TEST_CHECK(
+              read(previousFolder ? target / "old" : target) == (previousFolder ? "previous folder" : "previous file")
+          );
+          auto undo = reversed(redo);
+          TEST_CHECK(
+              read(incomingFolder ? target / "new" : target) == (incomingFolder ? "incoming folder" : "incoming file")
+          );
+          redo = reversed(undo);
+        }
+      }
+      drain();
+      noStages(target.parent_path());
+    }
+  }
+  void portableMerges(const fs::path& local, const Location& remote, const fs::path& backend) {
+    fs::create_directories(local / "tree/nested");
+    fs::create_directories(local / "tree/empty");
+    fs::create_directories(backend / "tree/nested");
+    write(local / "tree/new", "new merge bytes");
+    write(local / "tree/nested/replace", "incoming merge bytes");
+    write(local / "tree/nested/numbered", "numbered merge bytes");
+    write(local / "tree/nested/skip", "skipped source");
+    write(backend / "tree/nested/replace", "previous merge bytes");
+    write(backend / "tree/nested/numbered", "keep numbered");
+    write(backend / "tree/nested/skip", "keep skipped");
+    write(backend / "tree/keep", "unrelated merge bytes");
+    struct stat before{};
+    TEST_CHECK(::lstat((backend / "tree").c_str(), &before) == 0);
+    {
+      auto done = upload({Location::fromPath((local / "tree").native())}, remote, mergeChoice);
+      TEST_CHECK(done.receipt && done.receipt->size() == 4 && done.outcomes.front().outcome == Copied);
+      fs::remove_all(local);
+      write(backend / "tree/nested/later", "later sibling");
+      auto redo = reversed(done.receipt);
+      for (unsigned turn = 0; turn < 2; ++turn) {
+        TEST_CHECK(!fs::exists(backend / "tree/new") && !fs::exists(backend / "tree/empty"));
+        TEST_CHECK(read(backend / "tree/nested/replace") == "previous merge bytes");
+        TEST_CHECK(!fs::exists(backend / "tree/nested/numbered (1)"));
+        auto undo = reversed(redo);
+        TEST_CHECK(read(backend / "tree/new") == "new merge bytes" && fs::is_empty(backend / "tree/empty"));
+        TEST_CHECK(read(backend / "tree/nested/replace") == "incoming merge bytes");
+        TEST_CHECK(read(backend / "tree/nested/numbered (1)") == "numbered merge bytes");
+        TEST_CHECK(read(backend / "tree/nested/numbered") == "keep numbered");
+        TEST_CHECK(read(backend / "tree/nested/skip") == "keep skipped");
+        TEST_CHECK(read(backend / "tree/nested/later") == "later sibling");
+        TEST_CHECK(read(backend / "tree/keep") == "unrelated merge bytes");
+        struct stat after{};
+        TEST_CHECK(::lstat((backend / "tree").c_str(), &after) == 0 && after.st_ino == before.st_ino);
+        redo = reversed(undo);
+      }
+    }
+    drain();
+    noStages(backend);
+  }
+  void portableAliases(const fs::path& local, const Location& remote, const fs::path& backend) {
+    fs::create_directories(local);
+    fs::create_directories(backend);
+    write(local / "a", "same incoming bytes");
+    write(local / "A", "same incoming bytes");
+    fs::last_write_time(local / "A", fs::last_write_time(local / "a"));
+    write(backend / "a", "original alias bytes");
+    {
+      auto done = upload(
+          {Location::fromPath((local / "a").native()), Location::fromPath((local / "A").native())}, remote,
+          [](const auto&) { return Replace; }
+      );
+      TEST_CHECK(!done.receipt && done.outcomes.size() == 2);
+      TEST_CHECK(done.outcomes[0].outcome == Copied && done.outcomes[1].outcome == Copied);
+      TEST_CHECK(read(backend / "A") == "same incoming bytes");
+    }
+    drain(true);
+    const auto first = localAnchor("a"), second = localAnchor("A");
+    TEST_CHECK(read(first / "previous/a") == "original alias bytes");
+    TEST_CHECK(read(second / "previous/A") == "same incoming bytes");
+    fs::remove_all(first);
+    fs::remove_all(second);
+    noStages(backend);
+  }
+  void portableHistory(const fs::path& local, const Location& remote, const fs::path& backend) {
+    portableCopies(local / "copy", remote.child("copy"), backend / "copy");
+    portableReplacements(local / "replace", remote.child("replace"), backend / "replace");
+    portableMerges(local / "merge", remote.child("merge"), backend / "merge");
+    collisionsAndEdits(local / "edits", remote.child("edits"), backend / "edits");
+    cancellationAndDiscard(local / "cancel", remote.child("cancel"), backend / "cancel");
+    budget(local / "budget", remote.child("budget"), backend / "budget");
+    fullSelection(local / "selection", remote.child("selection"), backend / "selection");
+    mergeNoops(local / "noops", remote.child("noops"), backend / "noops");
+    disconnected(local / "disconnect", remote.child("disconnect"), backend / "disconnect");
+    if (remote.uri().starts_with("smb:")) {
+      portableAliases(local / "aliases", remote.child("aliases"), backend / "aliases");
+    }
+  }
+  void localPartialCancellation(const fs::path& local, const fs::path& backend) {
+    const auto stage = local / "stage", target = backend / "bulk";
+    fs::create_directories(stage);
+    fs::create_directories(backend);
+    write(stage / "first", "first retained bytes");
+    for (unsigned i = 0; i < 512; ++i) {
+      write(stage / ("item-" + std::to_string(i)), "retained cancellation bytes");
+    }
+    fs::path retained;
+    bool preserve = false;
+    {
+      provider_history::Budget budget;
+      auto effect = ProviderCopyEffect::prepareLocal(
+          Location::fromPath(target.native()), Location::fromPath(stage.native()), budget, {}
+      );
+      fs::rename(stage, target);
+      effect->published({});
+      auto receipt = ProviderCopyReceipt::capture({effect}, {});
+      effect.reset();
+      TEST_CHECK(receipt);
+      retained = localAnchor("bulk");
+      CancelToken cancel;
+      std::atomic<bool> finished{false};
+      std::jthread cancellation([&] {
+        while (!finished.load() && fs::exists(target / "first")) {
+          g_usleep(100);
+        }
+        if (!finished.load()) {
+          cancel.cancel();
+        }
+      });
+      std::atomic<std::size_t> completed{0};
+      auto result = receipt->reverse(cancel, completed);
+      finished.store(true);
+      cancellation.join();
+      TEST_CHECK(completed.load() == 1);
+      if (result.receipt) {
+        TEST_CHECK(!fs::exists(target));
+      } else {
+        TEST_CHECK(result.retireHistory && result.results.front().outcome == Partial);
+        preserve = true;
+      }
+      TEST_CHECK(!fs::exists(target / "first"));
+      TEST_CHECK(read(retained / "item/bulk/first") == "first retained bytes");
+      for (unsigned i = 0; i < 512; ++i) {
+        const auto name = "item-" + std::to_string(i);
+        TEST_CHECK(read(retained / "item/bulk" / name) == "retained cancellation bytes");
+        TEST_CHECK(!fs::exists(target / name) || read(target / name) == "retained cancellation bytes");
+      }
+    }
+    drain(preserve);
+    if (preserve) {
+      TEST_CHECK(read(retained / "item/bulk/first") == "first retained bytes");
+      fs::remove_all(retained);
+    }
+  }
+  void lostPortableReply(const fs::path& local, const Location& remote, const fs::path& backend, const fs::path& arm) {
+    fs::create_directories(local / "tree");
+    fs::create_directories(backend / "tree");
+    write(local / "tree/a", "incoming uncertain bytes");
+    write(local / "tree/z", "later unchanged bytes");
+    write(backend / "tree/a", "previous uncertain bytes");
+    write(backend / "tree/keep", "unrelated destination");
+    {
+      auto done = upload({Location::fromPath((local / "tree").native())}, remote, mergeChoice);
+      TEST_CHECK(done.receipt && done.receipt->size() == 2);
+      const auto temporary = fs::path(arm.string() + ".tmp");
+      write(temporary, (backend / "tree/a").native());
+      fs::rename(temporary, arm);
+      TransferService service;
+      TEST_CHECK(service.replayCopy(done.receipt));
+      wait(service);
+      TEST_CHECK(service.historyRetired() && !service.copyReceipt());
+      TEST_CHECK(service.results().front().outcome == Partial && service.results().front().error);
+      TEST_CHECK(service.report().contains("Inspect"));
+      TEST_CHECK(!fs::exists(backend / "tree/a"));
+      TEST_CHECK(read(backend / "tree/z") == "later unchanged bytes");
+      TEST_CHECK(read(backend / "tree/keep") == "unrelated destination");
+      const auto retained = localAnchor("a");
+      TEST_CHECK(read(retained / "item/a") == "incoming uncertain bytes");
+      TEST_CHECK(read(retained / "previous/a") == "previous uncertain bytes");
+      TEST_CHECK(read(local / "tree/a") == "incoming uncertain bytes");
+    }
+    drain(true);
+    const auto retained = localAnchor("a");
+    TEST_CHECK(read(retained / "item/a") == "incoming uncertain bytes");
+    TEST_CHECK(read(retained / "previous/a") == "previous uncertain bytes");
+  }
   void run(const fs::path& local, const Location& remote, const fs::path& backend) {
     basic(local / "basic", remote.child("basic"), backend / "basic");
     collisionsAndEdits(local / "collisions", remote.child("collisions"), backend / "collisions");
@@ -882,11 +1279,36 @@ namespace {
 
 int main(int argc, char* argv[]) {
   GlibPollSource glib;
-  if (argc == 6
+  if (argc == 6 && std::string_view(argv[1]) == "--lost-portable") {
+    const auto remote = Location::fromUri(argv[2]);
+    TEST_CHECK(!remote.isNative() && transferLocationSupported(remote));
+    mount(remote);
+    const luciole::GString uuid(g_uuid_string_random());
+    const auto name = std::string("lost-") + uuid.get();
+    lostPortableReply(fs::path(argv[4]) / name, remote.child(name), fs::path(argv[3]) / name, argv[5]);
+  } else if (argc == 7 && std::string_view(argv[1]) == "--portable-provider") {
+    const auto remote = Location::fromUri(argv[2]), readOnly = Location::fromUri(argv[5]);
+    TEST_CHECK(!remote.isNative() && transferLocationSupported(remote) && transferLocationSupported(readOnly));
+    mount(remote);
+    mount(readOnly);
+    const luciole::GString uuid(g_uuid_string_random());
+    const auto name = std::string("history-") + uuid.get();
+    const auto backend = fs::path(argv[3]) / name, local = fs::path(argv[4]) / name;
+    fs::create_directories(backend);
+    fs::create_directories(local);
+    portableHistory(local, remote.child(name), backend);
+    write(local / "denied", "read-only source");
+    const auto denied = upload({Location::fromPath((local / "denied").native())}, readOnly);
+    TEST_CHECK(!denied.receipt && denied.outcomes.front().outcome == Failed);
+    TEST_CHECK(read(local / "denied") == "read-only source" && !fs::exists(fs::path(argv[6]) / "denied"));
+    drain();
+  } else if (
+      argc == 6
       && (std::string_view(argv[1]) == "--lost-reply"
           || std::string_view(argv[1]) == "--lost-replacement"
           || std::string_view(argv[1]) == "--lost-restore"
-          || std::string_view(argv[1]) == "--lost-merge")) {
+          || std::string_view(argv[1]) == "--lost-merge")
+  ) {
     const auto remote = Location::fromUri(argv[2]);
     TEST_CHECK(remote.uri().starts_with("sftp:"));
     mount(remote);
@@ -918,6 +1340,9 @@ int main(int argc, char* argv[]) {
     const fs::path root(temp.get());
     fs::create_directories(root / "backend");
     run(root / "local", Location::fromPath((root / "backend").native()), root / "backend");
+    localRetention(root / "retention-local", root / "retention-backend");
+    localHistoryGuards(root / "guard-local", root / "guard-backend");
+    localPartialCancellation(root / "partial-local", root / "partial-backend");
     fs::remove_all(root);
   }
   std::println("Provider copy history checks passed");

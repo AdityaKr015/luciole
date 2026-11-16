@@ -2,7 +2,7 @@
 
 Luciole is a native Wayland file manager with grid, list and Miller column views, tabs, split view and file previews.
 
-It is built in C++23 on Wayland and OpenGL ES, using [Noctalia's](https://github.com/noctalia-dev/noctalia) rendering library and controls. It runs independently of the Noctalia shell and works with your Wayland desktop.
+It is built in C++23 on Wayland and OpenGL ES.
 
 <p align="center">
   <img src="assets/icons/dev.noctalia.luciole.svg" alt="Luciole Logo" width="192" />

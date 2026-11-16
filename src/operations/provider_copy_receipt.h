@@ -13,12 +13,21 @@ namespace luciole {
         const Location& destination, const Location& staged, provider_history::Budget& budget, const CancelToken& token,
         bool replacement = false, const std::optional<Location>& historyRoot = std::nullopt
     );
+    // Use owner-only local retained copies when server permissions cannot supply private history storage.
+    static std::shared_ptr<const ProviderCopyEffect> prepareLocal(
+        const Location& destination, const Location& staged, provider_history::Budget& budget, const CancelToken& token,
+        bool replacement = false, const std::optional<Location>& historyRoot = std::nullopt
+    );
     void published(const CancelToken& token, const std::optional<Location>& previous = std::nullopt) const;
     // Worker-only retirement preserves displaced versions when a complete history cannot be captured.
     void preserveInactive() const;
 
   private:
     friend class ProviderCopyReceipt;
+    static std::shared_ptr<const ProviderCopyEffect> prepareWithStorage(
+        const Location& destination, const Location& staged, provider_history::Budget& budget, const CancelToken& token,
+        bool replacement, const std::optional<Location>& historyRoot, bool local
+    );
     explicit ProviderCopyEffect(std::shared_ptr<ProviderCopyStorage> storage) : m_storage(std::move(storage)) {}
     std::shared_ptr<ProviderCopyStorage> m_storage;
   };
