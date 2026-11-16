@@ -1190,7 +1190,9 @@ bool BrowserPage::navigationKey(const KeyboardEvent& event, bool editing) {
   if (!editing && zoomFromKey(event)) {
     return true;
   }
-  if (!editing && !event.repeat && dispatchShortcut(event, {Action::ShowSidebar, Action::CreateFolder})) {
+  if (!editing
+      && !event.repeat
+      && dispatchShortcut(event, {Action::ShowSidebar, Action::CreateFolder, Action::CreateFile})) {
     return true;
   }
   return false;
