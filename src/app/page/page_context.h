@@ -35,6 +35,8 @@ enum class PopupMode : std::uint8_t { Transient, Dialog };
 // Dialog width tiers: Small for one-field prompts and confirmations, Medium for forms and inspectors, Large for
 // multi-pane editors. A dialog is never wider than the window minus the dialog margin on each side.
 enum class DialogWidth : std::uint8_t { Small, Medium, Large };
+// Whether a click outside the dialog closes it. Forms keep Explicit so typed input is never lost to a stray click.
+enum class DialogDismiss : std::uint8_t { Explicit, OutsideClick };
 
 // The part of BrowserPage that feature controllers use. BrowserPage implements it.
 //
@@ -153,7 +155,9 @@ public:
   // Shows `root` as a modal dialog centered on the window, with a drop shadow, and focuses its first control.
   // Its height follows its content, capped by the window. While it stays open its top edge stays put, so
   // switching to a shorter or taller page or tab only moves the bottom edge.
-  virtual void showDialog(std::unique_ptr<Flex> root, DialogWidth width) = 0;
+  // `dismiss` OutsideClick closes it on a click outside, like a popover.
+  virtual void
+  showDialog(std::unique_ptr<Flex> root, DialogWidth width, DialogDismiss dismiss = DialogDismiss::Explicit) = 0;
   // The content width a dialog of tier `width` gets in the window now; for content laid out at a fixed width.
   virtual float dialogWidth(DialogWidth width) const = 0;
   // Closes the active dialog on the next main loop iteration.

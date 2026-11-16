@@ -2621,7 +2621,7 @@ std::pair<int, int> BrowserPage::dialogPosition(const popup_chrome::Geometry& ch
   };
 }
 
-void BrowserPage::showDialog(std::unique_ptr<Flex> root, DialogWidth width) {
+void BrowserPage::showDialog(std::unique_ptr<Flex> root, DialogWidth width, DialogDismiss dismiss) {
   // The frame holds the shadow in the bleed around the dialog; only the dialog itself takes input.
   auto* content = root.get();
   content->setFlexGrow(1.0F);
@@ -2652,7 +2652,7 @@ void BrowserPage::showDialog(std::unique_ptr<Flex> root, DialogWidth width) {
        .gravity = XDG_POSITIONER_GRAVITY_BOTTOM_RIGHT,
        .constraintAdjustment =
            XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_X | XDG_POSITIONER_CONSTRAINT_ADJUSTMENT_SLIDE_Y},
-      PopupMode::Dialog
+      dismiss == DialogDismiss::OutsideClick ? PopupMode::Transient : PopupMode::Dialog
   );
   if (!m_menuSurface) {
     return;
@@ -2722,6 +2722,7 @@ void BrowserPage::openPopup(
       return;
     }
     UiPhaseScope phase(UiPhase::Layout);
+    m_previewController.layoutQuick();
     // Resize before binding the surface: binding fetches Mesa's back buffer, and a wl_egl_window resize after that
     // only applies to the next frame, so this frame's old-size buffer would be shown stretched to the new size.
     if (m_dialogTier) {
@@ -2737,7 +2738,6 @@ void BrowserPage::openPopup(
         {0, 0, static_cast<float>(m_menuSurface->width()), static_cast<float>(m_menuSurface->height())}
     );
     m_batchRename.syncTooltip(m_menuSurface->renderTarget().renderer());
-    m_previewController.layoutQuick();
   });
   m_menuSurface->setConfigureCallback([this](std::uint32_t, std::uint32_t) {
     if (std::exchange(m_dialogResizePending, false)

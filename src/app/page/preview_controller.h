@@ -4,6 +4,7 @@
 
 #include <memory>
 #include <optional>
+#include <utility>
 
 namespace luciole {
   class FileIconCache;
@@ -34,7 +35,7 @@ public:
   void layoutPane(bool show);
   // BrowserPage::deactivate(): hides the pane and clears its image.
   void hidePane();
-  // Popup frame hook in BrowserPage::showPopup(): syncs and arranges Quick Look.
+  // Dialog frame hook, before the dialog measures itself: sizes and syncs Quick Look.
   void layoutQuick();
 
   // Pane rectangle the workspace reserves; empty while no pane fits.
@@ -44,6 +45,8 @@ public:
 private:
   void openPreviewed(bool with);
   std::unique_ptr<FilePreviewView> makeView(bool quick);
+  // Quick Look's content size: the Medium dialog width and a height that follows the window.
+  std::pair<float, float> quickSize() const;
 
   PageContext& m_page;
   luciole::PreviewService& m_preview;

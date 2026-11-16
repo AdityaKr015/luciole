@@ -258,7 +258,8 @@ private:
 
   void applySettings(const luciole::BrowserSettings& settings, bool force) override;
 
-  void showDialog(std::unique_ptr<Flex> root, DialogWidth width) override;
+  void
+  showDialog(std::unique_ptr<Flex> root, DialogWidth width, DialogDismiss dismiss = DialogDismiss::Explicit) override;
   float dialogWidth(DialogWidth width) const override;
 
   void cancelDrag() override;

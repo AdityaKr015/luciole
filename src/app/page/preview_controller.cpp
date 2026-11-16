@@ -55,11 +55,10 @@ void PreviewController::sync() {
       ? current.image
       : prepared;
   const auto* pixels = image && image->pixels ? &*image->pixels : nullptr;
-  const float width = quick ? static_cast<float>(surface->width()) : m_bounds->width;
-  const float height = quick ? static_cast<float>(surface->height()) : m_bounds->height;
+  const auto size = quick ? quickSize() : std::pair{m_bounds->width, m_bounds->height};
   const auto& renderer = quick ? surface->renderTarget().renderer() : m_page.surface().renderTarget().renderer();
   const auto layout = luciole::previewImageLayout(
-      pixels ? pixels->width : 0, pixels ? pixels->height : 0, width, height, renderer.renderScale(), quick
+      pixels ? pixels->width : 0, pixels ? pixels->height : 0, size.first, size.second, renderer.renderScale(), quick
   );
   m_preview.show(entry ? std::optional(*entry) : std::nullopt, layout.pixels, prepared);
 }
@@ -102,17 +101,21 @@ std::unique_ptr<FilePreviewView> PreviewController::makeView(bool quick) {
   );
 }
 
+std::pair<float, float> PreviewController::quickSize() const {
+  return {
+      m_page.dialogWidth(DialogWidth::Medium),
+      std::max(1.0F, std::min(620.0F, static_cast<float>(m_page.surface().height()) - 48))
+  };
+}
+
 void PreviewController::showQuick() {
-  auto& surface = m_page.surface();
-  const float width = std::min(588.0F, static_cast<float>(surface.width()) - 32);
-  const float height = std::min(620.0F, static_cast<float>(surface.height()) - 48);
+  const auto height = quickSize().second;
   auto view = makeView(true);
   auto* control = view.get();
   view->setFlexGrow(1);
-  auto root = ui::column({.align = FlexAlign::Stretch, .height = height}, std::move(view));
-  m_page.showPopup(
-      std::move(root), nullptr, {(surface.width() - width) * 0.5F, (surface.height() - height) * 0.5F, 1, 1}, width,
-      height, false
+  m_page.showDialog(
+      ui::column({.align = FlexAlign::Stretch, .minHeight = height, .maxHeight = height}, std::move(view)),
+      DialogWidth::Medium, DialogDismiss::OutsideClick
   );
   if (m_page.menuSurface()) {
     m_page.activeDialog().bind(ActiveDialog::Kind::QuickPreview, [this] { m_quick = nullptr; });
@@ -197,14 +200,14 @@ void PreviewController::layoutQuick() {
   if (!m_quick) {
     return;
   }
-  auto* surface = m_page.menuSurface();
-  auto& renderer = surface->renderTarget().renderer();
-  const auto width = static_cast<float>(surface->width());
-  const auto height = static_cast<float>(surface->height());
+  // Before the dialog measures itself: the preview has a fixed height that follows the window.
+  const auto [width, height] = quickSize();
+  auto* root = m_page.activeDialog().root();
+  root->setMinHeight(height);
+  root->setMaxHeight(height);
   const auto& snapshot = m_preview.snapshot();
   m_quick->sync(snapshot, width, height, snapshot.entry ? m_page.browser().model().typeLabel(snapshot.entry->id) : "");
   if (!snapshot.image || !snapshot.image->pixels) {
-    m_quick->clear(renderer);
+    m_quick->clear(m_page.menuSurface()->renderTarget().renderer());
   }
-  m_page.activeDialog().root()->arrange(renderer, {0, 0, width, height});
 }
