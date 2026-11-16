@@ -420,8 +420,8 @@ app = executable('luciole',
 )
 
 configure_file(
-  input: 'assets/dbus/org.freedesktop.FileManager1.service.in',
-  output: 'org.freedesktop.FileManager1.service',
+  input: 'assets/dbus/dev.noctalia.luciole.FileManager1.service.in',
+  output: 'dev.noctalia.luciole.FileManager1.service',
   configuration: {'bindir': get_option('prefix') / get_option('bindir')},
   install_dir: get_option('datadir') / 'dbus-1/services',
 )
