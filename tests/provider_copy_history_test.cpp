@@ -4,6 +4,7 @@
 #include "operations/provider_transfer.h"
 #include "test_check.h"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -397,7 +398,11 @@ namespace {
       fs::rename(backend, backend.string() + "-held");
       fs::create_directory(backend);
       const auto reply = replay(done.receipt);
-      TEST_CHECK(!reply.receipt && reply.outcomes.front().error->kind == FileErrorKind::Missing);
+      TEST_CHECK(!reply.receipt && reply.outcomes.front().error);
+      TEST_CHECK(
+          reply.outcomes.front().error->kind == FileErrorKind::Missing
+          || reply.outcomes.front().error->kind == FileErrorKind::Changed
+      );
       TEST_CHECK(fs::is_empty(backend));
     }
     drain(true);
@@ -456,7 +461,11 @@ namespace {
     write(backend / "tree/keep", "kept");
     {
       auto done = upload({Location::fromPath((local / "tree").native())}, remote, [](const auto&) { return Merge; });
-      TEST_CHECK(!done.receipt && done.outcomes.front().outcome == Copied);
+      TEST_CHECK(done.receipt && done.receipt->size() == 1 && done.outcomes.front().outcome == Copied);
+      TEST_CHECK(read(backend / "tree/child") == "merged" && read(backend / "tree/keep") == "kept");
+      auto redo = reversed(done.receipt);
+      TEST_CHECK(!fs::exists(backend / "tree/child") && read(backend / "tree/keep") == "kept");
+      auto undo = reversed(redo);
       TEST_CHECK(read(backend / "tree/child") == "merged" && read(backend / "tree/keep") == "kept");
     }
     drain();
@@ -467,6 +476,227 @@ namespace {
     }
     drain();
     noStages(backend);
+  }
+  TransferConflictChoice mergeChoice(const TransferConflict& conflict) {
+    if (conflict.sourceDirectory && conflict.destinationDirectory) {
+      return Merge;
+    }
+    if (conflict.name == "skip") {
+      return Skip;
+    }
+    return conflict.name == "numbered" ? KeepBoth : Replace;
+  }
+  void merges(const fs::path& local, const Location& remote, const fs::path& backend) {
+    fs::create_directories(local / "tree/nested");
+    fs::create_directories(local / "tree/fresh");
+    fs::create_directories(local / "tree/empty");
+    fs::create_directories(backend / "tree/nested");
+    write(local / "tree/new.txt", "new content");
+    write(local / "tree/.hidden", "hidden content");
+    write(local / "tree/fresh/café\nfile", "fresh content");
+    fs::create_symlink("missing target", local / "tree/dangling");
+    write(local / "tree/nested/replaced", "incoming content");
+    write(local / "tree/nested/skip", "never copied");
+    write(local / "tree/nested/numbered", "numbered content");
+    write(local / "extra.txt", "extra content");
+    write(backend / "tree/nested/replaced", "previous content");
+    write(backend / "tree/nested/skip", "skipped content");
+    write(backend / "tree/nested/numbered", "keep numbered original");
+    write(backend / "tree/keep", "unrelated content");
+    TEST_CHECK(::chmod((backend / "tree").c_str(), 0750) == 0);
+    struct stat original{}, nested{}, previous{};
+    TEST_CHECK(::lstat((backend / "tree").c_str(), &original) == 0);
+    TEST_CHECK(::lstat((backend / "tree/nested").c_str(), &nested) == 0);
+    TEST_CHECK(::lstat((backend / "tree/nested/replaced").c_str(), &previous) == 0);
+    {
+      auto done = upload(
+          {Location::fromPath((local / "tree").native()), Location::fromPath((local / "extra.txt").native())}, remote,
+          mergeChoice
+      );
+      TEST_CHECK(done.receipt && done.receipt->size() == 8 && done.outcomes.front().outcome == Copied);
+      fs::remove_all(local);
+      write(backend / "tree/later", "added after copying");
+      write(backend / "tree/nested/later", "nested addition");
+      auto redo = reversed(done.receipt);
+      for (unsigned turn = 0; turn < 3; ++turn) {
+        TEST_CHECK(!fs::exists(backend / "tree/new.txt") && !fs::exists(backend / "extra.txt"));
+        TEST_CHECK(!fs::exists(backend / "tree/fresh") && !fs::exists(backend / "tree/empty"));
+        TEST_CHECK(!fs::is_symlink(backend / "tree/dangling"));
+        TEST_CHECK(!fs::exists(backend / "tree/nested/numbered (1)"));
+        TEST_CHECK(read(backend / "tree/nested/replaced") == "previous content");
+        struct stat restored{};
+        TEST_CHECK(::lstat((backend / "tree/nested/replaced").c_str(), &restored) == 0);
+        TEST_CHECK(restored.st_ino == previous.st_ino);
+        auto undo = reversed(redo);
+        TEST_CHECK(read(backend / "tree/new.txt") == "new content");
+        TEST_CHECK(read(backend / "tree/fresh/café\nfile") == "fresh content");
+        TEST_CHECK(read(backend / "tree/nested/replaced") == "incoming content");
+        TEST_CHECK(read(backend / "tree/nested/numbered (1)") == "numbered content");
+        TEST_CHECK(fs::read_symlink(backend / "tree/dangling") == "missing target");
+        TEST_CHECK(fs::is_empty(backend / "tree/empty"));
+        TEST_CHECK(read(backend / "extra.txt") == "extra content");
+        TEST_CHECK(read(backend / "tree/keep") == "unrelated content");
+        TEST_CHECK(read(backend / "tree/later") == "added after copying");
+        TEST_CHECK(read(backend / "tree/nested/later") == "nested addition");
+        TEST_CHECK(read(backend / "tree/nested/skip") == "skipped content");
+        TEST_CHECK(read(backend / "tree/nested/numbered") == "keep numbered original");
+        TEST_CHECK(::lstat((backend / "tree").c_str(), &restored) == 0);
+        TEST_CHECK(restored.st_ino == original.st_ino && (restored.st_mode & 0777U) == 0750U);
+        TEST_CHECK(::lstat((backend / "tree/nested").c_str(), &restored) == 0 && restored.st_ino == nested.st_ino);
+        redo = reversed(undo);
+      }
+    }
+    drain();
+    noStages(backend);
+    TEST_CHECK(read(backend / "tree/nested/replaced") == "previous content");
+  }
+  void mergeNoops(const fs::path& local, const Location& remote, const fs::path& backend) {
+    fs::create_directories(local / "tree");
+    fs::create_directories(backend / "tree");
+    write(backend / "tree/keep", "unchanged");
+    for (unsigned variant = 0; variant < 2; ++variant) {
+      if (variant) {
+        write(local / "tree/skip", "skip source");
+        write(backend / "tree/skip", "keep destination");
+      }
+      const auto done = upload({Location::fromPath((local / "tree").native())}, remote, mergeChoice);
+      TEST_CHECK(!done.receipt && done.outcomes.front().outcome == Copied && !done.outcomes.front().error);
+      TEST_CHECK(read(backend / "tree/keep") == "unchanged");
+      drain();
+      noStages(backend);
+    }
+    TEST_CHECK(read(backend / "tree/skip") == "keep destination");
+  }
+  void mergeParentRefusal(const fs::path& local, const Location& remote, const fs::path& backend) {
+    // Every merged ancestor must remain a real directory, including an ancestor above the immediate parent.
+    for (unsigned variant = 0; variant < 2; ++variant) {
+      const auto name = std::to_string(variant);
+      const auto source = local / name / "tree";
+      const auto destination = backend / name;
+      fs::create_directories(source / "nested");
+      fs::create_directories(destination / "tree/nested");
+      write(source / "a", "first copied item");
+      write(source / "nested/z", "last copied item");
+      {
+        auto done = upload({Location::fromPath(source.native())}, remote.child(name), mergeChoice);
+        TEST_CHECK(done.receipt);
+        const auto original = destination / (variant ? "tree" : "tree/nested");
+        const auto retired = destination / "retired";
+        fs::rename(original, retired);
+        fs::create_directory_symlink(retired, original);
+        auto blocked = replay(done.receipt);
+        TEST_CHECK(!blocked.receipt && blocked.outcomes.front().error->kind == FileErrorKind::Changed);
+        TEST_CHECK(read(destination / "tree/a") == "first copied item");
+        TEST_CHECK(read(destination / "tree/nested/z") == "last copied item");
+        fs::remove(original);
+        fs::rename(retired, original);
+      }
+      drain();
+      noStages(destination);
+    }
+  }
+  void mergePreflight(const fs::path& local, const Location& remote, const fs::path& backend) {
+    fs::create_directories(local / "tree/nested");
+    fs::create_directories(backend / "tree/nested");
+    write(local / "tree/a", "incoming a");
+    write(local / "tree/nested/z", "incoming z");
+    const auto source = Location::fromPath((local / "tree").native());
+    {
+      auto done = upload({source}, remote, mergeChoice);
+      TEST_CHECK(done.receipt);
+      CancelToken cancelled;
+      cancelled.cancel();
+      std::atomic<std::size_t> count{0};
+      auto stopped = done.receipt->reverse(cancelled, count);
+      TEST_CHECK(!stopped.receipt && !stopped.retireHistory);
+      TEST_CHECK(read(backend / "tree/a") == "incoming a" && read(backend / "tree/nested/z") == "incoming z");
+      const auto stamp = fs::last_write_time(backend / "tree/nested/z");
+      write(backend / "tree/nested/z", "external z");
+      fs::last_write_time(backend / "tree/nested/z", stamp);
+      const auto blocked = replay(done.receipt);
+      TEST_CHECK(!blocked.receipt && blocked.outcomes.front().error->kind == FileErrorKind::Changed);
+      TEST_CHECK(read(backend / "tree/a") == "incoming a");
+    }
+    drain();
+    noStages(backend);
+    {
+      auto done = upload({source}, remote, mergeChoice);
+      TEST_CHECK(done.receipt);
+      auto redo = reversed(done.receipt);
+      write(backend / "tree/nested/z", "unknown occupant");
+      auto blocked = replay(redo);
+      TEST_CHECK(!blocked.receipt && blocked.outcomes.front().error->kind == FileErrorKind::Changed);
+      TEST_CHECK(read(backend / "tree/a") == "incoming a");
+      TEST_CHECK(read(backend / "tree/nested/z") == "unknown occupant");
+    }
+    drain(true);
+    for (const auto& directory : {backend / "tree", backend / "tree/nested"}) {
+      const auto retained = anchor(directory);
+      TEST_CHECK(read(retained / "item") == (directory == backend / "tree" ? "incoming a" : "incoming z"));
+      fs::remove_all(retained);
+    }
+    noStages(backend);
+  }
+  void mergeCaptureFailure(const fs::path& local, const Location& remote, const fs::path& backend) {
+    // A dependent destination or later failure must not delete earlier displaced data during the forward job.
+    for (unsigned variant = 0; variant < 2; ++variant) {
+      const auto name = std::to_string(variant);
+      const auto first = local / name / "first/tree", second = local / name / "second/tree";
+      const auto destination = backend / name / "tree";
+      fs::create_directories(first);
+      fs::create_directories(second);
+      fs::create_directories(destination);
+      write(first / "a", "first incoming");
+      write(second / "a", "second incoming");
+      write(destination / "a", "original destination");
+      std::vector<Location> sources{Location::fromPath(first.native())};
+      if (!variant) {
+        sources.push_back(Location::fromPath(second.native()));
+      } else {
+        TEST_CHECK(::mkfifo((first / "z").c_str(), 0600) == 0);
+      }
+      {
+        const auto done = upload(sources, remote.child(name), mergeChoice);
+        TEST_CHECK(!done.receipt);
+        TEST_CHECK(done.outcomes.front().outcome == (variant ? Partial : Copied));
+        TEST_CHECK(read(destination / "a") == (variant ? "first incoming" : "second incoming"));
+        TEST_CHECK(read(first / "a") == "first incoming" && read(second / "a") == "second incoming");
+      }
+      drain(true);
+      std::vector<fs::path> retained;
+      std::vector<std::string> contents;
+      for (const auto& entry : fs::directory_iterator(destination)) {
+        if (entry.path().filename().native().starts_with(".luciole-history-")) {
+          retained.push_back(entry.path());
+          contents.push_back(read(entry.path() / "previous"));
+        }
+      }
+      TEST_CHECK(contents.size() == (variant ? 1 : 2));
+      TEST_CHECK(std::ranges::find(contents, "original destination") != contents.end());
+      if (!variant) {
+        TEST_CHECK(std::ranges::find(contents, "first incoming") != contents.end());
+      }
+      for (const auto& path : retained) {
+        fs::remove_all(path);
+      }
+      noStages(destination);
+    }
+  }
+  void mergeEffectLimit(const fs::path& local, const Location& remote, const fs::path& backend) {
+    fs::create_directories(local / "tree");
+    fs::create_directories(backend / "tree");
+    for (unsigned i = 0; i < 129; ++i) {
+      write(local / "tree" / ("item-" + std::to_string(i)), "bounded merge");
+    }
+    {
+      auto done = upload({Location::fromPath((local / "tree").native())}, remote, mergeChoice);
+      TEST_CHECK(!done.receipt && done.outcomes.front().outcome == Copied);
+    }
+    drain();
+    noStages(backend);
+    for (unsigned i = 0; i < 129; ++i) {
+      TEST_CHECK(read(backend / "tree" / ("item-" + std::to_string(i))) == "bounded merge");
+    }
   }
   void markerRefusal(const fs::path& local, const Location& remote, const fs::path& backend) {
     fs::create_directories(local);
@@ -593,6 +823,38 @@ namespace {
     fs::remove_all(retained);
   }
 
+  void lostMergeReply(const fs::path& local, const Location& remote, const fs::path& backend, const fs::path& arm) {
+    fs::create_directories(local / "tree");
+    fs::create_directories(backend / "tree");
+    write(local / "tree/a", "retained merge data");
+    write(local / "tree/z", "later merge data");
+    write(backend / "tree/keep", "unrelated destination");
+    {
+      auto done = upload({Location::fromPath((local / "tree").native())}, remote, mergeChoice);
+      TEST_CHECK(done.receipt && done.receipt->size() == 2);
+      const auto temporary = fs::path(arm.string() + ".tmp");
+      write(temporary, (backend / "tree/a").native());
+      fs::rename(temporary, arm);
+      TransferService service;
+      TEST_CHECK(service.replayCopy(done.receipt));
+      wait(service);
+      TEST_CHECK(service.historyRetired() && !service.copyReceipt());
+      TEST_CHECK(service.results().front().outcome == Partial && service.results().front().error);
+      TEST_CHECK(service.report().contains("Inspect"));
+      TEST_CHECK(!fs::exists(backend / "tree/a"));
+      TEST_CHECK(read(backend / "tree/z") == "later merge data");
+      TEST_CHECK(read(backend / "tree/keep") == "unrelated destination");
+      TEST_CHECK(read(local / "tree/a") == "retained merge data");
+      bool found = false;
+      for (const auto& entry : fs::directory_iterator(backend / "tree")) {
+        if (entry.path().filename().native().starts_with(".luciole-history-")) {
+          found |= read(entry.path() / "item") == "retained merge data";
+        }
+      }
+      TEST_CHECK(found);
+    }
+    drain(true);
+  }
   void run(const fs::path& local, const Location& remote, const fs::path& backend) {
     basic(local / "basic", remote.child("basic"), backend / "basic");
     collisionsAndEdits(local / "collisions", remote.child("collisions"), backend / "collisions");
@@ -603,9 +865,15 @@ namespace {
     cleanupRefusal(local / "refusal", remote.child("refusal"), backend / "refusal");
     budget(local / "budget", remote.child("budget"), backend / "budget");
     fullSelection(local / "selection", remote.child("selection"), backend / "selection");
+    merges(local / "merges", remote.child("merges"), backend / "merges");
+    mergeNoops(local / "merge-noops", remote.child("merge-noops"), backend / "merge-noops");
+    mergeParentRefusal(local / "merge-parents", remote.child("merge-parents"), backend / "merge-parents");
+    mergePreflight(local / "merge-preflight", remote.child("merge-preflight"), backend / "merge-preflight");
+    mergeCaptureFailure(local / "merge-capture", remote.child("merge-capture"), backend / "merge-capture");
     markerRefusal(local / "marker", remote.child("marker"), backend / "marker");
     if (remote.isNative()) {
       effectLimit(local / "limit", remote.child("limit"), backend / "limit");
+      mergeEffectLimit(local / "merge-limit", remote.child("merge-limit"), backend / "merge-limit");
     } else {
       disconnected(local / "disconnected", remote.child("disconnected"), backend / "disconnected");
     }
@@ -617,17 +885,22 @@ int main(int argc, char* argv[]) {
   if (argc == 6
       && (std::string_view(argv[1]) == "--lost-reply"
           || std::string_view(argv[1]) == "--lost-replacement"
-          || std::string_view(argv[1]) == "--lost-restore")) {
+          || std::string_view(argv[1]) == "--lost-restore"
+          || std::string_view(argv[1]) == "--lost-merge")) {
     const auto remote = Location::fromUri(argv[2]);
     TEST_CHECK(remote.uri().starts_with("sftp:"));
     mount(remote);
     const luciole::GString uuid(g_uuid_string_random());
     const auto name = std::string("lost-reply-") + uuid.get();
     const auto backend = fs::path(argv[3]) / name, local = fs::path(argv[4]) / name;
-    lostReply(
-        local, remote.child(name), backend, argv[5], std::string_view(argv[1]) != "--lost-reply",
-        std::string_view(argv[1]) == "--lost-restore"
-    );
+    if (std::string_view(argv[1]) == "--lost-merge") {
+      lostMergeReply(local, remote.child(name), backend, argv[5]);
+    } else {
+      lostReply(
+          local, remote.child(name), backend, argv[5], std::string_view(argv[1]) != "--lost-reply",
+          std::string_view(argv[1]) == "--lost-restore"
+      );
+    }
   } else if (argc == 5 && std::string_view(argv[1]) == "--provider") {
     const auto remote = Location::fromUri(argv[2]);
     TEST_CHECK(remote.uri().starts_with("sftp:"));

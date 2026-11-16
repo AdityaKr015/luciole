@@ -11,9 +11,11 @@ namespace luciole {
   public:
     static std::shared_ptr<const ProviderCopyEffect> prepare(
         const Location& destination, const Location& staged, provider_history::Budget& budget, const CancelToken& token,
-        bool replacement = false
+        bool replacement = false, const std::optional<Location>& historyRoot = std::nullopt
     );
     void published(const CancelToken& token, const std::optional<Location>& previous = std::nullopt) const;
+    // Worker-only retirement preserves displaced versions when a complete history cannot be captured.
+    void preserveInactive() const;
 
   private:
     friend class ProviderCopyReceipt;

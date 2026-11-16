@@ -3,6 +3,7 @@
 #include "fs/background_job.h"
 
 #include <algorithm>
+#include <map>
 #include <mutex>
 #include <print>
 #include <set>
@@ -127,6 +128,39 @@ namespace {
       throwFileError(FileErrorKind::Exists, "The remote destination name is occupied: " + location.uri());
     }
   }
+  struct DirectoryProof {
+    Location location;
+    std::map<std::string, std::string> attributes;
+  };
+  DirectoryProof directoryProof(const Location& location, const CancelToken& token) {
+    const auto value = ph::info(location, token);
+    if (readIsSymlink(value.get()) || g_file_info_get_file_type(value.get()) != G_FILE_TYPE_DIRECTORY) {
+      throwFileError(FileErrorKind::Changed, "A remote copy containing folder changed.");
+    }
+    DirectoryProof proof{location, {}};
+    // Membership and modification times change through our own effects and unrelated sibling additions.
+    for (const char* attribute :
+         {G_FILE_ATTRIBUTE_ID_FILE, G_FILE_ATTRIBUTE_ID_FILESYSTEM, G_FILE_ATTRIBUTE_UNIX_MODE,
+          G_FILE_ATTRIBUTE_UNIX_UID, G_FILE_ATTRIBUTE_UNIX_GID}) {
+      if (g_file_info_has_attribute(value.get(), attribute)) {
+        const luciole::GString text(g_file_info_get_attribute_as_string(value.get(), attribute));
+        proof.attributes.emplace(attribute, text.get());
+      }
+    }
+    return proof;
+  }
+  std::vector<DirectoryProof>
+  containingFolders(const Location& destination, const std::optional<Location>& root, const CancelToken& token) {
+    std::vector<DirectoryProof> result;
+    for (auto current = destination.parent(); current && result.size() < 129; current = current->parent()) {
+      result.push_back(directoryProof(*current, token));
+      if (!root || *current == *root) {
+        std::ranges::reverse(result);
+        return result;
+      }
+    }
+    throwFileError(FileErrorKind::Unsupported, "Remote copy history requires bounded containing folders.");
+  }
   bool invalidates(const FileError& error) {
     return error.kind == FileErrorKind::Changed
         || error.kind == FileErrorKind::Missing
@@ -139,16 +173,17 @@ struct luciole::ProviderCopyStorage {
   Location destination, anchor;
   std::string nonce;
   provider_history::Tree tree;
+  std::vector<DirectoryProof> parents;
   std::optional<provider_history::Tree> previous;
   bool previousStored = false;
   bool anchorAttempted = false, anchorCreated = false, markerReady = false, published = false, hidden = false,
        retain = false;
   ProviderCopyStorage(
       Location target, Location storage, std::string secret, provider_history::Tree proof,
-      std::optional<provider_history::Tree> predecessor
+      std::optional<provider_history::Tree> predecessor, std::vector<DirectoryProof> containing
   )
       : destination(std::move(target)), anchor(std::move(storage)), nonce(std::move(secret)), tree(std::move(proof)),
-        previous(std::move(predecessor)) {}
+        parents(std::move(containing)), previous(std::move(predecessor)) {}
 
   Location current() const { return hidden ? anchor.child("item") : destination; }
   std::vector<std::string> storageNames() const {
@@ -157,7 +192,15 @@ struct luciole::ProviderCopyStorage {
     }
     return previousStored ? std::vector<std::string>{kMarker, "previous"} : std::vector<std::string>{kMarker};
   }
+  void validateParents(const CancelToken& token) const {
+    for (const auto& parent : parents) {
+      if (directoryProof(parent.location, token).attributes != parent.attributes) {
+        throwFileError(FileErrorKind::Changed, "A remote copy containing folder changed.");
+      }
+    }
+  }
   void validate(const CancelToken& token) const {
+    validateParents(token);
     marker(anchor, nonce, token);
     const auto names = ph::children(anchor, token, 2);
     if (names != storageNames() || (previous && !previousStored)) {
@@ -175,6 +218,7 @@ struct luciole::ProviderCopyStorage {
     if (!anchorCreated) {
       if (anchorAttempted) {
         CleanupDeadline deadline;
+        validateParents(deadline.token);
         if (ph::info(anchor, deadline.token, true)) {
           throwFileError(FileErrorKind::Other, "Remote history storage creation was not confirmed.");
         }
@@ -185,6 +229,7 @@ struct luciole::ProviderCopyStorage {
       throwFileError(FileErrorKind::Other, "Incomplete remote reversal retained data for inspection.");
     }
     CleanupDeadline deadline;
+    validateParents(deadline.token);
     if (!markerReady) {
       if (!ph::children(anchor, deadline.token, 1).empty()) {
         throwFileError(FileErrorKind::Changed, "Unverified data remains in remote history storage.");
@@ -209,8 +254,9 @@ struct luciole::ProviderCopyStorage {
 
 std::shared_ptr<const luciole::ProviderCopyEffect> luciole::ProviderCopyEffect::prepare(
     const Location& destination, const Location& staged, provider_history::Budget& budget, const CancelToken& token,
-    bool replacement
+    bool replacement, const std::optional<Location>& historyRoot
 ) {
+  auto parents = containingFolders(destination, historyRoot, token);
   auto tree = provider_history::capture(staged, budget, token);
   auto previous = replacement ? std::optional(provider_history::capture(destination, budget, token)) : std::nullopt;
   const auto parent = destination.parent();
@@ -221,7 +267,7 @@ std::shared_ptr<const luciole::ProviderCopyEffect> luciole::ProviderCopyEffect::
   auto storage = std::shared_ptr<ProviderCopyStorage>(
       new ProviderCopyStorage(
           destination, parent->child(std::string(".luciole-history-") + uuid.get()), nonce.get(), std::move(tree),
-          std::move(previous)
+          std::move(previous), std::move(parents)
       ),
       [](ProviderCopyStorage* raw) {
         auto owned = std::unique_ptr<ProviderCopyStorage>(raw);
@@ -268,6 +314,10 @@ void luciole::ProviderCopyEffect::published(const CancelToken& token, const std:
   m_storage->validate(token);
   m_storage->published = true;
   m_storage->retain = false;
+}
+
+void luciole::ProviderCopyEffect::preserveInactive() const {
+  m_storage->retain |= m_storage->hidden || m_storage->previousStored;
 }
 
 struct luciole::ProviderCopyReceipt::State {
