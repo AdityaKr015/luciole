@@ -1508,7 +1508,9 @@ void BrowserPage::sortAction(Action action) {
 
 void BrowserPage::openTargets(const std::vector<luciole::DirectoryEntry>& targets) {
   if (choosing()) {
-    if (targets.size() == 1 && targets.front().type == luciole::FileType::Directory) {
+    if (targets.size() == 1
+        && (targets.front().type == luciole::FileType::Directory
+            || targets.front().type == luciole::FileType::Mountable)) {
       browser().activate(targets.front().id);
     } else {
       m_chooser.open(targets);
@@ -2110,6 +2112,7 @@ void BrowserPage::prepareFrame(bool, bool layout) {
   m_operations.onFrame();
   m_settingsController.onFrame();
   m_sidebar.onFrame();
+  m_mountController.onFrame();
   m_archiveController.onFrame();
   m_transferController.syncConflict();
   m_trashController.onFrame();

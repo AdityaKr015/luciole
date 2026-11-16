@@ -23,6 +23,14 @@ The field next to the location bar shows Search files… for recursive search, o
 
 Open Terminal Here is near the top of the folder background menu. A single folder's context menu offers Open in Terminal directly, targeting that folder. F4 always uses the active pane's current folder, regardless of selection; it also works while editing the location/search field, without submitting or clearing its text. Dialogs block the shortcut. Terminal actions require an accessible native folder and use Settings → General → Terminal, then the existing environment/discovery fallback.
 
+## Network folders
+
+Enter an address such as `smb://server/share` in the location bar, or open a saved network place. If the location is not mounted, Luciole asks the installed GIO/GVfs provider to connect and then opens the folder. You can also open an SMB server address and activate one of its listed shares. The same mounted share becomes visible to other applications using that desktop session.
+
+When the server requests login, use the username, domain and password fields, or Guest if the server offers anonymous access. A rejected password can produce another login prompt. Cancel stops that connection attempt; refreshing or opening the address again lets you retry. Navigating away or closing the page cancels its pending request. Credentials are passed to GIO for the session and are not saved in Luciole settings or bookmarks.
+
+Network protocols require their installed GVfs backends and a session D-Bus connection. See [packaging requirements](../../PACKAGING.md#gvfs-and-trash). A separate connect-to-server form, device-unlock dialogs and process-blocked mount questions are still planned.
+
 ## Views and selection
 
 [Undo/redo](file-operations.md#undo-and-redo) affects the most recent supported creation, rename or native copy/link/move in the running application, independently of the current folder or selection. When a text input is focused, its text-editing undo takes precedence.

@@ -12,6 +12,7 @@
 #include "app/page/file_keyboard_controller.h"
 #include "app/page/location_bar_controller.h"
 #include "app/page/menu_controller.h"
+#include "app/page/mount_controller.h"
 #include "app/page/operations_controller.h"
 #include "app/page/page_context.h"
 #include "app/page/preview_controller.h"
@@ -372,6 +373,7 @@ private:
   SubmenuController m_submenus{*this, m_connection, m_renderer, m_animations};
   ProgramController m_programs{*this, m_submenus, m_connection};
   CreateController m_createController{*this, m_templates, m_submenus};
+  MountController m_mountController{*this};
   ArchiveController m_archiveController{*this, m_launcher, m_icons, m_connection};
   TransferController m_transferController{*this, [this] { operationProgressTick(); }};
   OperationsController m_operations{*this, m_hub, [this](luciole::JobId id, bool retry) {
