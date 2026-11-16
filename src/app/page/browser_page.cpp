@@ -1007,6 +1007,9 @@ void BrowserPage::keyboard(const KeyboardEvent& event) {
     if (m_settingsController.key(event)) {
       return;
     }
+    if (m_shortcutsController.key(event)) {
+      return;
+    }
     m_menuController.key(event);
     return;
   }
@@ -1090,10 +1093,22 @@ bool BrowserPage::shortcutKey(const KeyboardEvent& event) {
   if (m_fileKeys.preeditKey(event)) {
     return true;
   }
-  if (m_locationBar.menuKey(event) || m_locationBar.completionKey(event)) {
+  if (m_locationBar.menuKey(event) || m_locationBar.completionKey(event) || m_locationBar.filterKey(event)) {
     return true;
   }
   if (windowKey(event) || m_locationBar.escapeKey(event)) {
+    return true;
+  }
+  // Escape anywhere else in the page returns to the file list.
+  if (!editing
+      && event.modifiers == 0
+      && KeySymbol::isEscape(event.sym)
+      && m_list != nullptr
+      && dispatcher().focusedArea() != m_list->focusArea()) {
+    focusFileList();
+    m_fileKeys.focusEntered();
+    m_browserDirty = true;
+    m_surface->requestUpdate();
     return true;
   }
   if (navigationKey(event, editing)) {
@@ -1108,7 +1123,7 @@ bool BrowserPage::shortcutKey(const KeyboardEvent& event) {
   if (m_list != nullptr
       && dispatcher().focusedArea() == m_list->focusArea()
       && (millerKey(event) || m_fileKeys.listKey(event))) {
-    m_fileKeys.setKeyboardFocus(!KeySymbol::isEscape(event.sym));
+    m_fileKeys.setKeyboardFocus(true);
     m_browserDirty = true;
     m_surface->requestUpdate();
     return true;
@@ -1119,6 +1134,10 @@ bool BrowserPage::shortcutKey(const KeyboardEvent& event) {
 bool BrowserPage::windowKey(const KeyboardEvent& event) {
   if (KeySymbol::isTab(event.sym)) {
     (void)dispatcher().cycleTabFocus((event.modifiers & KeyMod::Shift) != 0);
+    if (m_list != nullptr && dispatcher().focusedArea() == m_list->focusArea()) {
+      m_fileKeys.focusEntered();
+      m_browserDirty = true;
+    }
     m_surface->requestRedraw();
     return true;
   }
@@ -1130,7 +1149,7 @@ bool BrowserPage::windowKey(const KeyboardEvent& event) {
     m_surface->close();
     return true;
   }
-  if (dispatchShortcut(event, {Action::Settings})) {
+  if (dispatchShortcut(event, {Action::Settings, Action::KeyboardShortcuts})) {
     return true;
   }
   if (luciole::shortcutMatches(Action::EditLocation, event.sym, event.modifiers) && m_locationBar.hasLocationInput()) {
@@ -1167,13 +1186,15 @@ bool BrowserPage::millerKey(const KeyboardEvent& event) {
   if (m_miller.enabled() && event.modifiers == 0 && (event.sym == XKB_KEY_Left || event.sym == XKB_KEY_Right)) {
     const bool next = (event.sym == XKB_KEY_Right) != Style::rtl();
     if (next) {
+      m_fileKeys.selectFirstOnLoad();
       if (m_miller.enter()) {
         focusMiller(m_miller.focused());
         m_millerFocusPending = true;
+      } else {
+        m_fileKeys.cancelPendingCursor();
       }
-    } else if (m_miller.focused() > 0) {
-      focusMiller(m_miller.focused() - 1);
-      dispatcher().setFocus(m_list->focusArea());
+    } else if (actionState(Action::Up, actionRequest(false)).enabled) {
+      dispatchAction(Action::Up);
     }
     return true;
   }
@@ -1311,13 +1332,7 @@ void BrowserPage::runAction(
   static constexpr auto kHandlers = std::to_array<Handler>({
       {Action::Back, [](BrowserPage& page, const Call&) { (void)page.browser().back(); }},
       {Action::Forward, [](BrowserPage& page, const Call&) { (void)page.browser().forward(); }},
-      {Action::Up,
-      [](BrowserPage& page, const Call&) {
-        // Selects the folder just left once the parent loads.
-        if (auto current = page.browser().model().snapshot().location; page.browser().up()) {
-          page.revealOnReload({std::move(*current)});
-        }
-      }},
+      {Action::Up, [](BrowserPage& page, const Call&) { page.leaveFolder(); }},
       {Action::Home, [](BrowserPage& page, const Call&) { page.browser().home(); }},
       {Action::Root, [](BrowserPage& page, const Call&) { page.browser().open(luciole::Location::fromPath("/")); }},
       {Action::Refresh, [](BrowserPage& page, const Call&) { page.browser().refresh(); }},
@@ -1432,6 +1447,7 @@ void BrowserPage::runAction(
       {Action::Operations, [](BrowserPage& page, const Call&) { page.m_operations.open(); }},
       {Action::TargetTerminal,
        [](BrowserPage& page, const Call& call) { page.openTerminal(call.targets.front().location()); }},
+      {Action::KeyboardShortcuts, [](BrowserPage& page, const Call&) { page.m_shortcutsController.open(); }},
   });
   static_assert(luciole::actionTableInOrder(kHandlers));
   kHandlers[std::to_underlying(action)].run(*this, {.action = action, .request = request, .targets = targets});
@@ -1599,6 +1615,17 @@ void BrowserPage::actionError(std::string message) {
 void BrowserPage::setActionMessage(std::string message) { m_statusBar.setMessage(std::move(message)); }
 
 void BrowserPage::revealOnReload(std::vector<luciole::Location> targets) { m_revealTargets = std::move(targets); }
+
+void BrowserPage::leaveFolder() {
+  if (m_miller.enabled() && m_miller.focused() > 0) {
+    focusMiller(m_miller.focused() - 1);
+    dispatcher().setFocus(m_list->focusArea());
+    return;
+  }
+  if (auto current = browser().model().snapshot().location; browser().up()) {
+    revealOnReload({std::move(*current)});
+  }
+}
 
 void BrowserPage::restorePlaceFocus(luciole::Location location) { m_sidebar.focusPlace(std::move(location)); }
 
@@ -1909,6 +1936,7 @@ void BrowserPage::syncBrowser() {
     m_detailsHeader.setOffset(0);
     m_fileKeys.resetReveal();
   }
+  m_fileKeys.applyPendingCursor();
   m_browser.setExpandableFolders(
       m_savedSettings.expandableFolders && m_viewMode == luciole::ViewMode::List && !m_miller.enabled()
   );

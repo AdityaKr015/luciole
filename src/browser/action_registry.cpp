@@ -568,6 +568,7 @@ namespace {
        .shortcut = "",
        .scope = S::Targets,
        .rule = targetTerminal},
+      {.action = A::KeyboardShortcuts, .label = "Keyboard shortcuts", .shortcut = "F1"},
   });
   static_assert(luciole::actionTableInOrder(kActions));
 } // namespace
@@ -643,6 +644,7 @@ bool luciole::chooserAction(BrowserAction action) {
   case A::SelectionMenu:
   case A::CopyPath:
   case A::CopyUri:
+  case A::KeyboardShortcuts:
     return true;
   case A::Miller:
   case A::OpenWith:

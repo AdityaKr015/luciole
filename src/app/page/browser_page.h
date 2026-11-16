@@ -19,6 +19,7 @@
 #include "app/page/properties_controller.h"
 #include "app/page/rename_controller.h"
 #include "app/page/settings_controller.h"
+#include "app/page/shortcuts_controller.h"
 #include "app/page/sidebar_controller.h"
 #include "app/page/status_bar_controller.h"
 #include "app/page/submenu_controller.h"
@@ -287,6 +288,9 @@ private:
   bool windowKey(const KeyboardEvent& event);
   bool navigationKey(const KeyboardEvent& event, bool editing);
   bool millerKey(const KeyboardEvent& event);
+  // Parent folder: the parent Miller column when there is one, otherwise the parent folder, selecting the folder
+  // just left once it loads.
+  void leaveFolder();
 
   // Frame: prepareFrame() syncs the page and its controllers, then layoutFrame() lays them out.
   void syncBrowser();
@@ -397,6 +401,7 @@ private:
                                           m_connection, m_renderer,    [this] {
         m_thumbnails.clearCache(); }};
   AboutController m_aboutController{*this, m_launcher};
+  ShortcutsController m_shortcutsController{*this};
   ApplicationChooserController m_applicationChooser{*this, m_launcher, m_icons};
   PreviewController m_previewController{*this, m_preview, m_thumbnails, m_icons, m_renderer, m_applicationChooser};
   DetailsHeaderController m_detailsHeader{*this, m_preferences, m_listAdapter, m_gridAdapter, m_menuController};

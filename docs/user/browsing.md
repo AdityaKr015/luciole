@@ -13,7 +13,8 @@ The field next to the location bar shows Search files… for recursive search, o
 | Action | Shortcut |
 | --- | --- |
 | Back / Forward | Alt+Left / Alt+Right |
-| Parent folder / Home | Alt+Up / Alt+Home |
+| Parent folder / Home | Alt+Up or Backspace / Alt+Home |
+| Keyboard shortcuts | F1 |
 | Edit location / Focus search | Ctrl+L / Ctrl+F |
 | Open terminal in current folder | F4 |
 | Refresh | F5 |
@@ -22,6 +23,12 @@ The field next to the location bar shows Search files… for recursive search, o
 | Show sidebar / Show preview | F9 / F8 |
 
 Open Terminal Here is near the top of the folder background menu. A single folder's context menu offers Open in Terminal directly, targeting that folder. F4 always uses the active pane's current folder, regardless of selection; it also works while editing the location/search field, without submitting or clearing its text. Dialogs block the shortcut. Terminal actions require an accessible native folder and use Settings → General → Terminal, then the existing environment/discovery fallback.
+
+### Keyboard navigation
+
+In List and Columns, Right or Enter enters the folder under the cursor and Left or Backspace goes to its parent. Entering a folder from the keyboard selects its first item; going up selects the folder you left. In a List view folder tree, Left and Right still collapse and expand folders first. Grid keeps Left and Right for moving between items. Backspace edits typeahead or the search query while one is active.
+
+The cursor ring marks the item the keyboard acts on and stays visible inside a multi-selection. Ctrl+arrow keys move it without changing the selection, and Ctrl+Space selects or unselects the item under it. Ctrl+Enter opens the folder under the cursor in a new tab; Ctrl+Shift+Enter reverses the Switch to new folder tabs preference. Escape anywhere outside the file list, such as Places or the toolbar, returns focus to the list. In the search field, Down or Enter moves to the results with the first one selected. F1 lists every shortcut.
 
 ## Views and selection
 
@@ -69,7 +76,7 @@ Enable Restore tabs from last closed window in Settings → General to reopen th
 
 ## Miller columns
 
-Columns show successive folder levels inside one pane. Selecting one folder reveals its child column. Selecting a different folder replaces the descendant branch. Left/Right moves between parent and selected child; each column scrolls vertically, and horizontal scrolling reveals additional levels. Dividers resize columns.
+Columns show successive folder levels inside one pane. Selecting one folder reveals its child column. Selecting a different folder replaces the descendant branch. Right or Enter moves into the selected folder's column with its first item selected; Left, Backspace or Alt+Up moves back to the parent column. Each column scrolls vertically, and horizontal scrolling reveals additional levels. Dividers resize columns.
 
 Show parent folders is enabled by default in Settings → Views. Disable it to start Column view at the current folder alone. Deep navigation remains possible, while the application retains only a bounded set of live columns.
 
