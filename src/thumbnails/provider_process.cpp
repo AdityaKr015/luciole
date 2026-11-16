@@ -3,6 +3,8 @@
 #include "fs/gio_ptr.h"
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <condition_variable>
@@ -21,7 +23,10 @@ namespace {
     pid_t parent;
     rlim_t fileBytes;
     unsigned maxCpus;
+    // Launch ordinal: concurrent helpers take successive CPU groups instead of all sharing the first ones.
+    unsigned rotation;
   };
+  std::atomic<unsigned> launches{0};
   void childSetup(gpointer data) {
     const auto& limits = *static_cast<const ChildLimits*>(data);
     (void)::prctl(PR_SET_PDEATHSIG, SIGKILL);
@@ -39,15 +44,22 @@ namespace {
       if (::sched_getaffinity(0, sizeof(available), &available) < 0) {
         ::_exit(1);
       }
-      CPU_ZERO(&selected);
-      unsigned count = 0;
-      for (int cpu = 0; cpu < CPU_SETSIZE && count < limits.maxCpus; ++cpu) {
+      std::array<int, CPU_SETSIZE> cpus{};
+      unsigned total = 0;
+      for (int cpu = 0; cpu < CPU_SETSIZE; ++cpu) {
         if (CPU_ISSET(cpu, &available)) {
-          CPU_SET(cpu, &selected);
-          ++count;
+          cpus[total++] = cpu;
         }
       }
-      if (!count || ::sched_setaffinity(0, sizeof(selected), &selected) < 0) {
+      if (total == 0) {
+        ::_exit(1);
+      }
+      CPU_ZERO(&selected);
+      const unsigned first = limits.rotation * limits.maxCpus;
+      for (unsigned i = 0; i < std::min(limits.maxCpus, total); ++i) {
+        CPU_SET(cpus[(first + i) % total], &selected);
+      }
+      if (::sched_setaffinity(0, sizeof(selected), &selected) < 0) {
         ::_exit(1);
       }
     }
@@ -98,7 +110,7 @@ std::expected<void, std::string> luciole::runProviderProcess(
     g_subprocess_launcher_take_stdout_fd(launcher.get(), destination);
     g_subprocess_launcher_setenv(launcher.get(), "LC_ALL", "C", true);
   }
-  ChildLimits limits{::getpid(), fileBytes, maxCpus};
+  ChildLimits limits{::getpid(), fileBytes, maxCpus, launches.fetch_add(1, std::memory_order_relaxed)};
   g_subprocess_launcher_set_child_setup(launcher.get(), childSetup, &limits, nullptr);
   const int source = ::fcntl(input, F_DUPFD_CLOEXEC, 4);
   if (source < 0) {
