@@ -27,6 +27,9 @@ namespace luciole {
   Fd checkedFd(int fd);
   // fstat; throws errno as a FileErrorException.
   struct stat statFd(int fd);
+  // Distinguishes bind mounts even when their device and inode identities match.
+  // Throws Unsupported if the kernel cannot report mount IDs; optional history callers may decline capture.
+  bool sameMount(int first, int second);
   // Same inode and file type.
   bool sameIdentity(const struct stat& a, const struct stat& b);
   // Rename history ignores access time; metadata/content changes invalidate a captured revision.

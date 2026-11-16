@@ -13,6 +13,26 @@
 #include <unistd.h>
 #include <utility>
 
+namespace {
+  std::string namedDirectory(int fd) {
+    std::array<char, 8192> buffer{};
+    const auto count = ::readlink(("/proc/self/fd/" + std::to_string(fd)).c_str(), buffer.data(), buffer.size());
+    if (count <= 0 || static_cast<std::size_t>(count) == buffer.size() || buffer[0] != '/') {
+      return {};
+    }
+    std::string path(buffer.data(), static_cast<std::size_t>(count));
+    const luciole::Fd current(::open(path.c_str(), O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+    struct stat named{}, held{};
+    if (!current.valid()
+        || ::fstat(current.get(), &named) != 0
+        || ::fstat(fd, &held) != 0
+        || !luciole::sameIdentity(named, held)) {
+      return {};
+    }
+    return path;
+  }
+} // namespace
+
 luciole::CreationStage::CreationStage(int parent, bool discardOnClose)
     : m_parent(checkedFd(::fcntl(parent, F_DUPFD_CLOEXEC, 0))), m_discardOnClose(discardOnClose) {
   const GString uuid(g_uuid_string_random());
@@ -33,6 +53,7 @@ luciole::CreationStage::CreationStage(int parent, bool discardOnClose)
     throwErrno(errno);
   }
   m_directory = checkedFd(::open(held.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+  m_originalPath = namedDirectory(fd());
 }
 
 luciole::CreationStage::~CreationStage() { (void)clear(); }
@@ -101,11 +122,13 @@ bool luciole::CreationStage::clear() {
 }
 
 std::string luciole::CreationStage::recoveryPath() const {
-  std::array<char, 8192> buffer{};
-  const auto count = ::readlink(("/proc/self/fd/" + std::to_string(fd())).c_str(), buffer.data(), buffer.size());
-  return count > 0 && static_cast<std::size_t>(count) < buffer.size()
-      ? std::string(buffer.data(), static_cast<std::size_t>(count)) + "/item"
-      : "the private folder " + m_name;
+  const auto current = namedDirectory(fd());
+  if (!current.empty()) {
+    return current + "/item";
+  }
+  // Detached mounts can produce root-relative procfs names. Keep the last verified creation path instead.
+  return !m_originalPath.empty() ? m_originalPath + "/item"
+                                 : "/proc/" + std::to_string(::getpid()) + "/fd/" + std::to_string(fd()) + "/item";
 }
 
 void luciole::copyCreationData(int source, int output, std::uint64_t size, const CancelToken& token) {

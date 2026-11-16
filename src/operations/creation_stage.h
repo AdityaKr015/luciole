@@ -31,7 +31,7 @@ namespace luciole {
     void requireItem() const;
     Fd m_parent;
     bool m_discardOnClose;
-    std::string m_name;
+    std::string m_name, m_originalPath;
     Fd m_directory, m_item;
   };
   void copyCreationData(int source, int output, std::uint64_t size, const CancelToken& token);

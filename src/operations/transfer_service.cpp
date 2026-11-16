@@ -211,6 +211,47 @@ namespace {
     return outcomes;
   }
 
+  void guardCopiedMoves(
+      Work& work, const std::vector<Source>& sources, const std::vector<bool>& included,
+      const std::vector<bool>& processed, const luciole::Location& destination
+  ) {
+    if (!work.prepareCopiedMove) {
+      return;
+    }
+    std::vector<luciole::Location> paths;
+    for (std::size_t i = 0; i < sources.size(); ++i) {
+      if (processed[sources[i].index] || included[i]) {
+        continue;
+      }
+      if (paths.size() == 8192) {
+        work.prepareCopiedMove = {};
+        return;
+      }
+      paths.push_back(sources[i].location);
+      paths.push_back(destination.child(sources[i].name));
+    }
+    // Check independence only if a Move actually needs staged copying. Native sequencing is unchanged.
+    work.prepareCopiedMove =
+        [prepare = std::move(work.prepareCopiedMove), paths = std::move(paths), checked = false, independent = true](
+            const Source& source, const luciole::Location& target, int parent, int stage, bool replacing
+        ) mutable -> std::shared_ptr<const luciole::CopiedMoveEffect> {
+      if (!checked) {
+        checked = true;
+        for (std::size_t i = 0; i < paths.size() && independent; ++i) {
+          for (std::size_t j = 0; j < i; ++j) {
+            if (luciole::transferLocationsEqual(paths[i], paths[j])
+                || luciole::transferLocationInside(paths[i], paths[j])
+                || luciole::transferLocationInside(paths[j], paths[i])) {
+              independent = false;
+              break;
+            }
+          }
+        }
+      }
+      return independent ? prepare(source, target, parent, stage, replacing) : nullptr;
+    };
+  }
+
   std::vector<luciole::TransferResult> runFirst(Job& job, Work& work, std::atomic<std::size_t>& completed) {
     using luciole::TransferOutcome;
     const auto& request = job.request;
@@ -273,7 +314,6 @@ namespace {
       }
       std::set<std::tuple<dev_t, ino_t, std::string>> seen;
       std::vector<bool> included(sources.size(), false);
-      bool crossesDevice = false;
       // Classify overlaps before any selected parent is moved or removed.
       for (std::size_t i = 0; i < sources.size(); ++i) {
         auto& source = sources[i];
@@ -309,32 +349,9 @@ namespace {
           completed.fetch_add(1);
         }
         source.parent = luciole::Fd{};
-        if (!processed[source.index] && !included[i]) {
-          crossesDevice |= source.metadata.st_dev != binding->metadata.st_dev;
-        }
       }
 
-      // Copied and mixed history requires independent selected roots and at least one real device crossing.
-      if (!crossesDevice) {
-        work.prepareCopiedMove = {};
-      }
-      std::vector<luciole::Location> copiedPaths;
-      for (std::size_t i = 0; i < sources.size() && work.prepareCopiedMove; ++i) {
-        if (processed[sources[i].index] || included[i]) {
-          continue;
-        }
-        for (const auto& path : {sources[i].location, binding->location.child(sources[i].name)}) {
-          for (const auto& previous : copiedPaths) {
-            if (transferLocationsEqual(path, previous)
-                || transferLocationInside(path, previous)
-                || transferLocationInside(previous, path)) {
-              work.prepareCopiedMove = {};
-              break;
-            }
-          }
-          copiedPaths.push_back(path);
-        }
-      }
+      guardCopiedMoves(work, sources, included, processed, binding->location);
 
       for (std::size_t i = 0; i < sources.size(); ++i) {
         auto& source = sources[i];
@@ -595,13 +612,13 @@ namespace {
             destination, checkedFd(::open(path->c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC))
         );
       }
-      if (statFd(root->parent.get()).st_dev == statFd(parent).st_dev) {
+      if (sameMount(root->parent.get(), parent)) {
         return root;
       }
       for (const auto& effect : moves) {
         if (effect->encloses(folder)
             && effect->retentionRoot()
-            && statFd(effect->retentionRoot()->parent.get()).st_dev == statFd(parent).st_dev) {
+            && sameMount(effect->retentionRoot()->parent.get(), parent)) {
           return effect->retentionRoot();
         }
       }
@@ -684,6 +701,13 @@ namespace {
           if (source.metadata.st_dev != statFd(target).st_dev) {
             return {}; // Expected staged copy/remove, not a failed native proof.
           }
+          try {
+            if (!sameMount(source.parent.get(), target)) {
+              return {};
+            }
+          } catch (const FileErrorException&) {
+            // An unavailable optional mount query must not fail the forward transfer.
+          }
           if (collecting && room()) {
             try {
               std::vector<std::shared_ptr<const MoveFolder>> folders;
@@ -706,6 +730,9 @@ namespace {
           collecting = false;
           return {};
         };
+        work.discardPreparedMove = [&](const std::shared_ptr<const MoveEffect>& proof) {
+          std::erase_if(preparedMoves, [&](const auto& prepared) { return prepared.effect == proof; });
+        };
         work.recordPreparedMove = [&](const std::shared_ptr<const MoveEffect>& proof) {
           try {
             moves.push_back(contents(proof->publishedReplacement()));
@@ -719,7 +746,7 @@ namespace {
             try {
               auto proof = MoveFolder::retain(
                   source.location, source.parent.get(), folder, target, token, revisions,
-                  source.metadata.st_dev == statFd(target).st_dev ? retention(folder, target) : sourceRetention(source)
+                  sameMount(source.parent.get(), target) ? retention(folder, target) : sourceRetention(source)
               );
               if (proof) {
                 --remaining;

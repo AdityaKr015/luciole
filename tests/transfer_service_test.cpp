@@ -1,5 +1,6 @@
 #include "event_loop/glib_poll_source.h"
 #include "operations/copy_receipt.h"
+#include "operations/creation_stage.h"
 #include "operations/history_revisions.h"
 #include "operations/move_receipt.h"
 #include "operations/transfer_service.h"
@@ -12,10 +13,14 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <linux/fs.h>
 #include <print>
+#include <sched.h>
 #include <stdexcept>
+#include <sys/mount.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/xattr.h>
 #include <thread>
 #include <unistd.h>
@@ -3883,10 +3888,212 @@ namespace {
     f.clean();
   }
 
+  struct MountedFixture {
+    Fixture storage, aliases;
+    MountedFixture() {
+      bind(storage.source(""), aliases.source(""));
+      bind(storage.destination(""), aliases.destination(""));
+    }
+    ~MountedFixture() {
+      // Owned mount bindings must outlive deferred history cleanup from the finished service.
+      drainHistoryCleanup();
+      TEST_CHECK(::umount2(aliases.destination("").c_str(), MNT_DETACH) == 0);
+      TEST_CHECK(::umount2(aliases.source("").c_str(), MNT_DETACH) == 0);
+    }
+    static void bind(const fs::path& original, const fs::path& target) {
+      TEST_CHECK(::mount(original.c_str(), target.c_str(), nullptr, MS_BIND, nullptr) == 0);
+    }
+    static void rebind(const fs::path& original, const fs::path& target) {
+      TEST_CHECK(::umount2(target.c_str(), MNT_DETACH) == 0);
+      bind(original, target);
+    }
+  };
+  void testDetachedStagePath() {
+    MountedFixture f;
+    const auto target =
+        luciole::checkedFd(::open(f.aliases.destination("").c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+    luciole::CreationStage stage(target.get(), false);
+    const auto original = stage.recoveryPath();
+    TEST_CHECK(original.starts_with((f.aliases.root / "destination").native() + "/.luciole-create-"));
+    fs::create_directory(f.storage.root / "foreign");
+    MountedFixture::rebind(f.storage.root / "foreign", f.aliases.destination(""));
+    TEST_CHECK(stage.recoveryPath() == original);
+    MountedFixture::rebind(f.storage.destination(""), f.aliases.destination(""));
+    TEST_CHECK(stage.recoveryPath() == original && fs::is_directory(fs::path(original).parent_path()));
+  }
+  void testMountedMoveHistory(Pump& pump, bool reverseDirection) {
+    MountedFixture f;
+    const auto from = reverseDirection ? f.aliases.source("") : f.storage.source("");
+    const auto to = reverseDirection ? f.storage.destination("") : f.aliases.destination("");
+    const auto sourceFd = luciole::checkedFd(::open(from.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+    const auto targetFd = luciole::checkedFd(::open(to.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+    TEST_CHECK(luciole::statFd(sourceFd.get()).st_dev == luciole::statFd(targetFd.get()).st_dev);
+    TEST_CHECK(!luciole::sameMount(sourceFd.get(), targetFd.get()));
+    write(from / "probe", "probe");
+    TEST_CHECK(::syscall(SYS_renameat2, sourceFd.get(), "probe", targetFd.get(), "probe", RENAME_NOREPLACE) == -1);
+    TEST_CHECK(errno == EXDEV && fs::exists(from / "probe") && !fs::exists(to / "probe"));
+    fs::remove(from / "probe");
+    fs::create_directories(from / "tree/sub/empty");
+    fs::create_directories(to / "tree/sub/empty");
+    fs::create_directories(from / "whole/deep");
+    fs::create_directories(to / "inbox");
+    write(from / "tree/sub/value", "merged payload");
+    write(to / "tree/sub/value", "merged predecessor");
+    write(to / "tree/sub/keep", "destination only");
+    write(from / "whole/deep/file", "whole folder payload");
+    write(from / "plain", "copied payload");
+    write(to / "plain", "native payload");
+    // The native source aliases a predecessor retained by the copied branch of the same job.
+    fs::create_hard_link(to / "plain", to / "inbox/native");
+    write(to / "native", "native predecessor");
+    const auto raw = std::string("raw-") + static_cast<char>(0xff);
+    write(from / raw, "raw payload");
+    fs::create_symlink("missing", from / "broken");
+    struct stat tree{}, previous{}, native{}, container{};
+    TEST_CHECK(::stat((from / "tree").c_str(), &tree) == 0);
+    TEST_CHECK(::stat((to / "plain").c_str(), &previous) == 0);
+    TEST_CHECK(::stat((to / "inbox/native").c_str(), &native) == 0);
+    TEST_CHECK(::stat((to / "tree/sub").c_str(), &container) == 0);
+    luciole::TransferService service;
+    pump.run(
+        service,
+        {location(from / "tree"), location(from / "whole"), location(from / "plain"), location(from / raw),
+         location(from / "broken"), location(to / "inbox/native")},
+        to, TransferAction::Move, [](const auto& conflict) {
+          return conflict.canMerge ? TransferConflictChoice::Merge : TransferConflictChoice::Replace;
+        }
+    );
+    auto receipt = service.takeReceipt();
+    TEST_CHECK(receipt && !fs::exists(from / "tree") && read(to / "plain") == "copied payload");
+    write(to / "tree/sub/later", "later destination sibling");
+    for (int cycle = 0; cycle < 3; ++cycle) {
+      pump.replay(service, receipt);
+      receipt = service.takeReceipt();
+      if (!receipt) {
+        for (const auto& result : service.results()) {
+          if (result.error) {
+            std::println("Mounted Undo: {}", result.error->message);
+          }
+        }
+      }
+      TEST_CHECK(receipt && read(from / "plain") == "copied payload" && read(to / "plain") == "native payload");
+      TEST_CHECK(read(from / "whole/deep/file") == "whole folder payload");
+      TEST_CHECK(
+          read(from / "tree/sub/value") == "merged payload" && read(to / "tree/sub/value") == "merged predecessor"
+      );
+      TEST_CHECK(read(from / raw) == "raw payload" && fs::read_symlink(from / "broken") == "missing");
+      struct stat actual{};
+      TEST_CHECK(::stat((from / "tree").c_str(), &actual) == 0 && luciole::sameIdentity(tree, actual));
+      TEST_CHECK(::stat((to / "plain").c_str(), &actual) == 0 && luciole::sameIdentity(previous, actual));
+      TEST_CHECK(::stat((to / "inbox/native").c_str(), &actual) == 0 && luciole::sameIdentity(native, actual));
+      TEST_CHECK(read(to / "native") == "native predecessor");
+      pump.replay(service, receipt);
+      receipt = service.takeReceipt();
+      TEST_CHECK(receipt && !fs::exists(from / "tree") && !fs::exists(to / "inbox/native"));
+      TEST_CHECK(read(to / "plain") == "copied payload" && read(to / "native") == "native payload");
+      TEST_CHECK(
+          read(to / "tree/sub/keep") == "destination only" && read(to / "tree/sub/later") == "later destination sibling"
+      );
+      TEST_CHECK(::stat((to / "tree/sub").c_str(), &actual) == 0 && luciole::sameIdentity(container, actual));
+    }
+    receipt.reset();
+    noPrivateMoves(f.storage);
+  }
+  void testMountedMoveGuards(Pump& pump) {
+    for (unsigned scenario = 0; scenario < 5; ++scenario) {
+      [&] {
+        MountedFixture f;
+        const auto from = f.aliases.source(""), to = f.aliases.destination("");
+        fs::create_directories(from / "tree/sub");
+        fs::create_directories(to / "tree/sub");
+        fs::create_directories(to / "inbox");
+        write(from / "tree/sub/file", "copied payload");
+        write(to / "inbox/native", "native payload");
+        luciole::TransferService service;
+        pump.run(
+            service, {location(from / "tree"), location(to / "inbox/native")}, to, TransferAction::Move,
+            [](const auto&) { return TransferConflictChoice::Merge; }
+        );
+        auto receipt = service.takeReceipt();
+        TEST_CHECK(receipt);
+        if (scenario == 0) {
+          fs::create_directory(from / "tree");
+          pump.replay(service, receipt);
+          TEST_CHECK(!service.receipt() && !service.historyRetired());
+          TEST_CHECK(!fs::exists(to / "inbox/native") && read(to / "native") == "native payload");
+          fs::remove(from / "tree");
+          luciole::CancelToken cancelled;
+          cancelled.cancel();
+          std::atomic<std::size_t> completed{0};
+          const auto reply = receipt->reverse(cancelled, completed);
+          TEST_CHECK(!reply.receipt && !reply.retireHistory && completed.load() == receipt->size());
+          pump.replay(service, receipt);
+          TEST_CHECK(service.receipt() && read(from / "tree/sub/file") == "copied payload");
+          return;
+        }
+        if (scenario == 1) {
+          write(to / "tree/sub/file", "changed destination");
+        } else if (scenario == 2) {
+          pump.replay(service, receipt);
+          receipt = service.takeReceipt();
+          TEST_CHECK(receipt);
+          write(from / "tree/sub/later", "do not move");
+        } else {
+          fs::create_directory(f.storage.root / "foreign");
+          write(f.storage.root / "foreign/keep", "foreign payload");
+          MountedFixture::rebind(f.storage.root / "foreign", scenario == 3 ? to : from);
+        }
+        pump.replay(service, receipt);
+        TEST_CHECK(!service.receipt() && service.historyRetired());
+        if (scenario == 2) {
+          TEST_CHECK(read(from / "tree/sub/later") == "do not move");
+          TEST_CHECK(read(to / "inbox/native") == "native payload" && !fs::exists(to / "native"));
+        } else {
+          TEST_CHECK(!fs::exists(f.storage.source("tree")));
+          TEST_CHECK(
+              !fs::exists(f.storage.destination("inbox/native"))
+              && read(f.storage.destination("native")) == "native payload"
+          );
+        }
+        if (scenario >= 3) {
+          TEST_CHECK(read(f.storage.root / "foreign/keep") == "foreign payload");
+          MountedFixture::rebind(
+              scenario == 3 ? f.storage.destination("") : f.storage.source(""), scenario == 3 ? to : from
+          );
+        }
+      }();
+      drainHistoryCleanup();
+      const auto errors = luciole::CopyReceipt::takeCleanupErrors();
+      TEST_CHECK(errors.empty() == (scenario == 0));
+    }
+  }
+  int mountedHistoryChecks() {
+    // Always create a private mount namespace before changing propagation or making any bind mount.
+    if (::unshare(CLONE_NEWNS) != 0) {
+      std::println(
+          "Bind-mount history checks unavailable: cannot create a private mount namespace ({})",
+          luciole::errnoError(errno).message
+      );
+      return 77;
+    }
+    TEST_CHECK(::mount(nullptr, "/", nullptr, MS_REC | MS_PRIVATE, nullptr) == 0);
+    Pump pump;
+    testDetachedStagePath();
+    testMountedMoveHistory(pump, false);
+    testMountedMoveHistory(pump, true);
+    testMountedMoveGuards(pump);
+    std::println("Same-device bind-mount Move history checks passed");
+    return 0;
+  }
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
   try {
+    if (argc == 2 && std::string_view(argv[1]) == "--mount-history") {
+      return mountedHistoryChecks();
+    }
+    TEST_CHECK(argc == 1);
     Pump pump;
     testSymbolicLinkDrops(pump);
     testCopyHistory(pump);

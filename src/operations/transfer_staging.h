@@ -65,6 +65,7 @@ namespace luciole::transfer {
     std::function<bool(const Source&, const Location&, int, int)> recordMove;
     std::function<std::shared_ptr<const MoveEffect>(const Source&, const Location&, int)> prepareMove;
     std::function<void(const std::shared_ptr<const MoveEffect>&)> recordPreparedMove;
+    std::function<void(const std::shared_ptr<const MoveEffect>&)> discardPreparedMove;
     std::function<bool(const Source&, const Location&, int)> recordMerge;
     std::function<void(const Location&)> prepareMerge;
     std::function<void(const Location&, bool)> checkpointCopy;

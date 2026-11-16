@@ -192,7 +192,13 @@ namespace luciole::transfer {
                       RENAME_EXCHANGE
                   )
                   != 0) {
-                fail("Could not exchange moved item");
+                if (errno != EXDEV) {
+                  fail("Could not exchange moved item");
+                }
+                if (work.discardPreparedMove) {
+                  work.discardPreparedMove(proof);
+                }
+                break; // No exchange occurred; use the verified copy/remove path instead.
               }
               result.outcome = Partial;
               result.destination = binding.location.child(target);

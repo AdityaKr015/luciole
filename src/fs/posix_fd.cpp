@@ -3,6 +3,7 @@
 #include "fs/file_error.h"
 
 #include <cerrno>
+#include <fcntl.h>
 #include <unistd.h>
 #include <utility>
 
@@ -39,6 +40,18 @@ struct stat luciole::statFd(int fd) {
     throwErrno(errno);
   }
   return value;
+}
+
+bool luciole::sameMount(int first, int second) {
+  const auto mount = [](int fd) {
+    struct statx value{};
+    if (::statx(fd, "", AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW, STATX_MNT_ID, &value) != 0
+        || (value.stx_mask & STATX_MNT_ID) == 0) {
+      throwFileError(FileErrorKind::Unsupported, "Cannot identify the filesystem mount boundary.");
+    }
+    return value.stx_mnt_id;
+  };
+  return mount(first) == mount(second);
 }
 
 bool luciole::sameIdentity(const struct stat& a, const struct stat& b) {

@@ -58,9 +58,7 @@ std::shared_ptr<const luciole::CopiedMoveEffect> luciole::CopiedMoveEffect::prep
     const Location& source, int from, const Location& destination, int target, int stage, bool replacing,
     std::size_t& remaining, const CancelToken& token, const std::shared_ptr<HistoryRevisions>& revisions
 ) {
-  if (statFd(from).st_dev == statFd(target).st_dev) {
-    throwFileError(FileErrorKind::Unsupported, "Copied Move history requires separate native filesystems.");
-  }
+  // This proof follows an actual staged copy/remove path, including EXDEV on one device's bind mounts.
   auto state =
       std::make_shared<State>(Origin{source, std::make_shared<const Fd>(checkedFd(::fcntl(from, F_DUPFD_CLOEXEC, 0)))});
   state->source = CopyEffect::prepareAt(source, from, from, *source.basename(), remaining, token, revisions);

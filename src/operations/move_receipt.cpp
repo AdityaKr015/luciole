@@ -320,7 +320,7 @@ std::shared_ptr<const luciole::MoveFolder> luciole::MoveFolder::retain(
   if (root) {
     target = root->parent.get();
   }
-  if (transfer::info(from, name).st_dev != statFd(target).st_dev) {
+  if (transfer::info(from, name).st_dev != statFd(target).st_dev || !sameMount(from, target)) {
     return {};
   }
   std::size_t remaining = 1;
