@@ -52,6 +52,8 @@ Places contains Home, available XDG user folders, File System, Trash and your pi
 
 Pinned folders use the shared GTK bookmark file, also used by Nemo and Nautilus. Adding, removing, renaming or reordering user bookmarks in Luciole updates that file; changes from another application appear automatically. Built-in Places keep their Luciole layout and are not automatically added to other applications' bookmarks. Old Luciole-only pins are not imported.
 
+Drives lists the volumes and mounts GIO reports: removable media, extra partitions and network mounts, but not system mounts such as `/` or `/home`. In the Places list, each mounted drive shows a bar of its used space under its row; the bar turns red at 90% used. Unmounted drives and filesystems that do not report a size have no bar.
+
 Settings → Sidebar & preview controls sidebar visibility, width, drive rows and the optional folder tree. The separate expandable-folder preference adds a tree within List view. Both tree options are off by default.
 
 ## Tabs and split view

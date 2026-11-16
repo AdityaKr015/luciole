@@ -368,6 +368,11 @@ void BrowserPage::placesChanged() {
   m_surface->requestUpdate();
 }
 
+void BrowserPage::driveUsageChanged() {
+  m_sidebar.updateDriveUsage();
+  m_surface->requestUpdate();
+}
+
 void BrowserPage::clipboardChanged() {
   m_browserDirty = true;
   m_surface->requestUpdate();

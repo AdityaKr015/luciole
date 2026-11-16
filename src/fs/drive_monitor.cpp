@@ -3,8 +3,10 @@
 #include "fs/gio_interop.h"
 #include "fs/gio_ptr.h"
 
+#include <algorithm>
 #include <gio/gio.h>
 #include <map>
+#include <set>
 
 namespace {
   // Owned reference to the GVolume or GMount behind one Drive.
@@ -35,6 +37,8 @@ struct luciole::DriveMonitor::State : std::enable_shared_from_this<State> {
   std::vector<Drive> drives;
   std::map<std::string, Handle> handles;
   std::function<void()> changed;
+  std::function<void()> usageChanged;
+  std::set<std::string> usagePending;
 
   void add(Handle handle) {
     Drive drive;
@@ -73,6 +77,7 @@ struct luciole::DriveMonitor::State : std::enable_shared_from_this<State> {
   }
 
   void refresh() {
+    auto previous = std::move(drives);
     drives.clear();
     handles.clear();
     GList* volumes = g_volume_monitor_get_volumes(monitor.get());
@@ -89,6 +94,13 @@ struct luciole::DriveMonitor::State : std::enable_shared_from_this<State> {
       }
     }
     g_list_free(mounts);
+    // Keep the last known usage until the next query answers, so bars do not flicker on rebuilds.
+    for (auto& drive : drives) {
+      const auto old = std::ranges::find(previous, drive.key, &Drive::key);
+      if (drive.root && old != previous.end() && old->root == drive.root) {
+        drive.usage = old->usage;
+      }
+    }
     if (changed) {
       changed();
     }
@@ -109,6 +121,7 @@ luciole::DriveMonitor::~DriveMonitor() {
     g_signal_handlers_disconnect_by_data(m_state->monitor.get(), m_state.get());
   }
   m_state->changed = {};
+  m_state->usageChanged = {};
 }
 
 void luciole::DriveMonitor::start() {
@@ -139,6 +152,64 @@ const luciole::Drive* luciole::DriveMonitor::find(const std::string& key) const 
 
 void luciole::DriveMonitor::setChangedCallback(std::function<void()> callback) {
   m_state->changed = std::move(callback);
+}
+
+void luciole::DriveMonitor::setUsageChangedCallback(std::function<void()> callback) {
+  m_state->usageChanged = std::move(callback);
+}
+
+void luciole::DriveMonitor::refreshUsage() {
+  if (!m_state->monitor) {
+    return;
+  }
+  struct Request {
+    std::weak_ptr<State> state;
+    std::string key;
+    Location root;
+  };
+  const auto finished = [](GObject* source, GAsyncResult* result, gpointer data) {
+    const std::unique_ptr<Request> request(static_cast<Request*>(data));
+    GError* error = nullptr;
+    const GioPtr<GFileInfo> info(g_file_query_filesystem_info_finish(G_FILE(source), result, &error));
+    (void)errorText(error);
+    const auto state = request->state.lock();
+    if (!state) {
+      return;
+    }
+    state->usagePending.erase(request->key);
+    std::optional<DriveUsage> usage;
+    if (info) {
+      const auto size = infoUint64(info.get(), G_FILE_ATTRIBUTE_FILESYSTEM_SIZE);
+      auto used = infoUint64(info.get(), G_FILE_ATTRIBUTE_FILESYSTEM_USED);
+      if (const auto free = infoUint64(info.get(), G_FILE_ATTRIBUTE_FILESYSTEM_FREE);
+          !used && size && free && *free <= *size) {
+        used = *size - *free;
+      }
+      if (size && *size > 0 && used) {
+        usage = DriveUsage{.used = std::min(*used, *size), .size = *size};
+      }
+    }
+    const auto drive = std::ranges::find_if(state->drives, [&](const Drive& candidate) {
+      return candidate.key == request->key && candidate.root == request->root;
+    });
+    if (drive == state->drives.end() || drive->usage == usage) {
+      return;
+    }
+    drive->usage = usage;
+    if (state->usageChanged) {
+      state->usageChanged();
+    }
+  };
+  for (const auto& drive : m_state->drives) {
+    if (!drive.root || !m_state->usagePending.insert(drive.key).second) {
+      continue;
+    }
+    g_file_query_filesystem_info_async(
+        gioFile(*drive.root).get(),
+        G_FILE_ATTRIBUTE_FILESYSTEM_SIZE "," G_FILE_ATTRIBUTE_FILESYSTEM_USED "," G_FILE_ATTRIBUTE_FILESYSTEM_FREE,
+        G_PRIORITY_DEFAULT, nullptr, finished, new Request{m_state, drive.key, *drive.root}
+    );
+  }
 }
 
 void luciole::DriveMonitor::mount(

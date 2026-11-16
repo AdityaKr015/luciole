@@ -343,6 +343,8 @@ void SidebarController::onFrame() {
   m_sidebarResizeLine->setVisible(m_resizingSidebar || m_sidebarResize->focused() || m_sidebarResize->hovered());
 }
 
+void SidebarController::updateDriveUsage() { m_places->updateDriveUsage(); }
+
 std::optional<InputDispatcher::TabFocusSnapshot> SidebarController::invalidate() {
   std::optional<InputDispatcher::TabFocusSnapshot> placesFocus;
   if (m_placesDirty) {

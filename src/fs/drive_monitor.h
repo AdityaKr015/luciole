@@ -2,6 +2,7 @@
 
 #include "fs/location.h"
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -9,6 +10,12 @@
 #include <vector>
 
 namespace luciole {
+  struct DriveUsage {
+    std::uint64_t used = 0;
+    std::uint64_t size = 0;
+    bool operator==(const DriveUsage&) const = default;
+  };
+
   // One mountable volume or mount reported by GIO's volume monitor (removable media, extra partitions,
   // network mounts), as Nautilus lists them under "Other Locations".
   struct Drive {
@@ -22,6 +29,8 @@ namespace luciole {
     bool removable = false;
     // Ejecting, not just unmounting, is what removal does (removable media).
     bool ejectable = false;
+    // Filesystem usage of the mounted root; null until queried, when unmounted, or when the size is unknown.
+    std::optional<DriveUsage> usage;
   };
 
   // Main-context view of GIO's volume monitor. Callbacks run on the main context and must not throw.
@@ -39,6 +48,10 @@ namespace luciole {
     const std::vector<Drive>& drives() const;
     const Drive* find(const std::string& key) const;
     void setChangedCallback(std::function<void()> callback);
+    // Re-queries usage of every mounted drive asynchronously; a drive with a query in flight is skipped.
+    void refreshUsage();
+    // Runs on the main context when a drive's usage changes. Must not throw.
+    void setUsageChangedCallback(std::function<void()> callback);
     // Mounts the drive if needed; done receives the root, or an error message.
     void mount(const std::string& key, std::function<void(std::optional<Location>, std::string)> done);
     // Ejects removable media, otherwise unmounts; done receives an error message, empty on success.

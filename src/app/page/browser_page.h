@@ -128,6 +128,7 @@ public:
   std::optional<luciole::FileTooltipTarget> fileTooltipAt(float x, float y) const;
   void preferencesChanged(const std::string& error);
   void placesChanged();
+  void driveUsageChanged();
   void clipboardChanged();
   void clearExternalDrop();
   const std::vector<luciole::Bookmark>* draggedFolders() const;

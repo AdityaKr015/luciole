@@ -5,6 +5,8 @@
 #include "ui/controls/button.h"
 #include "ui/controls/scroll_view.h"
 
+class ProgressBar;
+
 namespace luciole {
   class SidebarTreeView;
   class PlacesSidebar final : public Flex {
@@ -15,6 +17,8 @@ namespace luciole {
     void setShowDrives(bool showDrives);
     void setChangedCallback(std::function<void()> callback) { m_changed = std::move(callback); }
     void invalidate();
+    // Updates drive usage bars from the monitor without rebuilding the list.
+    void updateDriveUsage();
     void sync(std::optional<Location> current);
     void cancelDragCandidate();
     std::optional<std::size_t> dropSlot(float x, float y) const;
@@ -48,6 +52,8 @@ namespace luciole {
       std::optional<Location> root;
       std::string label;
       Button* button = nullptr;
+      Node* usageHost = nullptr;
+      ProgressBar* usage = nullptr;
     };
     void rebuild();
     void addRow(const Bookmark& bookmark, const std::string& glyph, std::size_t index);

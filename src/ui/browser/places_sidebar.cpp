@@ -11,6 +11,23 @@
 #include <algorithm>
 #include <cmath>
 
+namespace {
+  constexpr float kUsageBarHeight = 3.0F;
+  constexpr float kUsageWarningFraction = 0.9F;
+
+  // Shows the bar host only for a known usage, so rows without one keep their plain height.
+  void applyUsage(Node& host, ProgressBar& bar, const std::optional<luciole::DriveUsage>& usage) {
+    host.setVisible(usage.has_value());
+    host.setParticipatesInLayout(usage.has_value());
+    if (!usage) {
+      return;
+    }
+    const auto fraction = static_cast<float>(static_cast<double>(usage->used) / static_cast<double>(usage->size));
+    bar.setProgress(fraction);
+    bar.setFillColor(colorSpecFromRole(fraction >= kUsageWarningFraction ? ColorRole::Error : ColorRole::Primary));
+  }
+} // namespace
+
 luciole::PlacesSidebar::PlacesSidebar(PinService& pins, DriveMonitor& drives) : m_pins(pins), m_drives(drives) {
   setDirection(FlexDirection::Vertical);
   setAlign(FlexAlign::Stretch);
@@ -73,6 +90,17 @@ InputArea* luciole::PlacesSidebar::focusArea(const Location& location) const {
 }
 void luciole::PlacesSidebar::invalidate() {
   m_dirty = true;
+  markLayoutDirty();
+}
+void luciole::PlacesSidebar::updateDriveUsage() {
+  if (m_tree) {
+    return;
+  }
+  for (const auto& row : m_driveRows) {
+    if (const auto* drive = m_drives.find(row.key); drive != nullptr && drive->root == row.root) {
+      applyUsage(*row.usageHost, *row.usage, drive->usage);
+    }
+  }
   markLayoutDirty();
 }
 std::optional<luciole::Bookmark> luciole::PlacesSidebar::folderAt(float x, float y) const {
@@ -219,8 +247,20 @@ void luciole::PlacesSidebar::addDriveRow(const Drive& drive) {
         )
     );
   }
-  m_driveRows.push_back({drive.key, drive.root, drive.label, raw});
-  m_scroll->content()->addChild(std::move(row));
+  Flex* usageHost = nullptr;
+  ProgressBar* usage = nullptr;
+  auto entry = ui::column(
+      {.align = FlexAlign::Stretch}, std::move(row),
+      ui::column(
+          {.out = &usageHost, .align = FlexAlign::Stretch, .paddingH = luciole::kSideListRowPaddingH},
+          ui::progressBar(
+              {.out = &usage, .track = colorSpecFromRole(ColorRole::SurfaceContainerHighest), .height = kUsageBarHeight}
+          )
+      )
+  );
+  applyUsage(*usageHost, *usage, drive.usage);
+  m_driveRows.push_back({drive.key, drive.root, drive.label, raw, usageHost, usage});
+  m_scroll->content()->addChild(std::move(entry));
 }
 void luciole::PlacesSidebar::addRow(const Bookmark& bookmark, const std::string& glyph, std::size_t index) {
   auto button = ui::button(
@@ -409,6 +449,7 @@ void luciole::PlacesSidebar::rebuild() {
     for (const auto& drive : m_drives.drives()) {
       addDriveRow(drive);
     }
+    m_drives.refreshUsage();
   }
   sync(m_current);
 }
