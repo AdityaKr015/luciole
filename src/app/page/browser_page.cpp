@@ -48,6 +48,7 @@
 #include "ui/controls/scroll_view.h"
 #include "ui/controls/side_list_metrics.h"
 #include "ui/controls/tooltip_presenter.h"
+#include "ui/dialogs/dialog_chrome.h"
 #include "ui/dialogs/name_dialog.h"
 #include "ui/palette.h"
 #include "ui/style.h"
@@ -2727,7 +2728,7 @@ void BrowserPage::showDialog(std::unique_ptr<Flex> root, DialogWidth width, Popu
       m_popupSurface->requestLayout();
     }
   });
-  (void)m_popupDispatcher.cycleTabFocus(false);
+  luciole::focusFirstDialogControl(m_popupDispatcher);
   m_popupSurface->requestLayout();
 }
 
