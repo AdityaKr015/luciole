@@ -80,6 +80,7 @@ All keys below belong in `[browser]`. Dimensions are logical pixels unless state
 | `show_drives` | `true` | Show drive rows |
 | `expandable_folders` | `false` | Expand folders within List view |
 | `show_preview` | `true` | Show the side preview when space permits |
+| `chooser_show_preview` | `false` | Show the side preview in file picker windows; toggling the preview there changes only this key |
 | `preview_width` | `320` | Integer `208` through `800` |
 | `miller_column_width` | `260` | Preferred column width, integer `180` through `800` |
 | `miller_show_parents` | `true` | Include parent folders when entering Column view |

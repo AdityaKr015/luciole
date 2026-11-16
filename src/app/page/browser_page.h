@@ -191,6 +191,9 @@ public:
   void keyboard(const KeyboardEvent& event);
 
 private:
+  // The preview preference of this window kind: file picker windows remember theirs separately.
+  bool previewEnabled() const;
+  void togglePreview();
   // Shared popup setup after closePopup(): `scene` goes on a new child surface configured by `config`;
   // `content` is what ActivePopup::root() returns. Menus pass their root as both.
   void openPopup(

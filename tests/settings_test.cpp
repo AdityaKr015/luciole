@@ -550,6 +550,13 @@ namespace {
             == luciole::AtomicWriteState::Durable
         && config.settings().browser.showPreview
     );
+    // File picker windows keep their own preview visibility, hidden by default.
+    TEST_CHECK(!config.settings().browser.chooserShowPreview);
+    TEST_CHECK(
+        config.saveOverrides(std::array{luciole::OverrideEdit{P::ChooserShowPreview, true}})
+        == luciole::AtomicWriteState::Durable
+    );
+    TEST_CHECK(config.settings().browser.chooserShowPreview && config.settings().browser.showPreview);
     fixture.write("config.toml", "[browser]\nshow_preview = 'true'\n");
     TEST_CHECK(!luciole::validateConfigFile(fixture.paths().base).empty());
     fixture.write("config.toml", "[browser]\npreview_width = 444\nshow_preview = true\n");

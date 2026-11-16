@@ -34,6 +34,7 @@ namespace luciole {
     bool showDrives = true;
     bool expandableFolders = false;
     bool showPreview = true;
+    bool chooserShowPreview = false; // File picker windows keep their own preview visibility.
     int previewWidth = 320;
     int millerColumnWidth = 260;
     bool millerShowParents = true;
@@ -84,6 +85,7 @@ namespace luciole {
     ShowDrives,
     ExpandableFolders,
     ShowPreview,
+    ChooserShowPreview,
     PreviewWidth,
     MillerColumnWidth,
     MillerShowParents,
@@ -158,6 +160,7 @@ namespace luciole {
     static constexpr PreferenceKey<bool> ShowDrives{Id::ShowDrives};
     static constexpr PreferenceKey<bool> ExpandableFolders{Id::ExpandableFolders};
     static constexpr PreferenceKey<bool> ShowPreview{Id::ShowPreview};
+    static constexpr PreferenceKey<bool> ChooserShowPreview{Id::ChooserShowPreview};
     static constexpr PreferenceKey<int> PreviewWidth{Id::PreviewWidth};
     static constexpr PreferenceKey<int> MillerColumnWidth{Id::MillerColumnWidth};
     static constexpr PreferenceKey<bool> MillerShowParents{Id::MillerShowParents};

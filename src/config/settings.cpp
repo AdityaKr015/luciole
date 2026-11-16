@@ -248,6 +248,7 @@ namespace {
       describe(P::ShowDrives, "show_drives", [](S& s) -> auto& { return s.showDrives; }),
       describe(P::ExpandableFolders, "expandable_folders", [](S& s) -> auto& { return s.expandableFolders; }),
       describe(P::ShowPreview, "show_preview", [](S& s) -> auto& { return s.showPreview; }),
+      describe(P::ChooserShowPreview, "chooser_show_preview", [](S& s) -> auto& { return s.chooserShowPreview; }),
       describe(
           P::PreviewWidth, "preview_width", [](S& s) -> auto& { return s.previewWidth; },
           {between<208, 800>, "expected integer preview width from 208 to 800"}

@@ -379,7 +379,8 @@ const std::vector<luciole::Bookmark>* BrowserPage::draggedFolders() const { retu
 
 luciole::FileDropTarget BrowserPage::externalDrop(float x, float y, const std::vector<luciole::Bookmark>* pins) {
   m_dragDrop.clearExternalDrop();
-  if (!m_visible || overlay() || popup() || actionContext().operationsBusy) {
+  // A file picker returns files to its caller; it never receives transfers.
+  if (!m_visible || choosing() || overlay() || popup() || actionContext().operationsBusy) {
     return {};
   }
   m_pointerX = x;
@@ -490,7 +491,20 @@ bool BrowserPage::popup() const { return m_popupSurface != nullptr; }
 
 bool BrowserPage::overlay() const { return m_archiveController.open(); }
 
-bool BrowserPage::previewVisible() const { return m_savedSettings.showPreview && !overlay(); }
+bool BrowserPage::previewEnabled() const {
+  return choosing() ? m_savedSettings.chooserShowPreview : m_savedSettings.showPreview;
+}
+
+bool BrowserPage::previewVisible() const { return previewEnabled() && !overlay(); }
+
+void BrowserPage::togglePreview() {
+  const bool shown = !previewEnabled();
+  (choosing() ? m_savedSettings.chooserShowPreview : m_savedSettings.showPreview) = shown;
+  m_preferences.submit(
+      {{choosing() ? luciole::BrowserPreference::ChooserShowPreview : luciole::BrowserPreference::ShowPreview, shown}}
+  );
+  m_surface->requestLayout();
+}
 
 int BrowserPage::previewWidth() const { return m_savedSettings.previewWidth; }
 
@@ -1217,7 +1231,7 @@ luciole::ActionContext BrowserPage::actionContext() const {
       .pinned = [this](const auto& location) { return m_pins.contains(location); },
       .viewMode = m_viewMode,
       .showSidebar = m_sidebar.visible(),
-      .showPreview = m_savedSettings.showPreview,
+      .showPreview = previewEnabled(),
       .clipboardAvailable = m_clipboard.available(),
       .clipboardHasFiles = m_clipboard.hasFiles(),
       .terminalAvailable = m_terminal.available(),
@@ -1344,12 +1358,7 @@ void BrowserPage::runAction(
       {Action::Miller, [](BrowserPage& page, const Call&) { page.setViewMode(luciole::ViewMode::Miller); }},
       {Action::ShowHidden, [](BrowserPage& page, const Call&) { page.toggleHidden(); }},
       {Action::ShowSidebar, [](BrowserPage& page, const Call&) { page.m_sidebar.setVisible(!page.m_sidebar.visible()); }},
-      {Action::ShowPreview,
-       [](BrowserPage& page, const Call&) {
-         page.m_savedSettings.showPreview = !page.m_savedSettings.showPreview;
-         page.m_preferences.submit({{luciole::BrowserPreference::ShowPreview, page.m_savedSettings.showPreview}});
-         page.m_surface->requestLayout();
-       }},
+      {Action::ShowPreview, [](BrowserPage& page, const Call&) { page.togglePreview(); }},
       {Action::QuickPreview, [](BrowserPage& page, const Call&) { page.m_previewController.showQuickPreview(); }},
       {Action::OpenWith,
        [](BrowserPage& page, const Call& call) { page.m_applicationChooser.show(call.targets); }},
@@ -2378,11 +2387,17 @@ std::unique_ptr<Flex> BrowserPage::buildToolbar() {
           ui::segmented(
               {.out = &m_viewSwitch,
                .options =
-                   std::vector<ui::SegmentedOption>{
-                       {.label = "", .glyph = "layout-grid", .tooltip = "Grid view (Ctrl+1)"},
-                       {.label = "", .glyph = "list", .tooltip = "List view (Ctrl+2)"},
-                       {.label = "", .glyph = "columns-3", .tooltip = "Column view (Ctrl+3)"}
-                   },
+                   [this] {
+                     std::vector<ui::SegmentedOption> views{
+                         {.label = "", .glyph = "layout-grid", .tooltip = "Grid view (Ctrl+1)"},
+                         {.label = "", .glyph = "list", .tooltip = "List view (Ctrl+2)"}
+                     };
+                     // Column view is unavailable while choosing files.
+                     if (!choosing()) {
+                       views.push_back({.label = "", .glyph = "columns-3", .tooltip = "Column view (Ctrl+3)"});
+                     }
+                     return views;
+                   }(),
                .selectedIndex = m_viewMode == luciole::ViewMode::Grid ? 0U
                    : m_viewMode == luciole::ViewMode::List            ? 1U
                                                                       : 2U,

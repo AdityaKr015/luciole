@@ -189,6 +189,7 @@ SettingsDialog::SettingsDialog(
   addNumber(P::SidebarWidth, "Sidebar width", widths(luciole::kMinSidebarWidth, luciole::kMaxSidebarWidth));
   card("Preview");
   addBool(P::ShowPreview, "Show preview");
+  addBool(P::ChooserShowPreview, "Show preview in file picker");
   addNumber(P::PreviewWidth, "Preview width", widths(208, 800));
   section("Thumbnails", "photo");
   card("Generation");
