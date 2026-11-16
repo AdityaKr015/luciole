@@ -42,7 +42,7 @@ List headers sort by their column. Drag their dividers to resize columns; Settin
 
 In large folders, names can appear while detail values are still loading. “Reading…” means a value is pending; “Unknown” means it was unavailable after querying. Hidden extra columns are not queried by ordinary large-folder browsing. Enabling one loads its visible rows. Sorting by metadata or selecting many items can require facts from the rest of the folder; file actions wait for the facts they need.
 
-The floating status pill reports actions, search and selection. Settings → General → Always show status bar keeps it visible when idle with the item count and, when available, free space.
+The floating status pill reports actions, search and selection. Settings → Appearance → Always show status bar keeps it visible when idle with the item count and, when available, free space.
 
 Click an entry to select it, Ctrl+click to toggle it and Shift+click to select a range. Clicking empty space clears selection. Drag an area over entries to select several. Ctrl+A selects all visible results, Ctrl+Shift+I inverts selection and Ctrl+S selects by pattern. Escape clears the selection when browsing. Opening uses double-click by default; Settings → General offers single-click opening.
 
@@ -56,13 +56,13 @@ Drives starts with File System (`/`), followed by the volumes and mounts GIO rep
 
 The eject button and the drive's context menu remove a mounted drive the way GNOME Files does: Safely Remove powers off a USB disk plugged in during the session, Eject ejects removable media, and Unmount unmounts anything else. Removal never forces: while a program still has files open on the drive, nothing is unmounted and the status bar names the programs or Luciole's running file operations that keep it busy.
 
-Settings → Sidebar & preview controls sidebar visibility, width, drive rows and the optional folder tree. The separate expandable-folder preference adds a tree within List view. Both tree options are off by default.
+Settings → Appearance controls sidebar visibility, width, drive rows and the optional folder tree. The separate expandable-folder preference adds a tree within List view. Both tree options are off by default.
 
 ## Tabs and split view
 
 Each tab can contain one or two browsing panes. A split belongs to its tab; it does not create another tab. Navigation, search, selection and scroll belong to each pane. Actions target the focused pane.
 
-The tab bar is shown by default even with one tab. Settings → General → Always show tab bar can hide it when there is only one tab.
+The tab bar is shown by default even with one tab. Settings → Appearance → Always show tab bar can hide it when there is only one tab.
 
 Middle-click a folder, breadcrumb or Places row, or use a folder's Open In → New Tab menu, to open it in another tab. Settings → General → Switch to new folder tabs is on by default. Turn it off to load those folders in background tabs while keeping your current tab, focused pane, search, selection and scroll. Shift+middle-click reverses the preference for that one opening. Click the tab or use Ctrl+Tab to visit it when ready.
 
