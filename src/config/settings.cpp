@@ -318,10 +318,6 @@ namespace {
           {between<1, 1024>, "expected an integer from 1 to 1024"}
       ),
       describe(
-          P::ThumbnailMaxMegapixels, "thumbnail_max_megapixels",
-          [](S& s) -> auto& { return s.thumbnails.maxMegapixels; }, {between<1, 64>, "expected an integer from 1 to 64"}
-      ),
-      describe(
           P::ThumbnailCacheMib, "thumbnail_cache_mib", [](S& s) -> auto& { return s.thumbnails.cacheMiB; },
           {between<16, 1024>, "expected an integer from 16 to 1024"}
       ),

@@ -109,7 +109,6 @@ namespace luciole {
     LocationColumnWidth,
     ThumbnailPolicy,
     ThumbnailMaxFileMib,
-    ThumbnailMaxMegapixels,
     ThumbnailCacheMib,
     TerminalCommand,
     Count
@@ -184,7 +183,6 @@ namespace luciole {
     static constexpr PreferenceKey<int> LocationColumnWidth{Id::LocationColumnWidth};
     static constexpr PreferenceKey<luciole::ThumbnailPolicy> ThumbnailPolicy{Id::ThumbnailPolicy};
     static constexpr PreferenceKey<int> ThumbnailMaxFileMib{Id::ThumbnailMaxFileMib};
-    static constexpr PreferenceKey<int> ThumbnailMaxMegapixels{Id::ThumbnailMaxMegapixels};
     static constexpr PreferenceKey<int> ThumbnailCacheMib{Id::ThumbnailCacheMib};
   };
 

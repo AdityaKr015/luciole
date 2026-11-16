@@ -200,7 +200,6 @@ SettingsDialog::SettingsDialog(
       "All locations can generate thumbnails on mounted shares. Unmounted locations use cached thumbnails."
   );
   addNumber(P::ThumbnailMaxFileMib, "Image/PDF size limit", {1, 1024}, "MiB");
-  addNumber(P::ThumbnailMaxMegapixels, "Image pixel limit", {1, 64}, "MP");
   card("Cache");
   addNumber(P::ThumbnailCacheMib, "Disk cache limit", {16, 1024}, "MiB");
   m_section->addChild(
