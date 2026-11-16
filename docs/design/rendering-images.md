@@ -54,7 +54,7 @@ Browsing requests send their selected video frame through the system `ffmpegthum
 
 The decorated pixels are stored in the existing shared cache, so other file managers see the same border. The sampling/style version is now `3`; old Luciole video cache entries refresh, while foreign entries remain reusable and protected. Native video preview requests skip the shared video cache, generate a clean frame and retain it in the memory cache under the preview purpose. They must not overwrite the browsing thumbnail. Non-native/cache-only previews can only use existing cache content, including any baked-in decoration. This is an application-owned adapter for ffmpegthumbnailer, not a general `.thumbnailer` discovery implementation or an icon-theme overlay.
 
-See [PACKAGING.md](../../PACKAGING.md#shared-video-thumbnail-appearance) for runtime availability and fallback behavior.
+See [PACKAGING.md](../../PACKAGING.md#runtime-integration-and-helpers) for runtime helper dependencies.
 
 ## File type detection
 

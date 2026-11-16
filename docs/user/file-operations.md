@@ -96,7 +96,7 @@ An undone created document's original data can continue using disk space while i
 
 ## Trash
 
-Delete moves native selections to Trash. A failed trash operation does not silently become permanent deletion. The full Trash interface requires the system's GIO/GVfs provider and a session D-Bus connection, including browsing, restoration and Empty Trash. See the [required Trash runtime](../../PACKAGING.md#required-trash-runtime) for packaging requirements.
+Delete moves native selections to Trash. A failed trash operation does not silently become permanent deletion. The full Trash interface requires the system's GIO/GVfs provider and a session D-Bus connection, including browsing, restoration and Empty Trash. See the [required Trash runtime](../../PACKAGING.md#gvfs-and-trash) for packaging requirements.
 
 In Trash, Restore returns selected items to their recorded original locations and asks about conflicts. Delete Permanently removes selected trashed items after confirmation. Empty Trash is available from the Trash sidebar row's context menu and by right-clicking the Trash folder background. It stays disabled when Trash is empty or unavailable; the sidebar briefly checks the provider when its menu opens. Hidden contents still count. Its confirmation includes the measured contents and size. Cancel starts with its normal appearance; Enter cancels until you explicitly focus another control. Permanent deletion is irreversible.
 
@@ -120,4 +120,4 @@ Native permission and ownership editing is available in Properties. Multiple sel
 
 Mounted, authenticated SFTP, SMB and WebDAV locations support the verified copy/move paths through installed GIO/GVfs backends. Some providers cannot preserve native symlinks, raw filename bytes or every metadata field. Read-only targets, conflicts, disconnects and partial moves remain explicit outcomes. Luciole does not provide its own server connection or credentials dialog yet.
 
-See [runtime providers](../../PACKAGING.md#gvfs-providers-across-distributions) for distribution package requirements and [the remaining plan](../../PLAN.md) for unfinished device/network integration.
+See [runtime providers](../../PACKAGING.md#gvfs-and-trash) for provider packaging requirements and [the remaining plan](../../PLAN.md) for unfinished device/network integration.
