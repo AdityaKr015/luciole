@@ -3,12 +3,14 @@ name: CI
 on:
   push:
     branches: [main, master]
+    paths-ignore: ["**.md", "docs/**"]
   pull_request:
+    paths-ignore: ["**.md", "docs/**"]
 
-# Cancel superseded pull request runs; every push to main runs to completion.
+# Cancel superseded runs on the same ref (PR or branch).
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 jobs:
   format:
@@ -37,8 +39,7 @@ jobs:
     container:
       image: archlinux:latest
     steps:
-      - &arch-deps
-        name: Install dependencies
+      - name: Install dependencies
         run: |
           pacman -Syu --noconfirm --needed \
             base-devel git meson ninja pkgconf ccache zstd \
@@ -56,14 +57,12 @@ jobs:
 
       # Meson picks up ccache automatically. Only pushes to main save the cache, so
       # PR runs reuse it without evicting each other from the repository quota.
-      - &ccache-env
-        name: Configure ccache
+      - name: Configure ccache
         run: |
           echo "CCACHE_DIR=$GITHUB_WORKSPACE/.ccache" >> "$GITHUB_ENV"
           echo "CCACHE_MAXSIZE=1G" >> "$GITHUB_ENV"
 
-      - &ccache-restore
-        name: Restore ccache
+      - name: Restore ccache
         uses: actions/cache/restore@v4
         with:
           path: .ccache
@@ -82,20 +81,6 @@ jobs:
         with:
           path: .ccache
           key: ccache-arch-${{ github.sha }}
-
-  lint:
-    name: clang-tidy
-    runs-on: ubuntu-latest
-    container:
-      image: archlinux:latest
-    steps:
-      - *arch-deps
-
-      - uses: actions/checkout@v6
-
-      - *ccache-env
-
-      - *ccache-restore
 
       - name: Check clang-tidy version
         run: |
