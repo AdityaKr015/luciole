@@ -1,6 +1,7 @@
 #include "operations/transfer_staging.h"
 
 #include "fs/gio_ptr.h"
+#include "operations/copied_move_receipt.h"
 #include "operations/move_receipt.h"
 
 #include <algorithm>
@@ -116,6 +117,24 @@ namespace luciole::transfer {
           replace = existing;
           return true;
         }
+      }
+    }
+
+    void recordPublication(
+        const std::shared_ptr<const CopyEffect>& copyProof, const std::shared_ptr<const CopiedMoveEffect>& moveProof,
+        bool replacing, Stage& stage, Work& work
+    ) {
+      if (replacing) {
+        if (copyProof || moveProof) {
+          stage.keepContents();
+        }
+        work.note(info(stage.fd(), "item"));
+      }
+      if (copyProof && work.recordCopy) {
+        work.recordCopy(copyProof, stage.fd());
+      }
+      if (moveProof) {
+        moveProof->published(stage.fd());
       }
     }
 
@@ -282,6 +301,11 @@ namespace luciole::transfer {
                       source.index, binding.location.child(target), destination, stage.fd(), replace.has_value()
                   )
                 : nullptr;
+            auto moveProof = action == TransferAction::Move && work.prepareCopiedMove
+                ? work.prepareCopiedMove(
+                      source, binding.location.child(target), destination, stage.fd(), replace.has_value()
+                  )
+                : nullptr;
             work.check();
             if (::syscall(SYS_renameat2, stage.fd(), "item", destination, target.c_str(), flags) != 0) {
               if (errno == EEXIST || (replace && errno == ENOENT)) {
@@ -304,24 +328,16 @@ namespace luciole::transfer {
                   FileErrorKind::Changed, "The previous destination changed and was retained in " + stage.name()
               );
             }
-            if (replace) {
-              if (copyProof) {
-                // Preserve the displaced item even if alias validation rejects the handoff.
-                stage.keepContents();
-              }
-              work.note(info(stage.fd(), "item"));
-            }
             result.outcome = action == TransferAction::Link ? Linked : Copied;
-            if (copyProof && work.recordCopy) {
-              work.recordCopy(copyProof, stage.fd());
-            }
+            recordPublication(copyProof, moveProof, replace.has_value(), stage, work);
             if (action == TransferAction::Move) {
               // The sources go only after the published copy is durable; flushMoves() syncs a batch at once.
               work.pendingMoves.push_back(
                   {.node = &node,
                    .tree = *tree,
                    .destination = opened(::fcntl(destination, F_DUPFD_CLOEXEC, 0)),
-                   .outcome = Moved}
+                   .outcome = Moved,
+                   .proof = std::move(moveProof)}
               );
               deferred = true;
               result.outcome = Moved;
@@ -371,6 +387,7 @@ namespace luciole::transfer {
     }
 
     TransferResult merge(Node& node, int destination, TransferAction action, Work& work, const struct stat& existing) {
+      work.prepareCopiedMove = {};
       // Native move history captures changed leaves and retains emptied source containers.
       if (action != TransferAction::Copy) {
         work.prepareCopy = {};
@@ -670,7 +687,17 @@ namespace luciole::transfer {
         work.check();
         const auto parent = openSourceParent(move.node->source);
         verifyTree(parent.get(), move.tree, work);
+        if (move.proof) {
+          move.proof->beforeSourceRemoval(work.token);
+        }
         removeSource(parent.get(), move.tree, work);
+        if (move.proof) {
+          try {
+            move.proof->sourceRemoved(work.token);
+          } catch (const FileErrorException&) {
+            // Optional history validation cannot undo the already confirmed source removal.
+          }
+        }
         result.outcome = move.outcome;
       } catch (const TransferCancelled&) {
         result.error = FileError{

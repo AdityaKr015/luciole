@@ -36,6 +36,8 @@ namespace luciole {
     std::vector<Location> retainForRecovery() const;
 
   private:
+    friend class CopiedMoveEffect;
+    friend class CopiedMoveReceipt;
     friend class CopyReceipt;
     friend class MoveEffect;
     friend class MoveFolder;
@@ -97,6 +99,7 @@ namespace luciole {
     explicit CopyReceipt(TransferAction action) : m_action(action) {}
 
   private:
+    friend class CopiedMoveReceipt;
     static std::shared_ptr<const CopyEffect> restoreParent(
         const std::shared_ptr<const CopyEffect>& effect, const std::vector<std::shared_ptr<const CopyEffect>>& children,
         const CancelToken& token

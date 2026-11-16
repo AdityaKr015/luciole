@@ -18,6 +18,7 @@
 // into per-child commits.
 namespace luciole {
   class CopyEffect;
+  class CopiedMoveEffect;
   class MoveEffect;
 } // namespace luciole
 namespace luciole::transfer {
@@ -46,6 +47,7 @@ namespace luciole::transfer {
     Fd destination;
     // The node's outcome once its source is removed.
     TransferOutcome outcome = TransferOutcome::Moved;
+    std::shared_ptr<const CopiedMoveEffect> proof;
   };
   // Cross-filesystem moves sync the destination filesystem once per this many items, not once per item.
   constexpr std::size_t kMoveSyncBatch = 64;
@@ -68,6 +70,8 @@ namespace luciole::transfer {
     std::function<void(const Location&, bool)> checkpointCopy;
     std::function<std::shared_ptr<const CopyEffect>(std::size_t, const Location&, int, int, bool)> prepareCopy;
     std::function<void(const std::shared_ptr<const CopyEffect>&, int)> recordCopy;
+    std::function<std::shared_ptr<const CopiedMoveEffect>(const Source&, const Location&, int, int, bool)>
+        prepareCopiedMove;
     bool allowMerge = true;
     std::size_t mergedItems = 0;
     // Owned by flushMoves(); nodes outlive the job's final flush.

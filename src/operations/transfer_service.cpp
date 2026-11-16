@@ -6,6 +6,7 @@
 #include "fs/gio_interop.h"
 #include "fs/posix_fd.h"
 #include "operations/conflict_gate.h"
+#include "operations/copied_move_receipt.h"
 #include "operations/copy_receipt.h"
 #include "operations/history_revisions.h"
 #include "operations/move_receipt.h"
@@ -309,6 +310,29 @@ namespace {
         source.parent = luciole::Fd{};
       }
 
+      // Only independent whole-item selections crossing real devices use paired copied-Move history.
+      std::vector<luciole::Location> copiedPaths;
+      for (std::size_t i = 0; i < sources.size() && work.prepareCopiedMove; ++i) {
+        if (processed[sources[i].index] || included[i]) {
+          continue;
+        }
+        if (sources[i].metadata.st_dev == binding->metadata.st_dev) {
+          work.prepareCopiedMove = {};
+          break;
+        }
+        for (const auto& path : {sources[i].location, binding->location.child(sources[i].name)}) {
+          for (const auto& previous : copiedPaths) {
+            if (transferLocationsEqual(path, previous)
+                || transferLocationInside(path, previous)
+                || transferLocationInside(previous, path)) {
+              work.prepareCopiedMove = {};
+              break;
+            }
+          }
+          copiedPaths.push_back(path);
+        }
+      }
+
       for (std::size_t i = 0; i < sources.size(); ++i) {
         auto& source = sources[i];
         if (processed[source.index]) {
@@ -460,6 +484,64 @@ namespace {
     }
     return checkedFd(::open(root->c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
   }
+  struct CopiedMoveCapture {
+    struct Prepared {
+      std::shared_ptr<const luciole::CopiedMoveEffect> effect;
+      std::size_t source;
+    };
+    std::vector<Prepared> prepared;
+    std::size_t remaining = 16384;
+    bool captureFailed = false;
+    void attach(Work& work, std::size_t budget) {
+      if (!budget) {
+        return;
+      }
+      work.prepareCopiedMove = [&, budget](
+                                   const Source& source, const luciole::Location& destination, int target, int stage,
+                                   bool replacing
+                               ) -> std::shared_ptr<const luciole::CopiedMoveEffect> {
+        if (prepared.size() < budget) {
+          try {
+            auto effect = luciole::CopiedMoveEffect::prepare(
+                source.location, source.parent.get(), destination, target, stage, replacing, remaining, work.token,
+                work.history
+            );
+            prepared.push_back({effect, source.index});
+            return effect;
+          } catch (const luciole::FileErrorException&) {
+          }
+        }
+        return {};
+      };
+    }
+    std::shared_ptr<const luciole::MoveReceipt> capture(std::size_t moved, const luciole::CancelToken& token) {
+      if (moved != prepared.size()) {
+        return {};
+      }
+      std::vector<std::shared_ptr<const luciole::CopiedMoveEffect>> effects;
+      effects.reserve(prepared.size());
+      for (const auto& item : prepared) {
+        effects.push_back(item.effect);
+      }
+      try {
+        return luciole::CopiedMoveReceipt::capture(effects, token);
+      } catch (const luciole::FileErrorException&) {
+        captureFailed = true;
+        return {};
+      }
+    }
+    void preserve(std::vector<luciole::TransferResult>& outcomes) const {
+      for (const auto& item : prepared) {
+        for (const auto& path : item.effect->retainForRecovery()) {
+          auto& result = outcomes.at(item.source);
+          if (!result.error) {
+            result.error = luciole::FileError{luciole::FileErrorKind::Other, "Move history is unavailable."};
+          }
+          result.error->message += " Inspect retained item: " + path.uri();
+        }
+      }
+    }
+  };
   // Worker-local optional history collection; prepared proofs outlive every source.
   struct MoveCapture {
     struct PreparedMove {
@@ -657,6 +739,13 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
             job->request.action == TransferAction::Move ? budget : 0, token, revisions, job->request.destination
         );
         moveHistory.attach(work);
+        CopiedMoveCapture copiedMoves;
+        if (!retry
+            && job->request.action == TransferAction::Move
+            && job->request.destination.isNative()
+            && std::ranges::all_of(job->request.sources, [](const auto& source) { return source.isNative(); })) {
+          copiedMoves.attach(work, transferHistoryBudget(14));
+        }
         Fd copyRetentionParent;
         bool collectingCopies =
             budget && job->request.action != TransferAction::Move && job->request.destination.isNative();
@@ -748,6 +837,12 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
           } catch (const FileErrorException&) {
             moveCaptureChanged = true;
           }
+        }
+        if (!receipt && !retry && !remote && movesComplete && merged == 0) {
+          receipt = copiedMoves.capture(moved, token);
+        }
+        if (!receipt && (!movesComplete || copiedMoves.captureFailed)) {
+          copiedMoves.preserve(outcomes);
         }
         if (!receipt && !retry && job->provider) {
           receipt = job->provider->takeMoveReceipt(token);
