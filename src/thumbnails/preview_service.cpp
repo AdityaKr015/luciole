@@ -184,9 +184,7 @@ struct luciole::PreviewService::State : std::enable_shared_from_this<State> {
     }
     view.imageUpgradeFailed = !pendingImage->pixels;
     view.status = view.image && view.image->pixels ? PreviewStatus::Ready : PreviewStatus::Unavailable;
-    view.message = pendingImage->pixels ? ""
-        : view.image                    ? "Larger preview unavailable."
-                                        : "No preview available for this file.";
+    view.message = !pendingImage->pixels && view.image ? "Larger preview unavailable." : "";
     pendingImage.reset();
   }
   void notify() {
@@ -304,10 +302,11 @@ void luciole::PreviewService::show(
   state.metadata.show(*entry, options);
   state.view.metadata = state.metadata.fields();
   state.view.status = PreviewStatus::Unavailable;
-  state.view.message = entry->type == luciole::FileType::Directory ? "Folder" : "No preview available for this file.";
+  // The view shows the type icon while loading or when nothing renders, and the Details card names the type, so
+  // only real failures need a message.
+  state.view.message.clear();
   if (entry->type == luciole::FileType::Regular && !entry->symlink && luciole::entryAccess(*entry).read != false) {
     state.view.status = PreviewStatus::Loading;
-    state.view.message = "Loading preview…";
     if (entry->contentType && luciole::contentTypeIsText(*entry->contentType)) {
       state.pending = true;
       state.start();
@@ -317,13 +316,11 @@ void luciole::PreviewService::show(
       if (prepared && prepared->pixels) {
         state.view.image = std::move(prepared);
         state.view.status = PreviewStatus::Ready;
-        state.view.message.clear();
       }
       state.pendingImage = state.thumbnails.request(*entry, pixels);
       state.imageChanged();
       if (!state.pendingImage && !state.view.image) {
         state.view.status = PreviewStatus::Unavailable;
-        state.view.message = "No preview available for this file.";
       }
     }
   }

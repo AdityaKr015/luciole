@@ -75,8 +75,7 @@ SettingsDialog::SettingsDialog(
        .viewportPaddingH = 0.0F,
        .viewportPaddingV = luciole::kSideListViewportPaddingV,
        .fillWidth = true,
-       .flexGrow = 1.0F,
-       .configure = [](ScrollView& view) { view.setReserveScrollbarGutter(true); }}
+       .flexGrow = 1.0F}
   );
   m_body->content()->setAlign(FlexAlign::Stretch);
   addChild(

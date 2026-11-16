@@ -90,7 +90,7 @@ void PreviewController::openPreviewed(bool with) {
 
 std::unique_ptr<FilePreviewView> PreviewController::makeView(bool quick) {
   return std::make_unique<FilePreviewView>(
-      m_icons,
+      m_icons, quick,
       [this, quick] {
         if (quick) {
           m_page.dismissMenu();
@@ -194,9 +194,7 @@ void PreviewController::layoutQuick() {
   const auto width = static_cast<float>(surface->width());
   const auto height = static_cast<float>(surface->height());
   const auto& snapshot = m_preview.snapshot();
-  m_quick->sync(
-      snapshot, width, height, snapshot.entry ? m_page.browser().model().typeLabel(snapshot.entry->id) : "", true
-  );
+  m_quick->sync(snapshot, width, height, snapshot.entry ? m_page.browser().model().typeLabel(snapshot.entry->id) : "");
   if (!snapshot.image || !snapshot.image->pixels) {
     m_quick->clear(renderer);
   }

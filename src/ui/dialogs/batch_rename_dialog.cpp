@@ -117,7 +117,6 @@ BatchRenameDialog::BatchRenameDialog(
   addChild(luciole::dialogHeader(std::format("Rename {} items", count), "forms", std::move(close)));
   auto scroll =
       ui::scrollView({.out = &m_scroll, .viewportPaddingH = 0.0F, .viewportPaddingV = 0.0F, .flexGrow = 1.0F});
-  scroll->setReserveScrollbarGutter(true);
   scroll->content()->setAlign(FlexAlign::Stretch);
   auto body = ui::column({.align = FlexAlign::Stretch, .gap = Style::spaceSm});
   body->addChild(

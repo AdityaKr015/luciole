@@ -108,12 +108,7 @@ OperationsView::OperationsView(Action action) : m_action(std::move(action)) {
   setFlexGrow(1.0F);
   addChild(
       ui::scrollView(
-          {.out = &m_scroll,
-           .viewportPaddingH = 0.0F,
-           .viewportPaddingV = 0.0F,
-           .fillWidth = true,
-           .flexGrow = 1.0F,
-           .configure = [](ScrollView& scroll) { scroll.setReserveScrollbarGutter(true); }}
+          {.out = &m_scroll, .viewportPaddingH = 0.0F, .viewportPaddingV = 0.0F, .fillWidth = true, .flexGrow = 1.0F}
       )
   );
   m_scroll->content()->setAlign(FlexAlign::Stretch);

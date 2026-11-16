@@ -37,12 +37,7 @@ void AboutController::open() {
   const float width =
       m_page.dialogWidth(DialogWidth::Medium) - Style::spaceMd * 2.0F - Style::scrollbarWidth - Style::scrollbarGap;
   auto body = ui::scrollView(
-      {.out = &scroll,
-       .viewportPaddingH = 0.0F,
-       .viewportPaddingV = 0.0F,
-       .fillWidth = true,
-       .flexGrow = 1.0F,
-       .configure = [](ScrollView& view) { view.setReserveScrollbarGutter(true); }}
+      {.out = &scroll, .viewportPaddingH = 0.0F, .viewportPaddingV = 0.0F, .fillWidth = true, .flexGrow = 1.0F}
   );
   body->content()->setAlign(FlexAlign::Stretch);
   body->content()->setGap(Style::spaceMd);

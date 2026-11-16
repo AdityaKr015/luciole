@@ -18,7 +18,6 @@ LinkDialog::LinkDialog(
   addChild(luciole::dialogHeader("Create link", "link", cancel));
   auto scroll =
       ui::scrollView({.out = &m_scroll, .viewportPaddingH = 0.0F, .viewportPaddingV = 0.0F, .flexGrow = 1.0F});
-  scroll->setReserveScrollbarGutter(true);
   scroll->content()->setDirection(FlexDirection::Vertical);
   scroll->content()->setAlign(FlexAlign::Stretch);
   auto body = ui::column(

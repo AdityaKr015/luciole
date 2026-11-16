@@ -431,7 +431,6 @@ PropertiesController::Body PropertiesController::buildBody(
   auto body = ui::scrollView(
       {.out = &scroll, .viewportPaddingH = 0.0F, .viewportPaddingV = 0.0F, .fillWidth = true, .flexGrow = 1.0F}
   );
-  body->setReserveScrollbarGutter(true);
   body->content()->setAlign(FlexAlign::Stretch);
   body->content()->setGap(Style::spaceMd);
   auto general = buildGeneral(targets, editable);
@@ -600,14 +599,16 @@ void PropertiesController::show(const std::vector<luciole::DirectoryEntry>& targ
     }
     showAdvanced(false);
     if (m_permissionSave) {
+      // Only the Permissions tab has anything to apply.
+      m_permissionSave->setVisible(index == 1);
+      m_permissionSave->setParticipatesInLayout(index == 1);
       m_permissionSave->setEnabled(canApply() && !m_page.operationsBusy());
     }
     scroll->requestScrollToOffset(0);
     m_page.menuSurface()->requestLayout();
   };
   auto root = ui::column(
-      {.align = FlexAlign::Stretch},
-      luciole::dialogHeader("Properties", "file-info", [this] { m_page.dismissMenu(); }),
+      {.align = FlexAlign::Stretch}, luciole::dialogHeader("Properties", "file-info", [this] { m_page.dismissMenu(); }),
       identityRow(targets, m_icons, width),
       ui::row(
           {.justify = FlexJustify::Center, .visible = editable, .participatesInLayout = editable},
@@ -681,7 +682,13 @@ void PropertiesController::show(const std::vector<luciole::DirectoryEntry>& targ
             ),
             ui::button({.text = "Close", .variant = ButtonVariant::Ghost, .onClick = [this] { m_page.dismissMenu(); }}),
             ui::button(
-                {.out = &save, .text = "Apply", .enabled = false, .variant = ButtonVariant::Primary, .onClick = [this] {
+                {.out = &save,
+                 .text = "Apply",
+                 .enabled = false,
+                 .variant = ButtonVariant::Primary,
+                 .visible = false,
+                 .participatesInLayout = false,
+                 .onClick = [this] {
                    if (m_permissionEditor && m_job && !m_page.operationsBusy()) {
                      auto& permissions = m_job->service<luciole::PermissionService>();
                      const bool started = m_aclActive && m_bulkAclEditor

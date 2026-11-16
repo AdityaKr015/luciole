@@ -22,7 +22,6 @@ ArchiveDialog::ArchiveDialog(
   addChild(luciole::dialogHeader(compress ? "Compress" : "Extract Archive", compress ? "file-zip" : "archive", cancel));
   auto scroll =
       ui::scrollView({.out = &m_scroll, .viewportPaddingH = 0.0F, .viewportPaddingV = 0.0F, .flexGrow = 1.0F});
-  scroll->setReserveScrollbarGutter(true);
   scroll->content()->setDirection(FlexDirection::Vertical);
   scroll->content()->setAlign(FlexAlign::Stretch);
   auto body = ui::column({.align = FlexAlign::Stretch, .gap = Style::spaceSm});
