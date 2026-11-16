@@ -6,22 +6,31 @@
 
 namespace luciole {
   // Adapted from Noctalia's ThumbnailService acquire/release and worker publication model.
+  // One process-wide cache for browsing thumbnails and preview images: one memory budget, one decoder pool.
   // Cells borrow immutable prepared pixels; the shared texture cache owns upload and residency.
   class ThumbnailService {
   public:
-    explicit ThumbnailService(ThumbnailPurpose purpose = ThumbnailPurpose::Thumbnail);
+    ThumbnailService();
     ~ThumbnailService();
     ThumbnailService(const ThumbnailService&) = delete;
     ThumbnailService& operator=(const ThumbnailService&) = delete;
-    std::shared_ptr<const FileIconImage> request(const DirectoryEntry& source, int pixels, bool visible = true);
+    // Preview requests decode images up to kMaxPreviewImageSide, ignore the browsing policy, and take the next free
+    // decoder ahead of thumbnails.
+    std::shared_ptr<const FileIconImage> request(
+        const DirectoryEntry& source, int pixels, bool visible = true,
+        ThumbnailPurpose purpose = ThumbnailPurpose::Thumbnail
+    );
     static int pixelSizeClass(int pixels, ThumbnailPurpose purpose);
+    // The largest ready image of `source` at any size and purpose.
     std::shared_ptr<const FileIconImage> prepared(const DirectoryEntry& source);
     bool touch(const std::shared_ptr<const FileIconImage>& image, bool visible);
     void synchronizeSources(const DirectorySnapshot& snapshot);
     void setOptions(ThumbnailOptions options);
+    const ThumbnailOptions& options() const;
     void setChangedCallback(std::function<void()> callback);
     void clearCache();
-    void invalidate();
+    // Starts queued work and cancels work nobody holds. Released images stay resident until the budget evicts the
+    // least recently used.
     void endFrame();
     bool clearing() const;
     const std::string& error() const;

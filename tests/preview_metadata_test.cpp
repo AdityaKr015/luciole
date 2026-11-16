@@ -207,13 +207,15 @@ namespace {
     zipFile.close();
     fields = inspect(svgz, "image/svg+xml-compressed");
     TEST_CHECK(value(fields, "Pixel size") == "400 × 200 px" && value(fields, "Compression") == "Gzip");
-    luciole::PreviewService preview;
+    luciole::ThumbnailService thumbnails;
+    luciole::PreviewService preview(thumbnails);
+    thumbnails.setChangedCallback([&] { preview.thumbnailsChanged(); });
     const auto source = entry(path, "image/png");
-    preview.show(source, 128, {});
+    preview.show(source, 128);
     wait([&] { return !preview.busy(); });
     TEST_CHECK(value(preview.snapshot().metadata, "Pixel size") == "640 × 360 px");
     TEST_CHECK(preview.snapshot().image && preview.snapshot().image->pixels->width == 128);
-    preview.show(source, 512, {});
+    preview.show(source, 512);
     wait([&] { return !preview.busy(); });
     TEST_CHECK(value(preview.snapshot().metadata, "Pixel size") == "640 × 360 px");
     const auto document = root / "page.pdf";
@@ -233,7 +235,7 @@ namespace {
     const auto notes = root / "notes.txt";
     std::ofstream(notes) << "UTF-8 café";
     TEST_CHECK(::chmod(notes.c_str(), 0600) == 0);
-    preview.show(entry(notes, "text/plain"), 128, {});
+    preview.show(entry(notes, "text/plain"), 128);
     wait([&] { return !preview.busy(); });
     TEST_CHECK(value(preview.snapshot().metadata, "Permissions") == "0600");
     TEST_CHECK(std::ranges::none_of(preview.snapshot().metadata, [](const auto& field) {
@@ -317,8 +319,10 @@ namespace {
     command(
         {"ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "sine=duration=0.2:sample_rate=44100", wav.native()}
     );
-    luciole::PreviewService preview;
-    preview.show(entry(wav, "audio/x-wav"), 128, {});
+    luciole::ThumbnailService thumbnails;
+    luciole::PreviewService preview(thumbnails);
+    thumbnails.setChangedCallback([&] { preview.thumbnailsChanged(); });
+    preview.show(entry(wav, "audio/x-wav"), 128);
     wait([&] { return !preview.busy(); });
     TEST_CHECK(value(preview.snapshot().metadata, "Audio codec") == "pcm_s16le");
     TEST_CHECK(

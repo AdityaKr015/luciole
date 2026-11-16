@@ -33,7 +33,7 @@ namespace {
     if (::nice(10) == -1 && errno != 0) {
       ::_exit(1);
     }
-    // Keep nested decoder thread pools within the image worker's address-space budget.
+    // Keep nested decoder thread pools, and so their stacks and arenas, within the image worker's memory budget.
     if (limits.maxCpus) {
       cpu_set_t available, selected;
       if (::sched_getaffinity(0, sizeof(available), &available) < 0) {
@@ -57,8 +57,10 @@ namespace {
       ::_exit(1);
     }
 #ifndef __SANITIZE_ADDRESS__
-    // ASan reserves a large virtual shadow region before the helper enters main.
-    if (::setrlimit(RLIMIT_AS, &memory) < 0) {
+    // Cap private writable memory, not address space: glycin's thread pools and malloc arenas reserve far more than
+    // they touch (VmPeak around 850 MiB for a 20 MP JPEG), so RLIMIT_AS failed large images at random with
+    // "mmap() failed". ASan maps its shadow region before the helper enters main.
+    if (::setrlimit(RLIMIT_DATA, &memory) < 0) {
       ::_exit(1);
     }
 #else
@@ -113,7 +115,7 @@ std::expected<void, std::string> luciole::runProviderProcess(
   if (!process) {
     return std::unexpected("cannot start thumbnail provider");
   }
-  // Waiting occurs only on a thumbnail worker. The child is also CPU/address-space/output bounded.
+  // Waiting occurs only on a thumbnail worker. The child is also CPU, memory and output bounded.
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   struct Wait {
     std::mutex mutex;

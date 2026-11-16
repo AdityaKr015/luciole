@@ -13,16 +13,15 @@ namespace luciole {
     bool imageUpgradeFailed = false;
     MetadataFields metadata;
   };
-  // One current selection and at most one text worker. Superseded work never publishes.
+  // One current selection and at most one text worker. Superseded work never publishes. Images come from the shared
+  // ThumbnailService, whose owner forwards its change notifications to thumbnailsChanged().
   class PreviewService {
   public:
-    PreviewService();
+    explicit PreviewService(ThumbnailService& thumbnails);
     ~PreviewService();
-    void show(
-        std::optional<DirectoryEntry> entry, int pixels, ThumbnailOptions options,
-        std::shared_ptr<const FileIconImage> prepared = {}
-    );
+    void show(std::optional<DirectoryEntry> entry, int pixels, std::shared_ptr<const FileIconImage> prepared = {});
     void clear();
+    void thumbnailsChanged();
     void setChangedCallback(std::function<void()> callback);
     const PreviewSnapshot& snapshot() const;
     bool busy() const;

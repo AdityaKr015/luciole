@@ -155,8 +155,9 @@ namespace {
 } // namespace
 
 struct luciole::PreviewService::State : std::enable_shared_from_this<State> {
+  explicit State(ThumbnailService& shared) : thumbnails(shared) {}
   PreviewSnapshot view;
-  ThumbnailService thumbnails{ThumbnailPurpose::Preview};
+  ThumbnailService& thumbnails;
   PreviewMetadataService metadata;
   std::shared_ptr<const FileIconImage> pendingImage;
   GioPtr<GCancellable> cancel;
@@ -173,6 +174,7 @@ struct luciole::PreviewService::State : std::enable_shared_from_this<State> {
     }
     view = {};
     pendingImage.reset();
+    // Lets the shared service cancel the superseded decode now rather than at the next frame.
     thumbnails.endFrame();
   }
   void imageChanged() {
@@ -232,7 +234,7 @@ struct luciole::PreviewService::State : std::enable_shared_from_this<State> {
     });
   }
 };
-luciole::PreviewService::PreviewService() : m_state(std::make_shared<State>()) {
+luciole::PreviewService::PreviewService(ThumbnailService& thumbnails) : m_state(std::make_shared<State>(thumbnails)) {
   const std::weak_ptr<State> weak = m_state;
   m_state->metadata.setChangedCallback([weak] {
     if (const auto state = weak.lock(); state && state->alive && state->view.entry) {
@@ -240,14 +242,13 @@ luciole::PreviewService::PreviewService() : m_state(std::make_shared<State>()) {
       state->notify();
     }
   });
-  m_state->thumbnails.setChangedCallback([weak] {
-    const auto state = weak.lock();
-    if (!state || !state->alive || !state->pendingImage) {
-      return;
-    }
-    state->imageChanged();
-    state->notify();
-  });
+}
+void luciole::PreviewService::thumbnailsChanged() {
+  if (!m_state->alive || !m_state->pendingImage) {
+    return;
+  }
+  m_state->imageChanged();
+  m_state->notify();
 }
 luciole::PreviewService::~PreviewService() {
   clear();
@@ -256,15 +257,13 @@ luciole::PreviewService::~PreviewService() {
 }
 void luciole::PreviewService::clear() {
   m_state->metadata.clear();
-  if (!m_state->view.entry && !m_state->pendingImage && !m_state->pending && m_state->thumbnails.reservedBytes() == 0) {
+  if (!m_state->view.entry && !m_state->pendingImage && !m_state->pending) {
     return;
   }
   m_state->resetSelection();
-  m_state->thumbnails.invalidate();
 }
 void luciole::PreviewService::show(
-    std::optional<DirectoryEntry> entry, int pixels, ThumbnailOptions options,
-    std::shared_ptr<const FileIconImage> prepared
+    std::optional<DirectoryEntry> entry, int pixels, std::shared_ptr<const FileIconImage> prepared
 ) {
   pixels = ThumbnailService::pixelSizeClass(
       pixels,
@@ -278,6 +277,7 @@ void luciole::PreviewService::show(
     }
     return;
   }
+  const auto& options = m_state->thumbnails.options();
   const bool unchanged = m_state->view.entry && sameSource(*entry, *m_state->view.entry) && options == m_state->options;
   if (unchanged
       && (pixels == m_state->pixels
@@ -311,13 +311,11 @@ void luciole::PreviewService::show(
       state.pending = true;
       state.start();
     } else {
-      options.policy = ThumbnailPolicy::All;
-      state.thumbnails.setOptions(options);
       if (prepared && prepared->pixels) {
         state.view.image = std::move(prepared);
         state.view.status = PreviewStatus::Ready;
       }
-      state.pendingImage = state.thumbnails.request(*entry, pixels);
+      state.pendingImage = state.thumbnails.request(*entry, pixels, true, ThumbnailPurpose::Preview);
       state.imageChanged();
       if (!state.pendingImage && !state.view.image) {
         state.view.status = PreviewStatus::Unavailable;
@@ -331,9 +329,5 @@ void luciole::PreviewService::setChangedCallback(std::function<void()> callback)
 }
 const luciole::PreviewSnapshot& luciole::PreviewService::snapshot() const { return m_state->view; }
 bool luciole::PreviewService::busy() const {
-  return m_state->metadata.busy()
-      || m_state->running
-      || m_state->pending
-      || m_state->thumbnails.activeJobs() != 0
-      || m_state->thumbnails.queuedJobs() != 0;
+  return m_state->metadata.busy() || m_state->running || m_state->pending || m_state->pendingImage != nullptr;
 }

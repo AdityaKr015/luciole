@@ -60,11 +60,12 @@ namespace {
     );
     const auto source = entry(path, "image/svg+xml");
     luciole::ThumbnailService grid;
+    luciole::PreviewService preview(grid);
+    grid.setChangedCallback([&] { preview.thumbnailsChanged(); });
     const auto seed = grid.request(source, 128);
     wait([&] { return seed && seed->ready; });
     TEST_CHECK(seed->pixels && seed->pixels->width == 128);
-    luciole::PreviewService preview;
-    preview.show(source, 2048, {}, seed);
+    preview.show(source, 2048, seed);
     TEST_CHECK(preview.snapshot().status == luciole::PreviewStatus::Ready && preview.snapshot().image == seed);
     wait([&] { return !preview.busy(); });
     TEST_CHECK(preview.snapshot().image && preview.snapshot().image->pixels);
@@ -75,7 +76,8 @@ namespace {
     TEST_CHECK(preview.snapshot().status == luciole::PreviewStatus::Empty);
   }
   void inheritedTextChecks(const std::filesystem::path& root) {
-    luciole::PreviewService preview;
+    luciole::ThumbnailService thumbnails;
+    luciole::PreviewService preview(thumbnails);
     for (const auto& [name, mime, text] :
          {std::tuple{"record.yaml", "application/yaml", "message: hello\n"},
           std::tuple{"record.yml", "application/x-yaml", "message: hello again\n"},
@@ -87,7 +89,7 @@ namespace {
           std::tuple{"flake.nix", "application/x-nix", "{ description = \"Example\"; }\n"}}) {
       const auto path = root / name;
       write(path, text);
-      preview.show(entry(path, mime), 512, {});
+      preview.show(entry(path, mime), 512);
       wait([&] { return !preview.busy(); });
       TEST_CHECK(preview.snapshot().status == luciole::PreviewStatus::Ready);
       TEST_CHECK(preview.snapshot().text == text);
@@ -95,7 +97,7 @@ namespace {
     }
     const auto path = root / "binary.yaml";
     write(path, std::string("binary\0text", 11));
-    preview.show(entry(path, "application/yaml"), 512, {});
+    preview.show(entry(path, "application/yaml"), 512);
     wait([&] { return !preview.busy(); });
     TEST_CHECK(preview.snapshot().status == luciole::PreviewStatus::Unavailable && preview.snapshot().text.empty());
     preview.clear();
@@ -107,27 +109,29 @@ namespace {
     TEST_CHECK(landscapeLayout.pixels <= 320);
     const auto retinaLayout = luciole::previewImageLayout(3840, 2160, 800, 720, 2);
     TEST_CHECK(retinaLayout.pixels > 1024 && retinaLayout.pixels <= 2048);
-    luciole::PreviewService preview;
+    luciole::ThumbnailService grid;
+    luciole::PreviewService preview(grid);
+    grid.setChangedCallback([&] { preview.thumbnailsChanged(); });
     const auto a = root / "space ' café\n.txt", b = root / "new.txt";
     const auto finish = [&] { wait([&] { return !preview.busy(); }); };
     write(a, "<b>literal</b>\n日本語\n");
     write(b, "current file");
-    preview.show(entry(a), 512, {});
+    preview.show(entry(a), 512);
     finish();
     TEST_CHECK(
         preview.snapshot().status == luciole::PreviewStatus::Ready
         && preview.snapshot().text == "<b>literal</b>\n日本語\n"
     );
     for (int i = 0; i < 100; ++i) {
-      preview.show(entry(i % 2 ? a : b), 512, {});
+      preview.show(entry(i % 2 ? a : b), 512);
     }
-    preview.show(entry(b), 512, {});
+    preview.show(entry(b), 512);
     finish();
     TEST_CHECK(
         preview.snapshot().text == "current file" && preview.snapshot().entry->location() == entry(b).location()
     );
     write(a, std::string(1000000, 'a'));
-    preview.show(entry(a), 512, {});
+    preview.show(entry(a), 512);
     finish();
     TEST_CHECK(
         preview.snapshot().status == luciole::PreviewStatus::Ready
@@ -135,30 +139,30 @@ namespace {
         && preview.snapshot().message == "Preview truncated"
     );
     write(b, std::string("binary\0text", 11));
-    preview.show(entry(b), 512, {});
+    preview.show(entry(b), 512);
     finish();
     TEST_CHECK(preview.snapshot().status == luciole::PreviewStatus::Unavailable);
     auto stale = entry(a);
     stale.size = 3;
-    preview.show(stale, 512, {});
+    preview.show(stale, 512);
     finish();
     TEST_CHECK(preview.snapshot().status == luciole::PreviewStatus::Error);
     const auto link = root / "link.txt";
     std::filesystem::create_symlink(a, link);
-    preview.show(entry(link), 512, {});
+    preview.show(entry(link), 512);
     finish();
     TEST_CHECK(preview.snapshot().text.empty());
     const auto fifo = root / "fifo.txt";
     TEST_CHECK(::mkfifo(fifo.c_str(), 0600) == 0);
-    preview.show(entry(fifo), 512, {});
+    preview.show(entry(fifo), 512);
     finish();
     TEST_CHECK(preview.snapshot().status == luciole::PreviewStatus::Unavailable);
     auto remote = entry(b);
     remote.place = luciole::Location::fromUri("sftp://example.invalid/file.txt");
-    preview.show(remote, 512, {});
+    preview.show(remote, 512);
     finish();
     TEST_CHECK(preview.snapshot().status == luciole::PreviewStatus::Unavailable);
-    preview.show(entry(a), 512, {});
+    preview.show(entry(a), 512);
     preview.clear();
     finish();
     TEST_CHECK(
@@ -169,7 +173,7 @@ namespace {
     const auto corrupt = root / "corrupt.png";
     write(corrupt, "not an image");
     auto image = entry(corrupt, "image/png");
-    preview.show(image, 512, {});
+    preview.show(image, 512);
     wait([&] { return preview.snapshot().status != luciole::PreviewStatus::Loading; });
     TEST_CHECK(preview.snapshot().status == luciole::PreviewStatus::Unavailable);
     preview.clear();
@@ -178,7 +182,7 @@ namespace {
     const luciole::GioPtr<GdkPixbuf> pixels(gdk_pixbuf_new(GDK_COLORSPACE_RGB, true, 8, 8, 8));
     gdk_pixbuf_fill(pixels.get(), 0xff2244ffU);
     TEST_CHECK(gdk_pixbuf_save(pixels.get(), good.c_str(), "png", nullptr, nullptr));
-    preview.show(entry(good, "image/png"), 1024, {});
+    preview.show(entry(good, "image/png"), 1024);
     wait([&] { return preview.snapshot().status != luciole::PreviewStatus::Loading; });
     TEST_CHECK(
         preview.snapshot().status == luciole::PreviewStatus::Ready
@@ -187,13 +191,12 @@ namespace {
     );
     preview.clear();
     finish();
-    luciole::ThumbnailService grid;
     const auto source = entry(good, "image/png");
     const auto loaded = grid.request(source, 128);
     wait([&] { return loaded && loaded->ready; });
     const auto seed = grid.prepared(source);
     TEST_CHECK(seed && seed->pixels);
-    preview.show(source, 1024, {}, seed);
+    preview.show(source, 1024, seed);
     TEST_CHECK(preview.snapshot().status == luciole::PreviewStatus::Ready && preview.snapshot().image == seed);
     auto obsolete = source;
     obsolete.contentRevision = luciole::ChangeRevision{.seconds = 1, .nanoseconds = 2};
@@ -208,42 +211,42 @@ namespace {
     const auto small = grid.request(detailSource, 128);
     wait([&] { return small && small->ready; });
     TEST_CHECK(small->pixels && small->pixels->width == 128);
-    preview.show(detailSource, 512, {}, small);
+    preview.show(detailSource, 512, small);
     TEST_CHECK(preview.snapshot().image == small);
     wait([&] {
       return preview.snapshot().image
           && preview.snapshot().image->pixels
           && preview.snapshot().image->pixels->width >= 512;
     });
-    preview.show(detailSource, 1024, {}, small);
+    preview.show(detailSource, 1024, small);
     finish();
     TEST_CHECK(
         preview.snapshot().image && preview.snapshot().image->pixels && preview.snapshot().image->pixels->width == 1024
     );
     TEST_CHECK(!preview.snapshot().imageUpgradeFailed);
-    preview.show(detailSource, 1536, {}, small);
+    preview.show(detailSource, 1536, small);
     finish();
     TEST_CHECK(
         preview.snapshot().image && preview.snapshot().image->pixels && preview.snapshot().image->pixels->width == 2048
     );
     const auto highResolution = preview.snapshot().image;
-    preview.show(detailSource, 1400, {}, small);
+    preview.show(detailSource, 1400, small);
     TEST_CHECK(preview.snapshot().image == highResolution);
-    preview.show(detailSource, 512, {}, small);
+    preview.show(detailSource, 512, small);
     TEST_CHECK(preview.snapshot().image == highResolution);
     const auto ordinary = grid.request(detailSource, 1536);
     wait([&] { return ordinary && ordinary->ready; });
     TEST_CHECK(ordinary->pixels && ordinary->pixels->width == 1024);
     preview.clear();
     finish();
-    const auto limitedPath = root / "limited.png";
-    std::filesystem::copy_file(detailed, limitedPath);
-    const auto limitedSource = entry(limitedPath, "image/png");
-    const auto fallback = grid.request(limitedSource, 128);
+    const auto changedPath = root / "changed.png";
+    std::filesystem::copy_file(detailed, changedPath);
+    const auto changedSource = entry(changedPath, "image/png");
+    const auto fallback = grid.request(changedSource, 128);
     wait([&] { return fallback && fallback->ready; });
-    luciole::ThumbnailOptions limited;
-    limited.maxMegapixels = 1;
-    preview.show(limitedSource, 512, limited, fallback);
+    // The file changes after its thumbnail was decoded: the larger decode fails and the thumbnail stays.
+    std::ofstream(changedPath, std::ios::binary | std::ios::app) << "trailing bytes";
+    preview.show(changedSource, 512, fallback);
     finish();
     TEST_CHECK(
         preview.snapshot().status == luciole::PreviewStatus::Ready
@@ -256,11 +259,11 @@ namespace {
     preview.clear();
     finish();
     {
-      luciole::PreviewService retired;
-      retired.show(entry(a), 512, {});
+      luciole::PreviewService retired(grid);
+      retired.show(entry(a), 512);
     }
     write(b, "latest revision");
-    preview.show(entry(b), 512, {});
+    preview.show(entry(b), 512);
     finish();
     TEST_CHECK(preview.snapshot().text == "latest revision");
   }

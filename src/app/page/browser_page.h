@@ -334,7 +334,7 @@ private:
   std::string m_selectionPattern = "*";
   luciole::FileIconCache& m_icons;
   luciole::ThumbnailService& m_thumbnails;
-  luciole::PreviewService m_preview;
+  luciole::PreviewService m_preview{m_thumbnails};
   bool m_thumbnailClearing = false;
   std::string m_thumbnailError;
   std::uint64_t m_thumbnailRevision = 0;

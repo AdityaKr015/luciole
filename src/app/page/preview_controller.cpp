@@ -61,7 +61,7 @@ void PreviewController::sync() {
   const auto layout = luciole::previewImageLayout(
       pixels ? pixels->width : 0, pixels ? pixels->height : 0, width, height, renderer.renderScale(), quick
   );
-  m_preview.show(entry ? std::optional(*entry) : std::nullopt, layout.pixels, m_page.settings().thumbnails, prepared);
+  m_preview.show(entry ? std::optional(*entry) : std::nullopt, layout.pixels, prepared);
 }
 
 void PreviewController::openPreviewed(bool with) {

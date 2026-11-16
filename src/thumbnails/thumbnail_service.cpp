@@ -26,6 +26,14 @@ namespace {
   std::string revisionText(const std::optional<luciole::ChangeRevision>& revision) {
     return revision ? revision->text() : std::string();
   }
+  // Purpose is part of the identity: previews accept no smaller foreign thumbnail and take clean video frames.
+  std::string cacheKey(const luciole::DirectoryEntry& source, int side, luciole::ThumbnailPurpose purpose) {
+    return std::format(
+        "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}", source.location().uri(), source.id, source.etag().value_or(""),
+        source.modifiedSeconds.value_or(0), source.size.value_or(0), revisionText(source.contentRevision), side,
+        purpose == luciole::ThumbnailPurpose::Preview ? "preview" : "thumbnail"
+    );
+  }
 
   constexpr std::size_t kResidentBudget = 64U * 1024U * 1024U;
   constexpr std::size_t kMaxEntries = 1024;
@@ -195,6 +203,7 @@ struct luciole::ThumbnailService::State : std::enable_shared_from_this<State> {
     GioPtr<GCancellable> cancel{g_cancellable_new()};
     std::uint64_t serial = 0, used = 0;
     int side = 128;
+    ThumbnailPurpose purpose = ThumbnailPurpose::Thumbnail;
     bool visible = false, failed = false;
     Stage stage = Stage::ProbeQueued;
     std::chrono::steady_clock::time_point retry;
@@ -207,6 +216,7 @@ struct luciole::ThumbnailService::State : std::enable_shared_from_this<State> {
     std::uint64_t epoch, serial;
     int side;
     bool generate;
+    ThumbnailPurpose purpose;
   };
   struct Result {
     LoadResult loaded;
@@ -219,7 +229,6 @@ struct luciole::ThumbnailService::State : std::enable_shared_from_this<State> {
   };
   static constexpr std::size_t kWriteBudget = 16U * 1024U * 1024U;
   ThumbnailOptions options;
-  ThumbnailPurpose purpose = ThumbnailPurpose::Thumbnail;
   std::unordered_map<std::string, Item> cache;
   std::unordered_map<const FileIconImage*, Item*> leases;
   std::function<void()> changed;
@@ -371,13 +380,21 @@ struct luciole::ThumbnailService::State : std::enable_shared_from_this<State> {
       g_task_return_boolean(task, true);
     });
   }
+  // Previews first, then visible cells, then the least recently requested.
   auto next(Stage stage) {
+    const auto before = [](const Item& a, const Item& b) {
+      const bool aPreview = a.purpose == ThumbnailPurpose::Preview, bPreview = b.purpose == ThumbnailPurpose::Preview;
+      if (aPreview != bPreview) {
+        return aPreview;
+      }
+      if (a.visible != b.visible) {
+        return a.visible;
+      }
+      return a.used < b.used;
+    };
     auto result = cache.end();
     for (auto it = cache.begin(); it != cache.end(); ++it) {
-      if (it->second.stage == stage
-          && (result == cache.end()
-              || (it->second.visible && !result->second.visible)
-              || (it->second.visible == result->second.visible && it->second.used < result->second.used))) {
+      if (it->second.stage == stage && (result == cache.end() || before(it->second, result->second))) {
         result = it;
       }
     }
@@ -446,17 +463,23 @@ struct luciole::ThumbnailService::State : std::enable_shared_from_this<State> {
         },
         nullptr
     ));
+    auto requestOptions = options;
+    if (item.purpose == ThumbnailPurpose::Preview) {
+      requestOptions.policy = ThumbnailPolicy::All;
+    }
     g_task_set_task_data(
         task.get(),
-        new Request{shared_from_this(), next->first, item.source, options, epoch, item.serial, item.side, generate},
+        new Request{
+            shared_from_this(), next->first, item.source, requestOptions, epoch, item.serial, item.side, generate,
+            item.purpose
+        },
         [](gpointer data) { delete static_cast<Request*>(data); }
     );
     g_task_run_in_thread(task.get(), [](GTask* task, gpointer, gpointer data, GCancellable* cancel) {
       const auto& request = *static_cast<Request*>(data);
       auto result = std::make_unique<Result>();
       try {
-        result->loaded =
-            load(request.source, request.side, request.options, cancel, request.generate, request.owner->purpose);
+        result->loaded = load(request.source, request.side, request.options, cancel, request.generate, request.purpose);
       } catch (const std::exception& error) {
         result->error = error.what();
       }
@@ -493,9 +516,7 @@ struct luciole::ThumbnailService::State : std::enable_shared_from_this<State> {
   }
 };
 
-luciole::ThumbnailService::ThumbnailService(ThumbnailPurpose purpose) : m_state(std::make_shared<State>()) {
-  m_state->purpose = purpose;
-}
+luciole::ThumbnailService::ThumbnailService() : m_state(std::make_shared<State>()) {}
 int luciole::ThumbnailService::pixelSizeClass(int pixels, ThumbnailPurpose purpose) {
   return purpose == ThumbnailPurpose::Preview && pixels > 1024 ? kMaxPreviewImageSide
                                                                : ThumbnailStore::sizeClass(std::clamp(pixels, 1, 1024));
@@ -506,11 +527,12 @@ luciole::ThumbnailService::~ThumbnailService() {
   m_state->retire();
 }
 std::shared_ptr<const luciole::FileIconImage>
-luciole::ThumbnailService::request(const DirectoryEntry& source, int pixels, bool visible) {
+luciole::ThumbnailService::request(const DirectoryEntry& source, int pixels, bool visible, ThumbnailPurpose purpose) {
   auto& state = *m_state;
   const auto& mime = source.contentType;
   const auto location = source.location();
-  if (state.options.policy == ThumbnailPolicy::Never
+  const auto policy = purpose == ThumbnailPurpose::Preview ? ThumbnailPolicy::All : state.options.policy;
+  if (policy == ThumbnailPolicy::Never
       || state.clearing
       || !mime
       || !(
@@ -523,14 +545,11 @@ luciole::ThumbnailService::request(const DirectoryEntry& source, int pixels, boo
       || source.symlink
       || !source.modifiedSeconds
       || privateUri(location.uri())
-      || (state.options.policy == ThumbnailPolicy::Local && !location.nativePath())) {
+      || (policy == ThumbnailPolicy::Local && !location.nativePath())) {
     return {};
   }
-  const int side = pixelSizeClass(pixels, mime->starts_with("image/") ? state.purpose : ThumbnailPurpose::Thumbnail);
-  const auto key = std::format(
-      "{}\n{}\n{}\n{}\n{}\n{}\n{}", location.uri(), source.id, source.etag().value_or(""),
-      source.modifiedSeconds.value_or(0), source.size.value_or(0), revisionText(source.contentRevision), side
-  );
+  const int side = pixelSizeClass(pixels, mime->starts_with("image/") ? purpose : ThumbnailPurpose::Thumbnail);
+  const auto key = cacheKey(source, side, purpose);
   auto found = state.cache.find(key);
   if (found != state.cache.end() && found->second.failed && std::chrono::steady_clock::now() >= found->second.retry) {
     state.erase(found);
@@ -544,6 +563,7 @@ luciole::ThumbnailService::request(const DirectoryEntry& source, int pixels, boo
     item.image = std::make_shared<FileIconImage>();
     item.serial = ++state.serial;
     item.side = side;
+    item.purpose = purpose;
     found = state.cache.emplace(key, std::move(item)).first;
     state.leases.emplace(found->second.image.get(), &found->second);
   }
@@ -571,23 +591,19 @@ std::shared_ptr<const luciole::FileIconImage> luciole::ThumbnailService::prepare
   if (m_state->clearing || m_state->options.policy == ThumbnailPolicy::Never) {
     return {};
   }
-  const auto uri = source.location().uri();
-  const auto etag = source.etag().value_or("");
   const auto identity = source.identity();
-  for (const int side : {1024, 512, 256, 128}) {
-    const auto key = std::format(
-        "{}\n{}\n{}\n{}\n{}\n{}\n{}", uri, source.id, etag, source.modifiedSeconds.value_or(0), source.size.value_or(0),
-        revisionText(source.contentRevision), side
-    );
-    const auto found = m_state->cache.find(key);
-    if (found != m_state->cache.end()
-        && found->second.image->pixels
-        && found->second.source.identity() == identity
-        && found->second.source.type == source.type
-        && found->second.source.symlink == source.symlink
-        && found->second.source.contentType == source.contentType) {
-      (void)touch(found->second.image, true);
-      return found->second.image;
+  for (const int side : {kMaxPreviewImageSide, 1024, 512, 256, 128}) {
+    for (const auto purpose : {ThumbnailPurpose::Preview, ThumbnailPurpose::Thumbnail}) {
+      const auto found = m_state->cache.find(cacheKey(source, side, purpose));
+      if (found != m_state->cache.end()
+          && found->second.image->pixels
+          && found->second.source.identity() == identity
+          && found->second.source.type == source.type
+          && found->second.source.symlink == source.symlink
+          && found->second.source.contentType == source.contentType) {
+        (void)touch(found->second.image, true);
+        return found->second.image;
+      }
     }
   }
   return {};
@@ -659,18 +675,8 @@ void luciole::ThumbnailService::setOptions(ThumbnailOptions options) {
   }
   m_state->notify();
 }
-void luciole::ThumbnailService::invalidate() { m_state->retire(); }
-void luciole::ThumbnailService::endFrame() {
-  for (auto it = m_state->cache.begin(); it != m_state->cache.end();) {
-    if (it->second.stage == State::Stage::Ready && it->second.image.use_count() == 1) {
-      auto retired = it++;
-      m_state->erase(retired);
-    } else {
-      ++it;
-    }
-  }
-  m_state->schedule();
-}
+const luciole::ThumbnailOptions& luciole::ThumbnailService::options() const { return m_state->options; }
+void luciole::ThumbnailService::endFrame() { m_state->schedule(); }
 void luciole::ThumbnailService::setChangedCallback(std::function<void()> callback) {
   m_state->changed = std::move(callback);
 }

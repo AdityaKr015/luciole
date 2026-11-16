@@ -196,8 +196,8 @@ namespace {
       TEST_CHECK(store.clear().empty() && fs::exists(target));
     }
     {
-      luciole::ThumbnailService preview(luciole::ThumbnailPurpose::Preview);
-      const auto asset = preview.request(entry, 256);
+      luciole::ThumbnailService service;
+      const auto asset = service.request(entry, 256, true, luciole::ThumbnailPurpose::Preview);
       pump.until([&] { return asset && asset->ready; });
       TEST_CHECK(asset->pixels && asset->pixels->rgba != foreign.image.rgba);
       pump.until([&] {
@@ -387,14 +387,14 @@ namespace {
       entries.erase(entries.begin() + static_cast<std::ptrdiff_t>(limit), entries.end());
     }
     TEST_CHECK(!entries.empty());
-    luciole::ThumbnailService service;
+    auto service = std::make_unique<luciole::ThumbnailService>();
     const auto phase = [&](const char* name) {
       std::vector<std::shared_ptr<const luciole::FileIconImage>> assets;
       assets.reserve(entries.size());
       std::vector<double> elapsed(entries.size(), -1);
       const auto started = std::chrono::steady_clock::now();
       for (const auto& entry : entries) {
-        assets.push_back(service.request(entry, 128));
+        assets.push_back(service->request(entry, 128));
       }
       pump.until([&] {
         bool done = true;
@@ -423,7 +423,8 @@ namespace {
         return fs::exists(cache / luciole::ThumbnailStore::filename(entry.location().uri()));
       });
     });
-    service.invalidate();
+    // A fresh service starts with an empty memory cache.
+    service = std::make_unique<luciole::ThumbnailService>();
     phase("warm-disk");
     phase("warm-memory");
   }
@@ -917,8 +918,7 @@ namespace {
     pump.until([&] { return fs::exists(cachePath); });
     const auto cached = luciole::readThumbnailFile(cachePath, 8U * 1024U * 1024U);
     TEST_CHECK(cached);
-    luciole::ThumbnailService previews(luciole::ThumbnailPurpose::Preview);
-    const auto preview = previews.request(entry, 128);
+    const auto preview = thumbnails.request(entry, 128, true, luciole::ThumbnailPurpose::Preview);
     pump.until([&] { return preview && preview->ready; });
     TEST_CHECK(preview->pixels && preview->pixels->rgba == plain->rgba);
     pump.drain();
@@ -1005,8 +1005,8 @@ namespace {
     };
     const auto bytes = sharedPng(foreign, PNG_TEXT_COMPRESSION_zTXt);
     write(target, bytes);
-    service.invalidate();
-    const auto reused = service.request(entry, 128);
+    luciole::ThumbnailService fresh;
+    const auto reused = fresh.request(entry, 128);
     pump.until([&] { return reused && reused->ready; });
     TEST_CHECK(reused->pixels && reused->pixels->rgba == foreign.image.rgba);
     pump.drain();
@@ -1112,7 +1112,8 @@ namespace {
     std::ofstream(bin / "pdftoppm") << "#!" << shell.get() << "\nexec " << sleep.get() << " 30\n";
     TEST_CHECK(::chmod((bin / "pdftoppm").c_str(), 0700) == 0);
     const std::string path = std::getenv("PATH");
-    ::setenv("PATH", bin.c_str(), 1);
+    // The blocking pdftoppm shadows the real one; glycin still needs bwrap from the system PATH.
+    ::setenv("PATH", (bin.native() + ":" + path).c_str(), 1);
     luciole::ThumbnailService service;
     auto a = service.request(first, 128), b = service.request(second, 128);
     TEST_CHECK(a && b);
@@ -1121,7 +1122,24 @@ namespace {
     TEST_CHECK(cached != nullptr);
     pump.until([&] { return cached->ready; });
     TEST_CHECK(cached->pixels && service.activeJobs() == 2 && !a->ready && !b->ready);
+    // A preview takes the next free decoder ahead of thumbnails that queued before it.
+    std::size_t completions = 0;
+    service.setChangedCallback([&] { ++completions; });
+    std::vector<std::shared_ptr<const luciole::FileIconImage>> queued;
+    for (std::uint64_t id = 100; id < 103; ++id) {
+      auto blocked = first;
+      blocked.id = id;
+      queued.push_back(service.request(blocked, 128));
+    }
+    const auto preview = service.request(warm, 512, true, luciole::ThumbnailPurpose::Preview);
+    TEST_CHECK(preview != nullptr);
+    pump.until([&] { return completions == queued.size() + 1; });
     a.reset();
+    service.endFrame();
+    pump.until([&] { return preview->ready; });
+    TEST_CHECK(preview->pixels && std::ranges::none_of(queued, [](const auto& image) { return image->ready; }));
+    service.setChangedCallback({});
+    queued.clear();
     b.reset();
     service.endFrame();
     pump.until([&] { return service.activeJobs() == 0; });
@@ -1198,14 +1216,17 @@ namespace {
     pump.until([&] { return asset->ready; });
     TEST_CHECK(asset->pixels && asset->pixels->width == 32 && asset->pixels->rgba[3] == 128);
     TEST_CHECK(thumbnails.activeJobs() <= 2 && thumbnails.reservedBytes() <= 64U * 1024U * 1024U);
-    const auto original = asset;
+    // A released thumbnail stays resident: scrolling back to it must not wait for the disk or a decoder.
+    asset.reset();
+    thumbnails.endFrame();
+    pump.drain();
+    asset = thumbnails.request(entry, 48);
+    TEST_CHECK(asset && asset->ready && asset->pixels);
     const auto stampBefore = fs::last_write_time(path);
     auto replacement = picture();
     std::ranges::fill(replacement.rgba, 255);
     write(path, png(replacement));
     fs::last_write_time(path, stampBefore);
-    thumbnails.invalidate();
-    TEST_CHECK(!original->pixels);
     entry = source(path, pump);
     asset = thumbnails.request(entry, 48);
     pump.until([&] { return asset->ready; });
@@ -1226,7 +1247,7 @@ namespace {
     TEST_CHECK(
         thumbnails.reservedBytes() <= 64U * 1024U * 1024U && held.size() < 1200 && thumbnails.queuedJobs() <= 1024
     );
-    thumbnails.invalidate();
+    asset.reset();
     held.clear();
     std::vector<std::shared_ptr<const luciole::FileIconImage>> overscan;
     for (std::uint64_t id = 1; id <= 16; ++id) {
@@ -1246,8 +1267,9 @@ namespace {
     thumbnails.endFrame();
     pump.drain();
     TEST_CHECK(thumbnails.queuedJobs() == 0 && thumbnails.activeJobs() == 0);
-    thumbnails.invalidate();
-    entry = source(path, pump);
+    const auto uncached = fixture.root / "uncached.png";
+    write(uncached, png(picture()));
+    entry = source(uncached, pump);
     asset = thumbnails.request(entry, 48);
     pump.until([&] { return thumbnails.activeJobs() > 0; });
     thumbnails.clearCache();

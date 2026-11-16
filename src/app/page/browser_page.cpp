@@ -308,6 +308,7 @@ void BrowserPage::thumbnailsChanged() {
     m_thumbnailError = m_thumbnails.error();
     m_settingsController.markDirty();
   }
+  m_preview.thumbnailsChanged();
   m_surface->requestLayout();
 }
 
@@ -605,7 +606,7 @@ void BrowserPage::hide() {
             ? std::optional(browser().model().rows()[*m_list->firstVisibleIndex()])
             : std::nullopt
     };
-    // Releasing the cells lets the shared ThumbnailService evict this page's thumbnails at its next endFrame().
+    // Releasing the cells lets the shared ThumbnailService evict this page's thumbnails when its budget needs room.
     m_list->setAdapter(nullptr);
     m_millerView->suspend();
     m_thumbnailContext = 0;
