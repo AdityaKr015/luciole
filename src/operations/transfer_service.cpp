@@ -273,6 +273,7 @@ namespace {
       }
       std::set<std::tuple<dev_t, ino_t, std::string>> seen;
       std::vector<bool> included(sources.size(), false);
+      bool crossesDevice = false;
       // Classify overlaps before any selected parent is moved or removed.
       for (std::size_t i = 0; i < sources.size(); ++i) {
         auto& source = sources[i];
@@ -308,17 +309,19 @@ namespace {
           completed.fetch_add(1);
         }
         source.parent = luciole::Fd{};
+        if (!processed[source.index] && !included[i]) {
+          crossesDevice |= source.metadata.st_dev != binding->metadata.st_dev;
+        }
       }
 
-      // Only independent whole-item selections crossing real devices use paired copied-Move history.
+      // Copied and mixed history requires independent selected roots and at least one real device crossing.
+      if (!crossesDevice) {
+        work.prepareCopiedMove = {};
+      }
       std::vector<luciole::Location> copiedPaths;
       for (std::size_t i = 0; i < sources.size() && work.prepareCopiedMove; ++i) {
         if (processed[sources[i].index] || included[i]) {
           continue;
-        }
-        if (sources[i].metadata.st_dev == binding->metadata.st_dev) {
-          work.prepareCopiedMove = {};
-          break;
         }
         for (const auto& path : {sources[i].location, binding->location.child(sources[i].name)}) {
           for (const auto& previous : copiedPaths) {
@@ -490,17 +493,13 @@ namespace {
       std::size_t source;
     };
     std::vector<Prepared> prepared;
-    std::size_t remaining = 16384;
     bool captureFailed = false;
-    void attach(Work& work, std::size_t budget) {
-      if (!budget) {
-        return;
-      }
-      work.prepareCopiedMove = [&, budget](
+    void attach(Work& work, std::size_t& remaining, const std::function<bool()>& room) {
+      work.prepareCopiedMove = [&, room](
                                    const Source& source, const luciole::Location& destination, int target, int stage,
                                    bool replacing
                                ) -> std::shared_ptr<const luciole::CopiedMoveEffect> {
-        if (prepared.size() < budget) {
+        if (room()) {
           try {
             auto effect = luciole::CopiedMoveEffect::prepare(
                 source.location, source.parent.get(), destination, target, stage, replacing, remaining, work.token,
@@ -514,7 +513,9 @@ namespace {
         return {};
       };
     }
-    std::shared_ptr<const luciole::MoveReceipt> capture(std::size_t moved, const luciole::CancelToken& token) {
+    std::shared_ptr<const luciole::MoveReceipt> capture(
+        std::size_t moved, const luciole::CancelToken& token, std::shared_ptr<const luciole::MoveReceipt> native = {}
+    ) {
       if (moved != prepared.size()) {
         return {};
       }
@@ -524,7 +525,7 @@ namespace {
         effects.push_back(item.effect);
       }
       try {
-        return luciole::CopiedMoveReceipt::capture(effects, token);
+        return luciole::CopiedMoveReceipt::capture(effects, token, std::move(native));
       } catch (const luciole::FileErrorException&) {
         captureFailed = true;
         return {};
@@ -558,12 +559,32 @@ namespace {
     std::shared_ptr<HistoryRevisions> revisions;
     Location destination;
     std::shared_ptr<const MoveHistoryRoot> root;
+    const std::vector<Location>& sources;
+    std::map<std::size_t, std::shared_ptr<const MoveHistoryRoot>> sourceRoots;
+    std::function<std::size_t()> copiedRoots = [] { return 0; };
     std::vector<std::shared_ptr<const MoveEffect>> moves;
     std::vector<PreparedMove> preparedMoves;
     std::vector<RetainedFolder> retainedFolders;
-    MoveCapture(std::size_t limit, CancelToken cancel, std::shared_ptr<HistoryRevisions> history, Location target)
+    MoveCapture(
+        std::size_t limit, CancelToken cancel, std::shared_ptr<HistoryRevisions> history, Location target,
+        const std::vector<Location>& selected
+    )
         : budget(limit), collecting(limit != 0), token(std::move(cancel)), revisions(std::move(history)),
-          destination(std::move(target)) {}
+          destination(std::move(target)), sources(selected) {}
+    std::shared_ptr<const MoveHistoryRoot> sourceRetention(const Source& source) {
+      if (const auto found = sourceRoots.find(source.index); found != sourceRoots.end()) {
+        return found->second;
+      }
+      // Only empty containers are retained, outside the original selected tree on its own filesystem.
+      const auto parent = sources.at(source.index).parent();
+      if (!parent || !parent->isNative()) {
+        throwFileError(FileErrorKind::Unsupported, "Merge-container history requires a native source parent.");
+      }
+      auto held = checkedFd(::open(parent->nativePath()->c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+      auto retained = std::make_shared<MoveHistoryRoot>(*parent, std::move(held));
+      sourceRoots.emplace(source.index, retained);
+      return retained;
+    }
     std::shared_ptr<const MoveHistoryRoot> retention(const Location& folder, int parent) {
       if (!root) {
         const auto path = destination.nativePath();
@@ -596,7 +617,33 @@ namespace {
       }
       return effect;
     }
-    bool room() const { return moves.size() + preparedMoves.size() + retainedFolders.size() < budget; }
+    bool room() const { return moves.size() + preparedMoves.size() + retainedFolders.size() + copiedRoots() < budget; }
+    std::shared_ptr<const MoveReceipt>
+    capture(std::size_t moved, std::size_t merged, CopiedMoveCapture& copied, bool& changed) const {
+      if (!collecting || moved != moves.size() + copied.prepared.size() || merged != retainedFolders.size()) {
+        return {};
+      }
+      try {
+        std::vector<std::shared_ptr<const MoveFolder>> folders;
+        folders.reserve(retainedFolders.size());
+        for (const auto& retained : retainedFolders) {
+          folders.push_back(retained.effect);
+        }
+        auto native = MoveReceipt::capture(moves, folders, false, false, token);
+        if (copied.prepared.empty()) {
+          return native;
+        }
+        if (!native && (!moves.empty() || !folders.empty())) {
+          return {};
+        }
+        auto receipt = copied.capture(copied.prepared.size(), token, std::move(native));
+        changed |= copied.captureFailed;
+        return receipt;
+      } catch (const FileErrorException&) {
+        changed = true;
+        return {};
+      }
+    }
     void attach(Work& work) {
       if (collecting) {
         work.prepareMerge = [&](const Location& folder) {
@@ -634,6 +681,9 @@ namespace {
         };
         work.prepareMove = [&](const Source& source, const Location& destination,
                                int target) -> std::shared_ptr<const MoveEffect> {
+          if (source.metadata.st_dev != statFd(target).st_dev) {
+            return {}; // Expected staged copy/remove, not a failed native proof.
+          }
           if (collecting && room()) {
             try {
               std::vector<std::shared_ptr<const MoveFolder>> folders;
@@ -668,7 +718,8 @@ namespace {
           if (collecting && room() && remaining) {
             try {
               auto proof = MoveFolder::retain(
-                  source.location, source.parent.get(), folder, target, token, revisions, retention(folder, target)
+                  source.location, source.parent.get(), folder, target, token, revisions,
+                  source.metadata.st_dev == statFd(target).st_dev ? retention(folder, target) : sourceRetention(source)
               );
               if (proof) {
                 --remaining;
@@ -733,18 +784,20 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
         };
         // Keep displaced data alive until every source has finished, even if optional history is disqualified.
         std::vector<PreparedCopy> preparedCopies;
-        const auto budget = !retry ? transferHistoryBudget(job->request.action == TransferAction::Move ? 10 : 7) : 0;
+        const auto budget = !retry ? transferHistoryBudget(job->request.action == TransferAction::Move ? 14 : 7) : 0;
         std::size_t remaining = 16384;
         MoveCapture moveHistory(
-            job->request.action == TransferAction::Move ? budget : 0, token, revisions, job->request.destination
+            job->request.action == TransferAction::Move ? budget : 0, token, revisions, job->request.destination,
+            job->request.sources
         );
         moveHistory.attach(work);
         CopiedMoveCapture copiedMoves;
+        moveHistory.copiedRoots = [&] { return copiedMoves.prepared.size(); };
         if (!retry
             && job->request.action == TransferAction::Move
             && job->request.destination.isNative()
             && std::ranges::all_of(job->request.sources, [](const auto& source) { return source.isNative(); })) {
-          copiedMoves.attach(work, transferHistoryBudget(14));
+          copiedMoves.attach(work, moveHistory.remaining, [&] { return moveHistory.collecting && moveHistory.room(); });
         }
         Fd copyRetentionParent;
         bool collectingCopies =
@@ -821,25 +874,8 @@ bool luciole::TransferService::launch(TransferRequest request, bool retry) {
         std::size_t moved = 0, merged = 0;
         const bool movesComplete = completedMoves(*job, outcomes, moved, merged);
         bool moveCaptureChanged = false;
-        if (!retry
-            && !remote
-            && moveHistory.collecting
-            && movesComplete
-            && moved == moveHistory.moves.size()
-            && merged == moveHistory.retainedFolders.size()) {
-          try {
-            std::vector<std::shared_ptr<const MoveFolder>> folders;
-            folders.reserve(moveHistory.retainedFolders.size());
-            for (const auto& retained : moveHistory.retainedFolders) {
-              folders.push_back(retained.effect);
-            }
-            receipt = MoveReceipt::capture(moveHistory.moves, folders, false, false, token);
-          } catch (const FileErrorException&) {
-            moveCaptureChanged = true;
-          }
-        }
-        if (!receipt && !retry && !remote && movesComplete && merged == 0) {
-          receipt = copiedMoves.capture(moved, token);
+        if (!retry && !remote && movesComplete) {
+          receipt = moveHistory.capture(moved, merged, copiedMoves, moveCaptureChanged);
         }
         if (!receipt && (!movesComplete || copiedMoves.captureFailed)) {
           copiedMoves.preserve(outcomes);

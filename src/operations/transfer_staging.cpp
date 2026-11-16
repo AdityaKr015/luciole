@@ -387,7 +387,6 @@ namespace luciole::transfer {
     }
 
     TransferResult merge(Node& node, int destination, TransferAction action, Work& work, const struct stat& existing) {
-      work.prepareCopiedMove = {};
       // Native move history captures changed leaves and retains emptied source containers.
       if (action != TransferAction::Copy) {
         work.prepareCopy = {};

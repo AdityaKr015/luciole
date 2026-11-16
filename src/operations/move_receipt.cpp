@@ -505,8 +505,44 @@ bool luciole::MoveReceipt::ownsProof() const {
       && std::ranges::all_of(m_folders, [](const auto& folder) { return folder->m_item->ownsProof(); });
 }
 
+bool luciole::MoveReceipt::restoreFolders(
+    std::vector<std::shared_ptr<const MoveFolder>>& folders, const CancelToken& token, MoveReplayResult& reply,
+    std::atomic<std::size_t>& completed, bool& applied
+) const {
+  // Forward capture orders merged containers from children to parents. Restore parents first.
+  for (std::size_t n = folders.size(); n > 0; --n) {
+    auto& result = reply.results[m_effects.size() + n - 1];
+    const auto& folder = folders[n - 1];
+    bool changed = false;
+    try {
+      checkCancelled(token);
+      auto restored = std::make_shared<MoveFolder>(*folder);
+      result.source = folder->m_item->currentLocation();
+      result.destination = folder->m_source;
+      restored->m_item = folder->m_item->restoreTo(folder->m_source, folder->m_from->get(), changed);
+      applied |= changed;
+      folders[n - 1] = std::move(restored);
+      result.outcome = TransferOutcome::Moved;
+    } catch (const std::exception&) {
+      applied |= changed;
+      result.error = currentFileError();
+      result.outcome = changed                             ? TransferOutcome::Partial
+          : result.error->kind == FileErrorKind::Cancelled ? TransferOutcome::Cancelled
+                                                           : TransferOutcome::Failed;
+      return false;
+    }
+    completed.fetch_add(1);
+  }
+  return true;
+}
+
 luciole::MoveReplayResult
 luciole::MoveReceipt::reverse(const CancelToken& token, std::atomic<std::size_t>& completed) const {
+  return reverseImpl(token, completed, nullptr);
+}
+luciole::MoveReplayResult luciole::MoveReceipt::reverseImpl(
+    const CancelToken& token, std::atomic<std::size_t>& completed, const ReplayHooks* hooks
+) const {
   const auto revisionGuard = m_revisions->lock();
   MoveReplayResult reply;
   reply.results.reserve(size());
@@ -556,6 +592,9 @@ luciole::MoveReceipt::reverse(const CancelToken& token, std::atomic<std::size_t>
         }
       }
     }
+    if (hooks) {
+      hooks->preflight(bindings);
+    }
   } catch (const std::exception&) {
     const auto error = currentFileError();
     reply.retireHistory = invalidates(error);
@@ -573,32 +612,8 @@ luciole::MoveReceipt::reverse(const CancelToken& token, std::atomic<std::size_t>
   std::vector<std::shared_ptr<const MoveEffect>> inverse;
   std::vector<std::shared_ptr<const MoveFolder>> folders = m_folders;
   bool stopped = false, applied = false;
-  // Forward capture orders merged containers from children to parents. Restore parents first.
   if (!m_undone) {
-    for (std::size_t n = folders.size(); n > 0; --n) {
-      auto& result = reply.results[m_effects.size() + n - 1];
-      const auto& folder = folders[n - 1];
-      bool changed = false;
-      try {
-        checkCancelled(token);
-        auto restored = std::make_shared<MoveFolder>(*folder);
-        result.source = folder->m_item->currentLocation();
-        result.destination = folder->m_source;
-        restored->m_item = folder->m_item->restoreTo(folder->m_source, folder->m_from->get(), changed);
-        applied |= changed;
-        folders[n - 1] = std::move(restored);
-        result.outcome = TransferOutcome::Moved;
-      } catch (const std::exception&) {
-        applied |= changed;
-        result.error = currentFileError();
-        result.outcome = changed                             ? TransferOutcome::Partial
-            : result.error->kind == FileErrorKind::Cancelled ? TransferOutcome::Cancelled
-                                                             : TransferOutcome::Failed;
-        stopped = true;
-        break;
-      }
-      completed.fetch_add(1);
-    }
+    stopped = !restoreFolders(folders, token, reply, completed, applied);
   }
   for (std::size_t i = 0; i < m_effects.size() && !stopped; ++i) {
     auto& result = reply.results[i];
@@ -688,6 +703,16 @@ luciole::MoveReceipt::reverse(const CancelToken& token, std::atomic<std::size_t>
       stopped = true;
     }
     completed.fetch_add(1);
+  }
+  // Empty source containers exist now, and must include copied roots in the inverse snapshot.
+  if (!stopped && hooks) {
+    try {
+      hooks->apply(applied);
+    } catch (const std::exception&) {
+      const auto error = currentFileError();
+      reply.retireHistory |= invalidates(error);
+      stopped = true;
+    }
   }
   std::size_t remaining = 16384;
   if (!stopped) {

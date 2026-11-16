@@ -24,8 +24,10 @@ namespace luciole {
   };
   class CopiedMoveReceipt final : public MoveReceipt {
   public:
-    static std::shared_ptr<const MoveReceipt>
-    capture(const std::vector<std::shared_ptr<const CopiedMoveEffect>>& effects, const CancelToken& token);
+    static std::shared_ptr<const MoveReceipt> capture(
+        const std::vector<std::shared_ptr<const CopiedMoveEffect>>& effects, const CancelToken& token,
+        std::shared_ptr<const MoveReceipt> native = {}
+    );
     MoveReplayResult reverse(const CancelToken& token, std::atomic<std::size_t>& completed) const override;
     std::vector<TransferResult> unconfirmed(const FileError& error) const override;
     std::size_t size() const override;
@@ -35,7 +37,11 @@ namespace luciole {
     CopiedMoveReceipt(std::shared_ptr<State> state, std::uint64_t generation, bool undone);
     static void preflight(const CopyReceipt& receipt, const CancelToken& token);
     void retain(std::vector<TransferResult>& values) const;
-    void preflight(const CancelToken& token) const;
+    void retainAll(std::vector<TransferResult>& values) const;
+    std::vector<TransferResult>
+    nativeResults(TransferOutcome outcome, const std::optional<FileError>& error = {}) const;
+    void preflight(const CancelToken& token, const MoveParents& parents = {}) const;
+    MoveReplayResult reverseCopied(const CancelToken& token, bool& applied, const MoveParents& parents = {}) const;
     void restoreSources(const CancelToken& token, MoveReplayResult& reply, bool& applied) const;
     void removeSources(const CancelToken& token, MoveReplayResult& reply, bool& applied) const;
     void reverseDestinations(const CancelToken& token, MoveReplayResult& reply, bool& applied) const;

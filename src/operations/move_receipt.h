@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -41,6 +42,7 @@ namespace luciole {
 
   private:
     friend class MoveReceipt;
+    friend class CopiedMoveReceipt;
     MoveFolder(Location sourceValue, Location folderValue)
         : m_source(std::move(sourceValue)), m_retainingFolder(std::move(folderValue)) {}
     Location m_source, m_retainingFolder;
@@ -108,6 +110,14 @@ namespace luciole {
     virtual std::size_t size() const { return m_effects.size() + m_folders.size(); }
 
   private:
+    friend class CopiedMoveReceipt;
+    // Compose native and copied phases without exposing independently replayable component receipts.
+    struct ReplayHooks {
+      std::function<void(const MoveParents&)> preflight;
+      std::function<void(bool&)> apply;
+    };
+    MoveReplayResult
+    reverseImpl(const CancelToken& token, std::atomic<std::size_t>& completed, const ReplayHooks* hooks) const;
     static std::vector<std::shared_ptr<const MoveEffect>>
     coalesce(const std::vector<std::shared_ptr<const MoveEffect>>& effects);
     static std::vector<std::shared_ptr<const MoveEffect>> compose(
@@ -126,6 +136,10 @@ namespace luciole {
     ) const;
     MoveParents parents(const CancelToken& token = {}) const;
     void validateFolders(const MoveParents& bindings, const CancelToken& token) const;
+    bool restoreFolders(
+        std::vector<std::shared_ptr<const MoveFolder>>& folders, const CancelToken& token, MoveReplayResult& reply,
+        std::atomic<std::size_t>& completed, bool& applied
+    ) const;
     bool ownsProof() const;
     void retainIncomplete(std::vector<TransferResult>& results) const;
     std::vector<std::shared_ptr<const MoveEffect>> m_effects;

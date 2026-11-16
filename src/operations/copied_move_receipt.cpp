@@ -22,7 +22,13 @@ namespace {
         || error.kind == FileErrorKind::Missing
         || error.kind == FileErrorKind::NotDirectory;
   }
-  void parentAt(const Location& source, int held) {
+  void parentAt(const Location& source, int held, const MoveParents& parents = {}) {
+    if (const auto found = parents.find(source.parent()->uri()); found != parents.end()) {
+      if (!sameIdentity(statFd(found->second), statFd(held))) {
+        throwFileError(FileErrorKind::Changed, "A retained copied Move parent changed.");
+      }
+      return;
+    }
     const auto current = checkedFd(::open(source.parent()->nativePath()->c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC));
     if (!sameIdentity(statFd(current.get()), statFd(held))) {
       throwFileError(FileErrorKind::Changed, "A copied Move containing folder changed.");
@@ -90,6 +96,8 @@ std::vector<luciole::Location> luciole::CopiedMoveEffect::retainForRecovery() co
 struct luciole::CopiedMoveReceipt::State {
   std::mutex mutex;
   std::shared_ptr<const CopyReceipt> sources, destinations;
+  std::shared_ptr<const MoveReceipt> native;
+  std::vector<Location> nativeLocations;
   std::vector<std::pair<Location, Location>> locations;
   std::vector<Origin> origins;
   std::vector<std::shared_ptr<const CopyEffect>> restored;
@@ -98,14 +106,27 @@ struct luciole::CopiedMoveReceipt::State {
 luciole::CopiedMoveReceipt::CopiedMoveReceipt(std::shared_ptr<State> state, std::uint64_t generation, bool undone)
     : m_state(std::move(state)), m_generation(generation), m_undone(undone) {}
 std::shared_ptr<const luciole::MoveReceipt> luciole::CopiedMoveReceipt::capture(
-    const std::vector<std::shared_ptr<const CopiedMoveEffect>>& effects, const CancelToken& token
+    const std::vector<std::shared_ptr<const CopiedMoveEffect>>& effects, const CancelToken& token,
+    std::shared_ptr<const MoveReceipt> native
 ) {
-  if (effects.empty() || effects.size() > 4096) {
+  if (effects.empty() || effects.size() + (native ? native->size() : 0) > 4096) {
     return {};
   }
   std::vector<std::shared_ptr<const CopyEffect>> destinations;
   destinations.reserve(effects.size());
   auto state = std::make_shared<State>();
+  if (native && native->m_sequence) {
+    throwFileError(FileErrorKind::Unsupported, "Mixed Move history requires independent selected roots.");
+  }
+  if (native) {
+    for (const auto& effect : native->m_effects) {
+      state->nativeLocations.push_back(effect->destination());
+    }
+    for (const auto& folder : native->m_folders) {
+      state->nativeLocations.push_back(folder->m_source);
+    }
+  }
+  state->native = std::move(native);
   state->locations.reserve(effects.size());
   for (const auto& effect : effects) {
     const auto& item = *effect->m_state;
@@ -116,6 +137,17 @@ std::shared_ptr<const luciole::MoveReceipt> luciole::CopiedMoveReceipt::capture(
     destinations.push_back(item.destination);
     state->locations.emplace_back(item.origin.location, item.destination->m_destination);
   }
+  if (state->native) {
+    for (const auto& moved : state->native->m_effects) {
+      for (const auto& copied : destinations) {
+        const auto& a = moved->destination();
+        const auto& b = copied->m_destination;
+        if (transferLocationsEqual(a, b) || transferLocationInside(a, b) || transferLocationInside(b, a)) {
+          throwFileError(FileErrorKind::Unsupported, "Mixed Move destinations must remain independent.");
+        }
+      }
+    }
+  }
   state->destinations = CopyReceipt::capture(destinations, TransferAction::Copy, token);
   if (!state->destinations || state->destinations->size() != effects.size()) {
     throwFileError(
@@ -123,13 +155,16 @@ std::shared_ptr<const luciole::MoveReceipt> luciole::CopiedMoveReceipt::capture(
     );
   }
   preflight(*state->destinations, token);
+  const auto parents = state->native ? state->native->parents(token) : MoveParents{};
   for (const auto& origin : state->origins) {
-    parentAt(origin.location, origin.parent->get());
+    parentAt(origin.location, origin.parent->get(), parents);
     vacant(origin.location, origin.parent->get());
   }
   return std::shared_ptr<const MoveReceipt>(new CopiedMoveReceipt(std::move(state), 0, false));
 }
-std::size_t luciole::CopiedMoveReceipt::size() const { return m_state->locations.size(); }
+std::size_t luciole::CopiedMoveReceipt::size() const {
+  return m_state->locations.size() + m_state->nativeLocations.size();
+}
 void luciole::CopiedMoveReceipt::preflight(const CopyReceipt& receipt, const CancelToken& token) {
   if (receipt.m_generation != receipt.m_revisions->generation()) {
     throwFileError(FileErrorKind::Changed, "Copied Move history is stale.");
@@ -152,32 +187,33 @@ luciole::CopiedMoveReceipt::results(TransferOutcome outcome, const std::optional
   return values;
 }
 void luciole::CopiedMoveReceipt::retain(std::vector<TransferResult>& values) const {
-  for (std::size_t i = 0; i < size(); ++i) {
+  for (std::size_t i = 0; i < m_state->locations.size(); ++i) {
     for (const auto& path : m_state->destinations->m_effects[i]->retainForRecovery()) {
       if (!values[i].error) {
         values[i].error = FileError{FileErrorKind::Other, "Move reversal is incomplete."};
       }
       values[i].error->message += " Inspect retained item: " + path.uri();
     }
-    if (values[i].error) {
-      values[i].error->message += " Inspect source "
-          + m_state->locations[i].first.uri()
-          + " and destination "
-          + m_state->locations[i].second.uri();
+    if (!values[i].error) {
+      values[i].error = FileError{FileErrorKind::Other, "Move history is unavailable after incomplete reversal."};
     }
+    values[i].error->message += " Inspect source "
+        + m_state->locations[i].first.uri()
+        + " and destination "
+        + m_state->locations[i].second.uri();
   }
 }
-void luciole::CopiedMoveReceipt::preflight(const CancelToken& token) const {
+void luciole::CopiedMoveReceipt::preflight(const CancelToken& token, const MoveParents& parents) const {
   preflight(*m_state->destinations, token);
   if (m_undone) {
-    if (!m_state->sources || m_state->restored.size() != size()) {
+    if (!m_state->sources || m_state->restored.size() != m_state->locations.size()) {
       throwFileError(FileErrorKind::Changed, "The restored Move source proof is incomplete.");
     }
     preflight(*m_state->sources, token);
   }
   for (const auto& origin : m_state->origins) {
     check(token);
-    parentAt(origin.location, origin.parent->get());
+    parentAt(origin.location, origin.parent->get(), parents);
     if (!m_undone) {
       vacant(origin.location, origin.parent->get());
     }
@@ -190,8 +226,8 @@ void luciole::CopiedMoveReceipt::restoreSources(
   transfer::Work work(token, bytes, {});
   work.history = std::make_shared<HistoryRevisions>();
   std::size_t remaining = 16384;
-  m_state->restored.assign(size(), {});
-  for (std::size_t i = 0; i < size(); ++i) {
+  m_state->restored.assign(m_state->locations.size(), {});
+  for (std::size_t i = 0; i < m_state->locations.size(); ++i) {
     const auto& origin = m_state->origins[i];
     const auto& incoming = m_state->destinations->m_effects[i];
     reply.results[i].outcome = TransferOutcome::Failed;
@@ -252,7 +288,7 @@ void luciole::CopiedMoveReceipt::removeSources(const CancelToken& token, MoveRep
     }
   }
   m_state->sources.reset();
-  for (std::size_t i = 0; i < size(); ++i) {
+  for (std::size_t i = 0; i < m_state->locations.size(); ++i) {
     const auto& origin = m_state->origins[i];
     const auto& proof = m_state->restored[i];
     check(token);
@@ -278,7 +314,7 @@ void luciole::CopiedMoveReceipt::reverseDestinations(
   std::atomic<std::size_t> completed{0};
   auto phase = m_state->destinations->reverse(token, completed);
   applied |= before != m_state->destinations->m_revisions->generation();
-  for (std::size_t i = 0; i < size(); ++i) {
+  for (std::size_t i = 0; i < m_state->locations.size(); ++i) {
     reply.results[i].children.push_back(phase.results[i]);
     if (phase.results[i].error) {
       reply.results[i].error = phase.results[i].error;
@@ -296,29 +332,43 @@ void luciole::CopiedMoveReceipt::reverseDestinations(
   }
   m_state->destinations = std::move(phase.receipt);
 }
+std::vector<luciole::TransferResult>
+luciole::CopiedMoveReceipt::nativeResults(TransferOutcome outcome, const std::optional<FileError>& error) const {
+  std::vector<TransferResult> values;
+  for (const auto& location : m_state->nativeLocations) {
+    values.emplace_back(location, outcome, error);
+  }
+  return values;
+}
+void luciole::CopiedMoveReceipt::retainAll(std::vector<TransferResult>& values) const {
+  const auto firstCopied = values.begin() + static_cast<std::ptrdiff_t>(m_state->nativeLocations.size());
+  if (m_state->native) {
+    std::vector<TransferResult> native(values.begin(), firstCopied);
+    m_state->native->retainIncomplete(native);
+    std::ranges::move(native, values.begin());
+  }
+  std::vector<TransferResult> copied(firstCopied, values.end());
+  retain(copied);
+  std::ranges::move(copied, firstCopied);
+}
 std::vector<luciole::TransferResult> luciole::CopiedMoveReceipt::unconfirmed(const FileError& error) const {
-  auto values = results(TransferOutcome::Partial, error);
+  auto values = nativeResults(TransferOutcome::Partial, error);
+  auto copied = results(TransferOutcome::Partial, error);
+  values.insert(values.end(), copied.begin(), copied.end());
   const std::unique_lock lock(m_state->mutex, std::try_to_lock);
   if (lock.owns_lock() && m_generation == m_state->generation) {
     ++m_state->generation;
-    retain(values);
+    retainAll(values);
   }
   return values;
 }
 luciole::MoveReplayResult
-luciole::CopiedMoveReceipt::reverse(const CancelToken& token, std::atomic<std::size_t>& completed) const {
+luciole::CopiedMoveReceipt::reverseCopied(const CancelToken& token, bool& applied, const MoveParents& parents) const {
   MoveReplayResult reply;
   reply.results = results(TransferOutcome::Skipped);
-  const std::unique_lock lock(m_state->mutex, std::try_to_lock);
-  bool applied = false, began = false;
+  bool began = false;
   try {
-    if (!lock.owns_lock()) {
-      throwFileError(FileErrorKind::Other, "Another reversal is using this Move history.");
-    }
-    if (m_generation != m_state->generation) {
-      throwFileError(FileErrorKind::Changed, "Copied Move history is stale.");
-    }
-    preflight(token);
+    preflight(token, parents);
     began = true;
     if (!m_undone) {
       restoreSources(token, reply, applied);
@@ -327,12 +377,11 @@ luciole::CopiedMoveReceipt::reverse(const CancelToken& token, std::atomic<std::s
       reverseDestinations(token, reply, applied);
       removeSources(token, reply, applied);
     }
-    ++m_state->generation;
-    for (std::size_t i = 0; i < size(); ++i) {
+    for (std::size_t i = 0; i < m_state->locations.size(); ++i) {
       reply.results[i].outcome = TransferOutcome::Moved;
       reply.results[i].destination = m_undone ? m_state->locations[i].second : m_state->locations[i].first;
     }
-    reply.receipt = std::shared_ptr<const MoveReceipt>(new CopiedMoveReceipt(m_state, m_state->generation, !m_undone));
+    // The outer owner publishes the inverse only after both components have completed.
   } catch (const FileErrorException& failure) {
     const auto& error = failure.error();
     reply.retireHistory |= applied || invalidates(error);
@@ -350,9 +399,94 @@ luciole::CopiedMoveReceipt::reverse(const CancelToken& token, std::atomic<std::s
         result.error = error;
       }
     }
+  }
+  return reply;
+}
+luciole::MoveReplayResult
+luciole::CopiedMoveReceipt::reverse(const CancelToken& token, std::atomic<std::size_t>& completed) const {
+  MoveReplayResult reply;
+  const std::unique_lock lock(m_state->mutex, std::try_to_lock);
+  bool applied = false;
+  try {
+    if (!lock.owns_lock()) {
+      throwFileError(FileErrorKind::Other, "Another reversal is using this Move history.");
+    }
+    if (m_generation != m_state->generation) {
+      throwFileError(FileErrorKind::Changed, "Copied Move history is stale.");
+    }
+    if (m_state->native) {
+      MoveReplayResult copied;
+      bool attempted = false;
+      const MoveReceipt::ReplayHooks hooks{
+          [&](const MoveParents& parents) { preflight(token, parents); },
+          [&](bool& changed) {
+            attempted = true;
+            copied = reverseCopied(token, changed);
+            const auto failure =
+                std::ranges::find_if(copied.results, [](const auto& item) { return item.error.has_value(); });
+            if (failure != copied.results.end()) {
+              throw FileErrorException(*failure->error);
+            }
+          }
+      };
+      std::atomic<std::size_t> nativeCompleted{0};
+      const auto before = m_state->native->m_revisions->generation();
+      reply = m_state->native->reverseImpl(token, nativeCompleted, &hooks);
+      applied = before != m_state->native->m_revisions->generation();
+      if (!attempted || copied.results.empty()) {
+        const auto failure =
+            std::ranges::find_if(reply.results, [](const auto& item) { return item.error.has_value(); });
+        copied.results = results(
+            TransferOutcome::Skipped,
+            failure != reply.results.end() ? failure->error
+                                           : std::optional<FileError>{FileError{
+                                                 FileErrorKind::Other, "Move reversal stopped before copied items."
+                                             }}
+        );
+      }
+      reply.results.insert(reply.results.end(), copied.results.begin(), copied.results.end());
+      reply.retireHistory |= copied.retireHistory;
+      if (!reply.receipt) {
+        if (reply.retireHistory) {
+          ++m_state->generation;
+          retainAll(reply.results);
+        }
+        completed.store(size());
+        return reply;
+      }
+      m_state->native = reply.receipt;
+      reply.receipt.reset();
+      // Native replay advances the shared job generation after copied destination reversal.
+      m_state->destinations = CopyReceipt::capture(m_state->destinations->m_effects, TransferAction::Copy, token);
+    } else {
+      reply = reverseCopied(token, applied);
+      const auto failure = std::ranges::find_if(reply.results, [](const auto& item) { return item.error.has_value(); });
+      if (failure != reply.results.end()) {
+        throw FileErrorException(*failure->error);
+      }
+    }
+    ++m_state->generation;
+    reply.receipt = std::shared_ptr<const MoveReceipt>(new CopiedMoveReceipt(m_state, m_state->generation, !m_undone));
+  } catch (const FileErrorException& failure) {
+    reply.retireHistory |= applied || invalidates(failure.error());
+    if (reply.results.empty()) {
+      const auto outcome =
+          failure.error().kind == FileErrorKind::Cancelled ? TransferOutcome::Cancelled : TransferOutcome::Failed;
+      reply.results = nativeResults(outcome, failure.error());
+      auto copied = results(outcome, failure.error());
+      reply.results.insert(reply.results.end(), copied.begin(), copied.end());
+    }
+    if (applied) {
+      for (auto& result : reply.results) {
+        result.outcome = TransferOutcome::Partial;
+        if (!result.error) {
+          result.error = failure.error();
+        }
+      }
+    }
     if (reply.retireHistory && lock.owns_lock() && m_generation == m_state->generation) {
       ++m_state->generation;
-      retain(reply.results);
+      retainAll(reply.results);
     }
   }
   completed.store(size());
