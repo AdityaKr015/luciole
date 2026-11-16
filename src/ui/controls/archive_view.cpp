@@ -2,9 +2,9 @@
 
 #include "core/input/key_symbols.h"
 #include "fs/gio_ptr.h"
+#include "ui/browser/file_error_text.h"
 #include "ui/browser/file_icon.h"
 #include "ui/builders.h"
-#include "ui/controls/file_error_text.h"
 #include "ui/controls/scroll_view.h"
 
 #include <algorithm>

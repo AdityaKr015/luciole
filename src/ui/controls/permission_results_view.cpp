@@ -2,8 +2,8 @@
 
 #include "browser/location_presentation.h"
 #include "core/input/key_symbols.h"
+#include "ui/browser/file_error_text.h"
 #include "ui/builders.h"
-#include "ui/controls/file_error_text.h"
 #include "ui/controls/glyph.h"
 #include "ui/controls/permission_editor.h"
 #include "ui/controls/virtual_grid_view.h"

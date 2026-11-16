@@ -2,20 +2,20 @@
 
 #include "app/operation_hub.h"
 #include "app/page/about_controller.h"
-#include "app/page/active_dialog.h"
+#include "app/page/active_popup.h"
 #include "app/page/application_chooser_controller.h"
 #include "app/page/archive_controller.h"
 #include "app/page/batch_rename_controller.h"
 #include "app/page/create_controller.h"
 #include "app/page/details_header_controller.h"
 #include "app/page/drag_drop_controller.h"
-#include "app/page/execution_controller.h"
 #include "app/page/file_keyboard_controller.h"
 #include "app/page/location_bar_controller.h"
 #include "app/page/menu_controller.h"
 #include "app/page/operations_controller.h"
 #include "app/page/page_context.h"
 #include "app/page/preview_controller.h"
+#include "app/page/program_controller.h"
 #include "app/page/properties_controller.h"
 #include "app/page/rename_controller.h"
 #include "app/page/settings_controller.h"
@@ -190,10 +190,11 @@ public:
   void keyboard(const KeyboardEvent& event);
 
 private:
-  // Shared popup setup after closeMenu(): `scene` goes on a new child surface configured by `config`;
-  // `content` is what ActiveDialog::root() returns. Menus pass their root as both.
+  // Shared popup setup after closePopup(): `scene` goes on a new child surface configured by `config`;
+  // `content` is what ActivePopup::root() returns. Menus pass their root as both.
   void openPopup(
-      std::unique_ptr<Flex> scene, Flex* content, ContextMenuControl* menu, PopupSurfaceConfig config, PopupMode mode
+      std::unique_ptr<Flex> scene, Flex* content, ContextMenuControl* menu, PopupSurfaceConfig config,
+      PopupDismiss dismiss
   );
   // The dialog's content size and shadow geometry for the current window: content height capped by the window.
   popup_chrome::Geometry dialogGeometry(Flex& content);
@@ -259,7 +260,7 @@ private:
   void applySettings(const luciole::BrowserSettings& settings, bool force) override;
 
   void
-  showDialog(std::unique_ptr<Flex> root, DialogWidth width, DialogDismiss dismiss = DialogDismiss::Explicit) override;
+  showDialog(std::unique_ptr<Flex> root, DialogWidth width, PopupDismiss dismiss = PopupDismiss::Explicit) override;
   float dialogWidth(DialogWidth width) const override;
 
   void cancelDrag() override;
@@ -299,16 +300,16 @@ private:
   std::unique_ptr<Flex> buildToolbar();
   std::unique_ptr<Flex> buildFilePane();
 
-  void dismissMenu() override;
-  void closeMenu() override;
+  void dismissPopup() override;
+  void closePopup() override;
 
   void showPopup(
       std::unique_ptr<Flex> root, ContextMenuControl* menu, LayoutRect anchor, float width, float height,
       bool alignLeft = false
   ) override;
-  PopupSurface* menuSurface() override;
-  InputDispatcher& menuDispatcher() override;
-  ActiveDialog& activeDialog() override;
+  PopupSurface* popupSurface() override;
+  InputDispatcher& popupDispatcher() override;
+  ActivePopup& activePopup() override;
   ContextMenuControl* contextMenu() override;
   std::uint32_t popupSerial() override;
   float popupMaxHeight() const override;
@@ -369,7 +370,7 @@ private:
   BatchRenameController m_batchRename{*this};
   luciole::TemplateCatalog m_templates;
   SubmenuController m_submenus{*this, m_connection, m_renderer, m_animations};
-  ExecutionController m_execution{*this, m_submenus, m_connection};
+  ProgramController m_programs{*this, m_submenus, m_connection};
   CreateController m_createController{*this, m_templates, m_submenus};
   ArchiveController m_archiveController{*this, m_launcher, m_icons, m_connection};
   TransferController m_transferController{*this, [this] { operationProgressTick(); }};
@@ -390,7 +391,7 @@ private:
       m_propertiesController,
       m_detailsHeader,
       m_locationBar,
-      m_execution
+      m_programs
   };
   SettingsController m_settingsController{*this,        m_preferences, m_thumbnails,
                                           m_connection, m_renderer,    [this] {
@@ -446,9 +447,9 @@ private:
   Button* m_up = nullptr;
   Button* m_sortButton = nullptr;
   bool m_browserDirty = true;
-  std::unique_ptr<PopupSurface> m_menuSurface;
-  PopupMode m_popupMode = PopupMode::Transient;
-  ActiveDialog m_activeDialog;
-  InputDispatcher m_menuDispatcher;
+  std::unique_ptr<PopupSurface> m_popupSurface;
+  PopupDismiss m_popupDismiss = PopupDismiss::OutsideClick;
+  ActivePopup m_activePopup;
+  InputDispatcher m_popupDispatcher;
   std::shared_ptr<int> m_lifetime = std::make_shared<int>(0);
 };

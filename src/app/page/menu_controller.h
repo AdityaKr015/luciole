@@ -24,7 +24,7 @@ namespace luciole {
 struct KeyboardEvent;
 class CreateController;
 class DetailsHeaderController;
-class ExecutionController;
+class ProgramController;
 class LocationBarController;
 class PageContext;
 class PropertiesController;
@@ -41,7 +41,7 @@ public:
       PageContext& page, luciole::PinService& pins, TransferController& transferController,
       luciole::TerminalLauncher& terminal, luciole::PathCompletion& siblingCompletion, CreateController& creator,
       SubmenuController& submenus, RenameController& renamer, PropertiesController& properties,
-      DetailsHeaderController& columns, LocationBarController& locationBar, ExecutionController& execution
+      DetailsHeaderController& columns, LocationBarController& locationBar, ProgramController& programs
   );
 
   // Shows `entries` on the popup; activating an entry closes the menu and then calls `action` with its id.
@@ -65,7 +65,7 @@ public:
   ContextMenuControl* menu() const { return m_menu; }
   // BrowserPage::openPopup(): the popup now shows `menu`, or a dialog or popover when null.
   void setMenu(ContextMenuControl* menu) { m_menu = menu; }
-  // BrowserPage::closeMenu(): forgets the menu widgets.
+  // BrowserPage::closePopup(): forgets the menu widgets.
   void menuClosed();
 
 private:
@@ -93,7 +93,7 @@ private:
   PropertiesController& m_properties;
   DetailsHeaderController& m_columns;
   LocationBarController& m_locationBar;
-  ExecutionController& m_execution;
+  ProgramController& m_programs;
   ContextMenuControl* m_menu = nullptr;
   ScrollView* m_scroll = nullptr;
   luciole::TrashAvailability m_trashAvailability;

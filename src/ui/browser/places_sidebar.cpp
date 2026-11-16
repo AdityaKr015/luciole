@@ -6,7 +6,7 @@
 #include "model/directory_options.h"
 #include "ui/browser/sidebar_tree_view.h"
 #include "ui/builders.h"
-#include "ui/controls/card_style.h"
+#include "ui/controls/side_list_metrics.h"
 
 #include <algorithm>
 #include <cmath>

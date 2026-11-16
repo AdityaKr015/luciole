@@ -20,7 +20,7 @@ namespace luciole {
   struct DirectoryEntry;
 } // namespace luciole
 
-class ActiveDialog;
+class ActivePopup;
 class ContextMenuControl;
 class Flex;
 class InputDispatcher;
@@ -29,14 +29,13 @@ class PageJobs;
 class PopupSurface;
 class VirtualGridView;
 
-// Menus dismiss on focus/outside clicks; forms remain until explicitly closed.
-enum class PopupMode : std::uint8_t { Transient, Dialog };
+// Whether a click outside a popup closes it. Menus and popovers use OutsideClick; forms keep Explicit so typed input
+// is never lost to a stray click.
+enum class PopupDismiss : std::uint8_t { Explicit, OutsideClick };
 
 // Dialog width tiers: Small for one-field prompts and confirmations, Medium for forms and inspectors, Large for
 // multi-pane editors. A dialog is never wider than the window minus the dialog margin on each side.
 enum class DialogWidth : std::uint8_t { Small, Medium, Large };
-// Whether a click outside the dialog closes it. Forms keep Explicit so typed input is never lost to a stray click.
-enum class DialogDismiss : std::uint8_t { Explicit, OutsideClick };
 
 // The part of BrowserPage that feature controllers use. BrowserPage implements it.
 //
@@ -55,8 +54,8 @@ enum class DialogDismiss : std::uint8_t { Explicit, OutsideClick };
 // sequence, and onFrame() runs sync() only when the flag was set. Keep that slot so syncs run in the same order
 // every frame.
 //
-// Dialogs: show the root with showDialog(). If menuSurface() exists afterwards, keep the widget pointers and
-// call activeDialog().bind(kind, onClose). onClose is the only teardown path: closeMenu() runs it whatever
+// Dialogs: show the root with showDialog(). If popupSurface() exists afterwards, keep the widget pointers and
+// call activePopup().bind(kind, onClose). onClose is the only teardown path: closePopup() runs it whatever
 // closed the popup, and it cancels the dialog's job and drops the pointers. When the page left its window
 // (!jobs().attached()), a job that already applies changes keeps running for the page that takes it over.
 // Never size a dialog root yourself: the page sets its width from the tier and its height from its content.
@@ -157,17 +156,17 @@ public:
   // switching to a shorter or taller page or tab only moves the bottom edge.
   // `dismiss` OutsideClick closes it on a click outside, like a popover.
   virtual void
-  showDialog(std::unique_ptr<Flex> root, DialogWidth width, DialogDismiss dismiss = DialogDismiss::Explicit) = 0;
+  showDialog(std::unique_ptr<Flex> root, DialogWidth width, PopupDismiss dismiss = PopupDismiss::Explicit) = 0;
   // The content width a dialog of tier `width` gets in the window now; for content laid out at a fixed width.
   virtual float dialogWidth(DialogWidth width) const = 0;
   // Closes the active dialog on the next main loop iteration.
-  virtual void dismissMenu() = 0;
+  virtual void dismissPopup() = 0;
   // Closes the active dialog now.
-  virtual void closeMenu() = 0;
+  virtual void closePopup() = 0;
   // Null while no popup is shown.
-  virtual PopupSurface* menuSurface() = 0;
-  virtual InputDispatcher& menuDispatcher() = 0;
-  virtual ActiveDialog& activeDialog() = 0;
+  virtual PopupSurface* popupSurface() = 0;
+  virtual InputDispatcher& popupDispatcher() = 0;
+  virtual ActivePopup& activePopup() = 0;
   // The context menu on the popup; null while the popup shows a dialog or nothing.
   virtual ContextMenuControl* contextMenu() = 0;
   // False while the workspace cannot show a popup for this page.

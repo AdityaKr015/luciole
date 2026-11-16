@@ -12,11 +12,11 @@ class ImageNode;
 class TextureManager;
 
 // One rounded contour for the visible selection, rasterized only during Layout.
-class SelectionSurface final : public Node {
+class SelectionContour final : public Node {
 public:
   static constexpr float cornerRadius = 7.0F;
-  SelectionSurface();
-  ~SelectionSurface() override;
+  SelectionContour();
+  ~SelectionContour() override;
   void bind(std::vector<std::uint8_t> selected, std::size_t columns, float columnStride, float rowStride);
 
 protected:

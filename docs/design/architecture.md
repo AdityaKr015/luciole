@@ -2,7 +2,7 @@
 
 ## Dialog lifetime
 
-[PageContext](../../src/app/page/page_context.h) distinguishes transient popups from persistent dialogs through `PopupMode`. Menus keep normal Wayland grabs and outside-click dismissal. Forms retain their scene, focus and drafts across application-window focus changes, using the existing popup transport without an explicit grab. [BrowserPage](../../src/app/page/browser_page.cpp) consumes dialog-background clicks, restores its text-input context on focus return, and keeps all explicit teardown in ActiveDialog. Settings dropdowns remain transient children; losing window focus closes the dropdown while retaining Settings. Compositor popup dismissal is always honored. This is application policy, not a change to the mirrored rendering library.
+[PageContext](../../src/app/page/page_context.h) chooses each popup's dismissal through `PopupDismiss`. Menus, popovers and dialogs opened with `OutsideClick` keep normal Wayland grabs and outside-click dismissal. Dialogs opened with `Explicit` (the default for forms) retain their scene, focus and drafts across application-window focus changes, using the existing popup transport without an explicit grab. [BrowserPage](../../src/app/page/browser_page.cpp) consumes dialog-background clicks, restores its text-input context on focus return, and keeps all explicit teardown in ActivePopup. Settings dropdowns remain transient children; losing window focus closes the dropdown while retaining Settings. Compositor popup dismissal is always honored. This is application policy, not a change to the mirrored rendering library.
 
 ## Module boundaries
 

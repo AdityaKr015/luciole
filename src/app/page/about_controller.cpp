@@ -1,6 +1,6 @@
 #include "app/page/about_controller.h"
 
-#include "app/page/active_dialog.h"
+#include "app/page/active_popup.h"
 #include "app/page/page_context.h"
 #include "imaging/image_limits.h"
 #include "imaging/svg_rasterizer.h"
@@ -91,12 +91,12 @@ void AboutController::open() {
   );
   auto root = ui::column(
       {.align = FlexAlign::Stretch},
-      luciole::dialogHeader("About Luciole", "info-circle", [this] { m_page.dismissMenu(); }), std::move(body)
+      luciole::dialogHeader("About Luciole", "info-circle", [this] { m_page.dismissPopup(); }), std::move(body)
   );
   luciole::applyDialogStyle(*root);
   m_page.showDialog(std::move(root), DialogWidth::Medium);
-  if (m_page.menuSurface()) {
-    m_page.activeDialog().bind(ActiveDialog::Kind::About, [this] {
+  if (m_page.popupSurface()) {
+    m_page.activePopup().bind(ActivePopup::Kind::About, [this] {
       m_scroll = nullptr;
       m_message = nullptr;
       m_logo = nullptr;
@@ -111,7 +111,7 @@ void AboutController::layoutDialog() {
   if (!m_logo) {
     return;
   }
-  auto& renderer = m_page.menuSurface()->renderTarget().renderer();
+  auto& renderer = m_page.popupSurface()->renderTarget().renderer();
   const auto pixels = static_cast<int>(std::ceil(kLogoSize * std::max(1.0F, renderer.renderScale())));
   const std::span svg(reinterpret_cast<const std::uint8_t*>(luciole::kAppIconSvg), sizeof(luciole::kAppIconSvg) - 1);
   if (const auto image = luciole::rasterizeSvg(svg, pixels, false, luciole::kMaxImagePixels)) {
@@ -128,7 +128,7 @@ void AboutController::launcherChanged(const std::string& error) {
     m_message->setText(error.empty() ? "" : std::format("Could not open the link: {}", error));
     m_message->setVisible(!error.empty());
     m_message->setParticipatesInLayout(!error.empty());
-    m_page.menuSurface()->requestLayout();
+    m_page.popupSurface()->requestLayout();
   }
 }
 

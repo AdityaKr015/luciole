@@ -1,7 +1,7 @@
 #include "app/page/rename_controller.h"
 
 #include "app/operation_hub.h"
-#include "app/page/active_dialog.h"
+#include "app/page/active_popup.h"
 #include "app/page/page_context.h"
 #include "browser/browser_controller.h"
 #include "browser/places.h"
@@ -11,7 +11,7 @@
 #include "operations/rename_service.h"
 #include "platform/desktop_integration.h"
 #include "render/scene/input_dispatcher.h"
-#include "ui/controls/file_error_text.h"
+#include "ui/browser/file_error_text.h"
 #include "ui/controls/input.h"
 #include "ui/dialogs/name_dialog.h"
 #include "wayland/popup_surface.h"
@@ -43,12 +43,12 @@ void RenameController::openFileRename(luciole::DirectoryEntry target) {
       m_page.dialogWidth(DialogWidth::Small),
       target.type == luciole::FileType::Directory && !target.symlink ? "Rename folder" : "Rename file", "pencil",
       validText ? target.name : "", validText ? "" : "Enter a new UTF-8 name for this item.", luciole::filenameProblem,
-      [this](std::string name) { submitFileRename(std::move(name)); }, [this] { m_page.dismissMenu(); }
+      [this](std::string name) { submitFileRename(std::move(name)); }, [this] { m_page.dismissPopup(); }
   );
   auto* control = editor.get();
   m_page.showDialog(std::move(editor), DialogWidth::Small);
-  if (m_page.menuSurface() != nullptr) {
-    m_page.activeDialog().bind(ActiveDialog::Kind::FileRename, [this] {
+  if (m_page.popupSurface() != nullptr) {
+    m_page.activePopup().bind(ActivePopup::Kind::FileRename, [this] {
       if (m_fileRenameTarget) {
         // Renaming goes on for the page that takes the job over once this page left its window.
         if (m_page.jobs().attached() || !m_job->running()) {
@@ -132,7 +132,7 @@ void RenameController::syncFileRename(const OperationJob& job) {
     }
     if (editor) {
       m_fileRenameEditor = nullptr;
-      m_page.dismissMenu();
+      m_page.dismissPopup();
     }
   } else if (!editor) {
     if (snapshot.status == luciole::RenameStatus::Error) {
@@ -147,12 +147,12 @@ void RenameController::syncFileRename(const OperationJob& job) {
     m_fileRenameEditor->setSaving(false);
     m_fileRenameEditor->showError(renameErrorText(snapshot.error));
     if (std::exchange(m_fileRenamePreparing, false)) {
-      m_page.menuDispatcher().setFocus(m_fileRenameEditor->input()->inputArea());
+      m_page.popupDispatcher().setFocus(m_fileRenameEditor->input()->inputArea());
       const auto& value = m_fileRenameEditor->input()->value();
       const bool directory = m_fileRenameTarget->type == luciole::FileType::Directory && !m_fileRenameTarget->symlink;
       m_fileRenameEditor->input()->selectRange(0, luciole::filenameStemLength(value, directory));
     }
-    m_page.menuSurface()->requestLayout();
+    m_page.popupSurface()->requestLayout();
   }
 }
 
@@ -178,12 +178,12 @@ void RenameController::openPlaceRename(const luciole::Bookmark& bookmark) {
         }
         return std::nullopt;
       },
-      [this](std::string label) { submitPlaceRename(std::move(label)); }, [this] { m_page.dismissMenu(); }
+      [this](std::string label) { submitPlaceRename(std::move(label)); }, [this] { m_page.dismissPopup(); }
   );
   auto* control = editor.get();
   m_page.showDialog(std::move(editor), DialogWidth::Small);
-  if (m_page.menuSurface() != nullptr) {
-    m_page.activeDialog().bind(ActiveDialog::Kind::PlaceRename, [this] {
+  if (m_page.popupSurface() != nullptr) {
+    m_page.activePopup().bind(ActivePopup::Kind::PlaceRename, [this] {
       if (m_placeRenameTarget) {
         m_page.restorePlaceFocus(m_placeRenameTarget->location);
       }
@@ -193,7 +193,7 @@ void RenameController::openPlaceRename(const luciole::Bookmark& bookmark) {
     });
     m_placeEditor = control;
     m_placeRenameTarget = current;
-    m_page.menuDispatcher().setFocus(control->input()->inputArea());
+    m_page.popupDispatcher().setFocus(control->input()->inputArea());
     control->input()->selectAll();
   }
 }
@@ -222,7 +222,7 @@ void RenameController::syncPlaceRename() {
   }
   const auto found = std::ranges::find(m_pins.bookmarks(), m_placeRenameTarget->location, &luciole::Bookmark::location);
   if (found != m_pins.bookmarks().end() && found->label == *m_pendingPlaceLabel) {
-    m_page.dismissMenu();
+    m_page.dismissPopup();
   } else {
     m_placeEditor->setSaving(false);
     m_placeEditor->showError(

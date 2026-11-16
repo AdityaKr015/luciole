@@ -5,6 +5,7 @@
 #include "ui/controls/card_style.h"
 #include "ui/controls/input.h"
 #include "ui/controls/select.h"
+#include "ui/controls/side_list_metrics.h"
 #include "ui/controls/stepper.h"
 #include "ui/dialogs/dialog_chrome.h"
 

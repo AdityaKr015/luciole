@@ -1,6 +1,6 @@
 #include "app/page/settings_controller.h"
 
-#include "app/page/active_dialog.h"
+#include "app/page/active_popup.h"
 #include "app/page/page_context.h"
 #include "config/view_preference_writer.h"
 #include "platform/desktop_integration.h"
@@ -38,7 +38,7 @@ void SettingsController::onFrame() {
     }
     if (m_view) {
       sync();
-      if (auto* surface = m_page.menuSurface()) {
+      if (auto* surface = m_page.popupSurface()) {
         surface->requestLayout();
       }
     }
@@ -77,37 +77,37 @@ void SettingsController::teardown() {
 
 void SettingsController::toggle() {
   if (m_view) {
-    m_page.dismissMenu();
+    m_page.dismissPopup();
     return;
   }
   m_viewLifetime = std::make_shared<int>(0);
   auto root = std::make_unique<SettingsDialog>(
       [this](luciole::OverrideEdit edit) {
         m_preferences.submit({std::move(edit)});
-        if (auto* surface = m_page.menuSurface()) {
+        if (auto* surface = m_page.popupSurface()) {
           surface->requestLayout();
         }
       },
-      [this] { m_preferences.resetAll(); }, [this] { m_page.dismissMenu(); }, [this] { m_clearThumbnails(); }
+      [this] { m_preferences.resetAll(); }, [this] { m_page.dismissPopup(); }, [this] { m_clearThumbnails(); }
   );
   root->setPopupContext(this);
   m_view = root.get();
   sync();
   m_view->setCompact(m_page.dialogWidth(DialogWidth::Large) < 720.0F);
   m_page.showDialog(std::move(root), DialogWidth::Large);
-  if (!m_page.menuSurface()) {
+  if (!m_page.popupSurface()) {
     m_view = nullptr;
     m_viewLifetime.reset();
     return;
   }
-  m_page.activeDialog().bind(ActiveDialog::Kind::Settings, [this] { teardown(); });
-  m_page.menuDispatcher().setFocusChangeCallback([this](InputArea*, InputArea* focused) {
+  m_page.activePopup().bind(ActivePopup::Kind::Settings, [this] { teardown(); });
+  m_page.popupDispatcher().setFocusChangeCallback([this](InputArea*, InputArea* focused) {
     if (m_view) {
       m_view->reveal(focused);
-      m_page.menuSurface()->requestLayout();
+      m_page.popupSurface()->requestLayout();
     }
   });
-  m_page.menuDispatcher().setFocus(m_page.menuDispatcher().firstTabFocusUnder(m_view->navigation()));
+  m_page.popupDispatcher().setFocus(m_page.popupDispatcher().firstTabFocusUnder(m_view->navigation()));
 }
 
 bool SettingsController::key(const KeyboardEvent& event) {
@@ -119,7 +119,7 @@ bool SettingsController::key(const KeyboardEvent& event) {
     return true;
   }
   if (event.pressed && luciole::shortcutMatches(luciole::BrowserAction::Settings, event.sym, event.modifiers)) {
-    m_page.dismissMenu();
+    m_page.dismissPopup();
     return true;
   }
   return false;
@@ -146,7 +146,7 @@ bool SettingsController::dropdownPointer(const PointerEvent& event) {
 }
 
 void SettingsController::openSelectDropdown(const DropdownRequest& request, DropdownCallbacks callbacks) {
-  auto* dialog = m_page.menuSurface();
+  auto* dialog = m_page.popupSurface();
   if (!m_view || !dialog) {
     if (callbacks.onDismiss) {
       callbacks.onDismiss();

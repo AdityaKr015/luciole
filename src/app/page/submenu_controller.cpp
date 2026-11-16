@@ -45,7 +45,7 @@ void SubmenuController::open(int id, bool keyboard) {
     return;
   }
   const auto* row = findRow(id);
-  if (row == nullptr || !m_page.menuSurface() || !m_page.contextMenu()) {
+  if (row == nullptr || !m_page.popupSurface() || !m_page.contextMenu()) {
     return;
   }
   close();
@@ -89,7 +89,7 @@ void SubmenuController::show(
   m_menu->setOnActivate([this, action = std::move(action)](const ContextMenuControlEntry& entry) {
     const int id = entry.id;
     const std::weak_ptr<int> lifetime = m_lifetime;
-    m_page.dismissMenu();
+    m_page.dismissPopup();
     DeferredCall::callLater([lifetime, action, id] {
       if (!lifetime.expired()) {
         action(id);
@@ -103,7 +103,7 @@ void SubmenuController::show(
 }
 
 bool SubmenuController::create(float width, float height) {
-  auto* menuSurface = m_page.menuSurface();
+  auto* menuSurface = m_page.popupSurface();
   auto* contextMenu = m_page.contextMenu();
   const auto* row = m_open ? findRow(*m_open) : nullptr;
   if (!menuSurface || !contextMenu || !row) {
@@ -136,7 +136,7 @@ bool SubmenuController::create(float width, float height) {
       menu->setSubmenuDirection(
           m_surface->configuredX() < 0 ? ContextSubmenuDirection::Left : ContextSubmenuDirection::Right
       );
-      m_page.menuSurface()->requestLayout();
+      m_page.popupSurface()->requestLayout();
     }
     m_surface->requestLayout();
   });

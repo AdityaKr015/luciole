@@ -42,7 +42,7 @@ public:
   // Changes whenever a submenu opens or closes, so content that arrives later can tell it is stale.
   std::uint64_t generation() const { return m_generation; }
 
-  // BrowserPage::closeMenu(): closes the submenu and forgets the rows.
+  // BrowserPage::closePopup(): closes the submenu and forgets the rows.
   void menuClosed();
   bool owns(const wl_surface* surface) const;
   InputDispatcher& dispatcher() { return m_dispatcher; }

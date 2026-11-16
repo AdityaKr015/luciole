@@ -10,7 +10,7 @@ class ScrollView;
 class FileMetadataView;
 class FilePreviewView final : public Flex {
 public:
-  // `quick` builds the Quick Look dialog (dialog chrome, the file name as title, Open as the primary action);
+  // `quick` builds the quick preview dialog (dialog chrome, the file name as title, Open as the primary action);
   // otherwise the flush docked pane. Both show the file facts in a Details card.
   FilePreviewView(
       luciole::FileIconCache& icons, bool quick, std::function<void()> close, std::function<void()> open,

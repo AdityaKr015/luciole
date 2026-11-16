@@ -5,8 +5,8 @@
 #include "core/input/key_symbols.h"
 #include "ui/builders.h"
 #include "ui/controls/button.h"
-#include "ui/controls/card_style.h"
 #include "ui/controls/scroll_view.h"
+#include "ui/controls/side_list_metrics.h"
 #include "ui/controls/virtual_grid_view.h"
 
 #include <algorithm>

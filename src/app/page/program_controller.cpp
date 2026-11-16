@@ -1,6 +1,6 @@
-#include "app/page/execution_controller.h"
+#include "app/page/program_controller.h"
 
-#include "app/page/active_dialog.h"
+#include "app/page/active_popup.h"
 #include "app/page/page_context.h"
 #include "app/page/submenu_controller.h"
 #include "browser/browser_controller.h"
@@ -8,8 +8,8 @@
 #include "fs/background_job.h"
 #include "platform/desktop_integration.h"
 #include "render/scene/input_dispatcher.h"
+#include "ui/browser/file_error_text.h"
 #include "ui/builders.h"
-#include "ui/controls/file_error_text.h"
 #include "ui/controls/label.h"
 #include "ui/controls/scroll_view.h"
 #include "ui/dialogs/dialog_chrome.h"
@@ -20,19 +20,19 @@
 #include <algorithm>
 #include <utility>
 
-ExecutionController::ExecutionController(PageContext& page, SubmenuController& submenus, WaylandConnection& connection)
+ProgramController::ProgramController(PageContext& page, SubmenuController& submenus, WaylandConnection& connection)
     : m_page(page), m_submenus(submenus), m_connection(connection) {}
-ExecutionController::~ExecutionController() { cancel(); }
-void ExecutionController::cancel() {
+ProgramController::~ProgramController() { cancel(); }
+void ProgramController::cancel() {
   m_listing.cancel();
   m_launch.cancel();
 }
-void ExecutionController::closeScripts() { m_listing.cancel(); }
-bool ExecutionController::current(const luciole::ActionRequest& request) const {
+void ProgramController::closeScripts() { m_listing.cancel(); }
+bool ProgramController::current(const luciole::ActionRequest& request) const {
   return m_page.visible() && m_page.requestCurrent(request, luciole::ActionScope::Targets);
 }
 
-void ExecutionController::run(const luciole::ActionRequest& request, bool terminal) {
+void ProgramController::run(const luciole::ActionRequest& request, bool terminal) {
   if (!current(request) || request.targets.size() != 1 || busy()) {
     return;
   }
@@ -61,10 +61,10 @@ void ExecutionController::run(const luciole::ActionRequest& request, bool termin
   );
 }
 
-void ExecutionController::confirm(const luciole::ActionRequest& request, luciole::PreparedProgram program) {
+void ProgramController::confirm(const luciole::ActionRequest& request, luciole::PreparedProgram program) {
   auto root = ui::column({.align = FlexAlign::Stretch});
   luciole::applyDialogStyle(*root);
-  root->addChild(luciole::dialogHeader("Run application launcher?", "player-play", [this] { m_page.dismissMenu(); }));
+  root->addChild(luciole::dialogHeader("Run application launcher?", "player-play", [this] { m_page.dismissPopup(); }));
   const auto text = [&](const std::string& value, int lines) {
     root->addChild(ui::label({.text = value, .maxLines = lines, .configure = [](Label& label) {
                                 label.setUseMarkup(false);
@@ -81,7 +81,7 @@ void ExecutionController::confirm(const luciole::ActionRequest& request, luciole
   text("Run this command only if you trust this launcher. Permission applies to this launch only.", 3);
   auto buttons = ui::row({.justify = FlexJustify::End, .gap = Style::spaceSm});
   auto cancel =
-      ui::button({.text = "Cancel", .variant = ButtonVariant::Ghost, .onClick = [this] { m_page.dismissMenu(); }});
+      ui::button({.text = "Cancel", .variant = ButtonVariant::Ghost, .onClick = [this] { m_page.dismissPopup(); }});
   auto* focus = cancel.get();
   buttons->addChild(std::move(cancel));
   buttons->addChild(
@@ -89,7 +89,7 @@ void ExecutionController::confirm(const luciole::ActionRequest& request, luciole
           {.text = "Launch Once", .onClick = [this, capturedRequest = request, program = std::move(program)] mutable {
              auto captured = std::move(capturedRequest);
              auto selected = std::move(program);
-             m_page.dismissMenu();
+             m_page.dismissPopup();
              if (current(captured)) {
                launch(captured, std::move(selected), false, false);
              }
@@ -98,15 +98,15 @@ void ExecutionController::confirm(const luciole::ActionRequest& request, luciole
   );
   root->addChild(std::move(buttons));
   m_page.showDialog(std::move(root), DialogWidth::Medium);
-  if (m_page.menuSurface()) {
+  if (m_page.popupSurface()) {
     // Dismissal retires this confirmation, not a launch accepted just before
     // the deferred popup close runs.
-    m_page.activeDialog().bind(ActiveDialog::Kind::RunProgram, [token = m_launch] { token.cancel(); });
-    m_page.menuDispatcher().setFocus(focus->inputArea());
+    m_page.activePopup().bind(ActivePopup::Kind::RunProgram, [token = m_launch] { token.cancel(); });
+    m_page.popupDispatcher().setFocus(focus->inputArea());
   }
 }
 
-void ExecutionController::launch(
+void ProgramController::launch(
     const luciole::ActionRequest& request, luciole::PreparedProgram program, bool terminal, bool script
 ) {
   if (!current(request) || busy()) {
@@ -155,7 +155,7 @@ void ExecutionController::launch(
   );
 }
 
-void ExecutionController::showScripts(
+void ProgramController::showScripts(
     const luciole::ActionRequest& request, luciole::ScriptListing listing, bool loading
 ) {
   if (!current(request)) {
@@ -196,7 +196,7 @@ void ExecutionController::showScripts(
   );
 }
 
-void ExecutionController::scripts(const luciole::ActionRequest& request) {
+void ProgramController::scripts(const luciole::ActionRequest& request) {
   if (!current(request)) {
     return;
   }
@@ -224,7 +224,7 @@ void ExecutionController::scripts(const luciole::ActionRequest& request) {
   );
 }
 
-void ExecutionController::openScriptsFolder(const luciole::ActionRequest& request) {
+void ProgramController::openScriptsFolder(const luciole::ActionRequest& request) {
   const std::weak_ptr<int> lifetime = m_lifetime;
   m_launch = luciole::CancelToken{};
   const auto token = m_launch;

@@ -6,9 +6,9 @@
 #include <functional>
 #include <memory>
 
-// Owns whatever a page shows on its menu popup surface: one context menu or dialog at a time.
-// The page's closeMenu() is the single close path; it calls close() and later release().
-class ActiveDialog {
+// Owns whatever a page shows on its popup surface: one context menu, popover or dialog at a time.
+// The page's closePopup() is the single close path; it calls close() and later release().
+class ActivePopup {
 public:
   enum class Kind : std::uint8_t {
     None,

@@ -1,6 +1,6 @@
 #include "app/page/preview_controller.h"
 
-#include "app/page/active_dialog.h"
+#include "app/page/active_popup.h"
 #include "app/page/application_chooser_controller.h"
 #include "app/page/page_context.h"
 #include "browser/browser_controller.h"
@@ -31,8 +31,8 @@ PreviewController::PreviewController(
       m_applications(applications) {}
 
 void PreviewController::sync() {
-  auto* surface = m_page.menuSurface();
-  const bool quick = m_quick && surface;
+  auto* surface = m_page.popupSurface();
+  const bool quick = m_quickPreview && surface;
   if ((!m_bounds && !quick) || !m_page.active() || m_page.overlay() || m_page.thumbnailsPaused()) {
     m_preview.clear();
     return;
@@ -55,7 +55,7 @@ void PreviewController::sync() {
       ? current.image
       : prepared;
   const auto* pixels = image && image->pixels ? &*image->pixels : nullptr;
-  const auto size = quick ? quickSize() : std::pair{m_bounds->width, m_bounds->height};
+  const auto size = quick ? quickPreviewSize() : std::pair{m_bounds->width, m_bounds->height};
   const auto& renderer = quick ? surface->renderTarget().renderer() : m_page.surface().renderTarget().renderer();
   const auto layout = luciole::previewImageLayout(
       pixels ? pixels->width : 0, pixels ? pixels->height : 0, size.first, size.second, renderer.renderScale(), quick
@@ -81,7 +81,7 @@ void PreviewController::openPreviewed(bool with) {
     if (with) {
       m_applications.show(*entry);
     } else {
-      m_page.dismissMenu();
+      m_page.dismissPopup();
       m_page.dispatchAction(Action::Open, request);
     }
   });
@@ -92,7 +92,7 @@ std::unique_ptr<FilePreviewView> PreviewController::makeView(bool quick) {
       m_icons, quick,
       [this, quick] {
         if (quick) {
-          m_page.dismissMenu();
+          m_page.dismissPopup();
         } else {
           m_page.dispatchAction(Action::ShowPreview);
         }
@@ -101,35 +101,35 @@ std::unique_ptr<FilePreviewView> PreviewController::makeView(bool quick) {
   );
 }
 
-std::pair<float, float> PreviewController::quickSize() const {
+std::pair<float, float> PreviewController::quickPreviewSize() const {
   return {
       m_page.dialogWidth(DialogWidth::Medium),
       std::max(1.0F, std::min(620.0F, static_cast<float>(m_page.surface().height()) - 48))
   };
 }
 
-void PreviewController::showQuick() {
-  const auto height = quickSize().second;
+void PreviewController::showQuickPreview() {
+  const auto height = quickPreviewSize().second;
   auto view = makeView(true);
   auto* control = view.get();
   view->setFlexGrow(1);
   m_page.showDialog(
       ui::column({.align = FlexAlign::Stretch, .minHeight = height, .maxHeight = height}, std::move(view)),
-      DialogWidth::Medium, DialogDismiss::OutsideClick
+      DialogWidth::Medium, PopupDismiss::OutsideClick
   );
-  if (m_page.menuSurface()) {
-    m_page.activeDialog().bind(ActiveDialog::Kind::QuickPreview, [this] { m_quick = nullptr; });
-    m_quick = control;
+  if (m_page.popupSurface()) {
+    m_page.activePopup().bind(ActivePopup::Kind::QuickPreview, [this] { m_quickPreview = nullptr; });
+    m_quickPreview = control;
     sync();
   }
 }
 
-bool PreviewController::quickKey(const KeyboardEvent& event) {
-  if (!m_quick || !event.pressed || event.preedit || event.modifiers != 0) {
+bool PreviewController::quickPreviewKey(const KeyboardEvent& event) {
+  if (!m_quickPreview || !event.pressed || event.preedit || event.modifiers != 0) {
     return false;
   }
   if (luciole::shortcutMatches(Action::QuickPreview, event.sym, event.modifiers) || KeySymbol::isEscape(event.sym)) {
-    m_page.dismissMenu();
+    m_page.dismissPopup();
     return true;
   }
   // Arrows walk the files as they do in the view behind: Left/Right one item, Up/Down one list item or one grid row.
@@ -154,7 +154,7 @@ bool PreviewController::quickKey(const KeyboardEvent& event) {
       }
     }
     sync();
-    m_page.menuSurface()->requestLayout();
+    m_page.popupSurface()->requestLayout();
     return true;
   }
   return false;
@@ -196,18 +196,20 @@ void PreviewController::hidePane() {
   }
 }
 
-void PreviewController::layoutQuick() {
-  if (!m_quick) {
+void PreviewController::layoutQuickPreview() {
+  if (!m_quickPreview) {
     return;
   }
   // Before the dialog measures itself: the preview has a fixed height that follows the window.
-  const auto [width, height] = quickSize();
-  auto* root = m_page.activeDialog().root();
+  const auto [width, height] = quickPreviewSize();
+  auto* root = m_page.activePopup().root();
   root->setMinHeight(height);
   root->setMaxHeight(height);
   const auto& snapshot = m_preview.snapshot();
-  m_quick->sync(snapshot, width, height, snapshot.entry ? m_page.browser().model().typeLabel(snapshot.entry->id) : "");
+  m_quickPreview->sync(
+      snapshot, width, height, snapshot.entry ? m_page.browser().model().typeLabel(snapshot.entry->id) : ""
+  );
   if (!snapshot.image || !snapshot.image->pixels) {
-    m_quick->clear(m_page.menuSurface()->renderTarget().renderer());
+    m_quickPreview->clear(m_page.popupSurface()->renderTarget().renderer());
   }
 }

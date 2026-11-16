@@ -1,4 +1,4 @@
-#include "ui/controls/selection_surface.h"
+#include "ui/controls/selection_contour.h"
 
 #include "render/core/renderer.h"
 #include "render/core/texture_manager.h"
@@ -102,7 +102,7 @@ namespace {
       if (index != start || vertices.size() < 4) {
         continue;
       }
-      constexpr double radius = SelectionSurface::cornerRadius;
+      constexpr double radius = SelectionContour::cornerRadius;
       constexpr double arc = 0.5522847498307936;
       for (std::size_t i = 0; i <= vertices.size(); ++i) {
         const auto current = vertices[i % vertices.size()];
@@ -131,7 +131,7 @@ namespace {
   using Context = std::unique_ptr<cairo_t, decltype(&cairo_destroy)>;
 } // namespace
 
-SelectionSurface::SelectionSurface() {
+SelectionContour::SelectionContour() {
   setHitTestVisible(false);
   m_fill = static_cast<ImageNode*>(addChild(std::make_unique<ImageNode>()));
   m_outline = static_cast<ImageNode*>(addChild(std::make_unique<ImageNode>()));
@@ -141,8 +141,8 @@ SelectionSurface::SelectionSurface() {
   m_outline->setMonochromeTint(true);
   m_paletteConn = paletteChanged().connect([this] { markLayoutDirty(); });
 }
-SelectionSurface::~SelectionSurface() { releaseTextures(); }
-void SelectionSurface::releaseTextures() {
+SelectionContour::~SelectionContour() { releaseTextures(); }
+void SelectionContour::releaseTextures() {
   if (m_textures != nullptr) {
     if (m_fillTexture.valid()) {
       m_textures->unload(m_fillTexture);
@@ -152,7 +152,7 @@ void SelectionSurface::releaseTextures() {
     }
   }
 }
-void SelectionSurface::bind(
+void SelectionContour::bind(
     std::vector<std::uint8_t> selected, std::size_t columns, float columnStride, float rowStride
 ) {
   if (selected != m_selected || columns != m_columns || columnStride != m_columnStride || rowStride != m_rowStride) {
@@ -164,7 +164,7 @@ void SelectionSurface::bind(
     markLayoutDirty();
   }
 }
-void SelectionSurface::doLayout(Renderer& renderer) {
+void SelectionContour::doLayout(Renderer& renderer) {
   // A calm tinted block; the outline matches the fill so merged selections read as one shape.
   m_fill->setTint(resolveColorSpec(colorSpecFromRole(ColorRole::PrimaryContainer)));
   m_outline->setTint(resolveColorSpec(colorSpecFromRole(ColorRole::PrimaryContainer)));
@@ -219,7 +219,7 @@ void SelectionSurface::doLayout(Renderer& renderer) {
   m_fill->arrange(renderer, {0, 0, imageWidth, imageHeight});
   m_outline->arrange(renderer, {0, 0, imageWidth, imageHeight});
 }
-void SelectionSurface::doInvalidateGpuResources(Renderer&) {
+void SelectionContour::doInvalidateGpuResources(Renderer&) {
   m_fillTexture = {};
   m_outlineTexture = {};
   m_fill->setTextureId({});

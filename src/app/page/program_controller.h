@@ -11,10 +11,10 @@ class PageContext;
 class SubmenuController;
 class WaylandConnection;
 
-class ExecutionController {
+class ProgramController {
 public:
-  ExecutionController(PageContext& page, SubmenuController& submenus, WaylandConnection& connection);
-  ~ExecutionController();
+  ProgramController(PageContext& page, SubmenuController& submenus, WaylandConnection& connection);
+  ~ProgramController();
   void run(const luciole::ActionRequest& request, bool terminal);
   void scripts(const luciole::ActionRequest& request);
   void closeScripts();

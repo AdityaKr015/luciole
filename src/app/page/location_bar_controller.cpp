@@ -470,7 +470,7 @@ void LocationBarController::layoutCompletions(Renderer& renderer) {
     if (!m_completionItems.error.empty() && entries.empty()) {
       entries.push_back({.label = "Folder suggestions unavailable", .enabled = false});
     }
-    const bool visible = m_editingLocation && !entries.empty() && m_page.menuSurface() == nullptr;
+    const bool visible = m_editingLocation && !entries.empty() && m_page.popupSurface() == nullptr;
     m_completionFrame->setVisible(visible);
     m_completionControl->setMaxVisible(entries.size());
     m_completionControl->setEntries(std::move(entries));

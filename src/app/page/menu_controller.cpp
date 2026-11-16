@@ -1,12 +1,12 @@
 #include "app/page/menu_controller.h"
 
 #include "app/operation_hub.h"
-#include "app/page/active_dialog.h"
+#include "app/page/active_popup.h"
 #include "app/page/create_controller.h"
 #include "app/page/details_header_controller.h"
-#include "app/page/execution_controller.h"
 #include "app/page/location_bar_controller.h"
 #include "app/page/page_context.h"
+#include "app/page/program_controller.h"
 #include "app/page/properties_controller.h"
 #include "app/page/rename_controller.h"
 #include "app/page/submenu_controller.h"
@@ -67,11 +67,11 @@ MenuController::MenuController(
     PageContext& page, luciole::PinService& pins, TransferController& transferController,
     luciole::TerminalLauncher& terminal, luciole::PathCompletion& siblingCompletion, CreateController& creator,
     SubmenuController& submenus, RenameController& renamer, PropertiesController& properties,
-    DetailsHeaderController& columns, LocationBarController& locationBar, ExecutionController& execution
+    DetailsHeaderController& columns, LocationBarController& locationBar, ProgramController& programs
 )
     : m_page(page), m_pins(pins), m_transferController(transferController), m_terminal(terminal),
       m_siblingCompletion(siblingCompletion), m_creator(creator), m_submenus(submenus), m_renamer(renamer),
-      m_properties(properties), m_columns(columns), m_locationBar(locationBar), m_execution(execution) {}
+      m_properties(properties), m_columns(columns), m_locationBar(locationBar), m_programs(programs) {}
 
 ContextMenuControlEntry
 MenuController::actionEntry(Action action, const luciole::ActionRequest& request, bool radio) const {
@@ -291,7 +291,7 @@ void MenuController::openFileMenu(std::optional<luciole::EntryId> id, float x, f
       );
     } else if (entryId == luciole::ActionRegistry::menuId(Action::Scripts)) {
       m_submenus.attach(
-          row, entryId, [this, request] { m_execution.scripts(request); }, [this] { m_execution.closeScripts(); }
+          row, entryId, [this, request] { m_programs.scripts(request); }, [this] { m_programs.closeScripts(); }
       );
     } else if (entryId == OpenIn) {
       m_submenus.attach(row, entryId, [this, request] { showOpenInMenu(request); });
@@ -407,10 +407,10 @@ void MenuController::openPlaceMenu(const luciole::Bookmark& bookmark, float x, f
       {x, y, 1, 1}
   );
   if (bookmark.location == luciole::Location::trash() && m_menu) {
-    const auto generation = m_page.activeDialog().generation();
+    const auto generation = m_page.activePopup().generation();
     const std::weak_ptr<int> lifetime = m_lifetime;
     m_trashAvailability.query([this, lifetime, generation, entries = std::move(entries)](auto count) mutable {
-      if (lifetime.expired() || generation != m_page.activeDialog().generation() || !m_menu || !m_page.menuSurface()) {
+      if (lifetime.expired() || generation != m_page.activePopup().generation() || !m_menu || !m_page.popupSurface()) {
         return;
       }
       const auto empty = std::ranges::find(entries, 7, &ContextMenuControlEntry::id);
@@ -419,7 +419,7 @@ void MenuController::openPlaceMenu(const luciole::Bookmark& bookmark, float x, f
             count && *count > 0 && m_page.actionState(Action::EmptyTrash, m_page.actionRequest(false)).enabled;
       }
       m_menu->setEntries(std::move(entries));
-      m_page.menuSurface()->requestLayout();
+      m_page.popupSurface()->requestLayout();
     });
   }
 }
@@ -480,15 +480,15 @@ void MenuController::openBreadcrumbMenu(const luciole::Location& target, LayoutR
     }
   };
   showContextMenu(entries, activate, anchor);
-  const auto generation = m_page.activeDialog().generation();
+  const auto generation = m_page.activePopup().generation();
   const auto siblingParent = target.parent().value_or(target);
   m_siblingCompletion.children(
       siblingParent, m_page.browser().model().filter().showHidden,
       [this, context, generation, anchor, targets, entries = std::move(entries),
        activate](const luciole::PathSuggestions& suggestions) mutable {
         if (context != m_page.browser().contextSerial()
-            || generation != m_page.activeDialog().generation()
-            || !m_page.menuSurface()) {
+            || generation != m_page.activePopup().generation()
+            || !m_page.popupSurface()) {
           return;
         }
         entries.pop_back();
@@ -521,17 +521,17 @@ void MenuController::revealHighlight() {
   } else if (bottom > offset + m_scroll->height()) {
     m_scroll->requestScrollToOffset(bottom - m_scroll->height());
   }
-  m_page.menuSurface()->requestLayout();
+  m_page.popupSurface()->requestLayout();
 }
 
 void MenuController::key(const KeyboardEvent& event) {
   if (m_menu == nullptr) {
     if (event.pressed && KeySymbol::isEscape(event.sym)) {
-      m_page.dismissMenu();
+      m_page.dismissPopup();
     } else if (event.pressed && KeySymbol::isTab(event.sym)) {
-      (void)m_page.menuDispatcher().cycleTabFocus((event.modifiers & KeyMod::Shift) != 0);
+      (void)m_page.popupDispatcher().cycleTabFocus((event.modifiers & KeyMod::Shift) != 0);
     } else {
-      m_page.menuDispatcher().keyEvent(event.sym, event.utf32, event.modifiers, event.pressed, event.preedit);
+      m_page.popupDispatcher().keyEvent(event.sym, event.utf32, event.modifiers, event.pressed, event.preedit);
     }
     return;
   }
@@ -542,16 +542,16 @@ void MenuController::key(const KeyboardEvent& event) {
     return;
   }
   if (KeySymbol::isEscape(event.sym)) {
-    m_page.dismissMenu();
+    m_page.dismissPopup();
   } else if (KeySymbol::isUp(event.sym)) {
     if (m_menu->moveHighlight(-1)) {
       revealHighlight();
-      m_page.menuSurface()->requestRedraw();
+      m_page.popupSurface()->requestRedraw();
     }
   } else if (KeySymbol::isDown(event.sym)) {
     if (m_menu->moveHighlight(1)) {
       revealHighlight();
-      m_page.menuSurface()->requestRedraw();
+      m_page.popupSurface()->requestRedraw();
     }
   } else if (KeySymbol::isRight(event.sym)) {
     m_submenus.openHighlighted();
@@ -586,7 +586,7 @@ void MenuController::showContextMenu(
   const auto activate = [this, action = std::move(action)](const ContextMenuControlEntry& entry) {
     const int id = entry.id;
     const std::weak_ptr<int> lifetime = m_lifetime;
-    m_page.dismissMenu();
+    m_page.dismissPopup();
     DeferredCall::callLater([lifetime, action, id] {
       if (!lifetime.expired()) {
         action(id);
@@ -719,7 +719,7 @@ void MenuController::showActionMenu(
           return;
         }
         m_page.dispatchAction(*action, request);
-        if (!m_page.menuSurface() && *action != Action::Search && *action != Action::EditLocation) {
+        if (!m_page.popupSurface() && *action != Action::Search && *action != Action::EditLocation) {
           m_page.focusFileList();
         }
       },
@@ -746,8 +746,8 @@ void MenuController::openMenu() {
   if (m_page.choosing()) {
     return;
   }
-  if (m_page.menuSurface() != nullptr) {
-    m_page.dismissMenu();
+  if (m_page.popupSurface() != nullptr) {
+    m_page.dismissPopup();
     return;
   }
   std::vector<ContextMenuControlEntry> entries{

@@ -1,15 +1,15 @@
 #include "app/page/operations_controller.h"
 
 #include "app/operation_hub.h"
-#include "app/page/active_dialog.h"
+#include "app/page/active_popup.h"
 #include "app/page/page_context.h"
 #include "clipboard/text_clipboard.h"
 #include "platform/desktop_integration.h"
 #include "render/scene/input_dispatcher.h"
 #include "ui/builders.h"
+#include "ui/controls/operations_view.h"
 #include "ui/controls/scroll_view.h"
 #include "ui/dialogs/dialog_chrome.h"
-#include "ui/dialogs/operations_view.h"
 #include "wayland/popup_surface.h"
 #include "xdg-shell-client-protocol.h"
 
@@ -29,8 +29,8 @@ std::unique_ptr<Button> OperationsController::buildButton() {
        .variant = ButtonVariant::Ghost,
        .tooltip = "File operations",
        .onClick = [this] {
-         if (m_page.activeDialog().kind() == ActiveDialog::Kind::Operations) {
-           m_page.dismissMenu();
+         if (m_page.activePopup().kind() == ActivePopup::Kind::Operations) {
+           m_page.dismissPopup();
          } else {
            open();
          }
@@ -74,9 +74,9 @@ void OperationsController::onFrame() {
     m_count = activities.size();
     m_clear->setEnabled(std::ranges::any_of(activities, [](const auto& item) { return item.finished; }));
     if (m_view->sync(std::move(activities))) {
-      m_page.menuDispatcher().cancelPointerCapture();
+      m_page.popupDispatcher().cancelPointerCapture();
     }
-    m_page.menuSurface()->requestLayout();
+    m_page.popupSurface()->requestLayout();
     if (progressing && !m_progress.active()) {
       m_progress.startRepeating(std::chrono::milliseconds(200), [this] { markDirty(); });
     } else if (!progressing) {
@@ -97,7 +97,7 @@ void OperationsController::open() {
   Button* clear = nullptr;
   auto root = ui::column(
       {.align = FlexAlign::Stretch},
-      luciole::dialogHeader("File Operations", "progress", [this] { m_page.dismissMenu(); }), std::move(view),
+      luciole::dialogHeader("File Operations", "progress", [this] { m_page.dismissPopup(); }), std::move(view),
       ui::separator({}),
       ui::row(
           {.justify = FlexJustify::End},
@@ -115,20 +115,20 @@ void OperationsController::open() {
       std::move(root), nullptr, sceneRect(*m_button),
       std::min(484.0F, static_cast<float>(m_page.surface().width()) - 32.0F), popupHeight(activities.size()), true
   );
-  if (!m_page.menuSurface()) {
+  if (!m_page.popupSurface()) {
     return;
   }
   m_parentSize = {m_page.surface().width(), m_page.surface().height()};
   m_view = shown;
   m_clear = clear;
-  m_page.activeDialog().bind(ActiveDialog::Kind::Operations, [this] { closed(); });
-  m_page.menuDispatcher().setFocusChangeCallback([this](InputArea*, InputArea* focus) {
+  m_page.activePopup().bind(ActivePopup::Kind::Operations, [this] { closed(); });
+  m_page.popupDispatcher().setFocusChangeCallback([this](InputArea*, InputArea* focus) {
     revealFocus(focus);
-    if (m_page.menuSurface()) {
-      m_page.menuSurface()->requestLayout();
+    if (m_page.popupSurface()) {
+      m_page.popupSurface()->requestLayout();
     }
   });
-  (void)m_page.menuDispatcher().cycleTabFocus(false);
+  (void)m_page.popupDispatcher().cycleTabFocus(false);
   markDirty();
 }
 
@@ -151,7 +151,7 @@ void OperationsController::act(std::uint64_t id, ActivityAction action) {
     m_pendingDetails = id;
     markDirty();
   } else {
-    m_page.dismissMenu();
+    m_page.dismissPopup();
     m_route(id, action == ActivityAction::Retry);
   }
 }
@@ -174,7 +174,7 @@ void OperationsController::details(std::uint64_t id) {
   );
   auto root = ui::column(
       {.align = FlexAlign::Stretch},
-      luciole::dialogHeader("Operation Details", "info-circle", [this] { m_page.dismissMenu(); }), std::move(body),
+      luciole::dialogHeader("Operation Details", "info-circle", [this] { m_page.dismissPopup(); }), std::move(body),
       ui::separator({}),
       ui::row(
           {.justify = FlexJustify::End, .gap = Style::spaceSm},
@@ -197,10 +197,10 @@ void OperationsController::details(std::uint64_t id) {
   );
   luciole::applyDialogStyle(*root);
   m_page.showDialog(std::move(root), DialogWidth::Medium);
-  if (m_page.menuSurface()) {
+  if (m_page.popupSurface()) {
     m_detailsScroll = scroll;
     m_reportLabel = label;
-    m_page.activeDialog().bind(ActiveDialog::Kind::OperationDetails, [this] { closed(); });
+    m_page.activePopup().bind(ActivePopup::Kind::OperationDetails, [this] { closed(); });
   }
 }
 
@@ -209,7 +209,7 @@ void OperationsController::layoutDialog() {
     const auto width =
         static_cast<std::uint32_t>(std::min(484.0F, static_cast<float>(m_page.surface().width()) - 32.0F));
     const auto height = static_cast<std::uint32_t>(popupHeight(m_count));
-    auto* popup = m_page.menuSurface();
+    auto* popup = m_page.popupSurface();
     const bool resized = popup->width() != width || popup->height() != height;
     if (resized) {
       (void)popup->resize(width, height, false);
@@ -236,14 +236,14 @@ void OperationsController::layoutDialog() {
   }
   if (m_reportLabel) {
     // The dialog's own width; the popup surface also holds its shadow.
-    m_reportLabel->setMaxWidth(std::max(1.0F, m_page.activeDialog().root()->width() - 48.0F));
+    m_reportLabel->setMaxWidth(std::max(1.0F, m_page.activePopup().root()->width() - 48.0F));
   }
 }
 
 void OperationsController::parentConfigured() {
   if (m_view && m_parentSize != std::pair(m_page.surface().width(), m_page.surface().height())) {
     // A toolbar popover closes on window resize; accepted jobs remain independent of its presentation.
-    m_page.dismissMenu();
+    m_page.dismissPopup();
   }
 }
 

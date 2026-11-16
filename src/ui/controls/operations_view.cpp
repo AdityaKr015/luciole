@@ -1,4 +1,4 @@
-#include "ui/dialogs/operations_view.h"
+#include "ui/controls/operations_view.h"
 
 #include "render/scene/input_area.h"
 #include "ui/builders.h"

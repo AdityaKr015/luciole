@@ -1,7 +1,7 @@
 #include "ui/dialogs/batch_rename_dialog.h"
 
+#include "ui/browser/file_error_text.h"
 #include "ui/builders.h"
-#include "ui/controls/file_error_text.h"
 #include "ui/controls/input.h"
 #include "ui/controls/scroll_view.h"
 #include "ui/controls/segmented.h"

@@ -1,7 +1,7 @@
 #include "app/page/properties_controller.h"
 
 #include "app/operation_hub.h"
-#include "app/page/active_dialog.h"
+#include "app/page/active_popup.h"
 #include "app/page/page_context.h"
 #include "browser/browser_controller.h"
 #include "browser/location_presentation.h"
@@ -109,7 +109,7 @@ void PropertiesController::showDetails(bool shown) {
   m_permissionDetails->setGlyph(shown ? "chevron-left" : "");
   m_permissionReport->setVisible(shown);
   m_permissionReport->setParticipatesInLayout(shown);
-  m_page.menuSurface()->requestLayout();
+  m_page.popupSurface()->requestLayout();
 }
 
 PropertiesController::PropertiesController(PageContext& page, luciole::FileIconCache& icons)
@@ -156,7 +156,7 @@ void PropertiesController::onFrame() {
 }
 
 void PropertiesController::syncMetadata() {
-  if (!m_metadataView || !m_page.menuSurface()) {
+  if (!m_metadataView || !m_page.popupSurface()) {
     return;
   }
   auto fields = m_multiple ? luciole::MetadataFields{} : m_metadata.fields();
@@ -207,7 +207,7 @@ void PropertiesController::syncMetadata() {
   // The entry's own facts lead, so both kinds read as one table with one row rhythm.
   fields.insert(fields.begin(), m_basicFields.begin(), m_basicFields.end());
   m_metadataView->sync(fields, m_metadataWidth);
-  m_page.menuSurface()->requestLayout();
+  m_page.popupSurface()->requestLayout();
 }
 
 void PropertiesController::updateApply() {
@@ -221,7 +221,7 @@ bool PropertiesController::resultsKey(const KeyboardEvent& event) {
       && m_permissionResults->visible()
       && event.pressed
       && m_permissionResults->navigate(event.sym, event.modifiers, event.preedit)) {
-    m_page.menuSurface()->requestLayout();
+    m_page.popupSurface()->requestLayout();
     return true;
   }
   return false;
@@ -247,9 +247,9 @@ void PropertiesController::showAdvanced(bool advanced, bool focus) {
   m_permissionSave->setEnabled(canApply() && !m_page.operationsBusy());
   m_permissionScroll->requestScrollToOffset(0);
   if (focus) {
-    m_page.menuDispatcher().setFocus((advanced ? m_permissionAdvancedBack : m_permissionAdvancedOpen)->inputArea());
+    m_page.popupDispatcher().setFocus((advanced ? m_permissionAdvancedBack : m_permissionAdvancedOpen)->inputArea());
   }
-  m_page.menuSurface()->requestLayout();
+  m_page.popupSurface()->requestLayout();
 }
 
 bool PropertiesController::canApply() const {
@@ -329,7 +329,7 @@ void PropertiesController::sync() {
                                 : m_permissionEditor->messageNode()
       );
     }
-    m_page.menuSurface()->requestLayout();
+    m_page.popupSurface()->requestLayout();
   }
   if ((snapshot.phase == luciole::PermissionPhase::Ready || snapshot.phase == luciole::PermissionPhase::Cancelled)
       && snapshot.applied) {
@@ -448,7 +448,7 @@ PropertiesController::Body PropertiesController::buildBody(
           if (m_permissionEditor && m_permissionSave) {
             m_permissionSave->setEnabled(canApply() && !m_page.operationsBusy());
           }
-          m_page.menuSurface()->requestLayout();
+          m_page.popupSurface()->requestLayout();
         },
         multiple, folders
     );
@@ -485,7 +485,7 @@ PropertiesController::Body PropertiesController::buildBody(
       if (m_permissionSave) {
         m_permissionSave->setEnabled(canApply() && !m_page.operationsBusy());
       }
-      m_page.menuSurface()->requestLayout();
+      m_page.popupSurface()->requestLayout();
     };
     std::unique_ptr<Flex> aclControl;
     if (multiple) {
@@ -605,10 +605,11 @@ void PropertiesController::show(const std::vector<luciole::DirectoryEntry>& targ
       m_permissionSave->setEnabled(canApply() && !m_page.operationsBusy());
     }
     scroll->requestScrollToOffset(0);
-    m_page.menuSurface()->requestLayout();
+    m_page.popupSurface()->requestLayout();
   };
   auto root = ui::column(
-      {.align = FlexAlign::Stretch}, luciole::dialogHeader("Properties", "file-info", [this] { m_page.dismissMenu(); }),
+      {.align = FlexAlign::Stretch},
+      luciole::dialogHeader("Properties", "file-info", [this] { m_page.dismissPopup(); }),
       identityRow(targets, m_icons, width),
       ui::row(
           {.justify = FlexJustify::Center, .visible = editable, .participatesInLayout = editable},
@@ -680,7 +681,9 @@ void PropertiesController::show(const std::vector<luciole::DirectoryEntry>& targ
                        }
                      }}
             ),
-            ui::button({.text = "Close", .variant = ButtonVariant::Ghost, .onClick = [this] { m_page.dismissMenu(); }}),
+            ui::button(
+                {.text = "Close", .variant = ButtonVariant::Ghost, .onClick = [this] { m_page.dismissPopup(); }}
+            ),
             ui::button(
                 {.out = &save,
                  .text = "Apply",
@@ -707,11 +710,11 @@ void PropertiesController::show(const std::vector<luciole::DirectoryEntry>& targ
     );
   }
   m_page.showDialog(std::move(root), DialogWidth::Medium);
-  if (m_page.menuSurface()) {
-    m_page.activeDialog().bind(ActiveDialog::Kind::Properties, [this] { close(); });
+  if (m_page.popupSurface()) {
+    m_page.activePopup().bind(ActivePopup::Kind::Properties, [this] { close(); });
     // Start on the tabs rather than the header's close button.
     if (editable) {
-      m_page.menuDispatcher().setFocus(m_page.menuDispatcher().firstTabFocusUnder(tabs));
+      m_page.popupDispatcher().setFocus(m_page.popupDispatcher().firstTabFocusUnder(tabs));
     }
     m_metadataView = body.metadata;
     m_folderTotals = body.folderTotals;
@@ -745,10 +748,10 @@ void PropertiesController::show(const std::vector<luciole::DirectoryEntry>& targ
     m_permissionTabs = tabs;
     m_permissionSave = save;
     m_permissionScroll = scroll;
-    m_page.menuDispatcher().setFocusChangeCallback([this](InputArea*, InputArea* focused) {
+    m_page.popupDispatcher().setFocusChangeCallback([this](InputArea*, InputArea* focused) {
       if (m_permissionScroll) {
         m_permissionScroll->requestScrollIntoView(focused);
-        m_page.menuSurface()->requestLayout();
+        m_page.popupSurface()->requestLayout();
       }
     });
     m_job = m_page.jobs().create<luciole::PermissionService>(JobScope::Page);

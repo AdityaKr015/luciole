@@ -1,7 +1,7 @@
 #include "app/page/create_controller.h"
 
 #include "app/operation_hub.h"
-#include "app/page/active_dialog.h"
+#include "app/page/active_popup.h"
 #include "app/page/page_context.h"
 #include "app/page/submenu_controller.h"
 #include "browser/browser_controller.h"
@@ -11,8 +11,8 @@
 #include "platform/desktop_integration.h"
 #include "render/scene/input_area.h"
 #include "render/scene/input_dispatcher.h"
+#include "ui/browser/file_error_text.h"
 #include "ui/controls/context_menu.h"
-#include "ui/controls/file_error_text.h"
 #include "ui/controls/input.h"
 #include "ui/dialogs/link_dialog.h"
 #include "ui/dialogs/name_dialog.h"
@@ -108,13 +108,13 @@ void CreateController::openCreateItem(
           : kind == luciole::CreateKind::Folder ? "New Folder"
                                                 : "New File",
       source ? "From " + source->label : "", luciole::filenameProblem,
-      [this](std::string name) { submitCreateItem(std::move(name)); }, [this] { m_page.dismissMenu(); }, "Create",
+      [this](std::string name) { submitCreateItem(std::move(name)); }, [this] { m_page.dismissPopup(); }, "Create",
       "Creating…"
   );
   auto* control = editor.get();
   m_page.showDialog(std::move(editor), DialogWidth::Small);
-  if (m_page.menuSurface() != nullptr) {
-    m_page.activeDialog().bind(ActiveDialog::Kind::CreateItem, [this] { closeCreation(); });
+  if (m_page.popupSurface() != nullptr) {
+    m_page.activePopup().bind(ActivePopup::Kind::CreateItem, [this] { closeCreation(); });
     m_createEditor = control;
     m_createParent = std::move(parent);
     m_creationPreparing = true;
@@ -185,20 +185,20 @@ void CreateController::openLinkDialog(const luciole::DirectoryEntry& target) {
         } catch (const std::exception& error) {
           m_linkDialog->showError(error.what());
         }
-        m_page.menuSurface()->requestLayout();
+        m_page.popupSurface()->requestLayout();
       },
-      [this] { m_page.dismissMenu(); }
+      [this] { m_page.dismissPopup(); }
   );
   auto* dialog = root.get();
   m_page.showDialog(std::move(root), DialogWidth::Medium);
-  if (m_page.menuSurface()) {
-    m_page.activeDialog().bind(ActiveDialog::Kind::Link, [this] { closeCreation(); });
+  if (m_page.popupSurface()) {
+    m_page.activePopup().bind(ActivePopup::Kind::Link, [this] { closeCreation(); });
     m_linkDialog = dialog;
     m_linkPreparing = true;
-    m_page.menuDispatcher().setFocusChangeCallback([this](InputArea*, InputArea* focused) {
+    m_page.popupDispatcher().setFocusChangeCallback([this](InputArea*, InputArea* focused) {
       if (m_linkDialog) {
         m_linkDialog->reveal(focused);
-        m_page.menuSurface()->requestLayout();
+        m_page.popupSurface()->requestLayout();
       }
     });
     dialog->setSaving(true);
@@ -257,16 +257,16 @@ void CreateController::sync(const OperationJob& job) {
     }
     if (createEditor != nullptr || linkDialog != nullptr) {
       m_createEditor = nullptr;
-      m_page.dismissMenu();
+      m_page.dismissPopup();
     }
   } else if (linkDialog) {
     linkDialog->setSaving(false);
     linkDialog->showError(createErrorText(snapshot.error));
     if (std::exchange(m_linkPreparing, false)) {
-      m_page.menuDispatcher().setFocus(linkDialog->nameInput()->inputArea());
+      m_page.popupDispatcher().setFocus(linkDialog->nameInput()->inputArea());
       linkDialog->nameInput()->selectAll();
     }
-    m_page.menuSurface()->requestLayout();
+    m_page.popupSurface()->requestLayout();
   } else if (createEditor == nullptr) {
     if (snapshot.status == luciole::CreateStatus::Error) {
       m_page.actionError(
@@ -280,7 +280,7 @@ void CreateController::sync(const OperationJob& job) {
     createEditor->setSaving(false);
     createEditor->showError(createErrorText(snapshot.error));
     if (std::exchange(m_creationPreparing, false)) {
-      m_page.menuDispatcher().setFocus(createEditor->input()->inputArea());
+      m_page.popupDispatcher().setFocus(createEditor->input()->inputArea());
       if (snapshot.kind == luciole::CreateKind::Document) {
         const auto& value = createEditor->input()->value();
         createEditor->input()->selectRange(0, luciole::filenameStemLength(value, false));
@@ -288,7 +288,7 @@ void CreateController::sync(const OperationJob& job) {
         createEditor->input()->selectAll();
       }
     }
-    m_page.menuSurface()->requestLayout();
+    m_page.popupSurface()->requestLayout();
   }
 }
 

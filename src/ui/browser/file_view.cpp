@@ -10,7 +10,7 @@
 #include "ui/browser/file_icon.h"
 #include "ui/browser/file_view_metrics.h"
 #include "ui/builders.h"
-#include "ui/controls/selection_surface.h"
+#include "ui/controls/selection_contour.h"
 
 #include <algorithm>
 #include <array>
@@ -57,7 +57,7 @@ namespace {
     FileRow(luciole::FileIconCache& icons, luciole::ThumbnailService& thumbnails, bool miller = false)
         : m_miller(miller) {
       setHitTestVisible(false);
-      addChild(ui::box({.out = &m_background, .radius = SelectionSurface::cornerRadius}));
+      addChild(ui::box({.out = &m_background, .radius = SelectionContour::cornerRadius}));
       auto icon = std::make_unique<luciole::FileIcon>(icons, 24.0F, &thumbnails);
       m_icon = icon.get();
       auto row = ui::row(
@@ -210,7 +210,7 @@ namespace {
   public:
     FileTile(luciole::FileIconCache& icons, luciole::ThumbnailService& thumbnails) {
       setHitTestVisible(false);
-      addChild(ui::box({.out = &m_background, .radius = SelectionSurface::cornerRadius}));
+      addChild(ui::box({.out = &m_background, .radius = SelectionContour::cornerRadius}));
       m_icon =
           static_cast<luciole::FileIcon*>(addChild(std::make_unique<luciole::FileIcon>(icons, 48.0F, &thumbnails)));
       addChild(
@@ -342,7 +342,7 @@ std::unique_ptr<Node> luciole::FileViewAdapter::createTile() {
   return std::make_unique<FileRow>(m_icons, m_thumbnails, m_mode == ViewMode::Miller);
 }
 
-std::unique_ptr<Node> luciole::FileViewAdapter::createDecoration() { return std::make_unique<SelectionSurface>(); }
+std::unique_ptr<Node> luciole::FileViewAdapter::createDecoration() { return std::make_unique<SelectionContour>(); }
 void luciole::FileViewAdapter::bindDecoration(Node& decoration, const VirtualGridDecorationLayout& layout) {
   const auto& model = m_browser.model();
   std::vector<std::uint8_t> selected(((layout.itemCount + layout.columns - 1) / layout.columns) * layout.columns, 0);
@@ -353,7 +353,7 @@ void luciole::FileViewAdapter::bindDecoration(Node& decoration, const VirtualGri
         m_columnActive && model.selection().selected.contains(model.rows()[layout.firstIndex + i]) ? 1 : 0;
   }
   decoration.setVisible(std::ranges::any_of(selected, [](auto value) { return value != 0; }));
-  static_cast<SelectionSurface&>(decoration)
+  static_cast<SelectionContour&>(decoration)
       .bind(
           std::move(selected), layout.columns, layout.cellWidth + layout.columnGap, layout.cellHeight + layout.rowGap
       );

@@ -1,4 +1,4 @@
-#include "ui/controls/file_error_text.h"
+#include "ui/browser/file_error_text.h"
 
 std::string luciole::fileErrorText(const FileError& error) {
   if (!error.message.empty()) {

@@ -1,7 +1,7 @@
 #include "app/page/transfer_controller.h"
 
 #include "app/operation_hub.h"
-#include "app/page/active_dialog.h"
+#include "app/page/active_popup.h"
 #include "app/page/page_context.h"
 #include "browser/browser_controller.h"
 #include "browser/location_presentation.h"
@@ -9,8 +9,8 @@
 #include "fs/gio_ptr.h"
 #include "platform/desktop_integration.h"
 #include "render/scene/input_dispatcher.h"
+#include "ui/browser/file_error_text.h"
 #include "ui/builders.h"
-#include "ui/controls/file_error_text.h"
 #include "ui/dialogs/dialog_chrome.h"
 #include "ui/palette.h"
 #include "ui/style.h"
@@ -124,7 +124,7 @@ void TransferController::finishMove(OperationJob& job, luciole::ClipboardFiles s
 void TransferController::extractDrop(
     luciole::ExtractionOffer offer, const luciole::Location& destination, luciole::DropCompletion finish
 ) {
-  if (m_page.operationsBusy() || !m_page.visible() || m_page.menuSurface()) {
+  if (m_page.operationsBusy() || !m_page.visible() || m_page.popupSurface()) {
     finish(false);
     return;
   }
@@ -182,7 +182,7 @@ void TransferController::chooseDrop(
 ) {
   if (payload.locations.empty()
       || !m_page.visible()
-      || m_page.menuSurface()
+      || m_page.popupSurface()
       || m_page.operationsBusy()
       || !m_page.popupAvailable()) {
     finish(false);
@@ -230,16 +230,16 @@ void TransferController::chooseDrop(
         || !pending->options.select
         || !pending->options.select(action)) {
       pending->cancel();
-      m_page.dismissMenu();
+      m_page.dismissPopup();
       return;
     }
     pending->chosen = true;
-    m_page.dismissMenu();
+    m_page.dismissPopup();
     resolvedDrop(std::move(pending->payload), pending->destination, action, std::move(pending->finish));
   };
   auto root = ui::column({.align = FlexAlign::Stretch});
   luciole::applyDialogStyle(*root);
-  root->addChild(luciole::dialogHeader("Choose Drop Action", "drag-drop", [this] { m_page.dismissMenu(); }));
+  root->addChild(luciole::dialogHeader("Choose Drop Action", "drag-drop", [this] { m_page.dismissPopup(); }));
   Button* focus = nullptr;
   const auto add = [&](const char* label, const char* glyph, luciole::TransferAction action, bool enabled) {
     auto button = ui::button(
@@ -264,13 +264,13 @@ void TransferController::chooseDrop(
           && std::ranges::all_of(pending->payload.locations, [](const auto& source) { return source.isNative(); }));
   root->addChild(ui::separator({}));
   root->addChild(ui::button({.text = "Cancel", .variant = ButtonVariant::Ghost, .onClick = [this] {
-                               m_page.dismissMenu();
+                               m_page.dismissPopup();
                              }}));
   m_page.showDialog(std::move(root), DialogWidth::Small);
-  if (m_page.menuSurface()) {
-    m_page.activeDialog().bind(ActiveDialog::Kind::DropAction, [pending] { pending->cancel(); });
+  if (m_page.popupSurface()) {
+    m_page.activePopup().bind(ActivePopup::Kind::DropAction, [pending] { pending->cancel(); });
     if (focus) {
-      m_page.menuDispatcher().setFocus(focus->inputArea());
+      m_page.popupDispatcher().setFocus(focus->inputArea());
     }
   }
 }
@@ -311,11 +311,11 @@ void TransferController::syncConflict() {
     const auto pending = shown ? shown->conflict() : std::nullopt;
     if (!pending || pending->id != m_activeConflict->conflict) {
       m_activeConflict.reset();
-      m_page.dismissMenu();
+      m_page.dismissPopup();
     }
     return;
   }
-  if (m_page.menuSurface() != nullptr) {
+  if (m_page.popupSurface() != nullptr) {
     return;
   }
   auto* job = m_page.jobs().oldest([](const OperationJob& candidate) { return candidate.conflict().has_value(); });
@@ -365,7 +365,7 @@ void TransferController::syncConflict() {
     if (owner
         && owner->resolve(active.conflict, choice, *applyToAll && choice != luciole::TransferConflictChoice::Cancel)) {
       m_activeConflict.reset();
-      m_page.dismissMenu();
+      m_page.dismissPopup();
     }
   };
   Button* keepBoth = nullptr;
@@ -459,8 +459,8 @@ void TransferController::syncConflict() {
   );
   luciole::applyDialogStyle(*root);
   m_page.showDialog(std::move(root), DialogWidth::Medium);
-  if (m_page.menuSurface() != nullptr) {
-    m_page.activeDialog().bind(ActiveDialog::Kind::TransferConflict, [this] {
+  if (m_page.popupSurface() != nullptr) {
+    m_page.activePopup().bind(ActivePopup::Kind::TransferConflict, [this] {
       if (const auto shown = std::exchange(m_activeConflict, std::nullopt)) {
         if (auto* owner = m_page.jobs().find(shown->job)) {
           (void)owner->resolve(shown->conflict, luciole::TransferConflictChoice::Cancel);
@@ -468,7 +468,7 @@ void TransferController::syncConflict() {
       }
     });
     m_activeConflict = active;
-    m_page.menuDispatcher().setFocus(keepBoth->inputArea());
+    m_page.popupDispatcher().setFocus(keepBoth->inputArea());
   } else {
     (void)job->resolve(conflict->id, luciole::TransferConflictChoice::Cancel);
   }

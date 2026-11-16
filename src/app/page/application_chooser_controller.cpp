@@ -1,6 +1,6 @@
 #include "app/page/application_chooser_controller.h"
 
-#include "app/page/active_dialog.h"
+#include "app/page/active_popup.h"
 #include "app/page/page_context.h"
 #include "platform/file_launcher.h"
 #include "render/scene/input_dispatcher.h"
@@ -37,9 +37,9 @@ ApplicationChooserController::ApplicationChooserController(
 bool ApplicationChooserController::current(const std::shared_ptr<Session>& session) const {
   return m_session == session
       && m_container
-      && m_page.menuSurface()
+      && m_page.popupSurface()
       && m_page.active()
-      && session->generation == m_page.activeDialog().generation();
+      && session->generation == m_page.activePopup().generation();
 }
 
 void ApplicationChooserController::show(const luciole::DirectoryEntry& entry) { show(std::vector{entry}); }
@@ -80,7 +80,7 @@ void ApplicationChooserController::show(const std::vector<luciole::DirectoryEntr
       {.align = FlexAlign::Stretch},
       luciole::dialogHeader(
           entries.size() == 1 ? "Open With" : std::format("Open {} Files With", entries.size()), "apps",
-          [this] { m_page.dismissMenu(); }
+          [this] { m_page.dismissPopup(); }
       ),
       ui::input(
           {.out = &search,
@@ -135,10 +135,10 @@ void ApplicationChooserController::show(const std::vector<luciole::DirectoryEntr
   );
   luciole::applyDialogStyle(*root);
   m_page.showDialog(std::move(root), DialogWidth::Medium);
-  if (!m_page.menuSurface()) {
+  if (!m_page.popupSurface()) {
     return;
   }
-  m_page.activeDialog().bind(ActiveDialog::Kind::Applications, [this] {
+  m_page.activePopup().bind(ActivePopup::Kind::Applications, [this] {
     m_searchDelay.stop();
     m_launcher.cancelApplications();
     m_session.reset();
@@ -150,7 +150,7 @@ void ApplicationChooserController::show(const std::vector<luciole::DirectoryEntr
     m_default = nullptr;
     m_error = nullptr;
   });
-  session->generation = m_page.activeDialog().generation();
+  session->generation = m_page.activePopup().generation();
   m_session = std::move(session);
   m_container = choices;
   m_scroll = choiceScroll;
@@ -158,7 +158,7 @@ void ApplicationChooserController::show(const std::vector<luciole::DirectoryEntr
   m_other = other;
   m_default = useDefault;
   m_error = error;
-  m_page.menuDispatcher().setFocus(m_search->inputArea());
+  m_page.popupDispatcher().setFocus(m_search->inputArea());
   load();
 }
 
@@ -232,14 +232,14 @@ void ApplicationChooserController::populate(const std::shared_ptr<Session>& sess
     m_container->addChild(ui::label({.text = "More applications match. Refine your search.", .maxLines = 2}));
   }
   m_scroll->requestScrollToOffset(0);
-  m_page.menuSurface()->requestLayout();
+  m_page.popupSurface()->requestLayout();
 }
 
 void ApplicationChooserController::showError(const std::string& message) {
   m_error->setText(message);
   m_error->setVisible(!message.empty());
   m_error->setParticipatesInLayout(!message.empty());
-  m_page.menuSurface()->requestLayout();
+  m_page.popupSurface()->requestLayout();
 }
 
 void ApplicationChooserController::choose(
@@ -254,7 +254,7 @@ void ApplicationChooserController::choose(
   }
   if (!session->useDefault) {
     m_launcher.openWith(session->locations, app);
-    m_page.dismissMenu();
+    m_page.dismissPopup();
     return;
   }
   session->submitting = true;
@@ -270,7 +270,7 @@ void ApplicationChooserController::choose(
     }
     if (error.empty() && m_page.actionState(luciole::BrowserAction::OpenWith, session->request).enabled) {
       m_launcher.openWith(session->locations, app);
-      m_page.dismissMenu();
+      m_page.dismissPopup();
       return;
     }
     session->submitting = false;

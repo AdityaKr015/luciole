@@ -1,7 +1,7 @@
 #include "app/page/trash_controller.h"
 
 #include "app/operation_hub.h"
-#include "app/page/active_dialog.h"
+#include "app/page/active_popup.h"
 #include "app/page/page_context.h"
 #include "browser/browser_controller.h"
 #include "core/input/key_symbols.h"
@@ -9,8 +9,8 @@
 #include "fs/gio_ptr.h"
 #include "platform/desktop_integration.h"
 #include "render/scene/input_dispatcher.h"
+#include "ui/browser/file_error_text.h"
 #include "ui/builders.h"
-#include "ui/controls/file_error_text.h"
 #include "ui/dialogs/dialog_chrome.h"
 #include "ui/palette.h"
 #include "ui/style.h"
@@ -98,7 +98,7 @@ void TrashController::openEmptyTrash(std::optional<std::vector<luciole::Director
   auto root = ui::column(
       {.align = FlexAlign::Stretch},
       luciole::dialogHeader(
-          selection ? "Delete selected items permanently?" : "Empty Trash?", "trash", [this] { m_page.dismissMenu(); }
+          selection ? "Delete selected items permanently?" : "Empty Trash?", "trash", [this] { m_page.dismissPopup(); }
       ),
       ui::label(
           {.out = &message,
@@ -118,7 +118,7 @@ void TrashController::openEmptyTrash(std::optional<std::vector<luciole::Director
       ui::row(
           {.align = FlexAlign::Center, .justify = FlexJustify::End, .gap = Style::spaceSm},
           ui::button(
-              {.text = "Cancel", .variant = ButtonVariant::Default, .onClick = [this] { m_page.dismissMenu(); }}
+              {.text = "Cancel", .variant = ButtonVariant::Default, .onClick = [this] { m_page.dismissPopup(); }}
           ),
           ui::button(
               {.out = &confirm,
@@ -131,8 +131,8 @@ void TrashController::openEmptyTrash(std::optional<std::vector<luciole::Director
   );
   luciole::applyDialogStyle(*root);
   m_page.showDialog(std::move(root), DialogWidth::Small);
-  if (m_page.menuSurface() != nullptr) {
-    m_page.activeDialog().bind(ActiveDialog::Kind::EmptyTrash, [this] {
+  if (m_page.popupSurface() != nullptr) {
+    m_page.activePopup().bind(ActivePopup::Kind::EmptyTrash, [this] {
       if (const auto job = std::exchange(m_emptyTrash, nullptr)) {
         job->cancel();
       }
@@ -152,13 +152,13 @@ void TrashController::openEmptyTrash(std::optional<std::vector<luciole::Director
 }
 
 bool TrashController::key(const KeyboardEvent& event) {
-  if (m_page.activeDialog().kind() == ActiveDialog::Kind::EmptyTrash
-      && !m_page.menuDispatcher().focusedArea()
+  if (m_page.activePopup().kind() == ActivePopup::Kind::EmptyTrash
+      && !m_page.popupDispatcher().focusedArea()
       && event.pressed
       && !event.preedit
       && event.modifiers == 0
       && KeySymbol::isEnter(event.sym)) {
-    m_page.dismissMenu();
+    m_page.dismissPopup();
     return true;
   }
   return false;
@@ -171,7 +171,7 @@ void TrashController::confirmEmptyTrash() {
   m_page.jobs().follow(*m_emptyTrash);
   m_emptyTrashConfirm->setEnabled(false);
   m_emptyTrash.reset();
-  m_page.dismissMenu();
+  m_page.dismissPopup();
 }
 
 void TrashController::onFrame() {
@@ -246,7 +246,7 @@ void TrashController::syncEmptyTrash() {
     sizeText = "Size unavailable";
   }
   m_emptyTrashSize->setText(sizeText);
-  m_page.menuSurface()->requestLayout();
+  m_page.popupSurface()->requestLayout();
 }
 
 void TrashController::trashChanged(OperationJob& job) {

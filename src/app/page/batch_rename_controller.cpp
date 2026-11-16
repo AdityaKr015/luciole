@@ -1,7 +1,7 @@
 #include "app/page/batch_rename_controller.h"
 
 #include "app/operation_hub.h"
-#include "app/page/active_dialog.h"
+#include "app/page/active_popup.h"
 #include "app/page/page_context.h"
 #include "browser/browser_controller.h"
 #include "clipboard/text_clipboard.h"
@@ -9,7 +9,7 @@
 #include "platform/desktop_integration.h"
 #include "render/scene/input_area.h"
 #include "render/scene/input_dispatcher.h"
-#include "ui/controls/file_error_text.h"
+#include "ui/browser/file_error_text.h"
 #include "ui/controls/input.h"
 #include "ui/controls/virtual_grid_view.h"
 #include "ui/dialogs/batch_rename_dialog.h"
@@ -46,26 +46,26 @@ void BatchRenameController::open(const std::vector<luciole::DirectoryEntry>& tar
         if (m_job && m_job->service<luciole::BatchRenameService>().applying()) {
           m_job->cancel();
         } else {
-          m_page.dismissMenu();
+          m_page.dismissPopup();
         }
       },
-      [this] { m_page.dismissMenu(); },
+      [this] { m_page.dismissPopup(); },
       [this] {
         if (m_job) {
           m_page.clipboard().setClipboardText(m_job->service<luciole::BatchRenameService>().snapshot().report);
         }
       },
       [this] {
-        if (auto* surface = m_page.menuSurface()) {
+        if (auto* surface = m_page.popupSurface()) {
           surface->requestUpdate();
         }
       }
   );
   auto* dialog = root.get();
   m_page.showDialog(std::move(root), DialogWidth::Large);
-  if (m_page.menuSurface()) {
+  if (m_page.popupSurface()) {
     m_dialog = dialog;
-    m_page.activeDialog().bind(ActiveDialog::Kind::BatchRename, [this] {
+    m_page.activePopup().bind(ActivePopup::Kind::BatchRename, [this] {
       if (m_dialog) {
         // Renaming goes on for the page that takes the job over once this page left its window.
         if (m_page.jobs().attached() || !m_job->service<luciole::BatchRenameService>().applying()) {
@@ -77,18 +77,18 @@ void BatchRenameController::open(const std::vector<luciole::DirectoryEntry>& tar
       m_job.reset();
     });
     m_reported = false;
-    m_page.menuDispatcher().setFocusChangeCallback([this](InputArea*, InputArea* focused) {
+    m_page.popupDispatcher().setFocusChangeCallback([this](InputArea*, InputArea* focused) {
       if (m_dialog) {
         m_dialog->reveal(focused);
-        m_page.menuSurface()->requestLayout();
+        m_page.popupSurface()->requestLayout();
       }
     });
-    m_page.menuDispatcher().setFocus(dialog->firstInput()->inputArea());
+    m_page.popupDispatcher().setFocus(dialog->firstInput()->inputArea());
     dialog->firstInput()->selectAll();
     m_job = m_page.jobs().create<luciole::BatchRenameService>(JobScope::Page);
     if (!m_job->service<luciole::BatchRenameService>().prepare(targets)) {
       m_page.actionError("Another rename is still finishing.");
-      m_page.dismissMenu();
+      m_page.dismissPopup();
     }
   }
 }
@@ -117,7 +117,7 @@ void BatchRenameController::sync() {
   const auto& snapshot = service.snapshot();
   if (m_dialog) {
     m_dialog->sync(snapshot, service.completed(), m_page.clipboard().available());
-    m_page.menuSurface()->requestLayout();
+    m_page.popupSurface()->requestLayout();
   }
   if (snapshot.phase == luciole::BatchRenamePhase::Finished && !std::exchange(m_reported, true)) {
     report(*m_job);

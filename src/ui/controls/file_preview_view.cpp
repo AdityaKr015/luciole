@@ -27,7 +27,7 @@ FilePreviewView::FilePreviewView(
   setDirection(FlexDirection::Vertical);
   setAlign(FlexAlign::Stretch);
   if (quick) {
-    // Quick Look is a dialog: same chrome, header, and footer as the others.
+    // The quick preview is a dialog: same chrome, header, and footer as the others.
     luciole::applyDialogStyle(*this);
     addChild(luciole::dialogHeader("Preview", "eye", std::move(close), &m_heading));
   } else {
@@ -147,7 +147,7 @@ void FilePreviewView::sync(
     m_location = location;
     m_scroll->requestScrollToOffset(0);
   }
-  // Quick Look titles itself with the file name; the docked pane names it in the body. The empty-state hint
+  // The quick preview titles itself with the file name; the docked pane names it in the body. The empty-state hint
   // reads as plain secondary text.
   if (m_quick) {
     m_heading->setText(entry ? entry->displayName() : "Preview");

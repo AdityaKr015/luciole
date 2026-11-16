@@ -18,7 +18,7 @@
 #include "ui/browser/places_sidebar.h"
 #include "ui/builders.h"
 #include "ui/controls/miller_view.h"
-#include "ui/controls/selection_surface.h"
+#include "ui/controls/selection_contour.h"
 #include "ui/palette.h"
 #include "wayland/toplevel_surface.h"
 #include "wayland/wayland_connection.h"
@@ -104,7 +104,7 @@ void DragDropController::buildOverlay(AnimationManager& animations) {
            .fill = clearColorSpec(),
            .border = colorSpecFromRole(ColorRole::Primary),
            .borderWidth = Style::focusRingWidth,
-           .radius = SelectionSurface::cornerRadius,
+           .radius = SelectionContour::cornerRadius,
            .visible = false,
            .participatesInLayout = false}
       )
@@ -210,7 +210,7 @@ luciole::FileDropTarget DragDropController::externalDrop(float x, float y, const
 luciole::FileDropTarget DragDropController::externalDestination(const luciole::Location& destination, LayoutRect rect) {
   if (!m_page.visible()
       || m_page.overlay()
-      || m_page.menuSurface() != nullptr
+      || m_page.popupSurface() != nullptr
       || m_page.operationsBusy()
       || !luciole::transferLocationSupported(destination)) {
     return {};
