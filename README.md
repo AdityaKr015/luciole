@@ -85,7 +85,7 @@ Donations are appreciated but completely optional.
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details..
+MIT License. See [LICENSE](LICENSE) for details.
 
 ## Star History
 
