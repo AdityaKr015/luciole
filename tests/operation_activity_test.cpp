@@ -837,6 +837,48 @@ namespace {
     TEST_CHECK(g_utf8_validate(report->data(), static_cast<gssize>(report->size()), nullptr));
     TEST_CHECK(workspace.hub.activities()[0].state == ActivityState::Failed);
   }
+  void preparedJobCompletion(Pump& pump) {
+    Fixture fixture;
+    fixture.write("keep");
+    unsigned completions = 0;
+    {
+      Workspace workspace;
+      const auto job = workspace.hub.create<luciole::TrashService>(workspace.page);
+      auto& service = job->service<luciole::TrashService>();
+      job->whenFinished([&](OperationJob& done) {
+        ++completions;
+        TEST_CHECK(done.service<luciole::TrashService>().snapshot().status == luciole::TrashStatus::Cancelled);
+      });
+      TEST_CHECK(service.prepare({fixture.at("keep")}));
+      pump.until([&] { return !service.busy(); });
+      TEST_CHECK(service.canTrash() && completions == 0);
+      service.cancel();
+      workspace.hub.update(workspace.window);
+      TEST_CHECK(completions == 1 && fs::exists(fixture.root / "keep"));
+      workspace.hub.update(workspace.window);
+      TEST_CHECK(completions == 1);
+
+      const auto failed = workspace.hub.create<luciole::TrashService>(workspace.page);
+      auto& invalid = failed->service<luciole::TrashService>();
+      failed->whenFinished([&](OperationJob& done) {
+        ++completions;
+        TEST_CHECK(done.service<luciole::TrashService>().snapshot().status == luciole::TrashStatus::Error);
+      });
+      TEST_CHECK(invalid.prepare({fixture.at("missing")}));
+      pump.until([&] { return !invalid.busy(); });
+      workspace.hub.update(workspace.window);
+      TEST_CHECK(completions == 2);
+
+      const auto pending = workspace.hub.create<luciole::TrashService>(workspace.page);
+      auto& prepared = pending->service<luciole::TrashService>();
+      pending->whenFinished([&](OperationJob&) { ++completions; });
+      TEST_CHECK(prepared.prepare({fixture.at("keep")}));
+      pump.until([&] { return !prepared.busy(); });
+      TEST_CHECK(prepared.canTrash() && completions == 2);
+      // Teardown releases the outstanding drop without starting a prepared mutation.
+    }
+    TEST_CHECK(completions == 3 && fs::exists(fixture.root / "keep"));
+  }
   void cancelledArchive(Pump& pump) {
     Fixture fixture;
     fixture.write("input");
@@ -857,6 +899,7 @@ int main() {
   conflictCancelAndRehome(pump);
   historyAndInspection(pump);
   cancelledArchive(pump);
+  preparedJobCompletion(pump);
   boundedReports(pump);
   batchRenameHistory(pump);
   renameHistoryReplacement(pump);

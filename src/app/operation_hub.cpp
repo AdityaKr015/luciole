@@ -119,6 +119,9 @@ OperationHub::~OperationHub() {
     if (auto idle = std::exchange(job->m_idle, {})) {
       idle(*job);
     }
+    if (auto finished = std::exchange(job->m_finished, {})) {
+      finished(*job);
+    }
   }
 }
 
@@ -247,6 +250,18 @@ void OperationHub::update(std::optional<luciole::WindowId> preferred) {
   }
   for (const auto& job : prepared) {
     (void)job->service<luciole::TrashService>().trash();
+  }
+  std::vector<std::shared_ptr<OperationJob>> finished;
+  for (const auto& [id, job] : m_jobs) {
+    (void)id;
+    if (!job->pending() && job->m_finished) {
+      finished.push_back(job);
+    }
+  }
+  for (const auto& job : finished) {
+    if (auto callback = std::exchange(job->m_finished, {})) {
+      callback(*job);
+    }
   }
   const auto removed = std::erase_if(m_jobs, [this](const auto& item) {
     const auto& job = *item.second;

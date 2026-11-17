@@ -148,6 +148,10 @@ void TransferController::receiveDrop(
     luciole::FilePayload payload, const luciole::Location& destination, luciole::DropOptions options,
     luciole::DropCompletion finish
 ) {
+  if (destination == luciole::Location::trash()) {
+    trashDrop(std::move(payload), options, std::move(finish));
+    return;
+  }
   if (options.action == luciole::DragAction::Ask) {
     chooseDrop(std::move(payload), destination, std::move(options), std::move(finish));
     return;
@@ -159,6 +163,34 @@ void TransferController::receiveDrop(
     return;
   }
   resolvedDrop(std::move(payload), destination, action, std::move(finish));
+}
+
+void TransferController::trashDrop(
+    luciole::FilePayload payload, const luciole::DropOptions& options, luciole::DropCompletion finish
+) {
+  if (m_page.operationsBusy()
+      || options.action != luciole::DragAction::Move
+      || !options.canMove
+      || !options.select
+      || !options.select(luciole::TransferAction::Move)) {
+    finish(false);
+    return;
+  }
+  const auto job = m_page.jobs().create<luciole::TrashService>();
+  if (!job->service<luciole::TrashService>().prepare(std::move(payload.locations))) {
+    finish(false);
+    return;
+  }
+  job->whenFinished([finish = std::move(finish)](OperationJob& done) {
+    const auto& snapshot = done.service<luciole::TrashService>().snapshot();
+    finish(
+        snapshot.status == luciole::TrashStatus::Finished
+        && !snapshot.results.empty()
+        && std::ranges::all_of(snapshot.results, [](const auto& result) {
+             return result.outcome == luciole::TrashOutcome::Trashed;
+           })
+    );
+  });
 }
 
 void TransferController::resolvedDrop(
