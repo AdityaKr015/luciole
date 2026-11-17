@@ -728,7 +728,7 @@ void WorkspaceApplication::pointer(const PointerEvent& event) {
       return;
     }
   }
-  if (host->strip && host->strip->containsScenePoint(x, y)) {
+  if (host->strip && host->strip->visible() && host->strip->containsScenePoint(x, y)) {
     host->pointerPage = 0;
     for (const auto& [tab, button] : host->buttons) {
       if (host->tabScroll->containsScenePoint(x, y)
