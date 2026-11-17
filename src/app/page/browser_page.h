@@ -276,6 +276,7 @@ private:
   void setViewMode(luciole::ViewMode mode);
   void applyViewMode();
   float gridHeight() const;
+  void applySort(luciole::SortOptions options);
   void changeSort(luciole::SortOptions options);
   void changeGridZoom(int requested);
   bool zoomFromKey(const KeyboardEvent& event);
@@ -428,6 +429,7 @@ private:
   luciole::PathCompletion m_siblingCompletion;
   std::optional<luciole::ViewMode> m_appliedViewMode;
   std::optional<luciole::EntryId> m_viewAnchor;
+  bool m_sortScrollPending = false;
   std::uint64_t m_visitSerial = 0;
   std::optional<luciole::BrowseViewport> m_pendingHistoryViewport;
   Node* m_root = nullptr;

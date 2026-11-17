@@ -1758,7 +1758,7 @@ void BrowserPage::applySettings(const luciole::BrowserSettings& settings, bool f
     browser().setDefaultIconSize(settings.gridIconSize);
   }
   if (m_settingsController.open() && (force || before.sort != settings.sort)) {
-    browser().model().setSort(settings.sort);
+    applySort(settings.sort);
   }
   if (m_settingsController.open()
       && (force || before.showHidden != settings.showHidden)
@@ -1821,17 +1821,28 @@ void BrowserPage::captureViewAnchor() {
   }
 }
 
-void BrowserPage::changeSort(luciole::SortOptions options) {
+void BrowserPage::applySort(luciole::SortOptions options) {
   if (options == browser().model().sort()) {
     return;
   }
-  captureViewAnchor();
+  // An explicit reorder starts at the new beginning, rather than following the old first visible item.
+  m_viewAnchor.reset();
+  m_pendingHistoryViewport.reset();
+  m_fileKeys.resetReveal();
   m_listAdapter.onPointerCancel();
   m_gridAdapter.onPointerCancel();
   browser().model().setSort(options);
   for (const auto& column : m_miller.columns()) {
     column->browser->model().setSort(options);
   }
+  m_sortScrollPending = true;
+}
+
+void BrowserPage::changeSort(luciole::SortOptions options) {
+  if (options == browser().model().sort()) {
+    return;
+  }
+  applySort(options);
   m_preferences.saveSort(options);
   dispatcher().setFocus(m_list->focusArea());
 }
@@ -2208,6 +2219,13 @@ void BrowserPage::layoutFrame(Renderer& renderer) {
   m_locationBar.prepareLayout();
   if (m_appliedViewMode != m_viewMode) {
     applyViewMode();
+  }
+  if (std::exchange(m_sortScrollPending, false)) {
+    // Apply after preference notifications and view switches can capture another anchor.
+    m_viewAnchor.reset();
+    m_pendingHistoryViewport.reset();
+    m_list->setSelectedIndex(m_list->selectedIndex(), false);
+    m_list->scrollView().requestScrollToOffset(0);
   }
   if (m_viewAnchor) {
     const auto& rows = browser().model().rows();
