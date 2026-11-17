@@ -1196,7 +1196,8 @@ namespace {
     TEST_CHECK(asset != nullptr);
     pump.until([&] { return asset->ready; });
     TEST_CHECK(asset->pixels && asset->pixels->width == 32 && asset->pixels->rgba[3] == 128);
-    TEST_CHECK(thumbnails.activeJobs() <= 2 && thumbnails.reservedBytes() <= 64U * 1024U * 1024U);
+    // A published image is charged its real size, not its size class's full square.
+    TEST_CHECK(thumbnails.activeJobs() <= 2 && thumbnails.reservedBytes() == asset->pixels->rgba.size());
     // A released thumbnail stays resident: scrolling back to it must not wait for the disk or a decoder.
     asset.reset();
     thumbnails.endFrame();
@@ -1219,30 +1220,33 @@ namespace {
     options.policy = luciole::ThumbnailPolicy::Local;
     thumbnails.setOptions(options);
     std::vector<std::shared_ptr<const luciole::FileIconImage>> held;
-    for (std::uint64_t id = 1; id <= 1200; ++id) {
+    for (std::uint64_t id = 1; id <= luciole::ThumbnailService::kMaxEntries + 1; ++id) {
       entry.id = id;
       if (auto image = thumbnails.request(entry, 48)) {
         held.push_back(std::move(image));
       }
     }
     TEST_CHECK(
-        thumbnails.reservedBytes() <= 64U * 1024U * 1024U && held.size() < 1200 && thumbnails.queuedJobs() <= 1024
+        thumbnails.reservedBytes() <= luciole::ThumbnailService::kResidentBudget
+        && held.size() <= luciole::ThumbnailService::kMaxEntries
+        && thumbnails.queuedJobs() <= luciole::ThumbnailService::kMaxEntries
     );
     asset.reset();
     held.clear();
     std::vector<std::shared_ptr<const luciole::FileIconImage>> overscan;
-    for (std::uint64_t id = 1; id <= 16; ++id) {
+    constexpr std::uint64_t kLarge = luciole::ThumbnailService::kResidentBudget / (1024U * 1024U * 4U);
+    for (std::uint64_t id = 1; id <= kLarge; ++id) {
       entry.id = id;
       overscan.push_back(thumbnails.request(entry, 1024, false));
       TEST_CHECK(overscan.back() != nullptr);
     }
-    entry.id = 17;
+    entry.id = kLarge + 1;
     auto visible = thumbnails.request(entry, 1024, true);
-    TEST_CHECK(visible && thumbnails.reservedBytes() == 64U * 1024U * 1024U);
+    TEST_CHECK(visible && thumbnails.reservedBytes() == luciole::ThumbnailService::kResidentBudget);
     entry.id = 1;
     TEST_CHECK(!thumbnails.request(entry, 1024, false));
     pump.until([&] { return thumbnails.activeJobs() == 2; });
-    TEST_CHECK(thumbnails.queuedJobs() == 14);
+    TEST_CHECK(thumbnails.queuedJobs() == kLarge - 2);
     visible.reset();
     overscan.clear();
     thumbnails.endFrame();
