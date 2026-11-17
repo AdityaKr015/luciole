@@ -123,6 +123,12 @@ void luciole::PlacesSidebar::updateDriveUsage() {
   markLayoutDirty();
 }
 std::optional<luciole::Bookmark> luciole::PlacesSidebar::folderAt(float x, float y) const {
+  return folderAt(x, y, 0.0F);
+}
+std::optional<luciole::Bookmark> luciole::PlacesSidebar::dropFolderAt(float x, float y) const {
+  return folderAt(x, y, 8.0F);
+}
+std::optional<luciole::Bookmark> luciole::PlacesSidebar::folderAt(float x, float y, float verticalInset) const {
   if (m_tree) {
     return m_tree->folderAt(x, y);
   }
@@ -134,8 +140,8 @@ std::optional<luciole::Bookmark> luciole::PlacesSidebar::folderAt(float x, float
     return Node::mapFromScene(button, x, y, localX, localY)
         && localX >= 0
         && localX < button->width()
-        && localY >= 8
-        && localY < button->height() - 8;
+        && localY >= verticalInset
+        && localY < button->height() - verticalInset;
   };
   for (const auto& row : m_rows) {
     if (hit(row.button)) {

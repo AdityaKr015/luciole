@@ -38,6 +38,8 @@ namespace luciole {
     void setDriveContextCallback(std::function<void(const std::string&, float, float)> callback);
     InputArea* focusArea(const Location& location) const;
     std::optional<Bookmark> folderAt(float x, float y) const;
+    // Drop targets reserve row edges for pin insertion and reordering; navigation uses the whole row.
+    std::optional<Bookmark> dropFolderAt(float x, float y) const;
     std::optional<LayoutRect> folderRect(const Location& location) const;
 
   protected:
@@ -63,6 +65,7 @@ namespace luciole {
     void rebuild();
     void addRow(const Bookmark& bookmark, const std::string& glyph, std::optional<std::size_t> index);
     void addDriveRow(const Drive& drive);
+    std::optional<Bookmark> folderAt(float x, float y, float verticalInset) const;
     // Fits drive names between the glyph and the eject button and places usage bars under them; true when a
     // name's width budget changed and the rows need another arrange.
     bool layoutDriveRows();

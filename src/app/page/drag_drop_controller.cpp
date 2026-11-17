@@ -182,7 +182,7 @@ luciole::FileDropTarget DragDropController::externalDrop(float x, float y, const
   updateExternalScroll();
   // External offers are decoded only after a drop. Transfer worker validation
   // still checks self/descendant/alias targets before any filesystem change.
-  if (pins && m_sidebar.visible() && m_pins.editable() && !m_sidebar.places().folderAt(x, y)) {
+  if (pins && m_sidebar.visible() && m_pins.editable() && !m_sidebar.places().dropFolderAt(x, y)) {
     if (const auto slot = m_sidebar.places().dropSlot(x, y)) {
       m_externalPinSlot = slot;
       updateExternalScroll();
@@ -394,7 +394,7 @@ std::optional<DragDropController::DropTarget> DragDropController::dropTarget() c
     return std::nullopt;
   }
   if (const auto place =
-          m_sidebar.visible() ? m_sidebar.places().folderAt(m_page.pointerX(), m_page.pointerY()) : std::nullopt) {
+          m_sidebar.visible() ? m_sidebar.places().dropFolderAt(m_page.pointerX(), m_page.pointerY()) : std::nullopt) {
     if (validDropFolder(place->location)) {
       if (const auto rect = m_sidebar.places().folderRect(place->location)) {
         return DropTarget{place->location, *rect};
@@ -479,7 +479,7 @@ std::optional<std::size_t> DragDropController::pinDropSlot() const {
     return std::nullopt;
   }
   if (!m_drag->sourcePin
-      && (!m_drag->foldersOnly || m_sidebar.places().folderAt(m_page.pointerX(), m_page.pointerY()))) {
+      && (!m_drag->foldersOnly || m_sidebar.places().dropFolderAt(m_page.pointerX(), m_page.pointerY()))) {
     return std::nullopt;
   }
   return m_sidebar.places().dropSlot(m_page.pointerX(), m_page.pointerY());
