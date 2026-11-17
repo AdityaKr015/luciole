@@ -388,7 +388,7 @@ void SettingsDialog::addFraction(luciole::PreferenceKey<double> key, const std::
   auto slider = std::make_unique<Slider>();
   auto* control = slider.get();
   control->setRange(0.0, 1.0);
-  control->setStep(0.05);
+  control->setStep(0.01);
   control->setFlexGrow(1.0F);
   const auto showPercent = [](Label* label, double value) {
     label->setText(std::format("{}%", std::lround(value * 100)));
