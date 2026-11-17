@@ -5,6 +5,7 @@
 #include "operations/trash_item.h"
 
 #include <atomic>
+#include <filesystem>
 #include <limits>
 #include <set>
 #include <string_view>
@@ -234,7 +235,15 @@ bool luciole::EmptyTrashService::prepareSelection(std::vector<DirectoryEntry> se
   }
   return prepareTargets(std::move(selection));
 }
-bool luciole::EmptyTrashService::prepareTargets(std::optional<std::vector<DirectoryEntry>> selection) {
+bool luciole::EmptyTrashService::prepareDeletion(std::vector<DirectoryEntry> selection) {
+  if (selection.empty() || selection.size() > 4096) {
+    return false;
+  }
+  return prepareTargets(std::move(selection), true);
+}
+bool luciole::EmptyTrashService::prepareTargets(
+    std::optional<std::vector<DirectoryEntry>> selection, bool outsideTrash
+) {
   if (busy()) {
     return false;
   }
@@ -247,11 +256,12 @@ bool luciole::EmptyTrashService::prepareTargets(std::optional<std::vector<Direct
       .error = {},
       .size = std::nullopt,
       .sizeIncomplete = false,
-      .selection = selection.has_value()
+      .selection = selection.has_value(),
+      .outsideTrash = outsideTrash
   };
   State::launch<Targets>(
       m_state,
-      [token = m_state->token, selection = std::move(selection)] {
+      [token = m_state->token, selection = std::move(selection), outsideTrash] {
         if (!selection) {
           return listTrashItems(token);
         }
@@ -259,8 +269,9 @@ bool luciole::EmptyTrashService::prepareTargets(std::optional<std::vector<Direct
         std::set<std::string> seen;
         for (const auto& entry : *selection) {
           const auto location = entry.location();
-          if (!isTopLevelTrashItem(location) || !seen.insert(location.uri()).second) {
-            throwFileError(FileErrorKind::InvalidArgument, "Only distinct top-level Trash items can be deleted.");
+          if (!(outsideTrash ? location.isNative() && location.parent().has_value() : isTopLevelTrashItem(location))
+              || !seen.insert(location.uri()).second) {
+            throwFileError(FileErrorKind::InvalidArgument, "Select distinct items from a supported folder.");
           }
           const auto current = queryTrashItem(location, token);
           const auto expected = readTrashItemIdentity(entry);
@@ -293,7 +304,7 @@ bool luciole::EmptyTrashService::empty() {
 void luciole::EmptyTrashService::State::startEmpty(const std::shared_ptr<State>& owner) {
   launch<std::vector<EmptyTrashResult>>(
       owner,
-      [owner, token = owner->token, targets = owner->targets] {
+      [owner, token = owner->token, targets = owner->targets, outsideTrash = owner->snapshot.outsideTrash] {
         auto results = pendingResults(*targets);
         for (std::size_t index = 0; index < targets->size(); ++index) {
           if (token.cancelled()) {
@@ -306,11 +317,23 @@ void luciole::EmptyTrashService::State::startEmpty(const std::shared_ptr<State>&
               result.outcome = EmptyTrashOutcome::Failed;
               result.error = FileError{
                   .kind = FileErrorKind::Changed,
-                  .message = "The item changed after confirmation was prepared. It was left in Trash."
+                  .message = "The item changed after confirmation was prepared. Select it again before deleting it."
               };
             } else {
               if (token.cancelled()) {
                 break;
+              }
+              if (outsideTrash) {
+                std::error_code error;
+                const auto removed = std::filesystem::remove_all(*target.location.nativePath(), error);
+                if (error) {
+                  result.error = FileError{.kind = FileErrorKind::Other, .message = error.message()};
+                  result.outcome = EmptyTrashOutcome::Unconfirmed;
+                } else {
+                  result.outcome = removed ? EmptyTrashOutcome::Deleted : EmptyTrashOutcome::Skipped;
+                }
+                owner->completed.fetch_add(1);
+                continue;
               }
               GError* raw = nullptr;
               // Finish the current provider request before observing cancellation.

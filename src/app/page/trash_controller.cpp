@@ -90,6 +90,7 @@ void TrashController::openEmptyTrash(std::optional<std::vector<luciole::Director
     m_page.actionError("Another file operation is still finishing.");
     return;
   }
+  const bool outsideTrash = selection && !selection->empty() && !selection->front().location().isTrash();
   m_page.cancelDrag();
   const float width = m_page.dialogWidth(DialogWidth::Small);
   Label* message = nullptr;
@@ -102,7 +103,7 @@ void TrashController::openEmptyTrash(std::optional<std::vector<luciole::Director
       ),
       ui::label(
           {.out = &message,
-           .text = "Reading Trash…",
+           .text = outsideTrash ? "Preparing deletion…" : "Reading Trash…",
            .maxWidth = width - 24.0F,
            .maxLines = 4,
            .configure = [](Label& label) { label.setUseMarkup(false); }}
@@ -145,8 +146,10 @@ void TrashController::openEmptyTrash(std::optional<std::vector<luciole::Director
     m_emptyTrashSize = size;
     m_emptyTrashConfirm = confirm;
     auto& emptyTrash = m_emptyTrash->service<luciole::EmptyTrashService>();
-    if (!(selection ? emptyTrash.prepareSelection(std::move(*selection)) : emptyTrash.prepare())) {
-      message->setText("Another Trash deletion is still finishing.");
+    if (!(outsideTrash    ? emptyTrash.prepareDeletion(std::move(*selection))
+              : selection ? emptyTrash.prepareSelection(std::move(*selection))
+                          : emptyTrash.prepare())) {
+      message->setText("Another deletion is still finishing.");
     }
   }
 }
@@ -207,7 +210,9 @@ void TrashController::emptyTrashChanged(OperationJob& job) {
     }
     m_page.actionError(std::move(message));
     auto& browser = m_page.browser();
-    if (const auto& location = browser.model().snapshot().location; location && location->isTrash()) {
+    if (snapshot.outsideTrash) {
+      browser.refresh();
+    } else if (const auto& location = browser.model().snapshot().location; location && location->isTrash()) {
       browser.open(luciole::Location::trash());
     }
   } else if (snapshot.status == luciole::EmptyTrashStatus::Error && job.takeResult()) {
@@ -235,7 +240,10 @@ void TrashController::syncEmptyTrash() {
     );
     m_emptyTrashConfirm->setEnabled(emptyTrash.canEmpty());
   } else if (snapshot.status == luciole::EmptyTrashStatus::Error) {
-    m_emptyTrashMessage->setText("Could not read Trash: " + luciole::fileErrorText(snapshot.error));
+    m_emptyTrashMessage->setText(
+        std::string(snapshot.outsideTrash ? "Could not prepare deletion: " : "Could not read Trash: ")
+        + luciole::fileErrorText(snapshot.error)
+    );
     m_emptyTrashConfirm->setEnabled(false);
   }
   std::string sizeText = "Size: calculating…";

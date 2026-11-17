@@ -166,7 +166,7 @@ bool FileKeyboardController::commandKey(const KeyboardEvent& event) {
       && !event.repeat) {
     if (event.sym == XKB_KEY_Delete && (event.modifiers == 0 || event.modifiers == KeyMod::Shift)) {
       const auto& folder = m_page.browser().model().snapshot().location;
-      if (folder && folder->isTrash()) {
+      if (event.modifiers == KeyMod::Shift || (folder && folder->isTrash())) {
         m_page.dispatchAction(Action::DeletePermanently);
       } else if (event.modifiers == 0) {
         m_page.dispatchAction(Action::Trash);

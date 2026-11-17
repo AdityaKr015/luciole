@@ -294,7 +294,9 @@ namespace {
     } else {
       const auto& service = job.service<luciole::EmptyTrashService>();
       const auto& snapshot = service.snapshot();
-      activity.title = snapshot.selection ? "Delete from Trash" : "Empty Trash";
+      activity.title = snapshot.outsideTrash ? "Delete permanently"
+          : snapshot.selection               ? "Delete from Trash"
+                                             : "Empty Trash";
       simple(
           activity, job.running(), service.canEmpty(), snapshot.status == luciole::EmptyTrashStatus::Finished,
           snapshot.status == luciole::EmptyTrashStatus::Cancelled, snapshot.error, false

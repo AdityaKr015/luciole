@@ -94,6 +94,37 @@ namespace {
     pump.until([&] { return !service.busy(); });
     TEST_CHECK(!notified);
   }
+  void nativeDeletion(Pump& pump) {
+    Fixture fixture;
+    const auto folder = fixture.root / "selected";
+    fs::create_directories(folder / "nested");
+    write(folder / "nested/file", "delete");
+    write(fixture.root / "keep", "preserve");
+    fs::create_symlink(fixture.root / "keep", folder / "link");
+    fs::create_symlink("missing", folder / "broken");
+    luciole::DirectorySession session;
+    session.open(luciole::Location::fromPath(fixture.root.native()));
+    pump.until([&] { return session.snapshot().status != luciole::DirectoryStatus::Loading; });
+    TEST_CHECK(session.snapshot().status == luciole::DirectoryStatus::Ready);
+    const auto found =
+        std::ranges::find(session.snapshot().entries, std::string("selected"), &luciole::DirectoryEntry::name);
+    TEST_CHECK(found != session.snapshot().entries.end());
+    // Freeze the entry: asynchronous session updates can replace its storage.
+    const auto selected = *found; // NOLINT(performance-unnecessary-copy-initialization)
+    luciole::EmptyTrashService service;
+    const auto prepare = [&] {
+      TEST_CHECK(service.prepareDeletion({selected}));
+      pump.until([&] { return !service.busy(); });
+      TEST_CHECK(service.canEmpty() && service.snapshot().outsideTrash);
+    };
+    prepare();
+    service.cancel();
+    TEST_CHECK(!service.empty() && read(folder / "nested/file") == "delete");
+    prepare();
+    pump.empty(service);
+    TEST_CHECK(!fs::exists(folder) && read(fixture.root / "keep") == "preserve");
+    TEST_CHECK(service.snapshot().results.size() == 1 && service.snapshot().results[0].outcome == Outcome::Deleted);
+  }
   void successfulEmptyAndNewArrivals(Pump& pump) {
     Fixture fixture;
     luciole::EmptyTrashService service;
@@ -360,6 +391,7 @@ int main(int argc, char** argv) {
       trashAvailability(pump);
     } else {
       TEST_CHECK(argc == 1);
+      nativeDeletion(pump);
       unavailableAndLifetime(pump);
       unavailableTrashAvailability(pump);
     }
