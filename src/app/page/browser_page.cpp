@@ -370,6 +370,10 @@ void BrowserPage::placesChanged() {
 }
 
 void BrowserPage::driveUsageChanged() {
+  // Background tabs build their scene on first mount, and new drive rows read the current usage then.
+  if (!m_root) {
+    return;
+  }
   m_sidebar.updateDriveUsage();
   m_surface->requestUpdate();
 }
