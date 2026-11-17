@@ -1130,6 +1130,14 @@ namespace {
     service.endFrame();
     pump.until([&] { return preview->ready; });
     TEST_CHECK(preview->pixels && std::ranges::none_of(queued, [](const auto& image) { return image->ready; }));
+    // Explicit removal cancels even borrowed images and waits for their actual helper completion. Reads from
+    // another location and their leases remain intact.
+    service.releaseLocation(first.location());
+    TEST_CHECK(service.readingLocation(first.location()));
+    TEST_CHECK(service.readingLocation(second.location()) && service.touch(busy.front(), true));
+    pump.until([&] { return !service.readingLocation(first.location()); });
+    TEST_CHECK(service.readingLocation(second.location()) && service.touch(busy.front(), true));
+    TEST_CHECK(cached->pixels && preview->pixels);
     service.setChangedCallback({});
     queued.clear();
     busy.clear();

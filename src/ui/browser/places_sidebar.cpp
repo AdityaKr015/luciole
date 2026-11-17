@@ -67,6 +67,12 @@ luciole::PlacesSidebar::PlacesSidebar(PinService& pins, DriveMonitor& drives) : 
   m_scroll->content()->setAlign(FlexAlign::Stretch);
   m_scroll->content()->setGap(Style::spaceXs);
 }
+void luciole::PlacesSidebar::releaseLocation(const Location& root) {
+  if (m_tree) {
+    m_tree->releaseLocation(root);
+  }
+}
+
 void luciole::PlacesSidebar::setOpenCallback(std::function<void(const Location&)> callback) {
   m_open = std::move(callback);
 }

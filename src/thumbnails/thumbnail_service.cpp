@@ -243,7 +243,11 @@ struct luciole::ThumbnailService::State : std::enable_shared_from_this<State> {
   GSource* sweepTimer = nullptr;
   std::deque<ThumbnailCacheWrite> writes;
   GioPtr<GCancellable> writeCancel{g_cancellable_new()};
-  std::vector<GioPtr<GCancellable>> running;
+  struct Running {
+    GioPtr<GCancellable> cancel;
+    Location source;
+  };
+  std::vector<Running> running;
   void notify() {
     const auto callback = changed;
     if (alive && callback) {
@@ -259,7 +263,7 @@ struct luciole::ThumbnailService::State : std::enable_shared_from_this<State> {
   void retire() {
     ++epoch;
     for (const auto& cancel : running) {
-      g_cancellable_cancel(cancel.get());
+      g_cancellable_cancel(cancel.cancel.get());
     }
     for (const auto& [_, item] : cache) {
       g_cancellable_cancel(item.cancel.get());
@@ -448,7 +452,9 @@ struct luciole::ThumbnailService::State : std::enable_shared_from_this<State> {
     } else {
       ++probes;
     }
-    running.emplace_back(static_cast<GCancellable*>(g_object_ref(item.cancel.get())));
+    running.push_back(
+        {GioPtr<GCancellable>(static_cast<GCancellable*>(g_object_ref(item.cancel.get()))), item.source.location()}
+    );
     const GioPtr<GTask> task(g_task_new(
         nullptr, item.cancel.get(),
         [](GObject*, GAsyncResult* result, gpointer) {
@@ -464,7 +470,7 @@ struct luciole::ThumbnailService::State : std::enable_shared_from_this<State> {
             --owner->probes;
           }
           std::erase_if(owner->running, [&](const auto& cancel) {
-            return cancel.get() == g_task_get_cancellable(task);
+            return cancel.cancel.get() == g_task_get_cancellable(task);
           });
           auto found = owner->cache.find(request->key);
           if (owner->alive
@@ -735,6 +741,32 @@ void luciole::ThumbnailService::setOptions(ThumbnailOptions options) {
   m_state->notify();
 }
 const luciole::ThumbnailOptions& luciole::ThumbnailService::options() const { return m_state->options; }
+void luciole::ThumbnailService::releaseLocation(const Location& root) {
+  const auto inside = [&](const Location& location) {
+    return location == root || location.uri().starts_with(root.uri() + (root.uri().ends_with('/') ? "" : "/"));
+  };
+  for (const auto& running : m_state->running) {
+    if (inside(running.source)) {
+      g_cancellable_cancel(running.cancel.get());
+    }
+  }
+  for (auto item = m_state->cache.begin(); item != m_state->cache.end();) {
+    if (inside(item->second.source.location())) {
+      const auto old = item++;
+      m_state->erase(old);
+    } else {
+      ++item;
+    }
+  }
+}
+
+bool luciole::ThumbnailService::readingLocation(const Location& root) const {
+  return std::ranges::any_of(m_state->running, [&](const auto& running) {
+    const auto& location = running.source;
+    return location == root || location.uri().starts_with(root.uri() + (root.uri().ends_with('/') ? "" : "/"));
+  });
+}
+
 void luciole::ThumbnailService::endFrame() { m_state->schedule(); }
 void luciole::ThumbnailService::setChangedCallback(std::function<void()> callback) {
   m_state->changed = std::move(callback);

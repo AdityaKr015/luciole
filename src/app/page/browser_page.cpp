@@ -313,6 +313,42 @@ void BrowserPage::thumbnailsChanged() {
   m_surface->requestLayout();
 }
 
+void BrowserPage::leaveDrive(const luciole::Location& root) {
+  const auto inside = [&](const luciole::Location& location) {
+    return location == root || location.uri().starts_with(root.uri() + (root.uri().ends_with('/') ? "" : "/"));
+  };
+  const auto affected = [&](const luciole::BrowserController& controller) {
+    const auto& location = controller.model().snapshot().location;
+    return location
+        && (inside(*location)
+            || (controller.searchRecursive()
+                && !controller.searchQuery().empty()
+                && root.uri().starts_with(location->uri() + (location->uri().ends_with('/') ? "" : "/"))));
+  };
+  if (affected(m_browser)
+      || std::ranges::any_of(m_miller.columns(), [&](const auto& column) { return affected(*column->browser); })) {
+    m_preview.clear();
+    m_retiringPreview = root;
+    m_previewController.hidePane();
+    m_miller.clear();
+    m_miller.collectRetired();
+    auto destination = luciole::Location::fromPath(g_get_home_dir());
+    m_browser.open(inside(destination) ? luciole::Location::fromPath("/") : destination);
+  }
+  m_browser.releaseLocation(root);
+  for (const auto& column : m_miller.columns()) {
+    column->browser->releaseLocation(root);
+  }
+  if (m_sidebar.hasPlaces()) {
+    m_sidebar.places().releaseLocation(root);
+  }
+  m_thumbnails.releaseLocation(root);
+}
+
+bool BrowserPage::driveReadersBusy(const luciole::Location& root) const {
+  return m_thumbnails.readingLocation(root) || (m_retiringPreview == root && m_preview.busy());
+}
+
 void BrowserPage::transfersFinished(const std::vector<luciole::TransferResult>& results) {
   const auto refresh = [&](luciole::BrowserController& controller) {
     const auto& current = controller.model().snapshot().location;

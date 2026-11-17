@@ -1,5 +1,7 @@
 #include "app/page/sidebar_controller.h"
 
+#include "app/drive_removal.h"
+#include "app/operation_hub.h"
 #include "app/page/drag_drop_controller.h"
 #include "app/page/menu_controller.h"
 #include "app/page/page_context.h"
@@ -181,21 +183,43 @@ void SidebarController::openDrive(const std::string& key) {
 
 void SidebarController::removeDrive(const std::string& key) {
   const auto* drive = m_drives.find(key);
-  if (drive == nullptr || !drive->root) {
+  if (drive == nullptr || !drive->root || m_removingDrive) {
     return;
   }
-  // Leave the drive first so this page does not keep it busy.
-  const auto& current = m_page.browser().model().snapshot().location;
-  if (current && (*current == *drive->root || current->uri().starts_with(drive->root->uri() + "/"))) {
-    if (const char* home = g_get_home_dir(); home != nullptr && g_path_is_absolute(home)) {
-      m_page.browser().open(luciole::Location::fromPath(home));
-    }
-  }
+  const auto root = *drive->root;
   auto verb = std::string(luciole::driveRemovalLabel(drive->removal));
   std::ranges::transform(verb, verb.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  m_drives.remove(
-      key, [this, verb = std::move(verb), lifetime = std::weak_ptr(m_lifetime)](luciole::DriveRemoveResult result) {
-        if (lifetime.expired() || result.error.empty()) {
+  m_removingDrive = true;
+  m_page.jobs().leaveDrive(root);
+  removeDriveAfterPreparation(
+      [this, root, lifetime = std::weak_ptr(m_lifetime)](auto done) {
+        if (lifetime.expired()) {
+          done(luciole::FileError{luciole::FileErrorKind::Cancelled, "Drive removal cancelled."});
+          return;
+        }
+        m_page.jobs().prepareDriveRemoval(root, std::move(done));
+      },
+      [this, root, lifetime = std::weak_ptr(m_lifetime)] {
+        return lifetime.expired() || m_page.jobs().removalReady(root);
+      },
+      [this, key, root, lifetime = std::weak_ptr(m_lifetime)](auto done) {
+        if (lifetime.expired()) {
+          done({.error = "Drive removal cancelled.", .busy = false, .blockers = {}});
+          return;
+        }
+        const auto* current = m_drives.find(key);
+        if (!current || current->root != root) {
+          done({.error = "This drive can no longer be removed.", .busy = false, .blockers = {}});
+          return;
+        }
+        m_drives.remove(key, std::move(done));
+      },
+      [this, verb = std::move(verb), lifetime = std::weak_ptr(m_lifetime)](luciole::DriveRemoveResult result) {
+        if (lifetime.expired()) {
+          return;
+        }
+        m_removingDrive = false;
+        if (result.error.empty()) {
           return;
         }
         if (!result.busy) {

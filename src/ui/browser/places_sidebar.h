@@ -20,6 +20,7 @@ namespace luciole {
     void setShowDrives(bool showDrives);
     void setChangedCallback(std::function<void()> callback) { m_changed = std::move(callback); }
     void invalidate();
+    void releaseLocation(const Location& root);
     // Updates drive usage bars from the monitor without rebuilding the list.
     void updateDriveUsage();
     void sync(std::optional<Location> current);

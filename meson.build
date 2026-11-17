@@ -222,6 +222,7 @@ operations_lib = static_library('luciole-operations',
     'src/operations/copied_move_receipt.cpp',
     'src/operations/copy_history_tree.cpp',
     'src/operations/creation_stage.cpp',
+    'src/operations/history_mount.cpp',
     'src/operations/empty_trash_service.cpp',
     'src/operations/permission_accounts.cpp',
     'src/operations/permission_jobs.cpp',
@@ -374,7 +375,7 @@ ui_dep = declare_dependency(link_with: ui_lib, include_directories: src_inc,
 )
 
 app_jobs_lib = static_library('luciole-app-jobs',
-  files('src/app/operation_hub.cpp', 'src/app/job_activity.cpp'),
+  files('src/app/operation_hub.cpp', 'src/app/job_activity.cpp', 'src/app/drive_removal.cpp'),
   include_directories: src_inc,
   dependencies: [browser_dep, operations_dep],
 )

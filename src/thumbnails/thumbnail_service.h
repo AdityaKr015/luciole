@@ -46,6 +46,9 @@ namespace luciole {
     std::size_t reservedBytes() const;
     std::size_t activeJobs() const;
     std::size_t queuedJobs() const;
+    // Cancel only this location's cached/queued/in-flight reads before explicit drive removal.
+    void releaseLocation(const Location& root);
+    bool readingLocation(const Location& root) const;
 
   private:
     struct State;

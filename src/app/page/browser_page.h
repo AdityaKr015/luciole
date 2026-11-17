@@ -120,6 +120,8 @@ public:
   }
   void reviewOperation(luciole::JobId id, bool retry);
   void transfersFinished(const std::vector<luciole::TransferResult>& results) override;
+  void leaveDrive(const luciole::Location& root) override;
+  bool driveReadersBusy(const luciole::Location& root) const override;
   // The shared thumbnail service changed.
   void thumbnailsChanged();
 
@@ -349,6 +351,7 @@ private:
   luciole::FileIconCache& m_icons;
   luciole::ThumbnailService& m_thumbnails;
   luciole::PreviewService m_preview{m_thumbnails};
+  std::optional<luciole::Location> m_retiringPreview;
   bool m_thumbnailClearing = false;
   std::string m_thumbnailError;
   std::uint64_t m_thumbnailRevision = 0;

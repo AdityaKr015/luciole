@@ -36,6 +36,20 @@ void luciole::DirectoryTree::clear() {
   m_nodes.clear();
   m_rejected.reset();
 }
+void luciole::DirectoryTree::releaseLocation(const Location& root) {
+  const auto removed = std::erase_if(m_nodes, [&](const auto& item) {
+    const auto& location = item.second->entry.navigationLocation();
+    if (location == root || location.uri().starts_with(root.uri() + (root.uri().ends_with('/') ? "" : "/"))) {
+      item.second->session.setChangedCallback({});
+      return true;
+    }
+    return false;
+  });
+  if (removed) {
+    publish();
+  }
+}
+
 void luciole::DirectoryTree::setRoot(DirectorySnapshot snapshot) {
   if (m_root.location != snapshot.location) {
     clear();

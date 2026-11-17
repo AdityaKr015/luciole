@@ -17,6 +17,7 @@ namespace luciole {
     void setRoots(const PinService& pins, const std::vector<Drive>& drives);
     void sync(std::optional<Location> current, bool showHidden);
     void prepare();
+    void releaseLocation(const Location& root) { m_tree.releaseLocation(root); }
     InputArea* focusArea(const Location& location);
     std::optional<Bookmark> folderAt(float x, float y) const;
     std::optional<LayoutRect> folderRect(const Location& location) const;
