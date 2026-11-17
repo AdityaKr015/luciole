@@ -73,3 +73,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development builds, code style and ch
 ## License
 
 MIT License. See [LICENSE](LICENSE) for details.
+
+## Star History
+
+<p align="center">
+  <a href="#">
+    <img src="https://api.noctalia.dev/stars-animated/luciole" alt="Star History" />
+  </a>
+</p>
