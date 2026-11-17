@@ -2,6 +2,7 @@
 
 #include "fs/background_job.h"
 #include "fs/gio_interop.h"
+#include "fs/ws_discovery_metadata.h"
 
 #include <algorithm>
 #include <arpa/inet.h>
@@ -11,7 +12,6 @@
 #include <cstring>
 #include <deque>
 #include <ifaddrs.h>
-#include <libsoup/soup.h>
 #include <mutex>
 #include <net/if.h>
 #include <netinet/in.h>
@@ -343,49 +343,7 @@ namespace {
       }
     }
   }
-  std::string metadata(
-      const luciole::wsd::MetadataTarget& target, const std::string& endpoint, bool modern,
-      const luciole::CancelToken& token
-  ) {
-    luciole::GioPtr<SoupSession> session(soup_session_new());
-    soup_session_set_timeout(session.get(), 8);
-    const luciole::GioPtr<GProxyResolver> direct(g_simple_proxy_resolver_new(nullptr, nullptr));
-    soup_session_set_proxy_resolver(session.get(), direct.get());
-    luciole::GioPtr<SoupMessage> message(soup_message_new("POST", target.uri.c_str()));
-    if (!message) {
-      return {};
-    }
-    soup_message_set_flags(message.get(), SOUP_MESSAGE_NO_REDIRECT);
-    soup_message_headers_replace(soup_message_get_request_headers(message.get()), "Host", target.host.c_str());
-    const auto request = luciole::wsd::metadataRequest(uuid(), endpoint, modern);
-    GBytes* bytes = g_bytes_new(request.data(), request.size());
-    soup_message_set_request_body_from_bytes(message.get(), "application/soap+xml; charset=utf-8", bytes);
-    g_bytes_unref(bytes);
-    luciole::GioPtr<GInputStream> stream(
-        soup_session_send(session.get(), message.get(), luciole::gioCancellable(token), nullptr)
-    );
-    if (!stream || soup_message_get_status(message.get()) != SOUP_STATUS_OK) {
-      return {};
-    }
-    const auto announced = soup_message_headers_get_content_length(soup_message_get_response_headers(message.get()));
-    if (announced > static_cast<goffset>(luciole::wsd::kMetadataLimit)) {
-      return {};
-    }
-    std::string body;
-    std::array<char, 8192> chunk{};
-    while (!token.cancelled()) {
-      const auto count =
-          g_input_stream_read(stream.get(), chunk.data(), chunk.size(), luciole::gioCancellable(token), nullptr);
-      if (count < 0 || body.size() + static_cast<std::size_t>(count) > luciole::wsd::kMetadataLimit) {
-        return {};
-      }
-      if (count == 0) {
-        return luciole::wsd::metadataName(body);
-      }
-      body.append(chunk.data(), static_cast<std::size_t>(count));
-    }
-    return {};
-  }
+
 } // namespace
 
 struct luciole::WsDiscovery::State : std::enable_shared_from_this<State> {
@@ -484,7 +442,7 @@ struct luciole::WsDiscovery::State : std::enable_shared_from_this<State> {
       );
       runJob<std::string>(
           deadline,
-          [request, deadline] { return metadata(request.target, request.endpoint, request.modern, deadline); },
+          [request, deadline] { return wsd::metadata(request.target, request.endpoint, request.modern, deadline); },
           [weak = weak_from_this(), request, generation, connection, timeout](JobResult<std::string> result) {
             g_source_remove(timeout);
             if (connection) {

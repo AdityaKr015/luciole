@@ -20,7 +20,7 @@
   dconf,
   dbus,
   gvfs,
-  libsoup_3,
+  curl,
   libxml2,
   pango,
   harfbuzz,
@@ -143,7 +143,7 @@ stdenv.mkDerivation (finalAttrs: {
     fontconfig
     cairo
     glib
-    libsoup_3
+    curl
     libxml2
     pango
     harfbuzz

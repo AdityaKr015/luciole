@@ -1,6 +1,9 @@
+#include "fs/ws_discovery_metadata.h"
 #include "fs/ws_discovery_protocol.h"
 #include "test_check.h"
 
+#include <chrono>
+#include <future>
 #include <string>
 
 namespace {
@@ -172,7 +175,33 @@ namespace {
   }
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+  if (argc == 7 && std::string_view(argv[1]) == "--metadata") {
+    const luciole::CancelToken token;
+    const int cancel = std::stoi(argv[4]);
+    if (cancel < 0) {
+      token.cancel();
+    }
+    const auto start = std::chrono::steady_clock::now();
+    auto result = std::async(std::launch::async, [&] {
+      return luciole::wsd::metadata(
+          {argv[2], argv[3]}, "urn:uuid:fixture", std::string_view(argv[6]) == "modern", token
+      );
+    });
+    if (cancel > 0) {
+      TEST_CHECK(result.wait_for(std::chrono::milliseconds(cancel)) == std::future_status::timeout);
+      token.cancel();
+    }
+    TEST_CHECK(result.get() == argv[5]);
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    if (cancel != 0) {
+      TEST_CHECK(elapsed < std::chrono::seconds(2));
+    } else if (std::string_view(argv[2]).ends_with("/drip")) {
+      TEST_CHECK(elapsed >= std::chrono::seconds(7) && elapsed < std::chrono::seconds(10));
+    }
+    return 0;
+  }
+  TEST_CHECK(argc == 1);
   packets();
   xmlBoundaries();
   metadata();

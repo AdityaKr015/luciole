@@ -68,7 +68,7 @@ These are pkg-config modules or header paths. Install the corresponding developm
 | `egl`, `glesv2` | EGL/OpenGL ES; shared-library detection also supports wayland-egl/libepoxy fallbacks |
 | `gio-2.0`, `gio-unix-2.0` | GLib/GIO 2.76+ |
 | `glib-2.0` | GLib |
-| `libsoup-3.0` | 3.0+; HTTP transport |
+| `libcurl` | 7.85+; HTTP transport |
 | `libxml-2.0` | 2.9+; XML parsing |
 | `freetype2`, `fontconfig` | Font libraries |
 | `cairo`, `cairo-ft` | Cairo with FreeType integration |
@@ -206,7 +206,7 @@ nix flake check path:.
 
 The package wrapper supplies helper paths, GIO/TLS/dconf modules, desktop settings schemas, Glycin loader data, MIME data and Adwaita icons. The development shell and checks provide the corresponding runtime environment. Native distributions should use their normal desktop integration rather than copying Nix store paths.
 
-The Nix recipe supplies libsoup 3 and libxml2 as link dependencies. Optional DNS-SD requires a system Avahi service; the application package does not enable system services.
+The Nix recipe supplies libcurl and libxml2 as link dependencies. Optional DNS-SD requires a system Avahi service; the application package does not enable system services.
 
 On NixOS, enable `services.gvfs.enable = true;` for the GVfs daemons and session activation. Luciole's NixOS module installs the application; Home Manager/hjem manage its declarative base configuration. These modules do not independently enable GVfs, select a default file manager or install an always-running Luciole service.
 

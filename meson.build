@@ -40,7 +40,7 @@ alias_target('generated-headers', protocol_headers)
 
 gio = dependency('gio-2.0', version: '>=2.76')
 gio_unix = dependency('gio-unix-2.0', version: '>=2.76')
-soup = dependency('libsoup-3.0', version: '>=3.0')
+curl = dependency('libcurl', version: '>=7.85')
 xml = dependency('libxml-2.0', version: '>=2.9')
 gdk_pixbuf = dependency('gdk-pixbuf-2.0', version: '>=2.44')
 glycin = dependency('glycin-2', version: '>=2.0.1')
@@ -145,6 +145,7 @@ fs_lib = static_library('luciole-fs',
     'src/fs/native_listing.cpp',
     'src/fs/network_listing.cpp',
     'src/fs/ws_discovery.cpp',
+    'src/fs/ws_discovery_metadata.cpp',
     'src/fs/ws_discovery_protocol.cpp',
     'src/fs/transfer_location.cpp',
     'src/fs/posix_fd.cpp',
@@ -154,9 +155,9 @@ fs_lib = static_library('luciole-fs',
     'src/fs/xdg_dirs.cpp',
   ),
   include_directories: src_inc,
-  dependencies: [gio, libarchive, liblzma, soup, xml],
+  dependencies: [gio, libarchive, liblzma, curl, xml],
 )
-fs_dep = declare_dependency(link_with: fs_lib, include_directories: src_inc, dependencies: [gio, libarchive, liblzma, soup, xml])
+fs_dep = declare_dependency(link_with: fs_lib, include_directories: src_inc, dependencies: [gio, libarchive, liblzma, curl, xml])
 
 config_lib = static_library('luciole-config',
   files(
