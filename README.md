@@ -90,7 +90,7 @@ MIT License. See [LICENSE](LICENSE) for details.
 ## Star History
 
 <p align="center">
-  <a href="#">
+  <a href="https://noctalia.dev/luciole">
     <img src="https://api.noctalia.dev/stars-animated/luciole" alt="Star History" />
   </a>
 </p>
