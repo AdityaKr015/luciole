@@ -207,7 +207,7 @@ SettingsDialog::SettingsDialog(
   );
   addNumber(P::ThumbnailMaxFileMib, "Image/PDF size limit", {1, 1024}, "MiB");
   card("Cache");
-  addNumber(P::ThumbnailCacheMib, "Disk cache limit", {16, 1024}, "MiB");
+  addNumber(P::ThumbnailCacheMib, "Disk cache limit", {16, 8192}, "MiB");
   m_section->addChild(
       ui::row(
           {.align = FlexAlign::Center, .gap = 8.0F, .paddingV = 6.0F},

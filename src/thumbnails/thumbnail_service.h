@@ -11,9 +11,11 @@ namespace luciole {
   class ThumbnailService {
   public:
     // Safety caps only: released images normally leave when they go unseen past an idle limit.
-    static constexpr std::size_t kResidentBudget = 128U * 1024U * 1024U;
+    static constexpr std::size_t kResidentBudget = 256U * 1024U * 1024U;
     static constexpr std::size_t kMaxEntries = 4096;
     ThumbnailService();
+    // Concurrent decoder helpers: a quarter of the CPUs, at least two and at most six.
+    static std::size_t decoders();
     ~ThumbnailService();
     ThumbnailService(const ThumbnailService&) = delete;
     ThumbnailService& operator=(const ThumbnailService&) = delete;

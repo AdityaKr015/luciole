@@ -17,6 +17,7 @@
 #include <nlohmann/json.hpp>
 #include <string_view>
 #include <sys/stat.h>
+#include <thread>
 #include <unistd.h>
 #include <unordered_map>
 #include <unordered_set>
@@ -232,7 +233,7 @@ struct luciole::ThumbnailService::State : std::enable_shared_from_this<State> {
     std::vector<ThumbnailCacheWrite> writes;
     std::uint64_t budget;
   };
-  static constexpr std::size_t kWriteBudget = 16U * 1024U * 1024U;
+  static constexpr std::size_t kWriteBudget = 64U * 1024U * 1024U;
   ThumbnailOptions options;
   std::unordered_map<std::string, Item> cache;
   std::unordered_map<const FileIconImage*, Item*> leases;
@@ -360,7 +361,7 @@ struct luciole::ThumbnailService::State : std::enable_shared_from_this<State> {
   }
   void queueWrite(ThumbnailCacheWrite write) {
     const auto bytes = write.thumbnail.image.rgba.size();
-    if (!alive || clearing || writes.size() >= 32 || bytes > kWriteBudget - writeBytes) {
+    if (!alive || clearing || writes.size() >= 2 * ThumbnailStore::kMaxBatch || bytes > kWriteBudget - writeBytes) {
       return;
     }
     writeBytes += bytes;
@@ -371,8 +372,8 @@ struct luciole::ThumbnailService::State : std::enable_shared_from_this<State> {
     if (!alive || clearing || writing || writeTimer || writes.empty()) {
       return;
     }
-    // Gather nearby completions without holding up decoded-pixel publication.
-    writeTimer = g_timeout_source_new(25);
+    // Gather nearby completions into one ledger rewrite without holding up decoded-pixel publication.
+    writeTimer = g_timeout_source_new(250);
     g_source_set_callback(
         writeTimer,
         [](gpointer data) -> gboolean {
@@ -392,8 +393,8 @@ struct luciole::ThumbnailService::State : std::enable_shared_from_this<State> {
     auto batch = std::make_unique<WriteBatch>();
     batch->owner = shared_from_this();
     batch->budget = static_cast<std::uint64_t>(options.cacheMiB) * 1024U * 1024U;
-    batch->writes.reserve(8);
-    while (!writes.empty() && batch->writes.size() < 8) {
+    batch->writes.reserve(std::min(writes.size(), ThumbnailStore::kMaxBatch));
+    while (!writes.empty() && batch->writes.size() < ThumbnailStore::kMaxBatch) {
       writeBytes -= writes.front().thumbnail.image.rgba.size();
       batch->writes.push_back(std::move(writes.front()));
       writes.pop_front();
@@ -551,7 +552,7 @@ struct luciole::ThumbnailService::State : std::enable_shared_from_this<State> {
       }
       start(item, false);
     }
-    while (active < 2) {
+    while (active < decoders()) {
       const auto item = next(Stage::DecodeQueued);
       if (item == cache.end()) {
         break;
@@ -562,6 +563,10 @@ struct luciole::ThumbnailService::State : std::enable_shared_from_this<State> {
 };
 
 luciole::ThumbnailService::ThumbnailService() : m_state(std::make_shared<State>()) {}
+std::size_t luciole::ThumbnailService::decoders() {
+  static const std::size_t count = std::clamp<std::size_t>(std::thread::hardware_concurrency() / 4, 2, 6);
+  return count;
+}
 int luciole::ThumbnailService::pixelSizeClass(int pixels, ThumbnailPurpose purpose) {
   return purpose == ThumbnailPurpose::Preview && pixels > 1024 ? kMaxPreviewImageSide
                                                                : ThumbnailStore::sizeClass(std::clamp(pixels, 1, 1024));

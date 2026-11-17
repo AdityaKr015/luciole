@@ -1026,7 +1026,7 @@ namespace {
     );
     for (const auto* invalid :
          {"thumbnail_policy = true", "thumbnail_policy = 'remote'", "thumbnail_max_file_mib = 0",
-          "thumbnail_max_file_mib = 1025", "thumbnail_cache_mib = 15", "thumbnail_cache_mib = 1025",
+          "thumbnail_max_file_mib = 1025", "thumbnail_cache_mib = 15", "thumbnail_cache_mib = 8193",
           "thumbnail_max_file_mib = 1.5"}) {
       fixture.write("config.toml", std::string("[browser]\n") + invalid + "\n");
       TEST_CHECK(!luciole::validateConfigFile(fixture.paths().base).empty());

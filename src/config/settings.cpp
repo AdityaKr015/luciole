@@ -343,7 +343,7 @@ namespace {
       ),
       describe(
           P::ThumbnailCacheMib, "thumbnail_cache_mib", [](S& s) -> auto& { return s.thumbnails.cacheMiB; },
-          {between<16, 1024>, "expected an integer from 16 to 1024"}
+          {between<16, 8192>, "expected an integer from 16 to 8192"}
       ),
       describe(P::TerminalCommand, "terminal_command", [](S& s) -> auto& { return s.terminalCommand; }),
   };
