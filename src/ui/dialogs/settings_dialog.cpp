@@ -6,10 +6,12 @@
 #include "ui/controls/input.h"
 #include "ui/controls/select.h"
 #include "ui/controls/side_list_metrics.h"
+#include "ui/controls/slider.h"
 #include "ui/controls/stepper.h"
 #include "ui/dialogs/dialog_chrome.h"
 
 #include <algorithm>
+#include <cmath>
 #include <format>
 #include <utility>
 
@@ -104,6 +106,7 @@ SettingsDialog::SettingsDialog(
   addTerminal();
   section("Appearance", "paint");
   card("Window");
+  addFraction(P::BackgroundOpacity, "Background opacity");
   addBool(P::AlwaysShowTabBar, "Always show tab bar");
   addBool(P::AlwaysShowStatusBar, "Always show status bar");
   addBool(P::CompactMenus, "Compact context menus");
@@ -378,6 +381,34 @@ void SettingsDialog::addNumber(
     }
   };
   addRow<int>(key, title, show, std::move(control));
+}
+
+void SettingsDialog::addFraction(luciole::PreferenceKey<double> key, const std::string& title) {
+  Label* percent = nullptr;
+  auto slider = std::make_unique<Slider>();
+  auto* control = slider.get();
+  control->setRange(0.0, 1.0);
+  control->setStep(0.05);
+  control->setFlexGrow(1.0F);
+  const auto showPercent = [](Label* label, double value) {
+    label->setText(std::format("{}%", std::lround(value * 100)));
+  };
+  auto row = ui::row(
+      {.align = FlexAlign::Center, .gap = Style::spaceSm, .width = 180.0F}, std::move(slider),
+      ui::label({.out = &percent, .fontSize = Style::fontSizeCaption, .minWidth = 36.0F})
+  );
+  control->setOnValueChanged([percent, showPercent](double value) { showPercent(percent, value); });
+  // Whole percents, so a snapped 0.6000000000000001 matches an inherited 0.6.
+  control->setOnDragEnd([this, key, control] {
+    send(key, std::optional(std::round(control->value() * 100.0) / 100.0));
+  });
+  const auto show = [control, percent, showPercent](double value) {
+    if (!control->dragging()) {
+      control->setValue(value);
+      showPercent(percent, value);
+    }
+  };
+  addRow<double>(key, title, show, std::move(row));
 }
 
 template <class T> void SettingsDialog::send(luciole::PreferenceKey<T> key, std::optional<T> value) {
