@@ -85,7 +85,7 @@ void DragDropController::buildOverlay(AnimationManager& animations) {
            .align = FlexAlign::Center,
            .justify = FlexJustify::Center,
            .fill = colorSpecFromRole(ColorRole::Primary),
-           .radius = Style::radiusSm,
+           .radius = Style::scaledRadiusSm(),
            .visible = false,
            .participatesInLayout = false},
           ui::label(
@@ -104,7 +104,7 @@ void DragDropController::buildOverlay(AnimationManager& animations) {
            .fill = clearColorSpec(),
            .border = colorSpecFromRole(ColorRole::Primary),
            .borderWidth = Style::focusRingWidth,
-           .radius = SelectionContour::cornerRadius,
+           .radius = SelectionContour::cornerRadius(),
            .visible = false,
            .participatesInLayout = false}
       )

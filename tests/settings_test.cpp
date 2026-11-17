@@ -67,6 +67,28 @@ namespace {
     }
   }
 
+  void testCornerRadiusScale() {
+    Fixture fixture;
+    luciole::ConfigService service(fixture.paths());
+    TEST_CHECK(service.reload() && service.settings().browser.cornerRadiusScale == 1.0);
+    fixture.write("config.toml", "[browser]\ncorner_radius_scale = 0\n");
+    TEST_CHECK(service.reload() && service.settings().browser.cornerRadiusScale == 0.0);
+    fixture.write("config.toml", "[browser]\ncorner_radius_scale = 2\n");
+    TEST_CHECK(service.reload() && service.settings().browser.cornerRadiusScale == 2.0);
+    const std::array edit{luciole::OverrideEdit{luciole::BrowserPreference::CornerRadiusScale, 1.5}};
+    TEST_CHECK(service.saveOverrides(edit) == luciole::AtomicWriteState::Durable);
+    TEST_CHECK(service.reload() && service.settings().browser.cornerRadiusScale == 1.5);
+    TEST_CHECK(read(fixture.paths().overrides).contains("corner_radius_scale = 1.5\n"));
+    const std::array reset{luciole::OverrideEdit{luciole::BrowserPreference::CornerRadiusScale, std::nullopt}};
+    TEST_CHECK(service.saveOverrides(reset) == luciole::AtomicWriteState::Durable);
+    TEST_CHECK(service.reload() && service.settings().browser.cornerRadiusScale == 2.0);
+    for (const auto* value : {"-0.1", "2.5", "nan", "true", "'1'"}) {
+      fixture.write("config.toml", std::format("[browser]\ncorner_radius_scale = {}\n", value));
+      TEST_CHECK(!service.reload() && service.settings().browser.cornerRadiusScale == 2.0);
+      TEST_CHECK(!luciole::validateConfigFile(fixture.paths().base).empty());
+    }
+  }
+
   void testTerminalCommand() {
     Fixture fixture;
     luciole::ConfigService service(fixture.paths());
@@ -1148,6 +1170,7 @@ namespace {
 int main() {
   try {
     testBackgroundOpacity();
+    testCornerRadiusScale();
     testTerminalCommand();
     testSchemaAndDiagnostics();
     testPresentationSettings();

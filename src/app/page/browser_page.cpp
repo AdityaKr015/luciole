@@ -586,7 +586,7 @@ void BrowserPage::prepare(LayoutRect bounds, bool active, bool roundCorner) {
   stampFocusKeys(*m_sidebar.bundle());
   // Panes are part of the flush content plane; the split view marks the active pane with the window's top bar.
   m_body->clearBorder();
-  m_body->setRadii(roundCorner ? Radii(kWorkspaceRadius, 0, 0, 0) : Radii(0, 0, 0, 0));
+  m_body->setRadii(roundCorner ? Radii(workspaceRadius(), 0, 0, 0) : Radii(0, 0, 0, 0));
   if (active && !m_active) {
     m_active = true;
     // A press or Tab that activated the pane already focused inside it; otherwise bring back its last focus.
@@ -2709,7 +2709,7 @@ void BrowserPage::showDialog(std::unique_ptr<Flex> root, DialogWidth width, Popu
       static_cast<float>(chrome.bleed.up), static_cast<float>(chrome.bleed.right),
       static_cast<float>(chrome.bleed.down), static_cast<float>(chrome.bleed.left)
   );
-  if (auto* shadow = popup_chrome::addShadow(*frame, chrome, kDialogShadow, Style::radiusLg)) {
+  if (auto* shadow = popup_chrome::addShadow(*frame, chrome, kDialogShadow, Style::scaledRadiusLg())) {
     shadow->setParticipatesInLayout(false);
     m_dialogShadow = shadow;
   }
