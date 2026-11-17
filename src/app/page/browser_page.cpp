@@ -495,6 +495,8 @@ bool BrowserPage::popupOwns(wl_surface* surface) const {
 
 bool BrowserPage::popup() const { return m_popupSurface != nullptr; }
 
+bool BrowserPage::dialog() const { return popup() && m_dialogTier.has_value(); }
+
 bool BrowserPage::overlay() const { return m_archiveController.open(); }
 
 bool BrowserPage::previewEnabled() const {

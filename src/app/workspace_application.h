@@ -33,6 +33,7 @@ class WorkspaceApplication {
     InputArea* previewDivider = nullptr;
     Box* previewResizeLine = nullptr;
     Box* activePaneBar = nullptr;
+    Box* dialogBackdrop = nullptr;
     // The window's only scene input: tab strip, chrome and every mounted page share it.
     InputDispatcher dispatcher;
     // Page that took the last pointer event outside the tab strip, 0 for the strip; a held button stays with it.

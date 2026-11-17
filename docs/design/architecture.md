@@ -4,6 +4,8 @@
 
 [PageContext](../../src/app/page/page_context.h) chooses each popup's dismissal through `PopupDismiss`. Menus, popovers and dialogs opened with `OutsideClick` keep normal Wayland grabs and outside-click dismissal. Dialogs opened with `Explicit` (the default for forms) retain their scene, focus and drafts across application-window focus changes, using the existing popup transport without an explicit grab. [BrowserPage](../../src/app/page/browser_page.cpp) consumes dialog-background clicks, restores its text-input context on focus return, and keeps all explicit teardown in ActivePopup. Settings dropdowns remain transient children; losing window focus closes the dropdown while retaining Settings. Compositor popup dismissal is always honored. This is application policy, not a change to the mirrored rendering library.
 
+[WorkspaceApplication](../../src/app/workspace_application.cpp) dims the parent client area behind dialogs using one shared Noctalia Box per window. The backdrop uses the palette's Scrim role at half opacity, covers all window content including split panes, and has no input target. Dialogs remain on their own child surfaces above it. [BrowserPage](../../src/app/page/browser_page.cpp) distinguishes its existing dialog transport from menus and popovers, which retain an undimmed parent. The existing popup layout/teardown drives backdrop visibility and resizing.
+
 ## Module boundaries
 
 [meson.build](../../meson.build) assembles the local Noctalia library and Luciole-owned static modules. [CONTRIBUTING.md](../../CONTRIBUTING.md#module-layering) defines the allowed dependencies. Public domain APIs use `Location`, typed metadata and `CancelToken`; UI callers do not operate directly on GIO file objects.
