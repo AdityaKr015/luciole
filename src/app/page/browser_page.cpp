@@ -2027,7 +2027,8 @@ void BrowserPage::syncBrowser() {
   m_viewSwitch->setSelectedIndex(grid ? 0 : m_viewMode == luciole::ViewMode::List ? 1 : 2);
   const auto request = actionRequest(false);
   for (const auto& [button, action] : std::array{
-           std::pair{m_back, Action::Back}, std::pair{m_forward, Action::Forward}, std::pair{m_up, Action::Up}
+           std::pair{m_back, Action::Back}, std::pair{m_forward, Action::Forward}, std::pair{m_up, Action::Up},
+           std::pair{m_newFolderButton, Action::CreateFolder}
        }) {
     const auto state = actionState(action, request);
     button->setEnabled(state.enabled);
@@ -2426,6 +2427,15 @@ std::unique_ptr<Flex> BrowserPage::buildToolbar() {
       m_locationBar.buildLocationArea(), m_locationBar.buildSearchArea(),
       ui::row(
           {.align = FlexAlign::Center, .gap = Style::spaceXs},
+          ui::button(
+              {.out = &m_newFolderButton,
+               .glyph = "folder-plus",
+               .variant = ButtonVariant::Ghost,
+               .tooltip = "New Folder… (Ctrl+Shift+N)",
+               .visible = choosing(),
+               .participatesInLayout = choosing(),
+               .onClick = [this] { dispatchAction(Action::CreateFolder); }}
+          ),
           ui::button(
               {.out = &m_sortButton,
                .glyph = "arrows-sort",
