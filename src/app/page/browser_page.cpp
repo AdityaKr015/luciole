@@ -169,7 +169,7 @@ BrowserPage::BrowserPage(
       if (const auto* entry = browser().model().entry(id)) {
         request.targets.push_back({id, entry->location()});
       }
-      dispatchAction(Action::Open, request);
+      dispatchAction(m_connection.keyboardModifiers() == KeyMod::Alt ? Action::Properties : Action::Open, request);
     });
     adapter->setContextCallback([this](std::optional<luciole::EntryId> id, float x, float y) {
       m_menuController.openFileMenu(id, x, y);
@@ -2566,7 +2566,7 @@ std::unique_ptr<Flex> BrowserPage::buildFilePane() {
     if (const auto* entry = browser().model().entry(id)) {
       request.targets.push_back({id, entry->location()});
     }
-    dispatchAction(Action::Open, request);
+    dispatchAction(m_connection.keyboardModifiers() == KeyMod::Alt ? Action::Properties : Action::Open, request);
   };
   miller->context = [this](std::optional<luciole::EntryId> entry, float x, float y) {
     m_menuController.openFileMenu(entry, x, y);

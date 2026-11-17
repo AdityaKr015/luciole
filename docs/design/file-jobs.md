@@ -30,6 +30,14 @@ Undo for remaining provider/cross-filesystem move shapes, retried transfers and 
 
 Provider downloads into native folders reuse `transfer::Work` copy-capture hooks and the existing `CopyReceipt`. GIO captures, reads and validates the remote source; native publication pins the destination/stage, revalidates the containing folder after optional proof capture, and uses non-overwriting publication or an explicit replacement exchange. Previous versions enter the same pinned native retention as ordinary copies. Leaf counts exclude skipped entries and merge containers, including empty merges. Only a fully completed, non-retried selection with matching captured effects arms history. Partial capture/handoff failures preserve displaced data and report inspection paths. No source URI or provider mutation is needed during replay. Native history limits, generations, worker cleanup and global menu/shortcut ownership remain unchanged. The provider-transfer fixtures run ordinary local files through this exact provider publication path in CI and offer the same history checks against explicitly supplied private servers.
 
+## Mouse Properties activation
+
+FileViewAdapter accepts an unmodified or Alt-only opening gesture. Both clicks of a double-click must use the same modifier chord, and the press/release chord must agree. Dragged, cancelled or mismatched-target releases cannot activate. The existing single/double-click preference controls click count. BrowserPage routes Alt activation to the existing Properties action with the captured entry ID and location; ordinary activation still uses Open. List, Grid and Miller share that policy, while Alt+Return retains its existing action shortcut and chooser/action eligibility checks remain in place.
+
+Miller follows ordinary folder selection immediately. Its Alt inspection gesture therefore defers selection so opening Properties cannot extend the folder path. A genuine Alt-drag selects an unselected source before publishing the existing transfer offer, preserving selected-source drags and the action chooser. No shared-library input API, setting or dependency changes.
+
+This follows [Dolphin's Alt+activation Properties handler](https://github.com/KDE/dolphin/blob/master/src/views/dolphinview.cpp) and its [single/double-click policy, delivered in 25.12](https://bugs.kde.org/show_bug.cgi?id=512383). It supplements the existing keyboard/context-menu action rather than creating another Properties implementation.
+
 ## Drive removal and history ownership
 
 Completed Transfer, Create, Rename and Batch Rename services hand their optional receipt to OperationHub. Finished reports and open result dialogs retain outcome facts without another receipt reference. Worker replay captures keep their in-flight proofs.

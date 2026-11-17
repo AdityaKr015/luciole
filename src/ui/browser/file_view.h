@@ -62,11 +62,12 @@ namespace luciole {
     std::optional<EntryId> m_pressed;
     std::optional<EntryId> m_expanderPress;
     std::optional<EntryId> m_lastClick;
+    std::uint32_t m_pressModifiers = 0, m_lastClickModifiers = 0;
     std::chrono::steady_clock::time_point m_lastClickTime;
     std::function<void(EntryId)> m_activate;
     ActivationMode m_activationMode = ActivationMode::DoubleClick;
     bool m_dragged = false;
-    bool m_plainClick = false;
+    bool m_activationClick = false;
     bool m_collapseSelectionOnClick = false;
     bool m_toggleSelectionOnClick = false;
     std::function<void(std::optional<EntryId>, float, float)> m_context;

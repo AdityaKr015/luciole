@@ -6,6 +6,7 @@
 #include "fs/gio_interop.h"
 #include "test_check.h"
 #include "ui/browser/action_shortcuts.h"
+#include "ui/browser/file_view.h"
 
 #include <algorithm>
 #include <chrono>
@@ -40,6 +41,117 @@ namespace {
         .error = {},
         .monitorError = {}
     };
+  }
+  void testPointerActivation() {
+    luciole::FileIconCache icons;
+    luciole::ThumbnailService thumbnails;
+    for (const auto mode : {luciole::ViewMode::List, luciole::ViewMode::Grid, luciole::ViewMode::Miller}) {
+      for (const auto policy : {luciole::ActivationMode::SingleClick, luciole::ActivationMode::DoubleClick}) {
+        luciole::BrowserController browser({}, false);
+        auto& model = browser.model();
+        model.applySnapshot(snapshot());
+        std::uint32_t modifiers = KeyMod::Alt;
+        luciole::FileViewAdapter adapter(
+            browser, icons, thumbnails, mode, [&] { return modifiers; }, [] { return true; }
+        );
+        adapter.setActivationMode(policy);
+        std::vector<luciole::EntryId> activated, dragged;
+        adapter.setActivateCallback([&](luciole::EntryId id) { activated.push_back(id); });
+        adapter.setDragCallback([&](const auto& ids) { dragged = ids; }, [] {});
+        const auto index = [&](luciole::EntryId id) {
+          const auto found = std::ranges::find(model.rows(), id);
+          TEST_CHECK(found != model.rows().end());
+          return static_cast<std::size_t>(found - model.rows().begin());
+        };
+        const auto press = [&](luciole::EntryId id) {
+          TEST_CHECK(adapter.onPointerPress(index(id), 100, 15, 300, 36));
+        };
+        const auto release = [&](std::optional<std::size_t> row) {
+          const auto result = adapter.onPointerRelease(row);
+          if (result.activateIndex) {
+            adapter.onActivate(*result.activateIndex);
+          }
+        };
+        const auto click = [&](luciole::EntryId id) {
+          press(id);
+          release(index(id));
+        };
+        modifiers = 0;
+        click(1);
+        if (policy == luciole::ActivationMode::DoubleClick) {
+          TEST_CHECK(activated.empty());
+          click(1);
+        }
+        TEST_CHECK(activated == std::vector<luciole::EntryId>{1});
+        modifiers = KeyMod::Alt;
+        for (const auto id : {luciole::EntryId{1}, luciole::EntryId{6}}) {
+          adapter.onPointerCancel();
+          activated.clear();
+          model.select(2);
+          press(id);
+          if (mode == luciole::ViewMode::Miller) {
+            TEST_CHECK(model.selection().selected.contains(2) && !model.selection().selected.contains(id));
+          }
+          release(index(id));
+          if (policy == luciole::ActivationMode::DoubleClick) {
+            TEST_CHECK(activated.empty());
+            click(id);
+          }
+          TEST_CHECK(activated == std::vector<luciole::EntryId>{id});
+        }
+        adapter.onPointerCancel();
+        activated.clear();
+        model.select(1);
+        model.select(2, luciole::SelectionMode::Toggle);
+        press(1);
+        TEST_CHECK(!adapter.onPointerDrag(index(1), 130, 15, 300, 36));
+        TEST_CHECK(
+            dragged.size() == 2 && model.selection().selected.contains(1) && model.selection().selected.contains(2)
+        );
+        release(index(1));
+        TEST_CHECK(activated.empty());
+        adapter.onPointerCancel();
+        press(6);
+        TEST_CHECK(!adapter.onPointerDrag(index(6), 130, 15, 300, 36));
+        TEST_CHECK(dragged == std::vector<luciole::EntryId>{6});
+        release(index(6));
+        TEST_CHECK(activated.empty());
+        adapter.onPointerCancel();
+        press(1);
+        release(index(2));
+        TEST_CHECK(activated.empty());
+        press(1);
+        adapter.onPointerCancel();
+        release(index(1));
+        TEST_CHECK(activated.empty());
+        for (const auto chord :
+             {KeyMod::Ctrl | KeyMod::Alt, KeyMod::Shift | KeyMod::Alt, KeyMod::Super | KeyMod::Alt}) {
+          modifiers = chord;
+          click(1);
+          click(1);
+          TEST_CHECK(activated.empty());
+        }
+        adapter.onPointerCancel();
+        adapter.setActivationMode(luciole::ActivationMode::DoubleClick);
+        modifiers = 0;
+        click(1);
+        modifiers = KeyMod::Alt;
+        click(1);
+        TEST_CHECK(activated.empty());
+        modifiers = 0;
+        click(1);
+        TEST_CHECK(activated.empty());
+        modifiers = KeyMod::Alt;
+        press(1);
+        modifiers = 0;
+        release(index(1));
+        TEST_CHECK(activated.empty());
+        modifiers = KeyMod::Alt;
+        click(1);
+        click(1);
+        TEST_CHECK(activated == std::vector<luciole::EntryId>{1});
+      }
+    }
   }
   void testPendingActionFacts() {
     luciole::DirectoryModel model;
@@ -831,6 +943,7 @@ int main() {
   try {
     testActionTable();
     testShortcuts();
+    testPointerActivation();
     testTerminalActions();
     testArchiveActions();
     testSplitArchiveActions();

@@ -440,13 +440,18 @@ bool luciole::FileViewAdapter::onPointerPress(std::size_t index, float x, float,
   m_expanderPress.reset();
   m_pressed = id;
   m_dragged = false;
-  m_plainClick = modifiers == 0;
-  m_collapseSelectionOnClick = m_plainClick && m_browser.model().selection().selected.contains(*m_pressed);
+  m_pressModifiers = modifiers;
+  m_activationClick = modifiers == 0 || modifiers == KeyMod::Alt;
+  const bool inspectColumn = m_mode == ViewMode::Miller && modifiers == KeyMod::Alt;
+  m_collapseSelectionOnClick =
+      m_activationClick && !inspectColumn && m_browser.model().selection().selected.contains(*m_pressed);
   m_toggleSelectionOnClick = modifiers == KeyMod::Ctrl && m_browser.model().selection().selected.contains(*m_pressed);
   const auto mode = (modifiers & KeyMod::Shift) != 0
       ? ((modifiers & KeyMod::Ctrl) != 0 ? SelectionMode::AddRange : SelectionMode::Range)
       : ((modifiers & KeyMod::Ctrl) != 0 ? SelectionMode::Toggle : SelectionMode::Replace);
-  if (!m_collapseSelectionOnClick && !m_toggleSelectionOnClick) {
+  // Miller follows folder selection immediately. Alt activation inspects its explicit target without changing
+  // that path; an actual drag still selects its source before publication.
+  if (!inspectColumn && !m_collapseSelectionOnClick && !m_toggleSelectionOnClick) {
     (void)m_browser.model().select(*m_pressed, mode);
   }
   return true;
@@ -461,6 +466,11 @@ bool luciole::FileViewAdapter::onPointerDrag(std::optional<std::size_t>, float, 
   const bool first = !m_dragged;
   m_dragged = true;
   if (first && m_drag && m_pressed && m_browser.model().entry(*m_pressed) != nullptr) {
+    if (m_mode == ViewMode::Miller
+        && m_pressModifiers == KeyMod::Alt
+        && !m_browser.model().selection().selected.contains(*m_pressed)) {
+      m_browser.model().select(*m_pressed);
+    }
     m_drag(m_browser.model().selectedIds());
   }
   return false;
@@ -488,7 +498,7 @@ VirtualGridAdapter::PointerReleaseResult luciole::FileViewAdapter::onPointerRele
     (void)m_browser.model().select(*pressed, SelectionMode::Toggle);
     return {.rebind = true, .activateIndex = std::nullopt};
   }
-  if (!m_plainClick) {
+  if (!m_activationClick || m_modifiers() != m_pressModifiers) {
     m_lastClick.reset();
     return {};
   }
@@ -496,11 +506,15 @@ VirtualGridAdapter::PointerReleaseResult luciole::FileViewAdapter::onPointerRele
   if (m_collapseSelectionOnClick) {
     m_browser.model().select(*pressed);
   }
-  const bool twice = m_lastClick == pressed && now - m_lastClickTime < std::chrono::milliseconds(400);
+  const bool twice = m_lastClick == pressed
+      && m_lastClickModifiers == m_pressModifiers
+      && now - m_lastClickTime < std::chrono::milliseconds(400);
   m_lastClick = twice ? std::nullopt : pressed;
+  m_lastClickModifiers = m_pressModifiers;
   m_lastClickTime = now;
   const auto* entry = m_browser.model().entry(*pressed);
-  const bool columnFolder = m_mode == ViewMode::Miller && entry && entry->type == luciole::FileType::Directory;
+  const bool columnFolder =
+      m_mode == ViewMode::Miller && m_pressModifiers == 0 && entry && entry->type == luciole::FileType::Directory;
   return {
       .rebind = true,
       .activateIndex =
