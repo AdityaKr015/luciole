@@ -68,7 +68,9 @@ void TrashController::restoreChanged(OperationJob& job) {
       return std::ranges::count(results, outcome, &luciole::RestoreResult::outcome);
     };
     const auto restored = count(luciole::RestoreOutcome::Restored);
-    std::string message = std::format("{} item{} restored", restored, restored == 1 ? "" : "s");
+    std::string message = std::format(
+        "{} item{} {}", restored, restored == 1 ? "" : "s", restore.moving() ? "moved out of Trash" : "restored"
+    );
     for (const auto& [outcome, label] :
          {std::pair{luciole::RestoreOutcome::Skipped, "skipped"}, std::pair{luciole::RestoreOutcome::Failed, "failed"},
           std::pair{luciole::RestoreOutcome::Cancelled, "cancelled"},

@@ -195,6 +195,14 @@ void OperationHub::changed(OperationJob& job) {
       owner->transfersFinished(job.service<luciole::TransferService>().results());
     }
   }
+  if (finished && job.kind() == JobKind::Restore) {
+    const auto effects = job.service<luciole::RestoreService>().transferResults();
+    for (const auto& [page, owner] : m_owners) {
+      if (page != m_routing.owner(job.id())) {
+        owner->transfersFinished(effects);
+      }
+    }
+  }
 }
 
 void OperationHub::notify(luciole::TabId page, OperationJob& job) {

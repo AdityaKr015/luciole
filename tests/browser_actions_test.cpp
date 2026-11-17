@@ -246,11 +246,17 @@ namespace {
     model.applySnapshot(data);
     model.select(1);
     luciole::ActionContext context{.model = model, .context = 33, .query = {}, .pinned = {}};
+    context.clipboardAvailable = true;
     const auto request = R::capture(context);
     TEST_CHECK(
         R::state(A::Restore, context, request).enabled && R::state(A::DeletePermanently, context, request).enabled
     );
+    test::editEntries(data, [&](auto& entries) { entries[0].access.rename = false; });
+    ++data.generation;
+    model.applySnapshot(data);
+    TEST_CHECK(R::state(A::CutFiles, context, request).enabled && !R::state(A::CopyFiles, context, request).enabled);
     context.operationsBusy = true;
+    TEST_CHECK(!R::state(A::CutFiles, context, request).enabled);
     TEST_CHECK(
         !R::state(A::Restore, context, request).enabled && !R::state(A::DeletePermanently, context, request).enabled
     );
@@ -261,10 +267,12 @@ namespace {
     TEST_CHECK(
         !R::state(A::Restore, context, request).enabled && R::state(A::DeletePermanently, context, request).enabled
     );
+    TEST_CHECK(R::state(A::CutFiles, context, request).enabled);
     test::editEntries(data, [&](auto& entries) { entries[0].access.remove = false; });
     ++data.generation;
     model.applySnapshot(data);
     TEST_CHECK(!R::state(A::DeletePermanently, context, request).enabled);
+    TEST_CHECK(!R::state(A::CutFiles, context, request).enabled);
     test::editEntries(data, [&](auto& entries) { entries[0].access.remove = true; });
     data.location = luciole::Location::fromUri("trash:///folder");
     test::editEntries(data, [&](auto& entries) {

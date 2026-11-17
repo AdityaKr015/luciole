@@ -52,9 +52,13 @@ namespace {
     }
     return clipboard(c, r);
   }
+  State trashItems(const C& c, const R& r, bool restore);
   State fileClipboard(const C& c, const R& r, bool cut) {
     if (!c.clipboardAvailable) {
       return unavailable("The application clipboard is unavailable.");
+    }
+    if (cut && r.folder && r.folder->isTrash()) {
+      return trashItems(c, r, false);
     }
     if (!all(c, r, [&](const DirectoryEntry& entry) {
           const auto location = entry.location();
