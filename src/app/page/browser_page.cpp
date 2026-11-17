@@ -495,8 +495,11 @@ bool BrowserPage::popupOwns(wl_surface* surface) const {
 
 bool BrowserPage::popup() const { return m_popupSurface != nullptr; }
 
-bool BrowserPage::modalDialog() const {
-  return popup() && m_dialogTier.has_value() && m_popupDismiss == PopupDismiss::Explicit;
+// Modal dialogs and quick preview dim the window; menus, popovers and other outside-click dialogs leave it undimmed.
+bool BrowserPage::dimsWindow() const {
+  return popup()
+      && m_dialogTier.has_value()
+      && (m_popupDismiss == PopupDismiss::Explicit || m_activePopup.kind() == ActivePopup::Kind::QuickPreview);
 }
 
 bool BrowserPage::overlay() const { return m_archiveController.open(); }
