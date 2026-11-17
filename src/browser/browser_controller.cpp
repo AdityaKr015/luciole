@@ -696,6 +696,12 @@ void luciole::BrowserController::activate(EntryId id) {
           }
         }
     );
+  } else if (entry->type == FileType::Shortcut) {
+    if (const auto* target = entry->shortcutTarget(); target && *target != location) {
+      open(*target);
+    } else {
+      showMessage("This network location has no valid destination. Refresh and try again.");
+    }
   } else if (entry->type == FileType::Mountable) {
     activateMountable(location);
   } else if (entry->type == FileType::Directory) {

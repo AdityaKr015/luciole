@@ -47,7 +47,7 @@ namespace luciole {
   private:
     struct Row {
       Bookmark bookmark;
-      std::size_t pinIndex = 0;
+      std::optional<std::size_t> pinIndex;
       Button* button = nullptr;
     };
     struct DriveRow {
@@ -61,7 +61,7 @@ namespace luciole {
       bool selected = false;
     };
     void rebuild();
-    void addRow(const Bookmark& bookmark, const std::string& glyph, std::size_t index);
+    void addRow(const Bookmark& bookmark, const std::string& glyph, std::optional<std::size_t> index);
     void addDriveRow(const Drive& drive);
     // Fits drive names between the glyph and the eject button and places usage bars under them; true when a
     // name's width budget changed and the rows need another arrange.

@@ -137,7 +137,7 @@ std::vector<ContextMenuControlEntry> MenuController::itemMenuEntries(const lucio
   const bool one = request.targets.size() == 1;
   const auto* single = one ? model.entry(request.targets.front().id) : nullptr;
   const auto singleLocation = single ? std::optional(single->location()) : std::nullopt;
-  const bool singleFolder = single != nullptr && single->type == luciole::FileType::Directory;
+  const bool singleFolder = single != nullptr && single->isFolderLink();
   const bool trash = request.targets.front().location.isTrash();
 
   add(Action::Open);
@@ -321,11 +321,15 @@ void MenuController::showOpenInMenu(const luciole::ActionRequest& request) {
         if (!m_page.requestCurrent(request, luciole::ActionScope::Targets)) {
           return;
         }
+        const auto* entry = m_page.browser().model().entry(request.targets.front().id);
+        if (!entry || !entry->isFolderLink()) {
+          return;
+        }
         m_page.requestWorkspace(
             id == NewTab          ? WorkspaceCommand::OpenTab
                 : id == NewWindow ? WorkspaceCommand::NewWindow
                                   : WorkspaceCommand::OpenOther,
-            request.targets.front().location, std::nullopt
+            entry->navigationLocation(), std::nullopt
         );
       },
       kShortSubmenuWidth
@@ -353,6 +357,12 @@ void MenuController::openPlaceMenu(const luciole::Bookmark& bookmark, float x, f
     return;
   }
   std::vector<ContextMenuControlEntry> entries{{.id = 1, .label = "Open"}};
+  if (!m_pins.contains(bookmark.location)) {
+    showContextMenu(
+        std::move(entries), [this, location = bookmark.location](int) { m_page.browser().open(location); }, {x, y, 1, 1}
+    );
+    return;
+  }
   {
     const auto& pins = m_pins.bookmarks();
     const auto found = std::ranges::find(pins, bookmark.location, &luciole::Bookmark::location);

@@ -302,7 +302,9 @@ void luciole::PlacesSidebar::addDriveRow(const Drive& drive) {
   );
   m_scroll->content()->addChild(std::move(button));
 }
-void luciole::PlacesSidebar::addRow(const Bookmark& bookmark, const std::string& glyph, std::size_t index) {
+void luciole::PlacesSidebar::addRow(
+    const Bookmark& bookmark, const std::string& glyph, std::optional<std::size_t> index
+) {
   auto button = ui::button(
       {.text = bookmark.label,
        .glyph = glyph,
@@ -331,7 +333,7 @@ void luciole::PlacesSidebar::addRow(const Bookmark& bookmark, const std::string&
         m_open(bookmark.location);
       }
     } else if (key.sym == XKB_KEY_F2 && key.modifiers == 0) {
-      if (m_rename && !bookmark.location.isTrash()) {
+      if (m_rename && !bookmark.location.isTrash() && bookmark.location != Location::network()) {
         m_rename(bookmark);
       }
     } else if (key.sym == XKB_KEY_Menu || (key.sym == XKB_KEY_F10 && key.modifiers == KeyMod::Shift)) {
@@ -348,7 +350,7 @@ void luciole::PlacesSidebar::addRow(const Bookmark& bookmark, const std::string&
       m_context(bookmark, x, y);
     }
   });
-  {
+  if (index) {
     raw->inputArea()->setOnPress([this, bookmark, raw](const InputArea::PointerData& pointer) {
       raw->setPressedVisual(pointer.pressed);
       if (pointer.button == BTN_LEFT && pointer.pressed) {
@@ -446,6 +448,17 @@ void luciole::PlacesSidebar::rebuild() {
         return drive.root && !m_pins.contains(*drive.root);
       });
     }
+    if (!m_pins.contains(Location::network())) {
+      drives.insert(
+          drives.begin(),
+          {.key = "network",
+           .label = "Network",
+           .glyph = "network",
+           .root = Location::network(),
+           .removal = DriveRemoval::None,
+           .usage = std::nullopt}
+      );
+    }
     m_tree->setRoots(m_pins, drives);
     m_tree->sync(m_current, m_showHidden);
     return;
@@ -482,6 +495,9 @@ void luciole::PlacesSidebar::rebuild() {
       return place.bookmark.location == pins[i].location;
     });
     addRow(pins[i], known == m_pins.userPlaces().end() ? "folder" : known->glyphName, i);
+  }
+  if (!m_pins.contains(Location::network())) {
+    addRow({"Network", Location::network()}, "network", std::nullopt);
   }
   if (m_showDrives && !m_drives.drives().empty()) {
     content->addChild(ui::column({.align = FlexAlign::Stretch, .paddingV = Style::spaceXs}, ui::separator({})));
@@ -551,7 +567,7 @@ std::optional<std::size_t> luciole::PlacesSidebar::dropSlot(float x, float y) co
   for (const auto& row : m_rows) {
     float rowX = 0, rowY = 0;
     Node::absolutePosition(row.button, rowX, rowY);
-    if (y < rowY + row.button->height() * 0.5F) {
+    if (row.pinIndex && y < rowY + row.button->height() * 0.5F) {
       return row.pinIndex;
     }
   }
@@ -571,10 +587,13 @@ LayoutRect luciole::PlacesSidebar::dropLine(std::size_t slot) const {
     line += m_heading->height() + 2.0F;
   }
   for (const auto& row : m_rows) {
+    if (!row.pinIndex) {
+      continue;
+    }
     float rowX = 0, rowY = 0;
     Node::absolutePosition(row.button, rowX, rowY);
     line = rowY - 2.0F;
-    if (row.pinIndex >= slot) {
+    if (*row.pinIndex >= slot) {
       break;
     }
     line = rowY + row.button->height() + 2.0F;

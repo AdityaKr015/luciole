@@ -40,6 +40,8 @@ alias_target('generated-headers', protocol_headers)
 
 gio = dependency('gio-2.0', version: '>=2.76')
 gio_unix = dependency('gio-unix-2.0', version: '>=2.76')
+soup = dependency('libsoup-3.0', version: '>=3.0')
+xml = dependency('libxml-2.0', version: '>=2.9')
 gdk_pixbuf = dependency('gdk-pixbuf-2.0', version: '>=2.44')
 glycin = dependency('glycin-2', version: '>=2.0.1')
 if not cpp.has_header('stb/stb_image_resize2.h')
@@ -141,6 +143,9 @@ fs_lib = static_library('luciole-fs',
     'src/fs/location_mount.cpp',
     'src/fs/mount_interaction.cpp',
     'src/fs/native_listing.cpp',
+    'src/fs/network_listing.cpp',
+    'src/fs/ws_discovery.cpp',
+    'src/fs/ws_discovery_protocol.cpp',
     'src/fs/transfer_location.cpp',
     'src/fs/posix_fd.cpp',
     'src/fs/recursive_search.cpp',
@@ -149,9 +154,9 @@ fs_lib = static_library('luciole-fs',
     'src/fs/xdg_dirs.cpp',
   ),
   include_directories: src_inc,
-  dependencies: [gio, libarchive, liblzma],
+  dependencies: [gio, libarchive, liblzma, soup, xml],
 )
-fs_dep = declare_dependency(link_with: fs_lib, include_directories: src_inc, dependencies: [gio, libarchive, liblzma])
+fs_dep = declare_dependency(link_with: fs_lib, include_directories: src_inc, dependencies: [gio, libarchive, liblzma, soup, xml])
 
 config_lib = static_library('luciole-config',
   files(

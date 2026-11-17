@@ -354,7 +354,7 @@ std::string BrowserPage::title() const {
   if (!location()) {
     return "Luciole";
   }
-  return location()->displayName().value_or("Luciole");
+  return location() == luciole::Location::network() ? "Network" : location()->displayName().value_or("Luciole");
 }
 
 void BrowserPage::preferencesChanged(const std::string& error) {
@@ -881,8 +881,8 @@ bool BrowserPage::openInNewTab(float x, float y) {
   if (m_list && m_list->containsScenePoint(x, y)) {
     if (auto index = m_list->itemAtScene(x, y); index && *index < browser().model().rows().size()) {
       const auto* entry = browser().model().entry(browser().model().rows()[*index]);
-      if (entry && entry->type == luciole::FileType::Directory) {
-        m_workspaceRequest(command, entry->location());
+      if (entry && entry->isFolderLink()) {
+        m_workspaceRequest(command, entry->navigationLocation());
       }
       return true;
     }
