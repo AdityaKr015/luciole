@@ -153,7 +153,7 @@ public:
   void setForeignDrop(std::function<std::optional<std::pair<luciole::Location, LayoutRect>>(float, float)> callback);
   bool popupOwns(wl_surface* surface) const;
   bool popup() const;
-  bool dialog() const;
+  bool modalDialog() const;
   bool overlay() const override;
   bool previewVisible() const;
   int previewWidth() const;

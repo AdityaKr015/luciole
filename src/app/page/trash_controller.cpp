@@ -110,13 +110,19 @@ void TrashController::openEmptyTrash(std::optional<std::vector<luciole::Director
   const bool outsideTrash = selection && !selection->empty() && !selection->front().location().isTrash();
   m_page.cancelDrag();
   const float width = m_page.dialogWidth(DialogWidth::Small);
+  std::string title = "Empty Trash?";
+  if (selection) {
+    title = selection->size() == 1 ? std::format("Delete “{}”?", selection->front().displayName())
+                                   : std::format("Delete {} items?", selection->size());
+  }
+  Label* titleLabel = nullptr;
   Label* message = nullptr;
   Label* size = nullptr;
   Button* confirm = nullptr;
   auto root = ui::column(
       {.align = FlexAlign::Stretch},
       luciole::dialogHeader(
-          selection ? "Delete selected items permanently?" : "Empty Trash?", "trash", [this] { m_page.dismissPopup(); }
+          title, "trash", [this] { m_page.dismissPopup(); }, &titleLabel
       ),
       ui::label(
           {.out = &message,
@@ -140,13 +146,17 @@ void TrashController::openEmptyTrash(std::optional<std::vector<luciole::Director
           ),
           ui::button(
               {.out = &confirm,
-               .text = selection ? "Delete permanently" : "Empty Trash",
+               .text = selection ? "Delete" : "Empty Trash",
                .enabled = false,
                .variant = ButtonVariant::Destructive,
                .onClick = [this] { confirmEmptyTrash(); }}
           )
       )
   );
+  if (selection) {
+    titleLabel->setMaxLines(2);
+    titleLabel->setEllipsize(TextEllipsize::Middle);
+  }
   luciole::applyDialogStyle(*root);
   m_page.showDialog(std::move(root), DialogWidth::Small);
   if (m_page.popupSurface() != nullptr) {
@@ -248,13 +258,20 @@ void TrashController::syncEmptyTrash() {
   const auto& snapshot = emptyTrash.snapshot();
   if (snapshot.status == luciole::EmptyTrashStatus::Ready) {
     const auto count = snapshot.results.size();
-    m_emptyTrashMessage->setText(
-        count == 0 ? "Trash is already empty."
-                   : std::format(
-                         "Permanently delete {} item{} and their contents? This cannot be undone.", count,
-                         count == 1 ? "" : "s"
-                     )
-    );
+    if (count == 0) {
+      m_emptyTrashMessage->setText("Trash is already empty.");
+    } else if (snapshot.selection) {
+      m_emptyTrashMessage->setText(
+          count == 1 ? "This item will be permanently deleted. This cannot be undone."
+                     : "These items will be permanently deleted. This cannot be undone."
+      );
+    } else {
+      m_emptyTrashMessage->setText(
+          std::format(
+              "Permanently delete {} item{} and their contents? This cannot be undone.", count, count == 1 ? "" : "s"
+          )
+      );
+    }
     m_emptyTrashConfirm->setEnabled(emptyTrash.canEmpty());
   } else if (snapshot.status == luciole::EmptyTrashStatus::Error) {
     m_emptyTrashMessage->setText(

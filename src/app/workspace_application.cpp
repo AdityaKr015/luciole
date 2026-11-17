@@ -1785,7 +1785,7 @@ void WorkspaceApplication::prepare(Host& host) {
   active.layoutNavigation(renderer);
   syncTooltip(host);
   host.dialogBackdrop->setVisible(std::ranges::any_of(host.mounted, [this](auto tab) {
-    return m_pages.at(tab)->dialog();
+    return m_pages.at(tab)->modalDialog();
   }));
   host.dialogBackdrop->arrange(renderer, {0, 0, width, height});
 }
