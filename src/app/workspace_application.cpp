@@ -1463,7 +1463,6 @@ void WorkspaceApplication::rebuildStrip(Host& host, const luciole::TabWindow& wi
        .align = FlexAlign::Center,
        .gap = Style::spaceXs,
        .paddingH = Style::spaceSm,
-       .fill = colorSpecFromRole(ColorRole::SurfaceContainerLow),
        .height = kTabStripHeight,
        .participatesInLayout = false},
       std::move(scroll),
@@ -1576,7 +1575,7 @@ void WorkspaceApplication::prepare(Host& host) {
     return;
   }
   if (!host.root) {
-    host.root = ui::column({.align = FlexAlign::Stretch, .fill = colorSpecFromRole(ColorRole::SurfaceContainerLow)});
+    host.root = ui::column({.out = &host.background, .align = FlexAlign::Stretch});
     host.root->setAnimationManager(&m_animations);
     host.surface.setSceneRoot(host.root.get());
     host.dispatcher.setSceneRoot(host.root.get());
@@ -1641,6 +1640,12 @@ void WorkspaceApplication::prepare(Host& host) {
     backdrop->setOpacity(0.5F);
     backdrop->setZIndex(100);
     host.root->addChild(std::move(backdrop));
+  }
+  if (host.backgroundOpacity != m_defaults.backgroundOpacity) {
+    host.backgroundOpacity = m_defaults.backgroundOpacity;
+    host.background->setFill(
+        colorSpecFromRole(ColorRole::SurfaceContainerLow, static_cast<float>(host.backgroundOpacity))
+    );
   }
   if (host.pendingFooter) {
     host.root->addChild(std::move(host.pendingFooter));

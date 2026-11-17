@@ -28,6 +28,7 @@ namespace luciole {
     bool alwaysShowTabBar = true;
     bool alwaysShowStatusBar = false;
     bool compactMenus = true;
+    double backgroundOpacity = 1.0; // 0 (clear) to 1 (opaque) for the window background.
     BrowsePresentation presentation;
     int gridIconSize = kDefaultGridIconSize;
     int sidebarWidth = kDefaultSidebarWidth;
@@ -72,6 +73,7 @@ namespace luciole {
     AlwaysShowTabBar,
     AlwaysShowStatusBar,
     CompactMenus,
+    BackgroundOpacity,
     SortBy,
     SortDescending,
     DirectoriesFirst,
@@ -149,6 +151,7 @@ namespace luciole {
     static constexpr PreferenceKey<bool> AlwaysShowTabBar{Id::AlwaysShowTabBar};
     static constexpr PreferenceKey<bool> AlwaysShowStatusBar{Id::AlwaysShowStatusBar};
     static constexpr PreferenceKey<bool> CompactMenus{Id::CompactMenus};
+    static constexpr PreferenceKey<double> BackgroundOpacity{Id::BackgroundOpacity};
     static constexpr PreferenceKey<luciole::SortField> SortBy{Id::SortBy};
     static constexpr PreferenceKey<bool> SortDescending{Id::SortDescending};
     static constexpr PreferenceKey<bool> DirectoriesFirst{Id::DirectoriesFirst};
@@ -217,7 +220,7 @@ namespace luciole {
   private:
     BrowserPreferenceId m_preference;
     std::variant<
-        std::monostate, bool, int, SortField, ViewMode, ViewDensity, FilenameTruncation, DetailsColumnOrder,
+        std::monostate, bool, int, double, SortField, ViewMode, ViewDensity, FilenameTruncation, DetailsColumnOrder,
         ActivationMode, TypingMode, ThumbnailPolicy, std::string>
         m_value;
   };

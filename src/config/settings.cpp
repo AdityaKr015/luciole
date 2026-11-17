@@ -75,6 +75,11 @@ namespace {
     bool (*accepts)(int);
     std::string_view expected;
   };
+  template <> struct Rule<double> {
+    double minimum;
+    double maximum;
+    std::string_view expected;
+  };
   template <> struct Rule<luciole::DetailsColumnOrder> {};
 
   bool accepts(const Rule<std::string>& /*rule*/, const std::string& value) {
@@ -82,6 +87,7 @@ namespace {
   }
   bool accepts(const Rule<bool>& /*rule*/, bool /*value*/) { return true; }
   bool accepts(const Rule<int>& rule, int value) { return rule.accepts(value); }
+  bool accepts(const Rule<double>& rule, double value) { return value >= rule.minimum && value <= rule.maximum; }
   bool accepts(const Rule<luciole::DetailsColumnOrder>& /*rule*/, const luciole::DetailsColumnOrder& order) {
     return luciole::validDetailsColumnOrder(order);
   }
@@ -106,6 +112,10 @@ namespace {
   std::optional<int> decode(const Rule<int>& /*rule*/, const toml::node& node) {
     const auto number = node.value_exact<std::int64_t>();
     return number && std::in_range<int>(*number) ? std::optional<int>(static_cast<int>(*number)) : std::nullopt;
+  }
+  // Accepts integers too, so `1` reads as 1.0.
+  std::optional<double> decode(const Rule<double>& /*rule*/, const toml::node& node) {
+    return node.is_number() ? node.value<double>() : std::nullopt;
   }
   std::optional<luciole::DetailsColumnOrder>
   decode(const Rule<luciole::DetailsColumnOrder>& /*rule*/, const toml::node& node) {
@@ -148,6 +158,7 @@ namespace {
 
   std::string expected(const Rule<bool>& /*rule*/) { return "expected a boolean"; }
   std::string expected(const Rule<int>& rule) { return std::string(rule.expected); }
+  std::string expected(const Rule<double>& rule) { return std::string(rule.expected); }
   std::string expected(const Rule<luciole::DetailsColumnOrder>& /*rule*/) {
     return "expected unique column names including 'type', 'size', and 'modified'; optional columns may be omitted";
   }
@@ -168,6 +179,9 @@ namespace {
     table.insert(key, value);
   }
   void encode(toml::table& table, std::string_view key, const Rule<int>& /*rule*/, int value) {
+    table.insert(key, value);
+  }
+  void encode(toml::table& table, std::string_view key, const Rule<double>& /*rule*/, double value) {
     table.insert(key, value);
   }
   void encode(
@@ -222,6 +236,10 @@ namespace {
       describe(P::AlwaysShowTabBar, "always_show_tab_bar", [](S& s) -> auto& { return s.alwaysShowTabBar; }),
       describe(P::AlwaysShowStatusBar, "always_show_status_bar", [](S& s) -> auto& { return s.alwaysShowStatusBar; }),
       describe(P::CompactMenus, "compact_menus", [](S& s) -> auto& { return s.compactMenus; }),
+      describe(
+          P::BackgroundOpacity, "background_opacity", [](S& s) -> auto& { return s.backgroundOpacity; },
+          {0.0, 1.0, "expected a number from 0 to 1"}
+      ),
       describe(P::SortBy, "sort_by", [](S& s) -> auto& { return s.sort.field; }, {kSortFields}),
       describe(P::SortDescending, "sort_descending", [](S& s) -> auto& { return s.sort.descending; }),
       describe(P::DirectoriesFirst, "directories_first", [](S& s) -> auto& { return s.sort.directoriesFirst; }),
@@ -525,7 +543,9 @@ namespace {
     }
     std::ostringstream output;
     output << toml::toml_formatter{
-        document, toml::toml_formatter::default_flags & ~toml::format_flags::allow_literal_strings
+        document,
+        (toml::toml_formatter::default_flags & ~toml::format_flags::allow_literal_strings)
+            | toml::format_flags::relaxed_float_precision
     };
     auto text = output.str();
     if (!text.ends_with('\n')) {
@@ -555,6 +575,7 @@ template std::string& luciole::preferenceValue(BrowserSettings&, PreferenceKey<s
 template const std::string& luciole::preferenceValue(const BrowserSettings&, PreferenceKey<std::string>);
 template bool& luciole::preferenceValue(BrowserSettings&, PreferenceKey<bool>);
 template int& luciole::preferenceValue(BrowserSettings&, PreferenceKey<int>);
+template double& luciole::preferenceValue(BrowserSettings&, PreferenceKey<double>);
 template luciole::ActivationMode& luciole::preferenceValue(BrowserSettings&, PreferenceKey<ActivationMode>);
 template luciole::TypingMode& luciole::preferenceValue(BrowserSettings&, PreferenceKey<TypingMode>);
 template luciole::SortField& luciole::preferenceValue(BrowserSettings&, PreferenceKey<SortField>);
@@ -565,6 +586,7 @@ template luciole::DetailsColumnOrder& luciole::preferenceValue(BrowserSettings&,
 template luciole::ThumbnailPolicy& luciole::preferenceValue(BrowserSettings&, PreferenceKey<ThumbnailPolicy>);
 template const bool& luciole::preferenceValue(const BrowserSettings&, PreferenceKey<bool>);
 template const int& luciole::preferenceValue(const BrowserSettings&, PreferenceKey<int>);
+template const double& luciole::preferenceValue(const BrowserSettings&, PreferenceKey<double>);
 template const luciole::ActivationMode& luciole::preferenceValue(const BrowserSettings&, PreferenceKey<ActivationMode>);
 template const luciole::TypingMode& luciole::preferenceValue(const BrowserSettings&, PreferenceKey<TypingMode>);
 template const luciole::SortField& luciole::preferenceValue(const BrowserSettings&, PreferenceKey<SortField>);
