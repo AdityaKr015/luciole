@@ -3,6 +3,7 @@
 #include "core/log.h"
 #include "fs/gio_interop.h"
 #include "fs/gio_ptr.h"
+#include "fs/native_listing.h"
 #include "fs/posix_fd.h"
 #include "thumbnails/thumbnail_codec.h"
 #include "thumbnails/thumbnail_provider.h"
@@ -65,8 +66,9 @@ namespace {
     bool decodeNeeded = false;
   };
   LoadResult load(
-      const luciole::DirectoryEntry& source, int side, const luciole::ThumbnailOptions& options, GCancellable* cancel,
-      bool generate, luciole::ThumbnailPurpose purpose
+      const luciole::DirectoryEntry& source, int side, const luciole::ThumbnailOptions& options,
+      const luciole::ThumbnailService::NetworkFilesystemCheck& networkFilesystem, GCancellable* cancel, bool generate,
+      luciole::ThumbnailPurpose purpose
   ) {
     using namespace luciole;
     LoadResult result;
@@ -86,15 +88,8 @@ namespace {
     if (g_cancellable_is_cancelled(cancel)) {
       return result;
     }
-    if (options.policy == ThumbnailPolicy::Local) {
-      const GioPtr<GFileInfo> filesystem(
-          g_file_query_filesystem_info(gioFile(location).get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE, cancel, nullptr)
-      );
-      if (!filesystem
-          || !g_file_info_has_attribute(filesystem.get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE)
-          || g_file_info_get_attribute_boolean(filesystem.get(), G_FILE_ATTRIBUTE_FILESYSTEM_REMOTE)) {
-        return result;
-      }
+    if (options.policy == ThumbnailPolicy::Local && networkFilesystem(*native)) {
+      return result;
     }
     const std::string mime(source.contentType.value_or(""));
     const bool media = mime.starts_with("video/") || mime.starts_with("audio/");
@@ -235,6 +230,7 @@ struct luciole::ThumbnailService::State : std::enable_shared_from_this<State> {
   };
   static constexpr std::size_t kWriteBudget = 64U * 1024U * 1024U;
   ThumbnailOptions options;
+  NetworkFilesystemCheck networkFilesystem;
   std::unordered_map<std::string, Item> cache;
   std::unordered_map<const FileIconImage*, Item*> leases;
   std::function<void()> changed;
@@ -525,7 +521,10 @@ struct luciole::ThumbnailService::State : std::enable_shared_from_this<State> {
       const auto& request = *static_cast<Request*>(data);
       auto result = std::make_unique<Result>();
       try {
-        result->loaded = load(request.source, request.side, request.options, cancel, request.generate, request.purpose);
+        result->loaded = load(
+            request.source, request.side, request.options, request.owner->networkFilesystem, cancel, request.generate,
+            request.purpose
+        );
       } catch (const std::exception& error) {
         result->error = error.what();
       }
@@ -562,7 +561,12 @@ struct luciole::ThumbnailService::State : std::enable_shared_from_this<State> {
   }
 };
 
-luciole::ThumbnailService::ThumbnailService() : m_state(std::make_shared<State>()) {}
+luciole::ThumbnailService::ThumbnailService()
+    : ThumbnailService([](const std::string& path) { return luciole::networkFilesystem(path); }) {}
+luciole::ThumbnailService::ThumbnailService(NetworkFilesystemCheck networkFilesystem)
+    : m_state(std::make_shared<State>()) {
+  m_state->networkFilesystem = std::move(networkFilesystem);
+}
 std::size_t luciole::ThumbnailService::decoders() {
   static const std::size_t count = std::clamp<std::size_t>(std::thread::hardware_concurrency() / 4, 2, 6);
   return count;
