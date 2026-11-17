@@ -70,6 +70,27 @@ Open Settings with Ctrl+, or from the main menu; changes apply immediately. For 
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development builds, code style and checks, and the [design notes](docs/design/README.md) for architecture. Bug reports are always welcome on the [issue tracker](https://github.com/noctalia-dev/luciole/issues); help and discussion happen on [Discord](https://discord.noctalia.dev).
 
+## Donations
+
+Donations are appreciated but completely optional.
+
+<p>
+  <a href="https://www.buymeacoffee.com/noctalia">
+    <img src="https://img.shields.io/badge/Buy_Me_a_Coffee-FFF59B?style=for-the-badge&logo=buymeacoffee&logoColor=070722&labelColor=FFF59B" alt="Buy Me a Coffee">
+  </a>
+  <a href="https://ko-fi.com/noctaliadev">
+    <img src="https://img.shields.io/badge/Ko--fi-FFF59B?style=for-the-badge&logo=kofi&logoColor=070722&labelColor=FFF59B" alt="Ko-fi">
+  </a>
+</p>
+
 ## License
 
 MIT License. See [LICENSE](LICENSE) for details.
+
+## Star History
+
+<p align="center">
+  <a href="https://noctalia.dev/luciole">
+    <img src="https://api.noctalia.dev/stars-animated/luciole" alt="Star History" />
+  </a>
+</p>

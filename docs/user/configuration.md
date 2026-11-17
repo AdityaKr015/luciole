@@ -35,6 +35,7 @@ confirm_permanent_deletion = true
 restore_last_window = false
 compact_menus = true
 background_opacity = 1.0
+corner_radius_scale = 1.0
 sort_by = "name"
 directories_first = true
 ```
@@ -71,6 +72,7 @@ All keys below belong in `[browser]`. Dimensions are logical pixels unless state
 | `always_show_status_bar` | `false` | Keep the status pill visible when idle, showing the item count and free space |
 | `compact_menus` | `true` | Reduce the row height and padding in context menus without shrinking their text |
 | `background_opacity` | `1.0` | Number from `0` (clear) to `1` (opaque) for the window background; tabs, toolbar, sidebar and file area share it. Menus and dialogs stay opaque |
+| `corner_radius_scale` | `1.0` | Number from `0` (square) to `2` (extra rounded) scaling every corner radius, like Noctalia's setting of the same name. Open windows apply a change after restart; menus and dialogs opened afterwards use it at once |
 | `activation_mode` | `"double_click"` | `"single_click"`, `"double_click"` |
 | `typing_mode` | `"search"` | `"search"` recursively searches filenames; `"filter"` filters names in the current folder only; `"typeahead"` selects names |
 | `confirm_permanent_deletion` | `true` | Ask before permanently deleting selected items, including Shift+Delete and selections in Trash; Empty Trash always confirms |
@@ -124,7 +126,7 @@ Name accepts `0` for automatic sizing or an integer from `160` through `16384`. 
 | --- | --- | --- |
 | `thumbnail_policy` | `"local"` | `"never"`, `"local"`, `"all"` |
 | `thumbnail_max_file_mib` | `64` | Image/PDF source limit, integer `1` through `1024`; does not limit video/audio file size |
-| `thumbnail_cache_mib` | `128` | Integer `16` through `1024` |
+| `thumbnail_cache_mib` | `1024` | Integer `16` through `8192`; only Luciole-written thumbnails count and are pruned |
 
 Local policy generates thumbnails for eligible local files. To generate thumbnails on mounted network shares such as `/mnt/media`, choose Settings → Thumbnails → Show thumbnails → All locations. All permits generation from filesystem paths, including mounted shares, and reuses the shared thumbnail cache. Locations without a filesystem path remain cache-only; Luciole does not download entire remote files for thumbnail generation.
 

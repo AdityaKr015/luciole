@@ -28,6 +28,7 @@
 #include "ui/controls/scroll_view.h"
 #include "ui/controls/tooltip_presenter.h"
 #include "ui/palette.h"
+#include "ui/style.h"
 #include "wayland/popup_surface.h"
 #include "wayland/text_input_service.h"
 #include "wayland/toplevel_surface.h"
@@ -58,6 +59,8 @@ WorkspaceApplication::WorkspaceApplication(
   m_preferences.setChangedCallback([this](const std::string& error) {
     if (m_preferences.settings()) {
       m_defaults = m_preferences.settings()->browser;
+      // Controls built from now on (menus, dialogs, tooltips) take the new rounding; open windows on restart.
+      Style::setCornerRadiusScale(static_cast<float>(m_defaults.cornerRadiusScale));
     }
     for (auto& [id, page] : m_pages) {
       (void)id;
@@ -1781,16 +1784,15 @@ void WorkspaceApplication::prepare(Host& host) {
     const LayoutRect bounds{left + (index ? first : 0), top, index ? content - first : first, bodyHeight};
     if (split && tab == window.active) {
       // Inset by the corner radius on both ends so it reads as an indicator, not a clipped border.
-      host.activePaneBar->arrange(
-          renderer, {bounds.x + kWorkspaceRadius, top, std::max(0.0F, bounds.width - kWorkspaceRadius * 2), 2}
-      );
+      const float radius = workspaceRadius();
+      host.activePaneBar->arrange(renderer, {bounds.x + radius, top, std::max(0.0F, bounds.width - radius * 2), 2});
     }
     m_pages.at(tab)->prepare(bounds, tab == window.active, index == 0 && left > 0);
   }
   active.layoutNavigation(renderer);
   syncTooltip(host);
   host.dialogBackdrop->setVisible(std::ranges::any_of(host.mounted, [this](auto tab) {
-    return m_pages.at(tab)->modalDialog();
+    return m_pages.at(tab)->dimsWindow();
   }));
   host.dialogBackdrop->arrange(renderer, {0, 0, width, height});
 }

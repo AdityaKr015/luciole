@@ -106,7 +106,8 @@ SettingsDialog::SettingsDialog(
   addTerminal();
   section("Appearance", "paint");
   card("Window");
-  addFraction(P::BackgroundOpacity, "Background opacity");
+  addFraction(P::BackgroundOpacity, "Background opacity", 1.0, 0.01);
+  addFraction(P::CornerRadiusScale, "Corner roundness", 2.0, 0.05, "Applies to open windows after restart");
   addBool(P::AlwaysShowTabBar, "Always show tab bar");
   addBool(P::AlwaysShowStatusBar, "Always show status bar");
   addBool(P::CompactMenus, "Compact context menus");
@@ -207,7 +208,7 @@ SettingsDialog::SettingsDialog(
   );
   addNumber(P::ThumbnailMaxFileMib, "Image/PDF size limit", {1, 1024}, "MiB");
   card("Cache");
-  addNumber(P::ThumbnailCacheMib, "Disk cache limit", {16, 1024}, "MiB");
+  addNumber(P::ThumbnailCacheMib, "Disk cache limit", {16, 8192}, "MiB");
   m_section->addChild(
       ui::row(
           {.align = FlexAlign::Center, .gap = 8.0F, .paddingV = 6.0F},
@@ -383,12 +384,14 @@ void SettingsDialog::addNumber(
   addRow<int>(key, title, show, std::move(control));
 }
 
-void SettingsDialog::addFraction(luciole::PreferenceKey<double> key, const std::string& title) {
+void SettingsDialog::addFraction(
+    luciole::PreferenceKey<double> key, const std::string& title, double maximum, double step, std::string subtitle
+) {
   Label* percent = nullptr;
   auto slider = std::make_unique<Slider>();
   auto* control = slider.get();
-  control->setRange(0.0, 1.0);
-  control->setStep(0.05);
+  control->setRange(0.0, maximum);
+  control->setStep(step);
   control->setFlexGrow(1.0F);
   const auto showPercent = [](Label* label, double value) {
     label->setText(std::format("{}%", std::lround(value * 100)));
@@ -408,7 +411,7 @@ void SettingsDialog::addFraction(luciole::PreferenceKey<double> key, const std::
       showPercent(percent, value);
     }
   };
-  addRow<double>(key, title, show, std::move(row));
+  addRow<double>(key, title, show, std::move(row), std::move(subtitle));
 }
 
 template <class T> void SettingsDialog::send(luciole::PreferenceKey<T> key, std::optional<T> value) {

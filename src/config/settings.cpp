@@ -240,6 +240,10 @@ namespace {
           P::BackgroundOpacity, "background_opacity", [](S& s) -> auto& { return s.backgroundOpacity; },
           {0.0, 1.0, "expected a number from 0 to 1"}
       ),
+      describe(
+          P::CornerRadiusScale, "corner_radius_scale", [](S& s) -> auto& { return s.cornerRadiusScale; },
+          {0.0, 2.0, "expected a number from 0 to 2"}
+      ),
       describe(P::SortBy, "sort_by", [](S& s) -> auto& { return s.sort.field; }, {kSortFields}),
       describe(P::SortDescending, "sort_descending", [](S& s) -> auto& { return s.sort.descending; }),
       describe(P::DirectoriesFirst, "directories_first", [](S& s) -> auto& { return s.sort.directoriesFirst; }),
@@ -343,7 +347,7 @@ namespace {
       ),
       describe(
           P::ThumbnailCacheMib, "thumbnail_cache_mib", [](S& s) -> auto& { return s.thumbnails.cacheMiB; },
-          {between<16, 1024>, "expected an integer from 16 to 1024"}
+          {between<16, 8192>, "expected an integer from 16 to 8192"}
       ),
       describe(P::TerminalCommand, "terminal_command", [](S& s) -> auto& { return s.terminalCommand; }),
   };
