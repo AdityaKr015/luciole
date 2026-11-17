@@ -1633,6 +1633,13 @@ void WorkspaceApplication::prepare(Host& host) {
     bar->setRadius(1.0F);
     bar->setZIndex(40);
     host.root->addChild(std::move(bar));
+    auto backdrop =
+        ui::box({.out = &host.dialogBackdrop, .fill = colorSpecFromRole(ColorRole::Scrim), .visible = false});
+    backdrop->setParticipatesInLayout(false);
+    backdrop->setHitTestVisible(false);
+    backdrop->setOpacity(0.5F);
+    backdrop->setZIndex(100);
+    host.root->addChild(std::move(backdrop));
   }
   if (host.backgroundOpacity != m_defaults.backgroundOpacity) {
     host.backgroundOpacity = m_defaults.backgroundOpacity;
@@ -1782,4 +1789,8 @@ void WorkspaceApplication::prepare(Host& host) {
   }
   active.layoutNavigation(renderer);
   syncTooltip(host);
+  host.dialogBackdrop->setVisible(std::ranges::any_of(host.mounted, [this](auto tab) {
+    return m_pages.at(tab)->dialog();
+  }));
+  host.dialogBackdrop->arrange(renderer, {0, 0, width, height});
 }
