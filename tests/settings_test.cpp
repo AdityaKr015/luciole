@@ -80,6 +80,24 @@ namespace {
     fixture.write("config.toml", "[browser]\nswitch_to_new_tab = true\n");
     TEST_CHECK(restored.reload() && restored.settings().browser.switchToNewTab);
   }
+  void testDeletionConfirmationPreference() {
+    Fixture fixture;
+    luciole::ConfigService service(fixture.paths());
+    TEST_CHECK(service.reload() && service.settings().browser.confirmPermanentDeletion);
+    fixture.write("config.toml", "[browser]\nconfirm_permanent_deletion = false\n");
+    TEST_CHECK(service.reload() && !service.settings().browser.confirmPermanentDeletion);
+    const std::array on{luciole::OverrideEdit{luciole::BrowserPreference::ConfirmPermanentDeletion, true}};
+    TEST_CHECK(service.saveOverrides(on) == luciole::AtomicWriteState::Durable);
+    luciole::ConfigService restored(fixture.paths());
+    TEST_CHECK(restored.reload() && restored.settings().browser.confirmPermanentDeletion);
+    const std::array reset{luciole::OverrideEdit{luciole::BrowserPreference::ConfirmPermanentDeletion, std::nullopt}};
+    TEST_CHECK(restored.saveOverrides(reset) == luciole::AtomicWriteState::Durable);
+    TEST_CHECK(restored.reload() && !restored.settings().browser.confirmPermanentDeletion);
+    fixture.write("config.toml", "[browser]\nconfirm_permanent_deletion = 'false'\n");
+    TEST_CHECK(!restored.reload() && !restored.settings().browser.confirmPermanentDeletion);
+    fixture.write("config.toml", "[browser]\nconfirm_permanent_deletion = true\n");
+    TEST_CHECK(restored.reload() && restored.settings().browser.confirmPermanentDeletion);
+  }
   void testRestoreLastWindowPreference() {
     Fixture fixture;
     luciole::ConfigService service(fixture.paths());
@@ -1113,6 +1131,7 @@ int main() {
     testFilenameTruncation();
     testBackupPreference();
     testNewTabPreference();
+    testDeletionConfirmationPreference();
     testRestoreLastWindowPreference();
     testMillerSettings();
     testMillerParents();

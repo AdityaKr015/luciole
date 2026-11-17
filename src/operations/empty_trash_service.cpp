@@ -130,6 +130,7 @@ struct luciole::EmptyTrashService::State {
   std::atomic<std::size_t> completed{0};
   bool active = false;
   bool emptyRequested = false;
+  bool immediate = false;
   std::function<void()> changed;
   void notify() const {
     const auto callback = changed;
@@ -160,6 +161,11 @@ struct luciole::EmptyTrashService::State {
     } else {
       owner->targets = std::make_shared<Targets>(std::move(*reply));
       owner->snapshot.results = pendingResults(*owner->targets);
+      if (owner->immediate) {
+        owner->snapshot.status = EmptyTrashStatus::Emptying;
+        startEmpty(owner);
+        return;
+      }
       owner->snapshot.status = EmptyTrashStatus::Ready;
       launch<Size>(owner, [targets = owner->targets, token] { return measureSize(*targets, token); }, measured);
       return;
@@ -241,13 +247,21 @@ bool luciole::EmptyTrashService::prepareDeletion(std::vector<DirectoryEntry> sel
   }
   return prepareTargets(std::move(selection), true);
 }
+bool luciole::EmptyTrashService::deleteSelection(std::vector<DirectoryEntry> selection) {
+  if (selection.empty() || selection.size() > 4096) {
+    return false;
+  }
+  const bool outsideTrash = !selection.front().location().isTrash();
+  return prepareTargets(std::move(selection), outsideTrash, true);
+}
 bool luciole::EmptyTrashService::prepareTargets(
-    std::optional<std::vector<DirectoryEntry>> selection, bool outsideTrash
+    std::optional<std::vector<DirectoryEntry>> selection, bool outsideTrash, bool immediate
 ) {
   if (busy()) {
     return false;
   }
   m_state->targets.reset();
+  m_state->immediate = immediate;
   m_state->token = CancelToken{};
   m_state->completed.store(0);
   m_state->snapshot = {

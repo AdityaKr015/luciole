@@ -36,9 +36,9 @@ External drag destinations use actual core `wl_keyboard.modifiers` events delive
 
 The 2026-11-13 investigation reproduces Ctrl choosing Move in Luciole and Shift choosing Copy in a matched native Qt receiver when drag destinations do not receive the held state. The corresponding Umbriel fix forwards modifiers to the active native pointer-drag focus client and clears stale state on leave/drop/client destruction, retaining keyboard-focus, key-event, cursor-ownership, session-lock and capture boundaries. This is compositor-owned protocol delivery, outside both Noctalia library copies. Luciole does not guess missing modifiers, identify source applications or force a global action. A compositor must supply the modifier state for an external target to honor it.
 
-## Confirmed permanent deletion
+## Permanent deletion
 
-Shift+Delete on the file view opens the existing permanent-deletion confirmation for native selections. EmptyTrashService prepares and rechecks selected identities, then uses worker-side std::filesystem::remove_all for ordinary files/folders without following entry symlinks. Existing Trash preparation and GIO deletion remain separate. The shared confirmation, size calculation, cancellation between selected items and activity report are reused. A recursive error may leave partial contents and is reported as unconfirmed; permanent deletion creates no Undo receipt. Plain Delete retains Move to Trash, while Delete inside Trash retains selected-item deletion.
+Settings → General → Confirm permanent deletion maps to browser.confirm_permanent_deletion and defaults to true. TrashController applies it to selected-item permanent deletion both inside and outside Trash. Empty Trash always uses its confirmation. EmptyTrashService's explicit preparation paths wait for confirmation; deleteSelection validates captured identities on a worker and starts deletion automatically, skipping confirmation size calculation. Native deletion uses std::filesystem::remove_all without following entry symlinks; Trash uses its existing GIO backend. Cancellation between selected items and activity reporting are reused. A recursive error may leave partial contents and is reported as unconfirmed; permanent deletion creates no Undo receipt. Plain Delete outside Trash retains Move to Trash.
 
 ## External deferred extraction
 

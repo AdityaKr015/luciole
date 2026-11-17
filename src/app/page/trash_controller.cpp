@@ -4,6 +4,7 @@
 #include "app/page/active_popup.h"
 #include "app/page/page_context.h"
 #include "browser/browser_controller.h"
+#include "config/settings.h"
 #include "core/input/key_symbols.h"
 #include "core/ui_phase.h"
 #include "fs/gio_ptr.h"
@@ -82,6 +83,22 @@ void TrashController::restoreChanged(OperationJob& job) {
     }
     m_page.setActionMessage(std::move(message));
     m_page.browser().refresh();
+  }
+}
+
+void TrashController::deleteItems(const std::vector<luciole::DirectoryEntry>& targets) {
+  if (targets.empty()) {
+    return;
+  }
+  if (m_page.settings().confirmPermanentDeletion) {
+    openEmptyTrash(targets);
+    return;
+  }
+  m_page.cancelDrag();
+  if (!m_page.jobs().create<luciole::EmptyTrashService>()->service<luciole::EmptyTrashService>().deleteSelection(
+          targets
+      )) {
+    m_page.actionError("Could not start deleting the selection.");
   }
 }
 

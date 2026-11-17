@@ -211,6 +211,10 @@ namespace {
           P::ActivationMode, "activation_mode", [](S& s) -> auto& { return s.activationMode; }, {kActivationModes}
       ),
       describe(P::TypingMode, "typing_mode", [](S& s) -> auto& { return s.typingMode; }, {kTypingModes}),
+      describe(
+          P::ConfirmPermanentDeletion, "confirm_permanent_deletion",
+          [](S& s) -> auto& { return s.confirmPermanentDeletion; }
+      ),
       describe(P::SwitchToNewTab, "switch_to_new_tab", [](S& s) -> auto& { return s.switchToNewTab; }),
       describe(P::RestoreLastWindow, "restore_last_window", [](S& s) -> auto& { return s.restoreLastWindow; }),
       describe(P::ShowHidden, "show_hidden", [](S& s) -> auto& { return s.showHidden; }),

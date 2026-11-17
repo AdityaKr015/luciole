@@ -1407,7 +1407,7 @@ void BrowserPage::runAction(
       {Action::Trash, [](BrowserPage& page, const Call& call) { page.m_trashController.trashItems(call.targets); }},
       {Action::Restore, [](BrowserPage& page, const Call& call) { page.m_trashController.restore(call.targets); }},
       {Action::DeletePermanently,
-       [](BrowserPage& page, const Call& call) { page.m_trashController.openEmptyTrash(call.targets); }},
+       [](BrowserPage& page, const Call& call) { page.m_trashController.deleteItems(call.targets); }},
       {Action::Properties,
        [](BrowserPage& page, const Call& call) { page.m_propertiesController.show(call.targets); }},
       {Action::Compress,

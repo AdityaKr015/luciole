@@ -97,6 +97,7 @@ SettingsDialog::SettingsDialog(
        {"Filter current folder", luciole::TypingMode::Filter},
        {"Select names", luciole::TypingMode::Typeahead}}
   );
+  addBool(P::ConfirmPermanentDeletion, "Confirm permanent deletion");
   addBool(P::SwitchToNewTab, "Switch to new folder tabs");
   addBool(P::RestoreLastWindow, "Restore tabs from last closed window");
   card("Terminal");

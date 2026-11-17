@@ -29,7 +29,7 @@ namespace luciole {
     bool outsideTrash = false;
   };
 
-  // Confirmed permanent deletion, with separate preparation for Trash and ordinary entries.
+  // Permanent deletion of selected native/Trash entries and confirmed Empty Trash.
   class EmptyTrashService {
   public:
     EmptyTrashService();
@@ -39,6 +39,8 @@ namespace luciole {
     bool prepare();
     bool prepareSelection(std::vector<DirectoryEntry> selection);
     bool prepareDeletion(std::vector<DirectoryEntry> selection);
+    // Deletes native or Trash selections immediately after worker-side validation.
+    bool deleteSelection(std::vector<DirectoryEntry> selection);
     bool empty();
     void cancel();
     bool busy() const;
@@ -49,7 +51,9 @@ namespace luciole {
     void setChangedCallback(std::function<void()> callback);
 
   private:
-    bool prepareTargets(std::optional<std::vector<DirectoryEntry>> selection, bool outsideTrash = false);
+    bool prepareTargets(
+        std::optional<std::vector<DirectoryEntry>> selection, bool outsideTrash = false, bool immediate = false
+    );
     struct State;
     std::shared_ptr<State> m_state;
   };
