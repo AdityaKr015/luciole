@@ -48,4 +48,7 @@ namespace luciole {
   // GIO's content type of a local file, sniffing its contents when the name is not decisive; nullopt when GIO
   // reports none. Blocking: worker threads only.
   std::optional<std::string> sniffContentType(const std::string& path);
+  // Whether the link at path leads to a folder; false for a broken or unreadable link. It follows the link, so an
+  // unresponsive mount can block it without end and cancellation cannot interrupt it. Worker threads only.
+  bool linksToDirectory(const std::string& path);
 } // namespace luciole

@@ -513,3 +513,8 @@ std::optional<std::string> luciole::sniffContentType(const std::string& path) {
   const char* type = sniffed ? infoString(sniffed.get(), G_FILE_ATTRIBUTE_STANDARD_CONTENT_TYPE) : nullptr;
   return type != nullptr ? std::optional<std::string>(type) : std::nullopt;
 }
+
+bool luciole::linksToDirectory(const std::string& path) {
+  struct statx target{};
+  return ::statx(AT_FDCWD, path.c_str(), AT_NO_AUTOMOUNT, STATX_TYPE, &target) == 0 && S_ISDIR(target.stx_mode);
+}
