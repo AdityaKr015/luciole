@@ -2516,11 +2516,21 @@ std::unique_ptr<Flex> BrowserPage::buildTitlebar() {
        .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
        .height = 48.0F},
       std::move(title),
-      ui::button({.glyph = "minus", .variant = ButtonVariant::Ghost, .onClick = [this] { m_surface->minimize(); }}),
       ui::button(
-          {.glyph = "square", .variant = ButtonVariant::Ghost, .onClick = [this] { m_surface->toggleMaximized(); }}
+          {.glyph = "minus",
+           .glyphSize = Style::baseGlyphSize,
+           .variant = ButtonVariant::Ghost,
+           .onClick = [this] { m_surface->minimize(); }}
       ),
-      ui::button({.glyph = "x", .variant = ButtonVariant::Ghost, .onClick = [this] { m_surface->close(); }})
+      ui::button(
+          {.glyph = "square",
+           .glyphSize = Style::baseGlyphSize,
+           .variant = ButtonVariant::Ghost,
+           .onClick = [this] { m_surface->toggleMaximized(); }}
+      ),
+      ui::button({.glyph = "x", .glyphSize = Style::baseGlyphSize, .variant = ButtonVariant::Ghost, .onClick = [this] {
+                    m_surface->close();
+                  }})
   );
 }
 
@@ -2532,6 +2542,7 @@ std::unique_ptr<Flex> BrowserPage::buildToolbar() {
           ui::button(
               {.out = &m_back,
                .glyph = "arrow-left",
+               .glyphSize = Style::baseGlyphSize,
                .variant = ButtonVariant::Ghost,
                .tooltip = "Back (Alt+Left)",
                .onClick = [this] { dispatchAction(Action::Back); }}
@@ -2539,6 +2550,7 @@ std::unique_ptr<Flex> BrowserPage::buildToolbar() {
           ui::button(
               {.out = &m_forward,
                .glyph = "arrow-right",
+               .glyphSize = Style::baseGlyphSize,
                .variant = ButtonVariant::Ghost,
                .tooltip = "Forward (Alt+Right)",
                .onClick = [this] { dispatchAction(Action::Forward); }}
@@ -2546,6 +2558,7 @@ std::unique_ptr<Flex> BrowserPage::buildToolbar() {
           ui::button(
               {.out = &m_up,
                .glyph = "arrow-up",
+               .glyphSize = Style::baseGlyphSize,
                .variant = ButtonVariant::Ghost,
                .tooltip = "Parent folder (Alt+Up)",
                .onClick = [this] { dispatchAction(Action::Up); }}
@@ -2557,6 +2570,7 @@ std::unique_ptr<Flex> BrowserPage::buildToolbar() {
           ui::button(
               {.out = &m_newFolderButton,
                .glyph = "folder-plus",
+               .glyphSize = Style::baseGlyphSize,
                .variant = ButtonVariant::Ghost,
                .tooltip = "New Folder… (Ctrl+Shift+N)",
                .visible = choosing(),
@@ -2566,6 +2580,7 @@ std::unique_ptr<Flex> BrowserPage::buildToolbar() {
           ui::button(
               {.out = &m_sortButton,
                .glyph = "arrows-sort",
+               .glyphSize = Style::baseGlyphSize,
                .variant = ButtonVariant::Ghost,
                .tooltip = "Sort files",
                .onClick = [this] { m_menuController.openSortMenu(sceneRect(*m_sortButton)); }}
@@ -2587,6 +2602,8 @@ std::unique_ptr<Flex> BrowserPage::buildToolbar() {
                .selectedIndex = m_viewMode == luciole::ViewMode::Grid ? 0U
                    : m_viewMode == luciole::ViewMode::List            ? 1U
                                                                       : 2U,
+               // The segments are glyph-only, so the font size is the glyph size.
+               .fontSize = Style::baseGlyphSize,
                .compact = true,
                .onChange =
                    [this](std::size_t index) {
@@ -2599,6 +2616,7 @@ std::unique_ptr<Flex> BrowserPage::buildToolbar() {
           ui::button(
               {.out = &m_menuButton,
                .glyph = "dots-vertical",
+               .glyphSize = Style::baseGlyphSize,
                .variant = ButtonVariant::Ghost,
                .visible = !choosing(),
                .onClick = [this] { m_menuController.openMenu(); }}

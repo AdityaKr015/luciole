@@ -676,6 +676,7 @@ void LocationBarController::rebuildBreadcrumbs() {
       ui::button(
           {.out = &m_breadcrumbOverflow,
            .glyph = "dots",
+           .glyphSize = Style::baseGlyphSize,
            .controlHeight = Style::controlHeightSm,
            .variant = ButtonVariant::Ghost,
            .tooltip = "Parent folders",

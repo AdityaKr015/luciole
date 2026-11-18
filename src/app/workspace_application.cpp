@@ -1487,7 +1487,7 @@ void WorkspaceApplication::rebuildStrip(Host& host, const luciole::TabWindow& wi
         ui::button(
             {.out = &close,
              .glyph = "x",
-             .glyphSize = 14.0F,
+             .glyphSize = Style::baseGlyphSize,
              .controlHeight = 24.0F,
              .variant = ButtonVariant::Ghost,
              .customPalette = closeTabPalette(foreground),
@@ -1506,6 +1506,7 @@ void WorkspaceApplication::rebuildStrip(Host& host, const luciole::TabWindow& wi
       ui::button(
           {.out = &host.newTabButton,
            .glyph = "plus",
+           .glyphSize = Style::baseGlyphSize,
            .controlHeight = Style::controlHeightSm,
            .variant = ButtonVariant::Ghost,
            .tooltip = "New tab (Ctrl+T)",
@@ -1527,6 +1528,7 @@ void WorkspaceApplication::rebuildStrip(Host& host, const luciole::TabWindow& wi
       ui::button(
           {.out = &host.splitButton,
            .glyph = "layout-columns",
+           .glyphSize = Style::baseGlyphSize,
            .controlHeight = Style::controlHeightSm,
            .selected = window.secondary.has_value(),
            .variant = ButtonVariant::Ghost,
@@ -1540,6 +1542,7 @@ void WorkspaceApplication::rebuildStrip(Host& host, const luciole::TabWindow& wi
     strip->addChild(
         ui::button(
             {.glyph = "minus",
+             .glyphSize = Style::baseGlyphSize,
              .controlHeight = Style::controlHeightSm,
              .variant = ButtonVariant::Ghost,
              .tooltip = "Minimize window",
@@ -1549,6 +1552,7 @@ void WorkspaceApplication::rebuildStrip(Host& host, const luciole::TabWindow& wi
     strip->addChild(
         ui::button(
             {.glyph = "square",
+             .glyphSize = Style::baseGlyphSize,
              .controlHeight = Style::controlHeightSm,
              .variant = ButtonVariant::Ghost,
              .tooltip = "Toggle maximized",
@@ -1558,6 +1562,7 @@ void WorkspaceApplication::rebuildStrip(Host& host, const luciole::TabWindow& wi
     strip->addChild(
         ui::button(
             {.glyph = "x",
+             .glyphSize = Style::baseGlyphSize,
              .controlHeight = Style::controlHeightSm,
              .variant = ButtonVariant::Ghost,
              .tooltip = "Close window (Ctrl+Shift+W)",
