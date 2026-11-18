@@ -2179,6 +2179,15 @@ void BrowserPage::syncBrowser() {
         + (state.enabled ? "" : "\n" + std::string(state.reason))
     );
   }
+  const bool showEmptyTrash = !choosing() && snapshot.location && snapshot.location->isTrash();
+  m_emptyTrashButton->setVisible(showEmptyTrash);
+  m_emptyTrashButton->setParticipatesInLayout(showEmptyTrash);
+  const auto emptyTrashState = actionState(Action::EmptyTrash, request);
+  const std::string emptyTrashLabel(luciole::ActionRegistry::definition(Action::EmptyTrash).label);
+  m_emptyTrashButton->setEnabled(emptyTrashState.enabled);
+  m_emptyTrashButton->setTooltip(
+      emptyTrashState.enabled ? emptyTrashLabel : emptyTrashLabel + "\n" + std::string(emptyTrashState.reason)
+  );
   m_sidebar.sync(snapshot.location);
   m_statusBar.sync(m_miller.enabled());
   const bool empty = model.rows().empty();
@@ -2599,6 +2608,15 @@ std::unique_ptr<Flex> BrowserPage::buildToolbar() {
                .visible = choosing(),
                .participatesInLayout = choosing(),
                .onClick = [this] { dispatchAction(Action::CreateFolder); }}
+          ),
+          ui::button(
+              {.out = &m_emptyTrashButton,
+               .glyph = "trash-x",
+               .glyphSize = Style::baseGlyphSize,
+               .variant = ButtonVariant::Ghost,
+               .visible = false,
+               .participatesInLayout = false,
+               .onClick = [this] { dispatchAction(Action::EmptyTrash); }}
           ),
           ui::button(
               {.out = &m_sortButton,
