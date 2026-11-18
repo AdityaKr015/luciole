@@ -426,6 +426,10 @@ namespace {
        .label = "Folders first",
        .shortcut = "",
        .rule = [](const C& c, const R&) { return checked(c.model.sort().directoriesFirst); }},
+      {.action = A::HiddenLast,
+       .label = "Hidden last",
+       .shortcut = "",
+       .rule = [](const C& c, const R&) { return checked(c.model.sort().hiddenLast); }},
       {.action = A::Open, .label = "Open", .shortcut = "Enter", .scope = S::Targets, .rule = open},
       {.action = A::ContainingFolder,
        .label = "Show in containing folder",
@@ -654,6 +658,7 @@ bool luciole::chooserAction(BrowserAction action) {
   case A::Ascending:
   case A::Descending:
   case A::FoldersFirst:
+  case A::HiddenLast:
   case A::Open:
   case A::SelectAll:
   case A::InvertSelection:

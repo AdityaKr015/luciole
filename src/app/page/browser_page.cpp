@@ -1452,6 +1452,7 @@ void BrowserPage::runAction(
       {Action::Ascending, sort},
       {Action::Descending, sort},
       {Action::FoldersFirst, sort},
+      {Action::HiddenLast, sort},
       {Action::Open, [](BrowserPage& page, const Call& call) { page.openTargets(call.targets); }},
       {Action::ContainingFolder,
        [](BrowserPage& page, const Call& call) { page.showContaining(call.targets.front().location()); }},
@@ -1600,6 +1601,8 @@ void BrowserPage::sortAction(Action action) {
     options.descending = action == Action::Descending;
   } else if (action == Action::FoldersFirst) {
     options.directoriesFirst = !options.directoriesFirst;
+  } else if (action == Action::HiddenLast) {
+    options.hiddenLast = !options.hiddenLast;
   } else if (options.field != field) {
     options.field = field;
     options.descending = false;
@@ -2136,7 +2139,10 @@ void BrowserPage::syncBrowser() {
       : sort.field == luciole::SortField::Size ? (sort.descending ? "largest first" : "smallest first")
                                                : (sort.descending ? "Z to A" : "A to Z");
   m_menuButton->setTooltip(
-      std::format("View options: {}, {}{}", field, direction, sort.directoriesFirst ? " · Folders first" : "")
+      std::format(
+          "View options: {}, {}{}{}", field, direction, sort.directoriesFirst ? " · Folders first" : "",
+          sort.hiddenLast ? " · Hidden last" : ""
+      )
   );
   const bool grid = m_viewMode == luciole::ViewMode::Grid;
   m_viewSwitch->setSelectedIndex(grid ? 0 : m_viewMode == luciole::ViewMode::List ? 1 : 2);
