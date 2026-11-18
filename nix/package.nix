@@ -154,7 +154,6 @@ stdenv.mkDerivation (finalAttrs: {
     libwebp
     pixbufWithGlycin
     svgWithGlycin
-    libglycin
     glycin-loaders
     stb
     nlohmann_json
