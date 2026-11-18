@@ -770,10 +770,11 @@ namespace {
     }
     const auto& pending = initial[pictureIndex];
     TEST_CHECK(pending.metadataPending && !pending.size && !pending.identity());
-    for (const auto index : {rawIndex, hiddenIndex, pictureIndex, brokenIndex, folderLinkIndex}) {
-      session.requestMetadata(index, initial.brief(index).id, luciole::EntryDetails::All);
-    }
+    // Requests made while a monitor rescan runs are dropped; like the view, ask again on every pass.
     pump.until([&] {
+      for (const auto index : {rawIndex, hiddenIndex, pictureIndex, brokenIndex, folderLinkIndex}) {
+        session.requestMetadata(index, initial.brief(index).id, luciole::EntryDetails::All);
+      }
       const auto& entries = session.snapshot().entries;
       return entries.known(pictureIndex) != nullptr && entries.known(folderLinkIndex) != nullptr;
     });
@@ -808,16 +809,15 @@ namespace {
     // Walking beyond the working-set limit evicts facts, not catalogue names or retained snapshots.
     for (std::size_t begin = 0; begin < initial.size(); begin += 128) {
       const auto end = std::min(begin + 128, initial.size());
-      for (auto i = begin; i < end; ++i) {
-        session.requestMetadata(i, initial.brief(i).id);
-      }
       pump.until([&] {
+        bool known = true;
         for (auto i = begin; i < end; ++i) {
           if (!session.snapshot().entries.known(i)) {
-            return false;
+            session.requestMetadata(i, initial.brief(i).id);
+            known = false;
           }
         }
-        return true;
+        return known;
       });
     }
     std::size_t retained = 0;
