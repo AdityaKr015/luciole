@@ -33,7 +33,7 @@ namespace luciole {
     double cornerRadiusScale = 1.0; // 0 (square) to 2; 1 is the default rounding.
     BrowsePresentation presentation;
     int gridIconSize = kDefaultGridIconSize;
-    int listIconSize = 0; // 0 keeps the density's list icon size.
+    int listIconSize = 0; // 0 keeps kDefaultListIconSize.
     int sidebarWidth = kDefaultSidebarWidth;
     bool showSidebar = true;
     bool sidebarTree = false;

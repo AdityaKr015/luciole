@@ -1954,7 +1954,8 @@ float BrowserPage::gridHeight() const {
       ? luciole::gridMetrics(gridIconSize(), m_savedSettings.presentation, context).height
       : luciole::fileRowHeight(
             m_savedSettings.presentation, context,
-            luciole::fileRowIconSize(m_savedSettings.presentation, m_listIconSize)
+            m_viewMode == luciole::ViewMode::Miller ? luciole::millerRowIconSize(m_savedSettings.presentation)
+                                                    : luciole::fileRowIconSize(m_listIconSize)
         );
 }
 
@@ -1993,7 +1994,7 @@ int BrowserPage::zoomStep() const {
   if (m_viewMode == luciole::ViewMode::Grid) {
     return static_cast<int>(m_gridZoom);
   }
-  const auto size = static_cast<int>(luciole::fileRowIconSize(m_savedSettings.presentation, m_listIconSize));
+  const auto size = static_cast<int>(luciole::fileRowIconSize(m_listIconSize));
   return static_cast<int>(std::ranges::find(luciole::kListIconSizes, size) - luciole::kListIconSizes.begin());
 }
 
@@ -2003,7 +2004,7 @@ void BrowserPage::changeZoomStep(int requested) {
     return;
   }
   const auto step = std::clamp(requested, 0, static_cast<int>(luciole::kListIconSizes.size()) - 1);
-  // Staying on the density's size keeps the list on automatic sizing.
+  // Staying on the default size keeps the list on automatic sizing.
   if (step != zoomStep()) {
     changeListIconSize(luciole::kListIconSizes[static_cast<std::size_t>(step)]);
   }
