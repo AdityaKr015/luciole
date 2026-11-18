@@ -88,10 +88,9 @@ namespace {
       for (const auto column : luciole::kDefaultDetailsColumnOrder) {
         row->addChild(
             ui::label(
-                {.out = &m_details[static_cast<std::size_t>(column)],
-                 .fontSize = Style::fontSizeCaption,
-                 .maxLines = 1,
-                 .configure = [](Label& label) { label.setUseMarkup(false); }}
+                {.out = &m_details[static_cast<std::size_t>(column)], .maxLines = 1, .configure = [](Label& label) {
+                   label.setUseMarkup(false);
+                 }}
             )
         );
       }

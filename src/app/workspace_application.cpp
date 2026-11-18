@@ -352,6 +352,17 @@ void WorkspaceApplication::iconsChanged() {
   }
 }
 
+void WorkspaceApplication::fontChanged() {
+  for (auto& [id, page] : m_pages) {
+    (void)id;
+    page->fontChanged();
+  }
+  for (auto& [id, host] : m_hosts) {
+    (void)id;
+    host->surface.requestLayout();
+  }
+}
+
 bool WorkspaceApplication::updateIconColorScheme() {
   auto roots = IconResolver::colorSchemeThemeRoots();
   if (roots == m_iconColorSchemeRoots && (roots.empty() || palette == m_iconColorSchemePalette)) {

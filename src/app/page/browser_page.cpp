@@ -236,6 +236,14 @@ void BrowserPage::iconThemeChanged() {
   m_surface->requestUpdate();
 }
 
+void BrowserPage::fontChanged() {
+  m_browserDirty = true;
+  m_surface->requestLayout();
+  if (m_popupSurface) {
+    m_popupSurface->requestLayout();
+  }
+}
+
 bool BrowserPage::initialize(const std::optional<std::string>& initialLocation) {
   if (initialLocation) {
     (void)browser().openText(*initialLocation);

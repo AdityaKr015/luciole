@@ -90,6 +90,8 @@ public:
   void focus(wl_surface* surface, bool entered);
   void outputChanged(wl_output* output);
   void iconsChanged();
+  // The system font changed (already applied to the renderer): lays every window out again.
+  void fontChanged();
   bool running();
   void keyboard(const KeyboardEvent& event);
   void pointer(const PointerEvent& event);

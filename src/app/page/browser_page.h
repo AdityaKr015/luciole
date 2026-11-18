@@ -105,6 +105,8 @@ public:
   ~BrowserPage();
 
   void iconThemeChanged();
+  // The system font changed: rebuild the file views and lay out the window and its popup again.
+  void fontChanged();
 
   bool initialize(const std::optional<std::string>& initialLocation);
 

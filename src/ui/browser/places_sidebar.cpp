@@ -220,6 +220,7 @@ void luciole::PlacesSidebar::sync(std::optional<Location> current) {
 void luciole::PlacesSidebar::addDriveRow(const Drive& drive) {
   auto button = ui::button(
       {.glyph = drive.glyph,
+       .glyphSize = luciole::kSideListGlyphSize,
        .controlHeight = luciole::kSideListRowHeight,
        .contentAlign = ButtonContentAlign::Start,
        .variant = ButtonVariant::Ghost,
@@ -265,7 +266,9 @@ void luciole::PlacesSidebar::addDriveRow(const Drive& drive) {
   // the row removes the drive instead of opening it.
   Glyph* eject = nullptr;
   if (drive.removal != DriveRemoval::None) {
-    eject = static_cast<Glyph*>(raw->addChild(ui::glyph({.glyph = "player-eject", .glyphSize = Style::fontSizeBody})));
+    eject = static_cast<Glyph*>(
+        raw->addChild(ui::glyph({.glyph = "player-eject", .glyphSize = luciole::kSideListGlyphSize}))
+    );
   }
   struct EjectPointer {
     bool over = false;
@@ -320,6 +323,7 @@ void luciole::PlacesSidebar::addRow(
   auto button = ui::button(
       {.text = bookmark.label,
        .glyph = glyph,
+       .glyphSize = luciole::kSideListGlyphSize,
        .controlHeight = luciole::kSideListRowHeight,
        .contentAlign = ButtonContentAlign::Start,
        .variant = ButtonVariant::Ghost,
