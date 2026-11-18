@@ -415,6 +415,11 @@ void luciole::PlacesSidebar::setShowDrives(bool showDrives) {
     invalidate();
   }
 }
+void luciole::PlacesSidebar::setShowNetwork(bool showNetwork) {
+  if (std::exchange(m_showNetwork, showNetwork) != showNetwork) {
+    invalidate();
+  }
+}
 void luciole::PlacesSidebar::rebuild() {
   if (m_treeEnabled) {
     m_scroll->setVisible(false);
@@ -460,18 +465,7 @@ void luciole::PlacesSidebar::rebuild() {
         return drive.root && !m_pins.contains(*drive.root);
       });
     }
-    if (!m_pins.contains(Location::network())) {
-      drives.insert(
-          drives.begin(),
-          {.key = "network",
-           .label = "Network",
-           .glyph = "network",
-           .root = Location::network(),
-           .removal = DriveRemoval::None,
-           .usage = std::nullopt}
-      );
-    }
-    m_tree->setRoots(m_pins, drives);
+    m_tree->setRoots(m_pins, drives, m_showNetwork);
     m_tree->sync(m_current, m_showHidden);
     return;
   }
@@ -503,6 +497,9 @@ void luciole::PlacesSidebar::rebuild() {
   heading("Places", &m_heading);
   const auto& pins = m_pins.bookmarks();
   for (std::size_t i = 0; i < pins.size(); ++i) {
+    if (!m_showNetwork && pins[i].location == Location::network()) {
+      continue;
+    }
     const auto known = std::ranges::find_if(m_pins.userPlaces(), [&](const auto& place) {
       return place.bookmark.location == pins[i].location;
     });
@@ -513,9 +510,6 @@ void luciole::PlacesSidebar::rebuild() {
                                                  : known->glyphName,
         i
     );
-  }
-  if (!m_pins.contains(Location::network())) {
-    addRow({"Network", Location::network(), {}}, "network", std::nullopt);
   }
   if (m_showDrives && !m_drives.drives().empty()) {
     content->addChild(ui::column({.align = FlexAlign::Stretch, .paddingV = Style::spaceXs}, ui::separator({})));

@@ -194,7 +194,7 @@ luciole::SidebarTreeView::~SidebarTreeView() {
   m_model.setChangedCallback({});
   m_tree.setChangedCallback({});
 }
-void luciole::SidebarTreeView::setRoots(const PinService& pins, const std::vector<Drive>& drives) {
+void luciole::SidebarTreeView::setRoots(const PinService& pins, const std::vector<Drive>& drives, bool showNetwork) {
   DirectorySnapshot snapshot;
   snapshot.status = DirectoryStatus::Ready;
   std::vector<DirectoryEntry> entries;
@@ -204,6 +204,9 @@ void luciole::SidebarTreeView::setRoots(const PinService& pins, const std::vecto
   m_pinCount = pins.bookmarks().size();
   for (std::size_t i = 0; i < pins.bookmarks().size(); ++i) {
     const auto& pin = pins.bookmarks()[i];
+    if (!showNetwork && pin.location == Location::network()) {
+      continue;
+    }
     const auto prior = m_rootIds.find(pin.location.uri());
     const auto id = prior == m_rootIds.end() ? m_nextRoot++ : prior->second;
     roots.emplace(pin.location.uri(), id);
@@ -369,7 +372,7 @@ bool luciole::SidebarTreeView::key(std::uint32_t sym, std::uint32_t modifiers) {
     return true;
   }
   if (!modifiers && sym == XKB_KEY_F2 && m_pinIndices.contains(id)) {
-    if (rename && bookmark) {
+    if (rename && bookmark && bookmark->location != Location::network()) {
       rename(*bookmark);
     }
     return true;

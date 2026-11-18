@@ -406,6 +406,7 @@ private:
   MenuController m_menuController{
       *this,
       m_pins,
+      m_preferences,
       m_transferController,
       m_terminal,
       m_siblingCompletion,

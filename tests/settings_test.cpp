@@ -723,6 +723,29 @@ namespace {
     }
   }
 
+  void testNetworkVisibility() {
+    using P = luciole::BrowserPreference;
+    using State = luciole::AtomicWriteState;
+    Fixture fixture;
+    luciole::ConfigService config(fixture.paths());
+    TEST_CHECK(config.reload() && config.settings().browser.showNetwork);
+    const std::string base = "[browser]\nshow_network = false\n";
+    fixture.write("config.toml", base);
+    TEST_CHECK(config.reload() && !config.settings().browser.showNetwork);
+    TEST_CHECK(config.saveOverrides(std::array{luciole::OverrideEdit{P::ShowNetwork, true}}) == State::Durable);
+    TEST_CHECK(luciole::loadSettings(fixture.paths())->browser.showNetwork);
+    TEST_CHECK(config.saveOverrides(std::array{luciole::OverrideEdit{P::ShowNetwork, false}}) == State::Durable);
+    TEST_CHECK(!config.settings().browser.showNetwork);
+    TEST_CHECK(config.saveOverrides(std::array{luciole::OverrideEdit{P::ShowNetwork, std::nullopt}}) == State::Durable);
+    TEST_CHECK(!config.settings().browser.showNetwork && !read(fixture.paths().overrides).contains("show_network"));
+    TEST_CHECK(read(fixture.paths().base) == base);
+    for (const auto* value : {"0", "'false'", "1.0"}) {
+      fixture.write("config.toml", std::string("[browser]\nshow_network = ") + value + "\n");
+      const auto issues = luciole::validateConfigFile(fixture.paths().base);
+      TEST_CHECK(issues.size() == 1 && issues.front().key == "browser.show_network");
+    }
+  }
+
   void testAlwaysShowTabBar() {
     using Preference = luciole::BrowserPreference;
     using State = luciole::AtomicWriteState;
@@ -1233,6 +1256,7 @@ int main() {
     testListIconSize();
     testSidebarWidth();
     testSidebarVisibility();
+    testNetworkVisibility();
     testAlwaysShowTabBar();
     testAlwaysShowStatusBar();
     testPreviewVisibility();

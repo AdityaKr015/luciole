@@ -38,6 +38,7 @@ namespace luciole {
     bool showSidebar = true;
     bool sidebarTree = false;
     bool showDrives = true;
+    bool showNetwork = true;
     bool expandableFolders = false;
     bool showPreview = true;
     bool chooserShowPreview = false; // File picker windows keep their own preview visibility.
@@ -95,6 +96,7 @@ namespace luciole {
     ShowSidebar,
     SidebarTree,
     ShowDrives,
+    ShowNetwork,
     ExpandableFolders,
     ShowPreview,
     ChooserShowPreview,
@@ -176,6 +178,7 @@ namespace luciole {
     static constexpr PreferenceKey<bool> ShowSidebar{Id::ShowSidebar};
     static constexpr PreferenceKey<bool> SidebarTree{Id::SidebarTree};
     static constexpr PreferenceKey<bool> ShowDrives{Id::ShowDrives};
+    static constexpr PreferenceKey<bool> ShowNetwork{Id::ShowNetwork};
     static constexpr PreferenceKey<bool> ExpandableFolders{Id::ExpandableFolders};
     static constexpr PreferenceKey<bool> ShowPreview{Id::ShowPreview};
     static constexpr PreferenceKey<bool> ChooserShowPreview{Id::ChooserShowPreview};
