@@ -496,9 +496,9 @@ void BrowserPage::windowFocusChanged(bool entered) {
     return;
   }
   if (!entered) {
-    m_dialogDropdown.closeSelectDropdown();
     m_popupDispatcher.pointerLeave();
-    // A grabbed menu also takes focus from the parent; its compositor dismissal owns that lifetime.
+    // Grabbing menus and dialog dropdowns take keyboard focus from the parent when they map (KWin, Hyprland), so
+    // this leave is often their own; the compositor dismisses them when focus really moves to another client.
     return;
   }
   m_popupDispatcher.setTextInputContext(m_popupSurface->wlSurface(), &m_textInput, true, m_surface->wlSurface());
