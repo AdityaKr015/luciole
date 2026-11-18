@@ -418,19 +418,19 @@ void luciole::DirectoryModel::rebuildProjection(bool resort) {
     }
     m_rows.clear();
     std::unordered_set<EntryId> visited;
-    const auto append = [&](this auto&& self, EntryId id, std::size_t depth) -> void {
+    const auto append = [&](auto&& self, EntryId id, std::size_t depth) -> void {
       if (depth > 32 || !visited.insert(id).second) {
         return;
       }
       m_rows.push_back(id);
       if (const auto found = children.find(id); found != children.end()) {
         for (const auto child : found->second) {
-          self(child, depth + 1);
+          self(self, child, depth + 1);
         }
       }
     };
     for (const auto id : roots) {
-      append(id, 0);
+      append(append, id, 0);
     }
     m_rowBySource.assign(m_snapshot.entries.size(), kNoRow);
     for (std::size_t row = 0; row < m_rows.size(); ++row) {
