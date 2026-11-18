@@ -1379,6 +1379,7 @@ void BrowserPage::dispatchAction(Action action, const luciole::ActionRequest& re
     }
   }
   if (action == Action::Open) {
+    action = luciole::ActionRegistry::openAction(actionContext(), request);
     Logger("file-launch").debug("Open action dispatch ({} targets)", request.targets.size());
   }
   const auto state = actionState(action, request);
