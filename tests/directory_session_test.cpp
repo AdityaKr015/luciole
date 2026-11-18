@@ -20,6 +20,7 @@
 #include <memory>
 #include <mutex>
 #include <print>
+#include <source_location>
 #include <stdexcept>
 #include <string>
 #include <sys/stat.h>
@@ -63,10 +64,11 @@ namespace {
 
   class Pump {
   public:
-    void until(const std::function<bool()>& done) {
+    // Reports the caller on timeout, so a CI-only stall names the wait that never finished.
+    void until(const std::function<bool()>& done, std::source_location caller = std::source_location::current()) {
       const auto deadline = std::chrono::steady_clock::now() + 5s;
       while (!done()) {
-        TEST_CHECK(std::chrono::steady_clock::now() < deadline);
+        luciole::test::check(std::chrono::steady_clock::now() < deadline, "pump.until deadline", caller);
         once();
       }
     }
@@ -108,10 +110,14 @@ namespace {
   }
 
   // Ready, with sniffed content types published.
-  void ready(Pump& pump, const DirectorySession& session) {
-    pump.until([&session] {
-      return session.snapshot().status != DirectoryStatus::Loading && !session.snapshot().contentTypesPending;
-    });
+  void
+  ready(Pump& pump, const DirectorySession& session, std::source_location caller = std::source_location::current()) {
+    pump.until(
+        [&session] {
+          return session.snapshot().status != DirectoryStatus::Loading && !session.snapshot().contentTypesPending;
+        },
+        caller
+    );
     TEST_CHECK(session.snapshot().status == DirectoryStatus::Ready);
   }
 
