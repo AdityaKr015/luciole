@@ -17,6 +17,9 @@
 
 namespace {
   using P = luciole::BrowserPreference;
+  // Like Noctalia's settings rows: every row is at least one control tall, so toggle, slider, dropdown and stepper
+  // rows share one height whatever their control measures; descriptions grow a row past it.
+  constexpr float kRowPaddingV = 2.0F;
   std::vector<int> widths(int minimum, int maximum, bool automatic = false) {
     std::vector<int> result;
     if (automatic) {
@@ -213,7 +216,7 @@ SettingsDialog::SettingsDialog(
   addNumber(P::ThumbnailCacheMib, "Disk cache limit", {16, 8192}, "MiB");
   m_section->addChild(
       ui::row(
-          {.align = FlexAlign::Center, .gap = 8.0F, .paddingV = 6.0F},
+          {.align = FlexAlign::Center, .gap = 8.0F, .paddingV = kRowPaddingV, .minHeight = Style::controlHeight},
           ui::label({.text = "Cached thumbnails", .fontWeight = FontWeight::SemiBold, .flexGrow = 1.0F}),
           ui::button(
               {.out = &m_clearThumbnails,
@@ -290,7 +293,10 @@ void SettingsDialog::addRow(
     );
   }
   m_section->addChild(
-      ui::row({.align = FlexAlign::Center, .gap = 8.0F, .paddingV = 6.0F}, std::move(copy), std::move(control))
+      ui::row(
+          {.align = FlexAlign::Center, .gap = 8.0F, .paddingV = kRowPaddingV, .minHeight = Style::controlHeight},
+          std::move(copy), std::move(control)
+      )
   );
   m_rows[key.id()] = [this, key, show = std::move(show)] { show(luciole::preferenceValue(m_current, key)); };
 }
