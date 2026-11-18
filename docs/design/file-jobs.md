@@ -249,6 +249,8 @@ Any applied incomplete branch retires the entire action and retains every inacti
 
 Trash, selected deletion and restoration use explicit identity/preparation contracts in [trash_service.h](../../src/operations/trash_service.h), [restore_service.h](../../src/operations/restore_service.h) and [empty_trash_service.h](../../src/operations/empty_trash_service.h). Trash failure never falls through to permanent deletion. Recursive permission jobs and folder totals require explicit scope; selection alone starts neither traversal.
 
+The explicit totals consumers are the preview selection, the Properties card and the list view's bound folder rows ([BrowserController](../../src/browser/browser_controller.h)); nothing else starts a totals walk.
+
 [ArchiveService](../../src/operations/archive_service.h) owns bounded read-only catalogs, extraction/creation and temporary member-open leases. Validate archive paths and link semantics before staging; publication uses transfer conflicts/outcomes. System libarchive is the main backend, with a bounded system 7-Zip CLI for encrypted 7z input. Keep passwords in per-job memory, never persisted configuration. [PACKAGING.md](../../PACKAGING.md) owns provider requirements and compatibility limits.
 
 ## Opening and execution
