@@ -9,6 +9,7 @@
 #include "browser/tab_workspace.h"
 #include "config/state_store.h"
 #include "thumbnails/thumbnail_service.h"
+#include "ui/palette.h"
 
 #include <csignal>
 #include <map>
@@ -125,6 +126,9 @@ private:
   // The window dispatcher's focus moved: the pages hear it and the pane that holds it becomes the active one.
   void focusChanged(Host& host, InputArea* focused);
   void prepare(Host& host);
+  // Points SVG icons of a theme that follows the color scheme at the current palette; true when that changed
+  // what they draw.
+  bool updateIconColorScheme();
   WaylandConnection& m_connection;
   RenderContext& m_renderer;
   TextInputService& m_input;
@@ -140,6 +144,10 @@ private:
   luciole::DriveMonitor m_drives;
   bool m_drivesStarted = false;
   luciole::FileIconCache m_icons;
+  // What updateIconColorScheme() last applied.
+  std::vector<std::string> m_iconColorSchemeRoots;
+  Palette m_iconColorSchemePalette;
+  Signal<>::ScopedConnection m_paletteConnection;
   // One thumbnail pipeline for every page.
   luciole::ThumbnailService m_thumbnails;
   luciole::TabWorkspace m_model;

@@ -17,6 +17,7 @@
 #include "render/render_context.h"
 #include "render/scene/input_area.h"
 #include "render/scene/input_dispatcher.h"
+#include "system/icon_resolver.h"
 #include "ui/builders.h"
 #include "ui/controls/acl_editor.h"
 #include "ui/controls/bulk_acl_editor.h"
@@ -151,6 +152,12 @@ WorkspaceApplication::WorkspaceApplication(
     for (auto& [id, page] : m_pages) {
       (void)id;
       page->iconsReady();
+    }
+  });
+  updateIconColorScheme();
+  m_paletteConnection = paletteChanged().connect([this] {
+    if (updateIconColorScheme()) {
+      iconsChanged();
     }
   });
   m_thumbnails.setOptions(m_defaults.thumbnails);
@@ -337,11 +344,23 @@ void WorkspaceApplication::outputChanged(wl_output* output) {
 }
 
 void WorkspaceApplication::iconsChanged() {
+  updateIconColorScheme();
   m_icons.invalidate();
   for (auto& [id, page] : m_pages) {
     (void)id;
     page->iconThemeChanged();
   }
+}
+
+bool WorkspaceApplication::updateIconColorScheme() {
+  auto roots = IconResolver::colorSchemeThemeRoots();
+  if (roots == m_iconColorSchemeRoots && (roots.empty() || palette == m_iconColorSchemePalette)) {
+    return false;
+  }
+  m_icons.setColorScheme(roots, iconColorSchemeStylesheet(palette));
+  m_iconColorSchemeRoots = std::move(roots);
+  m_iconColorSchemePalette = palette;
+  return true;
 }
 
 bool WorkspaceApplication::running() {
