@@ -198,6 +198,8 @@ Private `.luciole-create-*` and `.luciole-history-*` directories can contain ret
 
 [nix/package.nix](nix/package.nix) defines the package. [flake.nix](flake.nix) exports packages, checks, the development shell, an overlay and NixOS/Home Manager/hjem modules; [default.nix](default.nix) provides non-flake entry points.
 
+End-user flake setup and module examples are in the [NixOS / Nix installation guide](docs/user/installation.md#nixos--nix).
+
 ```sh
 nix build path:.#default
 nix flake check path:.
