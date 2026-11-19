@@ -417,7 +417,8 @@ void luciole::FileViewAdapter::bindTile(Node& tile, std::size_t index, bool, boo
       );
     } else {
       std::string folderSize;
-      if (entry->type == luciole::FileType::Directory && !entry->symlink && m_folderSizes) {
+      const bool sizeColumnVisible = m_columns.visible(luciole::DetailsColumn::Size);
+      if (entry->type == luciole::FileType::Directory && !entry->symlink && m_folderSizes && sizeColumnVisible) {
         m_browser.requestFolderSize(id);
         if (const auto* totals = m_browser.folderSize(id)) {
           folderSize = entryFolderSizeText(*totals);

@@ -83,7 +83,6 @@ namespace luciole {
 
     // Folder sizes for the list view's bound rows: lazily walked, cached per entry, invalidated on publication.
     void requestFolderSize(EntryId id);
-    void releaseFolderSize(EntryId id);
     const FolderTotalsSnapshot* folderSize(EntryId id) const;
 
     std::uint64_t contextSerial() const { return m_contextSerial; }
@@ -126,7 +125,6 @@ namespace luciole {
       std::optional<std::string> etag;
     };
     bool folderSizeEligible(const DirectoryEntry& entry) const;
-    bool folderSizeClaimed(EntryId id) const;
     void pumpFolderSizes();
     void folderSizeSlotChanged(std::size_t index);
     void syncFolderSizes();
