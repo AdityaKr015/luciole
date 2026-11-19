@@ -4,6 +4,8 @@ Luciole needs a Wayland session with EGL/OpenGL ES support. Neither the Noctalia
 
 Prefer a distribution package when one is available; it provides the simplest installation and upgrade path. Otherwise, build from source as described below. Package maintainers will find dependencies and install layout in [PACKAGING.md](../../PACKAGING.md).
 
+**Trash and remote folders require GVfs.** Install and enable your distribution's GIO/GVfs services and the backends for SFTP/SSH, SMB or WebDAV as needed, with a working session D-Bus connection. An SSH client alone does not provide SFTP browsing. Without the relevant backend, a remote address can fail with **Operation not supported** before a login prompt appears. See [network folders](browsing.md#network-folders) for connection examples and troubleshooting, and the distribution-specific setup below.
+
 ## Arch Linux
 
 [`luciole-git`](https://aur.archlinux.org/packages/luciole-git) is available in the AUR and builds the latest development version. Install it with an AUR helper such as `paru` or `yay`:
@@ -19,6 +21,18 @@ Optional helpers for video, PDF and archive support and network locations are li
 ## NixOS
 
 The flake provides a package, NixOS, Home Manager and hjem modules, and a pinned development environment for `x86_64-linux` and `aarch64-linux`. Enable the `nix-command` and `flakes` experimental features in your Nix configuration before using the commands below.
+
+### GVfs for Trash and remote folders
+
+On NixOS, Trash and remote folders such as `sftp://`, `ssh://`, `smb://` and WebDAV require GVfs services. Installing the Luciole package alone does not enable those services. This also applies to `nix run` and installations managed through Home Manager or hjem.
+
+Add this to your **NixOS system configuration**:
+
+```nix
+services.gvfs.enable = true;
+```
+
+This is a [NixOS service option](https://github.com/NixOS/nixpkgs/blob/master/nixos/modules/services/desktops/gvfs.nix), not a Home Manager option. Rebuild your system, then restart Luciole. If the existing desktop session does not pick up the new service environment, log out and back in.
 
 ### Try Luciole
 
@@ -69,8 +83,6 @@ Import the module in your system configuration and enable Luciole:
 
 The Luciole module installs the application system-wide. Enable GVfs separately as shown above for Trash and network locations; Luciole's modules do not enable it automatically. Optional DNS-SD discovery also needs `services.avahi.enable = true;`.
 
-After enabling the services, restart Luciole. If your existing desktop session does not pick up the new service environment, log out and back in.
-
 Rebuild using your configuration's host name:
 
 ```sh
@@ -100,7 +112,7 @@ With Home Manager already configured, import Luciole's module in your home confi
 }
 ```
 
-Apply it with your usual Home Manager switch command, or rebuild NixOS when Home Manager is integrated into the system configuration. On NixOS, enable GVfs in the system configuration even when Home Manager installs Luciole. On other distributions, install and enable the distribution's GIO/GVfs services.
+Apply it with your usual Home Manager switch command, or rebuild NixOS when Home Manager is integrated into the system configuration. On NixOS, set `services.gvfs.enable = true;` in the system configuration, outside `home-manager.users` or `home.nix`, even when Home Manager installs Luciole. See [GVfs setup](#gvfs-for-trash-and-remote-folders). On other distributions, install and enable the distribution's GIO/GVfs services.
 
 ### hjem
 
