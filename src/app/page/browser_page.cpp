@@ -2518,6 +2518,7 @@ void BrowserPage::buildScene() {
                        .controlHeight = 24.0F,
                        .variant = ButtonVariant::Ghost,
                        .tooltip = "Close pane (Ctrl+Alt+W)",
+                       .followsCloseButtons = true,
                        .padding = Style::spaceXs,
                        .width = 24.0F,
                        .onClick =
