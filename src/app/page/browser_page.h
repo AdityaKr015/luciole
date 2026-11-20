@@ -268,6 +268,7 @@ private:
   MillerView& millerView() override;
   luciole::ViewMode viewMode() const override;
   float gridIconSize() const override;
+  float rowIconSize() const override;
   void captureViewAnchor() override;
   void resetFileView() override;
 
