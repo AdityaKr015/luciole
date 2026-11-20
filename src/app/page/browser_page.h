@@ -149,6 +149,10 @@ public:
   void focusChanged(InputArea* focused);
   void windowFocusChanged(bool entered);
   bool completeLocationOnTab(std::uint32_t modifiers);
+  bool sidebarKey(const KeyboardEvent& event);
+  bool sidebarOverlays(float x, float y) const;
+  void prepareSidebar(float width);
+  void arrangeSidebar(Renderer& renderer, float top, float height);
   void stampFocusKeys(Node& node);
   void duplicateFrom(BrowserPage& source);
   void open(const luciole::Location& location);

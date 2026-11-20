@@ -393,6 +393,10 @@ std::optional<DragDropController::DropTarget> DragDropController::dropTarget() c
   if (!m_externalHover && (!m_drag || m_drag->sourcePin)) {
     return std::nullopt;
   }
+  if (m_sidebar.drawerContains(m_page.pointerX(), m_page.pointerY())
+      && (!m_sidebar.visible() || !m_sidebar.places().containsScenePoint(m_page.pointerX(), m_page.pointerY()))) {
+    return std::nullopt;
+  }
   if (const auto place =
           m_sidebar.visible() ? m_sidebar.places().dropFolderAt(m_page.pointerX(), m_page.pointerY()) : std::nullopt) {
     if (validDropFolder(place->location)) {
