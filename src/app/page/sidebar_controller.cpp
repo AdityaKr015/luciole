@@ -172,21 +172,16 @@ void SidebarController::configureCallbacks() {
 
 void SidebarController::openDrive(const std::string& key) {
   m_page.setActionMessage({});
-  m_drives.mount(
-      key, [this, lifetime = std::weak_ptr(m_lifetime)](std::optional<luciole::Location> root, std::string error) {
-        if (lifetime.expired()) {
-          return;
-        }
-        if (!root) {
-          m_page.actionError(
-              error.empty() ? "Could not mount the drive." : std::format("Could not mount the drive: {}", error)
-          );
-          return;
-        }
-        m_page.browser().open(*root);
-        m_page.dispatcher().setFocus(m_page.fileList()->focusArea());
-      }
-  );
+  m_page.browser().openDrive(m_drives, key, [this, lifetime = std::weak_ptr(m_lifetime)](std::string error) {
+    if (lifetime.expired()) {
+      return;
+    }
+    if (!error.empty()) {
+      m_page.actionError(std::format("Could not mount the drive: {}", error));
+      return;
+    }
+    m_page.dispatcher().setFocus(m_page.fileList()->focusArea());
+  });
 }
 
 void SidebarController::removeDrive(const std::string& key) {

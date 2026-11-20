@@ -38,6 +38,14 @@ Miller follows ordinary folder selection immediately. Its Alt inspection gesture
 
 This follows [Dolphin's Alt+activation Properties handler](https://github.com/KDE/dolphin/blob/master/src/views/dolphinview.cpp) and its [single/double-click policy, delivered in 25.12](https://bugs.kde.org/show_bug.cgi?id=512383). It supplements the existing keyboard/context-menu action rather than creating another Properties implementation.
 
+## Device mounting and unlock requests
+
+[DriveMonitor](../../src/fs/drive_monitor.h) resolves a captured sidebar key to the current GVolume or mounted root. [BrowserController](../../src/browser/browser_mount.cpp) owns its device request through the same [LocationMount](../../src/fs/location_mount.h) instance used for browsing-location authentication. A device request uses g_volume_mount with a cancellable and an interactive [MountInteraction](../../src/fs/mount_interaction.h); GIO/GVfs/UDisks owns encryption, retries, authorization and credential-service integration. No cryptsetup subprocess, shell Polkit agent or secret configuration storage is introduced.
+
+Device prompts use the shared MountDialog with Unlock drive/Unlock labels and literal provider text. Only a successful mount with an available root navigates. The existing folder remains visible while the request is pending. Context changes, replacement requests and controller destruction cancel the request and invalidate its completion token. A disconnected underlying GDrive cancels its token and clears its prompt immediately. An encrypted GVolume can be removed and replaced during a successful unlock, so that signal alone must not cancel mounting. Other volume disappearance remains provider-owned through aborted prompts and mount completion. Request-owned volume, drive, operation and cancellation references survive until GIO's completion is consumed; disconnect-signal handlers disconnect with the request. Cancelled or obsolete completions cannot navigate, even if a provider returns late success. Supported provider question choices use the same captured prompt IDs. Process-blocked removal dialogs and explicit encrypted-device locking remain separate scope.
+
+This follows [Nautilus' sidebar mount_volume](https://github.com/GNOME/nautilus/blob/main/src/nautilus-sidebar.c), which supplies an interactive mount operation and session credential retention to g_volume_mount. Luciole uses Noctalia controls and the existing per-pane context guards. [GVfs' UDisks volume provider](https://github.com/GNOME/gvfs/blob/master/monitor/udisks2/gvfsudisks2volume.c) owns the LUKS unlock/mount sequence. These are primary-source comparisons, not a live Nautilus test.
+
 ## Drive removal and history ownership
 
 Completed Transfer, Create, Rename and Batch Rename services hand their optional receipt to OperationHub. Finished reports and open result dialogs retain outcome facts without another receipt reference. Worker replay captures keep their in-flight proofs.
