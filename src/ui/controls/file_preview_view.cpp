@@ -6,6 +6,7 @@
 #include "ui/controls/button.h"
 #include "ui/controls/card_style.h"
 #include "ui/controls/file_metadata_view.h"
+#include "ui/controls/folder_totals_view.h"
 #include "ui/controls/label.h"
 #include "ui/dialogs/dialog_chrome.h"
 #include "ui/palette.h"
@@ -17,6 +18,14 @@
 namespace {
   // Type icon shown in place of a preview that is loading or cannot render.
   constexpr float kFallbackIconSize = 96.0F;
+
+  // One compact contents line for a selected folder; Properties keeps the detailed inspection notes.
+  std::string folderContentsLine(const luciole::FolderTotalsSnapshot& totals) {
+    const char* phase = totals.phase == luciole::FolderTotalsPhase::Running ? "Calculating… · "
+        : totals.partial()                                                  ? "Partial result · "
+                                                                            : "";
+    return std::format("{}{} · {}", phase, folderTotalsSizeText(totals), folderTotalsCountsText(totals));
+  }
 } // namespace
 
 FilePreviewView::FilePreviewView(
@@ -170,6 +179,9 @@ void FilePreviewView::sync(
     if (entry->size && entry->type != luciole::FileType::Directory) {
       const luciole::GString size(g_format_size_full(*entry->size, G_FORMAT_SIZE_IEC_UNITS));
       metadata.push_back({"File size", size.get()});
+    }
+    if (snapshot.totals.phase != luciole::FolderTotalsPhase::Idle) {
+      metadata.push_back({"Contents", folderContentsLine(snapshot.totals)});
     }
     if (entry->modifiedSeconds && *entry->modifiedSeconds <= G_MAXINT64) {
       const std::unique_ptr<GDateTime, decltype(&g_date_time_unref)> date(
