@@ -644,10 +644,11 @@ void luciole::BrowserController::publish(DirectorySnapshot snapshot) {
 }
 
 void luciole::BrowserController::releaseLocation(const Location& root) {
+  // Before the tree drops expanded rows under root, so their walks are still found and cancelled.
+  releaseFolderSizesUnder(root);
   if (m_tree) {
     m_tree->releaseLocation(root);
   }
-  releaseFolderSizesUnder(root);
 }
 
 bool luciole::BrowserController::folderSizeEligible(const DirectoryEntry& entry) const {
@@ -689,6 +690,7 @@ void luciole::BrowserController::syncFolderSizes() {
   for (auto& slot : m_folderSizeSlots) {
     if (slot.running && slot.id != 0 && m_model.entry(slot.id) == nullptr) {
       slot.id = 0;
+      slot.service.cancel();
     }
   }
 }

@@ -39,7 +39,7 @@ namespace luciole {
     void setActivateCallback(std::function<void(EntryId)> callback) { m_activate = std::move(callback); }
     void setCutPredicate(std::function<bool(const Location&)> predicate) { m_cut = std::move(predicate); }
     // List rows only; other adapters stay dormant.
-    void setFolderSizeEnabled(bool enabled) { m_folderSizes = enabled; };
+    void setFolderSizeEnabled(bool enabled) { m_folderSizes = enabled; }
     void setActivationMode(ActivationMode mode) { m_activationMode = mode; }
     void setPresentation(BrowsePresentation presentation, std::optional<bool> readOnly) {
       m_presentation = presentation;
