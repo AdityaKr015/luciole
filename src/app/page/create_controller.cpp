@@ -106,9 +106,9 @@ void CreateController::openCreateItem(
   const auto display = source ? luciole::filenameDisplayText(source->name) : std::string{};
   auto editor = std::make_unique<NameDialog>(
       m_page.dialogWidth(DialogWidth::Small),
-      kind == luciole::CreateKind::Folder ? "New folder"
-          : document                      ? "New document"
-                                          : "New file",
+      kind == luciole::CreateKind::Folder ? "New Folder"
+          : document                      ? "New Document"
+                                          : "New File",
       kind == luciole::CreateKind::Folder ? "folder-plus" : "file-plus",
       source                                    ? display
           : kind == luciole::CreateKind::Folder ? "New Folder"
@@ -140,7 +140,7 @@ void CreateController::openImagePaste(luciole::ClipboardImage image, luciole::Lo
     return;
   }
   auto editor = std::make_unique<NameDialog>(
-      m_page.dialogWidth(DialogWidth::Small), "Paste image", "photo", "Pasted image." + image.extension, "",
+      m_page.dialogWidth(DialogWidth::Small), "Paste Image", "photo", "Pasted image." + image.extension, "",
       luciole::filenameProblem, [this](std::string name) { submitCreateItem(std::move(name)); },
       [this] { m_page.dismissPopup(); }, "Save", "Saving…"
   );

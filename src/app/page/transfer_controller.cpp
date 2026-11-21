@@ -448,7 +448,7 @@ void TransferController::syncConflict() {
   auto root = ui::column(
       {.align = FlexAlign::Stretch},
       luciole::dialogHeader(
-          "Item already exists", "alert-triangle", [choose] { choose(luciole::TransferConflictChoice::Cancel); }
+          "Item Already Exists", "alert-triangle", [choose] { choose(luciole::TransferConflictChoice::Cancel); }
       ),
       ui::label(
           {.text = conflict->name,
@@ -511,7 +511,7 @@ void TransferController::syncConflict() {
           ),
           ui::button(
               {.out = &keepBoth,
-               .text = "Keep both",
+               .text = "Keep Both",
                .variant = ButtonVariant::Primary,
                .onClick = [choose] { choose(luciole::TransferConflictChoice::KeepBoth); }}
           ),

@@ -1717,7 +1717,7 @@ void BrowserPage::unpinTargets(const std::vector<luciole::DirectoryEntry>& targe
 
 void BrowserPage::openPatternSelection(const luciole::ActionRequest& request) {
   auto editor = std::make_unique<NameDialog>(
-      dialogWidth(DialogWidth::Small), "Select by pattern", "cursor-text", m_selectionPattern,
+      dialogWidth(DialogWidth::Small), "Select by Pattern", "cursor-text", m_selectionPattern,
       "Use * for any text and ? for one character. Matches visible names, ignoring case.",
       luciole::selectionPatternProblem,
       [this, request](std::string pattern) {
