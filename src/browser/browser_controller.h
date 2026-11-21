@@ -4,6 +4,7 @@
 #include "fs/cancel_token.h"
 #include "fs/folder_totals.h"
 #include "fs/location_mount.h"
+#include "fs/native_listing.h"
 #include "fs/recursive_search.h"
 
 #include <array>
@@ -24,7 +25,12 @@ namespace luciole {
 
   class BrowserController {
   public:
-    BrowserController(SortOptions sort, bool showHidden, bool showBackups = true);
+    BrowserController(
+        SortOptions sort, bool showHidden, bool showBackups = true,
+        const FolderTotalsService::NetworkFilesystemCheck& networkCheck = [](const std::string& path) {
+          return luciole::networkFilesystem(path);
+        }
+    );
     ~BrowserController();
     BrowserController(const BrowserController&) = delete;
     BrowserController& operator=(const BrowserController&) = delete;

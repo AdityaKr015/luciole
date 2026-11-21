@@ -20,6 +20,7 @@ struct luciole::FolderTotalsService::State : std::enable_shared_from_this<State>
   CancelToken cancel;
   std::shared_ptr<Progress> progress;
   std::function<void()> changed;
+  NetworkFilesystemCheck check;
   GSource* timer = nullptr;
   std::uint64_t serial = 0;
   bool alive = true, running = false;
@@ -92,8 +93,22 @@ bool luciole::FolderTotalsService::start(std::span<const DirectoryEntry> entries
   state->startTimer();
   runJob<FolderTotalsSnapshot>(
       state->cancel,
-      [roots = std::move(roots), token = state->cancel, progress = state->progress,
-       limited = state->snapshot.limited] mutable {
+      [roots = std::move(roots), token = state->cancel, progress = state->progress, limited = state->snapshot.limited,
+       check = state->check] mutable {
+        if (check && std::ranges::any_of(roots, [&check](const auto& root) {
+              const auto native = root.location().nativePath();
+              return native && check(*native);
+            })) {
+          FolderTotalsSnapshot snapshot;
+          snapshot.phase = FolderTotalsPhase::Unsupported;
+          snapshot.unsupported = roots.size();
+          snapshot.limited = limited;
+          {
+            const std::scoped_lock lock(progress->mutex);
+            progress->value = snapshot;
+          }
+          return snapshot;
+        }
         return walkFolderTotals(std::move(roots), token, [progress, limited](const FolderTotalsSnapshot& value) {
           const std::scoped_lock lock(progress->mutex);
           progress->value = value;
@@ -140,4 +155,7 @@ bool luciole::FolderTotalsService::busy() const { return m_state->running; }
 const luciole::FolderTotalsSnapshot& luciole::FolderTotalsService::snapshot() const { return m_state->snapshot; }
 void luciole::FolderTotalsService::setChangedCallback(std::function<void()> changed) {
   m_state->changed = std::move(changed);
+}
+void luciole::FolderTotalsService::setNetworkFilesystemCheck(NetworkFilesystemCheck check) {
+  m_state->check = std::move(check);
 }

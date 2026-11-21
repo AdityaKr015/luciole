@@ -1037,6 +1037,29 @@ namespace {
     TEST_CHECK(!browser.folderSize(sizedId));
   }
 
+  void testFolderSizeNetworkRefusal() {
+    Fixture fixture;
+    fs::create_directory(fixture.path / "remote-ish");
+    Pump pump;
+    int probeCalls = 0;
+    BrowserController browser({}, false, true, [&](const std::string&) {
+      ++probeCalls;
+      return true;
+    });
+    browser.open(Location::fromPath(fixture.path.native()));
+    pump.ready(browser);
+    const auto refusalId = id(browser, "remote-ish");
+    browser.requestFolderSize(refusalId);
+    pump.until([&] { return browser.folderSize(refusalId) != nullptr; });
+    TEST_CHECK(browser.folderSize(refusalId)->phase == luciole::FolderTotalsPhase::Unsupported);
+    TEST_CHECK(luciole::entryFolderSizeText(*browser.folderSize(refusalId)).empty());
+    TEST_CHECK(probeCalls == 1);
+    const int settle = probeCalls;
+    browser.requestFolderSize(refusalId);
+    pump.drainFor(150ms);
+    TEST_CHECK(probeCalls == settle && browser.folderSize(refusalId) != nullptr);
+  }
+
 } // namespace
 
 int main() {
@@ -1051,6 +1074,7 @@ int main() {
     testBackupPolicyAndSearch();
     testSearchLifetimeAndPartialFailure();
     testFolderSizes();
+    testFolderSizeNetworkRefusal();
     testLocationPresentation();
     testHistoryState();
     testDemandMetadataAndBulkFallback();

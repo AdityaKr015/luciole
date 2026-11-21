@@ -25,7 +25,9 @@ struct luciole::BrowserController::ActivationState {
   std::function<void(EntryId, const Location&, std::uint64_t, const std::expected<FileType, FileError>&)> resolved;
 };
 
-luciole::BrowserController::BrowserController(SortOptions sort, bool showHidden, bool showBackups)
+luciole::BrowserController::BrowserController(
+    SortOptions sort, bool showHidden, bool showBackups, const FolderTotalsService::NetworkFilesystemCheck& networkCheck
+)
     : m_activation(std::make_shared<ActivationState>()) {
   m_activation->resolved = [this](
                                EntryId id, const Location& target, std::uint64_t context,
@@ -79,6 +81,7 @@ luciole::BrowserController::BrowserController(SortOptions sort, bool showHidden,
   });
   for (std::size_t index = 0; index < m_folderSizeSlots.size(); ++index) {
     m_folderSizeSlots[index].service.setChangedCallback([this, index] { folderSizeSlotChanged(index); });
+    m_folderSizeSlots[index].service.setNetworkFilesystemCheck(networkCheck);
   }
   updateMetadataPolicy();
 }
@@ -722,7 +725,8 @@ void luciole::BrowserController::folderSizeSlotChanged(std::size_t index) {
     return;
   }
   slot.running = false;
-  if (totals.phase == FolderTotalsPhase::Complete && slot.id != 0) {
+  const bool cacheable = totals.phase == FolderTotalsPhase::Complete || totals.phase == FolderTotalsPhase::Unsupported;
+  if (cacheable && slot.id != 0) {
     if (const auto* entry = m_model.entry(slot.id)) {
       m_folderSizeCache.insert_or_assign(slot.id, FolderSizeCache{totals, entry->etag()});
     }
