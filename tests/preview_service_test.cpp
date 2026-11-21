@@ -106,7 +106,7 @@ namespace {
     luciole::ThumbnailService thumbnails;
     luciole::PreviewService preview(thumbnails);
     const auto folder = [](const std::filesystem::path& path) {
-      auto result = entry(path, "inode/directry");
+      auto result = entry(path, "inode/directory");
       result.type = luciole::FileType::Directory;
       return result;
     };
@@ -123,8 +123,8 @@ namespace {
         && preview.snapshot().totals.bytes == 5
         && !preview.snapshot().totals.partial()
     );
-    // Selecting the same folder again keeps its completed totals.
-    preview.show(folder(tree), 512);
+    // Reselecting the same folder at a larger preview size keeps its completed totals.
+    preview.show(folder(tree), 1024);
     TEST_CHECK(preview.snapshot().totals.phase == luciole::FolderTotalsPhase::Complete);
     const auto other = root / "totals-other";
     std::filesystem::create_directory(other);
@@ -149,6 +149,11 @@ namespace {
     preview.show(entry(file), 512);
     TEST_CHECK(preview.snapshot().totals.phase == luciole::FolderTotalsPhase::Idle);
     wait([&] { return !preview.busy(); });
+    TEST_CHECK(preview.snapshot().totals.phase == luciole::FolderTotalsPhase::Idle);
+    // Folders the native walk cannot count, such as Trash, show no contents row.
+    auto trashed = folder(tree);
+    trashed.place = luciole::Location::trash();
+    preview.show(trashed, 512);
     TEST_CHECK(preview.snapshot().totals.phase == luciole::FolderTotalsPhase::Idle);
     preview.clear();
     TEST_CHECK(preview.snapshot().totals.phase == luciole::FolderTotalsPhase::Idle);

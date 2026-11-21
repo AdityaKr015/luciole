@@ -149,6 +149,10 @@ public:
   void focusChanged(InputArea* focused);
   void windowFocusChanged(bool entered);
   bool completeLocationOnTab(std::uint32_t modifiers);
+  bool sidebarKey(const KeyboardEvent& event);
+  bool sidebarOverlays(float x, float y) const;
+  void prepareSidebar(float width);
+  void arrangeSidebar(Renderer& renderer, float top, float height);
   void stampFocusKeys(Node& node);
   void duplicateFrom(BrowserPage& source);
   void open(const luciole::Location& location);
@@ -264,12 +268,15 @@ private:
   MillerView& millerView() override;
   luciole::ViewMode viewMode() const override;
   float gridIconSize() const override;
+  float rowIconSize() const override;
   void captureViewAnchor() override;
   void resetFileView() override;
 
   void operationProgressTick();
 
   void showContaining(const luciole::Location& location);
+  // Opens the folder holding `link`'s target and selects it, once a worker has read the link.
+  void showLinkTarget(const luciole::Location& link);
 
   void applySettings(const luciole::BrowserSettings& settings, bool force) override;
 
@@ -285,8 +292,9 @@ private:
   void applySort(luciole::SortOptions options);
   void changeSort(luciole::SortOptions options);
   void changeGridZoom(int requested);
-  void changeListIconSize(int size);
-  // The current view's step in its icon sizes; only Grid and List views zoom.
+  // List and Columns rows; 0 keeps the view's default size.
+  void changeRowIconSize(int size);
+  // The current view's step in its icon sizes.
   int zoomStep() const;
   void changeZoomStep(int requested);
   void resetZoom();
@@ -400,7 +408,7 @@ private:
   CreateController m_createController{*this, m_templates, m_submenus};
   MountController m_mountController{*this};
   ArchiveController m_archiveController{*this, m_launcher, m_icons, m_connection};
-  TransferController m_transferController{*this, [this] { operationProgressTick(); }};
+  TransferController m_transferController{*this, [this] { operationProgressTick(); }, m_createController};
   OperationsController m_operations{*this, m_hub, [this](luciole::JobId id, bool retry) {
                                       if (m_operationRequest) {
                                         m_operationRequest(id, retry);
@@ -436,6 +444,7 @@ private:
   StatusBarController m_statusBar{*this, m_pins, m_settingsController, m_fileKeys};
   std::size_t m_gridZoom = 1;
   int m_listIconSize = 0;
+  int m_millerIconSize = 0;
   double m_zoomScroll = 0;
   luciole::ViewMode m_viewMode;
   luciole::WaylandTextClipboard& m_clipboard;
@@ -477,6 +486,7 @@ private:
   Button* m_up = nullptr;
   Button* m_newFolderButton = nullptr;
   Button* m_sortButton = nullptr;
+  Button* m_emptyTrashButton = nullptr;
   bool m_browserDirty = true;
   std::unique_ptr<PopupSurface> m_popupSurface;
   PopupDismiss m_popupDismiss = PopupDismiss::OutsideClick;

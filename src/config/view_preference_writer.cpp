@@ -213,6 +213,9 @@ void luciole::ViewPreferenceWriter::saveGridIconSize(int size) {
 void luciole::ViewPreferenceWriter::saveListIconSize(int size) {
   m_state->queue({{BrowserPreference::ListIconSize, size}});
 }
+void luciole::ViewPreferenceWriter::saveMillerIconSize(int size) {
+  m_state->queue({{BrowserPreference::MillerIconSize, size}});
+}
 void luciole::ViewPreferenceWriter::saveSidebarWidth(int width) {
   m_state->queue({{BrowserPreference::SidebarWidth, width}});
 }
@@ -230,6 +233,7 @@ void luciole::ViewPreferenceWriter::saveSort(SortOptions options) {
       {BrowserPreference::SortBy, options.field},
       {BrowserPreference::SortDescending, options.descending},
       {BrowserPreference::DirectoriesFirst, options.directoriesFirst},
+      {BrowserPreference::HiddenLast, options.hiddenLast},
   });
 }
 bool luciole::ViewPreferenceWriter::busy() const {

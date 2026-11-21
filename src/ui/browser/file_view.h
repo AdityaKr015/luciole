@@ -46,8 +46,8 @@ namespace luciole {
       m_readOnly = readOnly;
     }
     void setGridIconSize(float size) { m_gridIconSize = size; }
-    // List rows only; 0 keeps the default size.
-    void setListIconSize(int size) { m_listIconSize = size; }
+    // List and Columns rows; 0 keeps the view's default size.
+    void setRowIconSize(int size) { m_rowIconSize = size; }
     void setDetailsColumns(DetailsColumns columns) { m_columns = columns; }
     void setDetailsColumnOrder(DetailsColumnOrder order) { m_columnOrder = order; }
     void setColumnActive(bool active) { m_columnActive = active; }
@@ -81,7 +81,7 @@ namespace luciole {
     std::optional<bool> m_readOnly;
     bool m_folderSizes = false;
     float m_gridIconSize = static_cast<float>(kDefaultGridIconSize);
-    int m_listIconSize = 0;
+    int m_rowIconSize = 0;
     DetailsColumns m_columns;
     DetailsColumnOrder m_columnOrder = kDefaultDetailsColumnOrder;
     std::vector<EntryId> m_areaRows;

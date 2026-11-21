@@ -19,6 +19,7 @@ namespace luciole {
     SortOptions sort;
     ActivationMode activationMode = ActivationMode::DoubleClick;
     TypingMode typingMode = TypingMode::Search;
+    bool singleClickLocationEdit = false;
     bool confirmPermanentDeletion = true;
     bool showPermanentDeletion = false;
     bool switchToNewTab = true;
@@ -29,11 +30,13 @@ namespace luciole {
     bool alwaysShowTabBar = true;
     bool alwaysShowStatusBar = false;
     bool compactMenus = true;
+    bool showCloseButtons = true;
     double backgroundOpacity = 1.0; // 0 (clear) to 1 (opaque) for the window background.
     double cornerRadiusScale = 1.0; // 0 (square) to 2; 1 is the default rounding.
     BrowsePresentation presentation;
     int gridIconSize = kDefaultGridIconSize;
-    int listIconSize = 0; // 0 keeps kDefaultListIconSize.
+    int listIconSize = 0;   // 0 keeps kDefaultListIconSize.
+    int millerIconSize = 0; // 0 keeps the density's Columns icon size.
     int sidebarWidth = kDefaultSidebarWidth;
     bool showSidebar = true;
     bool sidebarTree = false;
@@ -69,6 +72,7 @@ namespace luciole {
   enum class BrowserPreferenceId : std::uint8_t {
     ActivationMode,
     TypingMode,
+    SingleClickLocationEdit,
     ConfirmPermanentDeletion,
     ShowPermanentDeletion,
     SwitchToNewTab,
@@ -78,14 +82,17 @@ namespace luciole {
     AlwaysShowTabBar,
     AlwaysShowStatusBar,
     CompactMenus,
+    ShowCloseButtons,
     BackgroundOpacity,
     CornerRadiusScale,
     SortBy,
     SortDescending,
     DirectoriesFirst,
+    HiddenLast,
     ViewMode,
     GridIconSize,
     ListIconSize,
+    MillerIconSize,
     Density,
     FilenameTruncation,
     ShowSizeCaption,
@@ -151,6 +158,7 @@ namespace luciole {
     static constexpr PreferenceKey<std::string> TerminalCommand{Id::TerminalCommand};
     static constexpr PreferenceKey<luciole::ActivationMode> ActivationMode{Id::ActivationMode};
     static constexpr PreferenceKey<luciole::TypingMode> TypingMode{Id::TypingMode};
+    static constexpr PreferenceKey<bool> SingleClickLocationEdit{Id::SingleClickLocationEdit};
     static constexpr PreferenceKey<bool> ConfirmPermanentDeletion{Id::ConfirmPermanentDeletion};
     static constexpr PreferenceKey<bool> ShowPermanentDeletion{Id::ShowPermanentDeletion};
     static constexpr PreferenceKey<bool> SwitchToNewTab{Id::SwitchToNewTab};
@@ -160,14 +168,17 @@ namespace luciole {
     static constexpr PreferenceKey<bool> AlwaysShowTabBar{Id::AlwaysShowTabBar};
     static constexpr PreferenceKey<bool> AlwaysShowStatusBar{Id::AlwaysShowStatusBar};
     static constexpr PreferenceKey<bool> CompactMenus{Id::CompactMenus};
+    static constexpr PreferenceKey<bool> ShowCloseButtons{Id::ShowCloseButtons};
     static constexpr PreferenceKey<double> BackgroundOpacity{Id::BackgroundOpacity};
     static constexpr PreferenceKey<double> CornerRadiusScale{Id::CornerRadiusScale};
     static constexpr PreferenceKey<luciole::SortField> SortBy{Id::SortBy};
     static constexpr PreferenceKey<bool> SortDescending{Id::SortDescending};
     static constexpr PreferenceKey<bool> DirectoriesFirst{Id::DirectoriesFirst};
+    static constexpr PreferenceKey<bool> HiddenLast{Id::HiddenLast};
     static constexpr PreferenceKey<luciole::ViewMode> ViewMode{Id::ViewMode};
     static constexpr PreferenceKey<int> GridIconSize{Id::GridIconSize};
     static constexpr PreferenceKey<int> ListIconSize{Id::ListIconSize};
+    static constexpr PreferenceKey<int> MillerIconSize{Id::MillerIconSize};
     static constexpr PreferenceKey<luciole::ViewDensity> Density{Id::Density};
     static constexpr PreferenceKey<luciole::FilenameTruncation> FilenameTruncation{Id::FilenameTruncation};
     static constexpr PreferenceKey<bool> ShowSizeCaption{Id::ShowSizeCaption};

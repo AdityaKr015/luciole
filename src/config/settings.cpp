@@ -216,6 +216,9 @@ namespace {
   }
   template <int Minimum, int Maximum> bool between(int value) { return value >= Minimum && value <= Maximum; }
   template <std::size_t Index> bool columnWidth(int value) { return luciole::validDetailsColumnWidth(Index, value); }
+  // List and Columns icon sizes; 0 keeps the view's default size.
+  bool rowIconSize(int value) { return value == 0 || std::ranges::contains(luciole::kRowIconSizes, value); }
+  constexpr Rule<int> kRowIconSize{rowIconSize, "expected 0 or integer icon size 16, 20, 24, 28, 32, 40, 48, or 64"};
 
   using P = luciole::BrowserPreference;
   using S = BrowserSettings;
@@ -225,6 +228,10 @@ namespace {
           P::ActivationMode, "activation_mode", [](S& s) -> auto& { return s.activationMode; }, {kActivationModes}
       ),
       describe(P::TypingMode, "typing_mode", [](S& s) -> auto& { return s.typingMode; }, {kTypingModes}),
+      describe(
+          P::SingleClickLocationEdit, "single_click_location_edit",
+          [](S& s) -> auto& { return s.singleClickLocationEdit; }
+      ),
       describe(
           P::ConfirmPermanentDeletion, "confirm_permanent_deletion",
           [](S& s) -> auto& { return s.confirmPermanentDeletion; }
@@ -239,6 +246,7 @@ namespace {
       describe(P::AlwaysShowTabBar, "always_show_tab_bar", [](S& s) -> auto& { return s.alwaysShowTabBar; }),
       describe(P::AlwaysShowStatusBar, "always_show_status_bar", [](S& s) -> auto& { return s.alwaysShowStatusBar; }),
       describe(P::CompactMenus, "compact_menus", [](S& s) -> auto& { return s.compactMenus; }),
+      describe(P::ShowCloseButtons, "show_close_buttons", [](S& s) -> auto& { return s.showCloseButtons; }),
       describe(
           P::BackgroundOpacity, "background_opacity", [](S& s) -> auto& { return s.backgroundOpacity; },
           {0.0, 1.0, "expected a number from 0 to 1"}
@@ -250,6 +258,7 @@ namespace {
       describe(P::SortBy, "sort_by", [](S& s) -> auto& { return s.sort.field; }, {kSortFields}),
       describe(P::SortDescending, "sort_descending", [](S& s) -> auto& { return s.sort.descending; }),
       describe(P::DirectoriesFirst, "directories_first", [](S& s) -> auto& { return s.sort.directoriesFirst; }),
+      describe(P::HiddenLast, "hidden_last", [](S& s) -> auto& { return s.sort.hiddenLast; }),
       describe(P::ViewMode, "view_mode", [](S& s) -> auto& { return s.viewMode; }, {kViewModes}),
       describe(
           P::GridIconSize, "grid_icon_size", [](S& s) -> auto& { return s.gridIconSize; },
@@ -257,9 +266,10 @@ namespace {
            "expected integer icon size 32, 48, 64, 80, 96, 128, 160, 192, or 256"}
       ),
       describe(
-          P::ListIconSize, "list_icon_size", [](S& s) -> auto& { return s.listIconSize; },
-          {[](int value) { return value == 0 || std::ranges::contains(luciole::kListIconSizes, value); },
-           "expected 0 or integer icon size 16, 20, 24, 28, 32, 40, 48, or 64"}
+          P::ListIconSize, "list_icon_size", [](S& s) -> auto& { return s.listIconSize; }, kRowIconSize
+      ),
+      describe(
+          P::MillerIconSize, "miller_icon_size", [](S& s) -> auto& { return s.millerIconSize; }, kRowIconSize
       ),
       describe(P::Density, "density", [](S& s) -> auto& { return s.presentation.density; }, {kDensities}),
       describe(

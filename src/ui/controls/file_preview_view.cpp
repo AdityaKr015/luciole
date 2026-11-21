@@ -6,6 +6,7 @@
 #include "ui/controls/button.h"
 #include "ui/controls/card_style.h"
 #include "ui/controls/file_metadata_view.h"
+#include "ui/controls/folder_totals_view.h"
 #include "ui/controls/label.h"
 #include "ui/dialogs/dialog_chrome.h"
 #include "ui/palette.h"
@@ -13,7 +14,6 @@
 
 #include <algorithm>
 #include <format>
-#include <iterator>
 
 namespace {
   // Type icon shown in place of a preview that is loading or cannot render.
@@ -21,33 +21,10 @@ namespace {
 
   // One compact contents line for a selected folder; Properties keeps the detailed inspection notes.
   std::string folderContentsLine(const luciole::FolderTotalsSnapshot& totals) {
-    const char* prefix = totals.phase == luciole::FolderTotalsPhase::Running
-        ? (totals.cancelRequested ? "Stopping…" : "Calculating…")
-        : totals.partial() ? "Partial result"
-                           : "";
-    std::string line = prefix;
-    if (!line.empty()) {
-      line += " · ";
-    }
-    if (totals.overflow) {
-      line += "size overflow";
-    } else if (totals.bytes == 0 && totals.partial()) {
-      line += "size unknown";
-    } else {
-      const luciole::GString size(g_format_size_full(totals.bytes, G_FORMAT_SIZE_IEC_UNITS));
-      line += totals.bytes < 1024 ? std::string(size.get()) : std::format("{} ({} bytes)", size.get(), totals.bytes);
-    }
-    std::format_to(
-        std::back_inserter(line), " . {} {} . {} {}", totals.files, totals.files == 1 ? "file" : "files",
-        totals.folders, totals.folders == 1 ? "folder" : "folders"
-    );
-    if (totals.links != 0) {
-      std::format_to(std::back_inserter(line), " . {} {}", totals.links, totals.links == 1 ? "link" : "links");
-    }
-    if (totals.other != 0) {
-      std::format_to(std::back_inserter(line), " . {} other", totals.other);
-    }
-    return line;
+    const char* phase = totals.phase == luciole::FolderTotalsPhase::Running ? "Calculating… · "
+        : totals.partial()                                                  ? "Partial result · "
+                                                                            : "";
+    return std::format("{}{} · {}", phase, folderTotalsSizeText(totals), folderTotalsCountsText(totals));
   }
 } // namespace
 
@@ -80,6 +57,7 @@ FilePreviewView::FilePreviewView(
                  .controlHeight = 24.0F,
                  .variant = ButtonVariant::Ghost,
                  .tooltip = "Close preview",
+                 .followsCloseButtons = true,
                  .padding = Style::spaceXs,
                  .width = 24.0F,
                  .onClick = std::move(close)}
@@ -101,8 +79,10 @@ FilePreviewView::FilePreviewView(
   auto details = std::make_unique<FileMetadataView>();
   m_metadata = details.get();
   Flex* card = nullptr;
-  body->content()->addChild(luciole::card("Details", &card));
+  auto detailsCard = luciole::card("Details", &card);
+  m_details = detailsCard.get();
   card->addChild(std::move(details));
+  body->content()->addChild(std::move(detailsCard));
   body->content()->addChild(
       ui::label({.out = &m_status, .fontSize = Style::fontSizeCaption, .maxLines = 3, .configure = literal})
   );
@@ -199,7 +179,7 @@ void FilePreviewView::sync(
     metadata.push_back({"Type", type});
     if (entry->size && entry->type != luciole::FileType::Directory) {
       const luciole::GString size(g_format_size_full(*entry->size, G_FORMAT_SIZE_IEC_UNITS));
-      metadata.push_back({"File size", size.get()});
+      metadata.push_back({"File Size", size.get()});
     }
     if (snapshot.totals.phase != luciole::FolderTotalsPhase::Idle) {
       metadata.push_back({"Contents", folderContentsLine(snapshot.totals)});
@@ -231,6 +211,8 @@ void FilePreviewView::sync(
   const bool showImage = entry && (pixels || snapshot.text.empty());
   m_image->parent()->setVisible(showImage);
   m_image->parent()->setParticipatesInLayout(showImage);
+  m_details->setVisible(entry.has_value());
+  m_details->setParticipatesInLayout(entry.has_value());
   metadata.insert(metadata.end(), snapshot.metadata.begin(), snapshot.metadata.end());
   metadata.insert(metadata.end(), fileFacts.begin(), fileFacts.end());
   // The table sits inside the Details card, which pads it on both sides.
@@ -247,4 +229,5 @@ void FilePreviewView::sync(
   m_open->setEnabled(entry.has_value());
   m_openWith->setEnabled(entry && entry->type == luciole::FileType::Regular && !entry->symlink);
 }
+bool FilePreviewView::showsImage() const { return m_image->parent()->visible(); }
 void FilePreviewView::clear(Renderer& renderer) { m_image->releaseFile(renderer); }
